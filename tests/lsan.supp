@@ -1,0 +1,11 @@
+# LeakSanitizer suppressions for leaks inside third-party libraries, which LCAD cannot fix.
+# Keep this list short and specific: a suppression here hides every leak whose stack passes
+# through the named library.
+
+# When no D-Bus session bus answers (as in CI containers), Qt's D-Bus thread leaves a read
+# buffer behind in libdbus.
+leak:libdbus-1.so
+
+# Same situation, when Qt loads the GTK platform theme: the accessibility bridge leaks its
+# connection setup.
+leak:libatk-bridge-2.0.so

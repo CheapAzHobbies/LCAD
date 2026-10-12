@@ -19,10 +19,11 @@ function(lcad_add_gui_test name)
         add_test(NAME ${name} COMMAND ${name})
     endif()
     # Force X11 so the test never lands on a developer's Wayland session, and software rendering
-    # so the result does not depend on the machine's GPU.
+    # so the result does not depend on the machine's GPU. LSAN_OPTIONS only has an effect in
+    # sanitizer builds.
     set_tests_properties(${name} PROPERTIES
         LABELS gui
-        ENVIRONMENT "QT_QPA_PLATFORM=xcb;LIBGL_ALWAYS_SOFTWARE=1")
+        ENVIRONMENT "QT_QPA_PLATFORM=xcb;LIBGL_ALWAYS_SOFTWARE=1;LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=0")
 endfunction()
 
 lcad_add_gui_test(lcad_viewport_tests ViewportTest.cpp)
