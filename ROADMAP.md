@@ -8,8 +8,8 @@ The dates are estimates for part-time development, set on 2026-10-12. They get r
 phase based on how long that phase actually took. Each phase is also a GitHub milestone with the same due
 date.
 
-Phase 0 was finished on 2026-10-12, four weeks ahead of its target, apart from the license decision. The
-later dates stay as they are until Phase 1 shows whether that pace holds for real modeling work.
+Phase 0 was finished on 2026-10-12, four weeks ahead of its target. The later dates stay as they are
+until Phase 1 shows whether that pace holds for real modeling work.
 
 ## Timeline
 
@@ -33,9 +33,8 @@ worth showing.
 
 Decide before writing application code.
 
-- [ ] Choose the license. The options and a recommendation are in
-      [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md#what-the-license-choice-for-lcad-allows). This is the
-      owner's decision and the only item still open.
+- [x] License: GPL-3.0-or-later. What it allows, and what the alternatives would have, is in
+      [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md#lcads-own-license).
 - [x] Dependency assessment: OCCT, Qt 6, sketch solver candidates, file format libraries, with license,
       maintenance status, and distro versions for each. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 - [x] Architecture document: module boundaries and the rules between them. See
@@ -161,6 +160,7 @@ Decided in Phase 0, with the reasoning in [docs/ARCHITECTURE.md](docs/ARCHITECTU
 
 | Decision | Chosen |
 |---|---|
+| License | GPL-3.0-or-later |
 | Viewport | OCCT's viewer inside a Qt widget |
 | Native file format | Zip container of JSON plus B-rep |
 | Document model | LCAD's own, not OCCT's application framework |
@@ -170,7 +170,6 @@ Still open:
 
 | Decision | Options | Needed by |
 |---|---|---|
-| License | GPL-3.0-or-later (recommended), an LGPL, or a permissive license. It decides which sketch solver can be used: SolveSpace's is GPL-3.0-or-later, FreeCAD's planegcs is LGPL-2.1-or-later. | Now: last open item of Phase 0 |
 | Sketch solver | SolveSpace (libslvs), planegcs, or ezpz; chosen by a spike | Start of Phase 2 |
 | Stable references to faces and edges | To be designed | Start of Phase 3 |
 | When to make the repository public | v0.1, v0.5, or later | Owner's call |

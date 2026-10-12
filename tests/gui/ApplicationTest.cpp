@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <lcad/app/Application.h>
 #include <lcad/app/MainWindow.h>
 #include <lcad/kernel/Primitives.h>
@@ -97,6 +99,7 @@ void ApplicationTest::aboutTextNamesTheLibrariesInUse() {
     const QString about = window.aboutText();
 
     QVERIFY(about.contains(lcad::app::versionString()));
+    QVERIFY(about.contains(QStringLiteral("GNU General Public License, version 3 or later")));
     QVERIFY(about.contains(QString::fromLatin1(qVersion())));
     QVERIFY(about.contains(QString::fromStdString(lcad::kernel::occtVersion())));
     QVERIFY(!window.viewport()->graphicsInfo().isEmpty());

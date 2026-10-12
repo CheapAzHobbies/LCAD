@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Installs what is needed to build and test LCAD, using the distribution's package manager.
 #
 # Supported: Ubuntu, Debian, Linux Mint and other Debian derivatives; Fedora; Arch Linux and its
@@ -13,7 +15,7 @@ for arg in "$@"; do
     case "$arg" in
         -y | --yes) assume_yes=true ;;
         -h | --help)
-            sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)

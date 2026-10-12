@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Exact geometry. The public headers expose no OCCT types, so OCCT is a private dependency.
 add_library(lcad_kernel STATIC
     src/Measure.cpp

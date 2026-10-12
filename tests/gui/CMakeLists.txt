@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # GUI tests run under xvfb-run when it is available: each gets a private X server and Mesa's
 # software renderer, so results are the same on a desktop and in CI, and no window ever appears
 # on a real screen.

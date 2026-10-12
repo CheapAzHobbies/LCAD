@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Finds Open CASCADE Technology (OCCT) and defines the two targets LCAD links against:
 #
 #   lcad_occt_modeling        exact geometry and topology (no graphics)

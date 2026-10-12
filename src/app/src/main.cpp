@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <lcad/app/Application.h>
 #include <lcad/app/MainWindow.h>
 #include <lcad/viewport/ViewportWidget.h>

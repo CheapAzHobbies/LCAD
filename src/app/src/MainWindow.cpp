@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include <lcad/app/MainWindow.h>
 
 #include <lcad/app/Application.h>
@@ -32,7 +34,10 @@ MainWindow::MainWindow(QWidget* parent)
 }
 
 QString MainWindow::aboutText() const {
-    QString text = tr("LCAD %1\n\nBuilt with Qt %2 and Open CASCADE Technology %3.")
+    QString text = tr("LCAD %1\n\n"
+                      "Free software under the GNU General Public License, version 3 or later. "
+                      "It comes with no warranty.\n\n"
+                      "Built with Qt %2 and Open CASCADE Technology %3.")
                        .arg(versionString(), QString::fromLatin1(qVersion()),
                             QString::fromStdString(kernel::occtVersion()));
     const QString graphics = m_viewport->graphicsInfo();

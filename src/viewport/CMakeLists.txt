@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # The 3D viewport: OCCT's viewer drawing into a Qt widget. Apart from the kernel, this is the
 # only module that uses OCCT directly, and its public header exposes Qt types only.
 qt_add_library(lcad_viewport STATIC

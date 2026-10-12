@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # The user interface is a library so that tests can drive it without launching the executable.
 qt_add_library(lcad_app STATIC
     include/lcad/app/Application.h

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 find_package(Catch2 3 REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Test)
 include(Catch)

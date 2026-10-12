@@ -87,7 +87,7 @@ Each was made on 2026-10-12 unless noted.
 | 7 | Errors | No OCCT exception leaves `kernel` | Not expected |
 | 8 | Finding OCCT at build time | From headers and libraries, not OCCT's CMake package | Distributions fix their packages |
 | 9 | Tests | Catch2 for units, Qt Test for the interface; see [TESTING.md](TESTING.md) | Not expected |
-| 10 | License | Open: the owner's decision, and the last open item of Phase 0; see [DEPENDENCIES.md](DEPENDENCIES.md) | |
+| 10 | License | GPL-3.0-or-later; see [DEPENDENCIES.md](DEPENDENCIES.md#lcads-own-license) | Not expected |
 | 11 | Stable references to faces and edges | Open, designed at the start of Phase 3 | |
 | 12 | Sketch solver | Open, chosen by a spike at the start of Phase 2 | |
 

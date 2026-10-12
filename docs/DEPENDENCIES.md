@@ -76,8 +76,8 @@ how Qt applications are normally packaged, so it costs nothing extra.
 | [ezpz](https://github.com/KittyCAD/ezpz) | MIT | Young (last push 2026-08-05) | No | Written in Rust for Zoo Design Studio. Would add a Rust toolchain to the build. |
 | A solver written for LCAD | n/a | n/a | n/a | Months of work before the first sketch solves. Not justified while two proven solvers exist. |
 
-The license decision narrows this: `libslvs` can only be used if LCAD itself is GPL-3.0 or later.
-If LCAD is GPL, `libslvs` is the first candidate because it is a real library with a stable
+LCAD is licensed under GPL-3.0-or-later, so every candidate can be used, including `libslvs`,
+which requires it. `libslvs` is the first candidate because it is a real library with a stable
 interface and is proven in a Fusion-style sketcher. The choice should be confirmed with a spike
 at the start of Phase 2 that checks conflict reporting and dragging of underconstrained geometry.
 
@@ -112,15 +112,19 @@ Noted now because they affect planning; each gets a full assessment when its pha
 - **DXF and PDF (Phase 6).** Qt writes PDF. A DXF library is to be chosen.
 - **CAM, mesh repair, Python scripting.** To be assessed.
 
-## What the license choice for LCAD allows
+## LCAD's own license
 
-| If LCAD is licensed under | OCCT | Qt | SolveSpace solver | planegcs | Effect on others |
+LCAD is licensed under GPL-3.0-or-later. The owner decided this on 2026-10-12. It keeps every
+solver option open, matches the closest comparable projects (SolveSpace and Dune3D), and means
+that anyone who distributes a modified LCAD has to publish their source.
+
+For the record, what each option would have allowed:
+
+| If LCAD were licensed under | OCCT | Qt | SolveSpace solver | planegcs | Effect on others |
 |---|---|---|---|---|---|
 | GPL-3.0-or-later | Yes | Yes | Yes | Yes | Anyone distributing a modified LCAD must publish their source. |
 | LGPL-2.1-or-later or LGPL-3.0 | Yes | Yes | No | Yes | Others may link LCAD's libraries from closed programs. |
 | MIT or Apache-2.0 | Yes | Yes | No | Yes | Others may build closed products from LCAD's code. Binaries still carry the LGPL terms of Qt and OCCT. |
 
-Recommendation: GPL-3.0-or-later. It keeps every solver option open, matches the closest
-comparable projects (SolveSpace and Dune3D), and keeps forks open. As sole copyright holder the owner
-can still relicense later; that gets harder with each outside contribution unless contributors
-agree to it up front.
+As sole copyright holder the owner can still relicense later. That gets harder with each outside
+contribution unless contributors agree to it up front.

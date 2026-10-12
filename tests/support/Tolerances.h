@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #pragma once
 
 // Tolerances for geometry assertions. Every comparison of a measured value names one of these;

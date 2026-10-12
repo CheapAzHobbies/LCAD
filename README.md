@@ -44,5 +44,12 @@ LCAD uses [Open CASCADE Technology](https://dev.opencascade.org) for exact geome
 
 ## License
 
-Not chosen yet. It will be an open source license. The options and what each allows are laid out in
-[docs/DEPENDENCIES.md](docs/DEPENDENCIES.md#what-the-license-choice-for-lcad-allows).
+Copyright (C) 2026 the LCAD authors.
+
+LCAD is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
+License as published by the Free Software Foundation, either version 3 of the License, or (at your option)
+any later version. It is distributed in the hope that it will be useful, but without any warranty. The full
+text is in [LICENSE](LICENSE).
+
+The libraries LCAD links against keep their own licenses; see
+[docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
