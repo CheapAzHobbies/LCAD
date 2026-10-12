@@ -49,7 +49,7 @@ TEST_CASE("makeBox builds a valid solid of the requested size", "[kernel][primit
         CHECK_THAT(bounds->max.z, WithinAbs(30.0, lengthTolerance));
     }
 
-    SECTION("its centre of mass is the centre of the box") {
+    SECTION("its center of mass is the center of the box") {
         const auto center = centerOfMass(box);
         REQUIRE(center.has_value());
         CHECK_THAT(center->x, WithinAbs(5.0, lengthTolerance));

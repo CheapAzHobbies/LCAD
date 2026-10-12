@@ -6,7 +6,7 @@
 
 namespace lcad::kernel {
 
-/// A position in model space, in millimetres.
+/// A position in model space, in millimeters.
 struct Point {
     double x = 0.0;
     double y = 0.0;
@@ -33,10 +33,10 @@ struct TopologyCount {
 // These functions measure the exact geometry, never a display mesh. All of them accept a null
 // shape and report it as empty.
 
-/// Enclosed volume of the shape's solids, in cubic millimetres.
+/// Enclosed volume of the shape's solids, in cubic millimeters.
 [[nodiscard]] double volume(const Shape& shape);
 
-/// Total area of the shape's faces, in square millimetres.
+/// Total area of the shape's faces, in square millimeters.
 [[nodiscard]] double surfaceArea(const Shape& shape);
 
 /// Centroid of the shape's solids, or nothing when the shape encloses no volume.

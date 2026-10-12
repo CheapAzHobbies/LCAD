@@ -17,7 +17,7 @@ inline bool isNear(QRgb pixel, const QColor& color, int tolerance = 6) {
            std::abs(qBlue(pixel) - color.blue()) <= tolerance;
 }
 
-/// Share of the frame, from 0 to 1, that is not the background colour.
+/// Share of the frame, from 0 to 1, that is not the background color.
 inline double drawnFraction(const QImage& frame, const QColor& background) {
     if (frame.isNull()) {
         return 0.0;

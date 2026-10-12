@@ -1,13 +1,13 @@
 # Third-party notices
 
-LCAD links against libraries that are installed separately; their licences are listed in
+LCAD links against libraries that are installed separately; their licenses are listed in
 [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md). This file covers third-party work that LCAD's own
 source code is derived from.
 
 ## OCCT Qt samples
 
 `src/viewport/src/ViewportWidget.cpp` follows the technique of the QOpenGLWidget sample in
-<https://github.com/gkv311/occt-samples-qt>, which is distributed under the MIT licence:
+<https://github.com/gkv311/occt-samples-qt>, which is distributed under the MIT license:
 
 ```
 Copyright (c) 2023 Kirill Gavrilov

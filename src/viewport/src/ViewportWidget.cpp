@@ -1,6 +1,6 @@
 // Embeds OCCT's 3D viewer in a QOpenGLWidget: Qt owns the OpenGL context and the framebuffer,
 // and OCCT adopts both. The technique follows the QOpenGLWidget sample maintained for OCCT at
-// https://github.com/gkv311/occt-samples-qt (MIT licence, see THIRD_PARTY_NOTICES.md).
+// https://github.com/gkv311/occt-samples-qt (MIT license, see THIRD_PARTY_NOTICES.md).
 
 #include <lcad/viewport/ViewportWidget.h>
 

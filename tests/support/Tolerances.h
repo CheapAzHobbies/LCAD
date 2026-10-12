@@ -4,8 +4,8 @@
 // see docs/TESTING.md for how to choose.
 namespace lcad::test {
 
-/// Lengths and coordinates, in millimetres. One order of magnitude looser than the kernel's own
-/// modelling tolerance of 1e-7 mm.
+/// Lengths and coordinates, in millimeters. One order of magnitude looser than the kernel's own
+/// modeling tolerance of 1e-7 mm.
 inline constexpr double lengthTolerance = 1e-6;
 
 /// Relative tolerance for areas and volumes of shapes bounded only by planes, where the kernel
