@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # One job per supported distribution family, on the packages that distribution
+          # ships. Ubuntu 24.04 has the oldest Qt and Open CASCADE that LCAD supports.
+          - name: Ubuntu 24.04
+            image: ubuntu:24.04
+            bootstrap: apt-get update && apt-get install -y git ca-certificates
+            preset: ci
+          - name: Ubuntu 26.04
+            image: ubuntu:26.04
+            bootstrap: apt-get update && apt-get install -y git ca-certificates
+            preset: ci
+          - name: Fedora 44
+            image: fedora:44
+            bootstrap: dnf install -y git
+            preset: ci
+          - name: Arch Linux
+            image: archlinux:latest
+            # The bare Arch image has no fonts, and without one Qt draws menu text as boxes.
+            bootstrap: pacman -Syu --noconfirm git ttf-dejavu
+            preset: ci
+          - name: Sanitizers
+            image: ubuntu:24.04
+            bootstrap: apt-get update && apt-get install -y git ca-certificates
+            preset: asan
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install git
+        run: ${{ matrix.bootstrap }}
+
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: ./scripts/install-deps.sh --yes
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        # $GITHUB_WORKSPACE, not the github.workspace context: inside a container job the
+        # context still holds the path on the host.
+        run: LCAD_TEST_ARTIFACTS="$GITHUB_WORKSPACE/test-frames" ctest --preset ${{ matrix.preset }}
+
+      - name: Keep the frames the GUI tests rendered
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frames-${{ matrix.name }}
+          path: test-frames
+          if-no-files-found: ignore
+          retention-days: 14

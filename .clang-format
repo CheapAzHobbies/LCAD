@@ -1,0 +1,15 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AlwaysBreakTemplateDeclarations: Yes
+# OCCT's Handle(Type) and RTTI macros are not statements.
+StatementMacros:
+  - Q_OBJECT
+  - DEFINE_STANDARD_RTTI_INLINE
+TypenameMacros:
+  - Handle
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive

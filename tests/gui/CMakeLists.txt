@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# GUI tests run under xvfb-run when it is available: each gets a private X server and Mesa's
+# software renderer, so results are the same on a desktop and in CI, and no window ever appears
+# on a real screen.
+find_program(LCAD_XVFB_RUN xvfb-run DOC "Runs GUI tests on a virtual X display")
+if(NOT LCAD_XVFB_RUN)
+    message(WARNING "xvfb-run was not found; GUI tests will open windows on the current display.")
+endif()
+
+function(lcad_add_gui_test name)
+    qt_add_executable(${name} ${ARGN})
+    target_link_libraries(${name} PRIVATE Qt6::Test lcad::app lcad::kernel lcad_test_support)
+    lcad_target_defaults(${name})
+
+    if(LCAD_XVFB_RUN)
+        add_test(NAME ${name}
+            COMMAND "${LCAD_XVFB_RUN}" --auto-servernum "--server-args=-screen 0 1280x1024x24"
+                    $<TARGET_FILE:${name}>)
+    else()
+        add_test(NAME ${name} COMMAND ${name})
+    endif()
+    # Force X11 so the test never lands on a developer's Wayland session, and software rendering
+    # so the result does not depend on the machine's GPU. LSAN_OPTIONS only has an effect in
+    # sanitizer builds.
+    set_tests_properties(${name} PROPERTIES
+        LABELS gui
+        ENVIRONMENT "QT_QPA_PLATFORM=xcb;LIBGL_ALWAYS_SOFTWARE=1;LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=0")
+endfunction()
+
+lcad_add_gui_test(lcad_viewport_tests ViewportTest.cpp)
+lcad_add_gui_test(lcad_app_tests ApplicationTest.cpp)
+# ApplicationTest asks the X server which kind of server it is.
+find_package(X11 REQUIRED)
+target_link_libraries(lcad_app_tests PRIVATE X11::xcb)
+
+# Needs no display, so it runs with the unit tests.
+qt_add_executable(lcad_viewport_setup_tests SetupTest.cpp)
+target_link_libraries(lcad_viewport_setup_tests PRIVATE Qt6::Test lcad::viewport)
+lcad_target_defaults(lcad_viewport_setup_tests)
+add_test(NAME lcad_viewport_setup_tests COMMAND lcad_viewport_setup_tests)
+set_tests_properties(lcad_viewport_setup_tests PROPERTIES LABELS unit)

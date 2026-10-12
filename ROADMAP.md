@@ -8,6 +8,9 @@ The dates are estimates for part-time development, set on 2026-10-12. They get r
 phase based on how long that phase actually took. Each phase is also a GitHub milestone with the same due
 date.
 
+Phase 0 was finished on 2026-10-12, four weeks ahead of its target. The later dates stay as they are
+until Phase 1 shows whether that pace holds for real modeling work.
+
 ## Timeline
 
 | Phase | What ships | Start | Target | Release |
@@ -30,16 +33,22 @@ worth showing.
 
 Decide before writing application code.
 
-- [ ] Choose the license (see "Open decisions").
-- [ ] Dependency assessment: OCCT, Qt 6, sketch solver candidates, file format libraries. Record license,
-      maintenance status, and distro package availability for each in `docs/DEPENDENCIES.md`.
-- [ ] Architecture document: module boundaries for kernel wrapper, document model, feature graph,
-      rendering, and UI (`docs/ARCHITECTURE.md`).
-- [ ] Decide the viewport approach: OCCT's own viewer (AIS/V3d) inside Qt, or a custom renderer.
-- [ ] Decide the native file format and how it will be versioned.
-- [ ] CMake project skeleton that builds an empty Qt window linked against OCCT on Ubuntu, Fedora, Arch.
-- [ ] CI: build and test on every push.
-- [ ] Test strategy: unit test framework, geometry assertions with tolerances, reference models.
+- [x] License: GPL-3.0-or-later. What it allows, and what the alternatives would have, is in
+      [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md#lcads-own-license).
+- [x] Dependency assessment: OCCT, Qt 6, sketch solver candidates, file format libraries, with license,
+      maintenance status, and distro versions for each. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+- [x] Architecture document: module boundaries and the rules between them. See
+      [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- [x] Viewport approach: OCCT's own viewer inside a Qt widget, proven by a working viewport with orbit,
+      pan, zoom, and hover highlighting.
+- [x] Native file format and its versioning: a zip container of JSON and B-rep. See
+      [docs/FILE_FORMAT.md](docs/FILE_FORMAT.md).
+- [x] CMake project that builds an LCAD window linked against OCCT on Ubuntu 24.04, Ubuntu 26.04,
+      Fedora 44, and Arch. See [docs/BUILDING.md](docs/BUILDING.md).
+- [x] CI: builds and runs the tests on those four distributions, plus a sanitizer build, on every pull
+      request and push to `main`.
+- [x] Test strategy: Catch2 and Qt Test, geometry assertions with named tolerances, the plan for
+      reference models. See [docs/TESTING.md](docs/TESTING.md).
 
 Done when: a clean checkout builds and runs an empty window on the three distro families, CI is green, and
 the decisions above are written down.
@@ -48,12 +57,17 @@ the decisions above are written down.
 
 - [ ] Main window with the five regions from the brief (top bar, toolbar, browser, viewport, timeline),
       empty where features do not exist yet.
-- [ ] 3D viewport: orbit, pan, zoom, perspective/orthographic, view cube, standard views, fit.
-- [ ] Face, edge, vertex, and body selection with hover highlighting.
+- [ ] 3D viewport: perspective/orthographic, view cube, standard views, fit, and Fusion-style mouse
+      mapping. Basic orbit, pan, and zoom exist from Phase 0.
+- [ ] Face, edge, vertex, and body selection. Hover highlighting of whole shapes exists from Phase 0.
 - [ ] Document model, object tree in the browser.
-- [ ] Primitive solids (box, cylinder, sphere) as the first real geometry.
-- [ ] Native project format, save and open, atomic writes.
+- [ ] Primitive solids (cylinder, sphere, and the rest) as the first real geometry. The box exists from
+      Phase 0.
+- [ ] Native project format, save and open, atomic writes, built to
+      [docs/FILE_FORMAT.md](docs/FILE_FORMAT.md). Includes the test that a file saved with one OCCT
+      version opens with another.
 - [ ] Undo and redo through a transaction system.
+- [ ] The kernel's own error type, and OCCT's diagnostic messages routed into LCAD's log.
 - [ ] AppImage built by CI.
 
 Acceptance: create a document, add a solid, save, close, reopen, and verify the geometry is identical.
@@ -140,12 +154,31 @@ export G-code through a validated postprocessor.
 Surface modeling, sheet metal, advanced mesh repair, advanced assembly motion, rendering, simulation
 integrations, advanced CAM, Python scripting and plugins. Ordered by user demand once v1.0 is out.
 
-## Open decisions
+## Decisions
+
+Decided in Phase 0, with the reasoning in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md):
+
+| Decision | Chosen |
+|---|---|
+| License | GPL-3.0-or-later |
+| Viewport | OCCT's viewer inside a Qt widget |
+| Native file format | Zip container of JSON plus B-rep |
+| Document model | LCAD's own, not OCCT's application framework |
+| Supported OCCT versions | 7.6 to 7.9 |
+
+Still open:
 
 | Decision | Options | Needed by |
 |---|---|---|
-| License | GPL-3.0-or-later, LGPL-2.1-or-later, or a permissive license. It constrains which sketch solver can be used: SolveSpace's solver is GPL-3.0, FreeCAD's planegcs is LGPL-2.1+. OCCT is LGPL-2.1 with an exception; Qt 6 is LGPL-3.0/GPL-3.0. | End of Phase 0 |
-| Sketch solver | SolveSpace (libslvs), planegcs, or a new solver | Start of Phase 2 |
-| Viewport | OCCT viewer inside Qt, or a custom renderer | End of Phase 0 |
-| Native file format | Zip container of JSON plus B-rep, or SQLite | End of Phase 0 |
+| Sketch solver | SolveSpace (libslvs), planegcs, or ezpz; chosen by a spike | Start of Phase 2 |
+| Stable references to faces and edges | To be designed | Start of Phase 3 |
 | When to make the repository public | v0.1, v0.5, or later | Owner's call |
+
+## Risks found in Phase 0
+
+- **OCCT 8.** Upstream released 8.0 in May 2026 with many interface changes. No supported distribution
+  ships it yet. When the first one does, LCAD needs a port, and for a while has to build against both.
+- **Wayland.** Distributions build OCCT's viewer for X11 only, so LCAD runs through XWayland on Wayland
+  desktops. That works today; native Wayland depends on how distributions build OCCT.
+- **Distribution packaging.** Two of the four distributions shipped OCCT build files that did not work
+  as installed. LCAD now avoids them, and CI installs from scratch on every run to catch the next case.
