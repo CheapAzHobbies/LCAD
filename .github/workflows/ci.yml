@@ -37,7 +37,8 @@ jobs:
             preset: ci
           - name: Arch Linux
             image: archlinux:latest
-            bootstrap: pacman -Syu --noconfirm git
+            # The bare Arch image has no fonts, and without one Qt draws menu text as boxes.
+            bootstrap: pacman -Syu --noconfirm git ttf-dejavu
             preset: ci
           - name: Sanitizers
             image: ubuntu:24.04
