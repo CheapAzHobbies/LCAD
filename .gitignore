@@ -1,0 +1,38 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+compile_commands.json
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+
+# IDEs and editors
+.vscode/
+.idea/
+*.user
+*.swp
+*~
+.cache/
+.clangd/
+
+# Packaging
+*.AppImage
+.flatpak-builder/
+
+# OS
+.DS_Store
+Thumbs.db
