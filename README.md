@@ -10,14 +10,14 @@ Linux comes first. Windows and macOS ports are planned once the core modeling wo
 
 Early. LCAD cannot sketch or extrude yet.
 
-What works today, from Phases 0 and 1: creating box, cylinder, sphere, cone, and torus solids by
-their sizes with a live preview; a 3D view with a view cube, standard views, and Fusion's mouse
-controls; selecting bodies, faces, edges, and vertices, with their measurements in the status
-bar; a browser tree to rename, hide, and delete bodies; undo and redo; and saving and opening
-`.lcad` documents. [docs/USING.md](docs/USING.md) shows how.
+What works today: creating box, cylinder, sphere, cone, and torus solids by their sizes with a
+live preview; a 3D view with a view cube, standard views, display styles, and a grid; selecting
+bodies, faces, edges, and vertices, with their measurements; a browser tree and a properties
+panel to rename, hide, isolate, and delete bodies; several documents in tabs; undo and redo;
+saving and opening `.lcad` documents; a command search; and a light and a dark theme.
+[docs/USING.md](docs/USING.md) shows how.
 
-Next is the interface shell (themes, command search, tabs), then Phase 2, the sketcher. See the
-[roadmap](ROADMAP.md).
+Next is Phase 2, the sketcher. See the [roadmap](ROADMAP.md).
 
 ## Building
 

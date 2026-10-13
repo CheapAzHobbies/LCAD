@@ -34,7 +34,7 @@ cmake --preset asan && cmake --build --preset asan && ctest --preset asan    # s
 | Unit | Catch2 | `unit` | No | `core`: the log. `kernel`: primitives, measurement, moving, sub-shapes, serialization, errors, message routing. `document`: the model, undo, transactions, the file format |
 | Save and reopen | Catch2 | `unit` | No | A reopened document measures the same as the one saved; damaged, foreign, and newer files are refused |
 | Reference models | Catch2 | `unit` | No | The documents in `tests/models/` open and measure correctly, whichever OCCT wrote them |
-| Interface | Qt Test | `gui` | A virtual one | The rendering path, camera, selection, the main window, commands, and the acceptance test through the interface |
+| Interface | Qt Test | `gui` | A virtual one | Three programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts |
 | Sanitizers | All of the above, built with ASan and UBSan | all | A virtual one | Memory errors, leaks, undefined behavior |
 | Package | A shell script, in CI | | A virtual one | The AppImage starts on another distribution and draws a document |
 
@@ -56,6 +56,12 @@ twice: in `tests/document/FileTest.cpp` against the document module alone, and i
 `tests/gui/ApplicationTest.cpp` through the interface, by triggering the Create action, typing
 sizes into the panel, pressing OK, saving, destroying the window, and opening the file in a new
 one. Both compare measurements of the exact geometry with closed-form values.
+
+Phase 1b's acceptance test is about the interface itself, and is in
+`tests/gui/InterfaceTest.cpp`: every command has one definition, is in a menu, and is found by
+the search under its own name; no two commands share a shortcut; the window's layout, theme, and
+view settings come back after a restart; and at three window sizes, in both themes and at both
+display scales, no control overlaps another or is cut off.
 
 ## Geometry assertions
 
@@ -107,7 +113,7 @@ direction, where a model point lands on screen, and above all what a click selec
 then measured with the kernel. A test that clicks the middle of a box's top face asserts that
 the selected face has an area of 6000 mm², not that some pixels turned blue.
 
-Six lessons are built into them:
+Seven lessons are built into them:
 
 - **Look at the screen, not only at the widget.** The first viewport rendered correctly into its
   own framebuffer while the window on screen was blank. `ApplicationTest` therefore reads the
@@ -120,6 +126,10 @@ Six lessons are built into them:
 - **A frame can be one step behind.** OCCT reuses the last frame until told the scene changed,
   and a layout change reaches a widget only when the event loop runs. Tests that look at a
   frame after such a change wait for it.
+- **A high-DPI display is a different display.** Everything OCCT draws at a fixed size on
+  screen is measured in physical pixels. At twice the scale the view cube was half its size and
+  sat where no click meant for it could land, and every test at the ordinary scale passed. So
+  CTest runs each interface test program twice, the second time with `QT_SCALE_FACTOR=2`.
 - **Fonts are part of the environment.** OCCT warns when the font it wants for the labels in
   the 3D view is not installed and it has to substitute. Bare containers have almost no fonts,
   so the CI jobs for Arch and Fedora install DejaVu, as a desktop would have.
@@ -146,7 +156,10 @@ not drawing the shape; discarding pointer positions; not clearing what could be 
 new edit; skipping the rollback of an abandoned transaction; restoring an undone deletion at
 the end of the list; accepting a file in a newer format; ignoring a zip checksum; not giving
 the saved file the permissions of the one it replaces; treating a cylinder's diameter as its
-radius; giving OCCT the top-level window again.
+radius; giving OCCT the top-level window again; starting a command that is not enabled;
+ranking an alias above a name in the search; accepting a shortcut that belongs to another
+command; not saving the theme, the layout, or a tab's camera; opening a file that is already
+open a second time; drawing the view cube at one size whatever the display's scale.
 
 One change survived and the code was kept as it is, with a comment: the check after reading
 geometry (an empty result, or a stream in a failed state) can be removed without a test

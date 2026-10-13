@@ -36,7 +36,7 @@ qt_add_resources(lcad_app "lcad_icons"
     FILES "${PROJECT_SOURCE_DIR}/packaging/io.github.cheapazhobbies.LCAD.png")
 
 qt_add_executable(lcad src/main.cpp)
-target_link_libraries(lcad PRIVATE lcad::app)
+target_link_libraries(lcad PRIVATE lcad::app lcad::core)
 lcad_target_defaults(lcad)
 
 # What a package of LCAD contains: the program, its launcher, its icon, and the file type of
@@ -52,3 +52,5 @@ install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.png"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps")
 install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.xml"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages")
+install(FILES "${PROJECT_SOURCE_DIR}/packaging/application-x-lcad.svg"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/mimetypes")

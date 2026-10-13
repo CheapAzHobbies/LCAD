@@ -93,7 +93,9 @@ class InterfaceTest : public QObject {
 public:
     static void initMain() {
         lcad::viewport::prepareApplication();
-        // Keep the tests away from the real settings of whoever runs them.
+        // Keep the tests away from the real settings of whoever runs them, and from their
+        // desktop's choice of a light or dark theme.
+        qunsetenv("XDG_CURRENT_DESKTOP");
         static QTemporaryDir settingsDirectory;
         QCoreApplication::setOrganizationName(QStringLiteral("LCAD"));
         QCoreApplication::setApplicationName(QStringLiteral("LCAD"));
@@ -115,6 +117,7 @@ private slots:
     // Appearance
     void themesAreBuiltFromTokens_data();
     void themesAreBuiltFromTokens();
+    void desktopPreferenceIsUnderstood();
     void themeChoiceAppliesEverywhereAndIsRemembered();
     void everyIconDrawsInBothThemes();
     void nothingEssentialIsClipped_data();
@@ -429,6 +432,17 @@ void InterfaceTest::themesAreBuiltFromTokens() {
     QVERIFY(qAbs(t.accent.hue() - t.viewport.selection.hue()) < 15);
     // Errors are not the accent color.
     QVERIFY(qAbs(t.error.hue() - t.accent.hue()) > 60);
+}
+
+void InterfaceTest::desktopPreferenceIsUnderstood() {
+    using lcad::app::darkFromDesktopSetting;
+    // What `gsettings get org.gnome.desktop.interface color-scheme` prints.
+    QCOMPARE(darkFromDesktopSetting(QStringLiteral("'prefer-dark'\n")), std::optional<bool>(true));
+    QCOMPARE(darkFromDesktopSetting(QStringLiteral("'default'\n")), std::optional<bool>(false));
+    QCOMPARE(darkFromDesktopSetting(QStringLiteral("'prefer-light'\n")),
+             std::optional<bool>(false));
+    QCOMPARE(darkFromDesktopSetting(QStringLiteral("No such schema")), std::optional<bool>());
+    QCOMPARE(darkFromDesktopSetting(QString()), std::optional<bool>());
 }
 
 void InterfaceTest::themeChoiceAppliesEverywhereAndIsRemembered() {

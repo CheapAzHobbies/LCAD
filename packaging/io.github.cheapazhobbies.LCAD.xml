@@ -5,6 +5,6 @@
     <comment>LCAD document</comment>
     <sub-class-of type="application/zip"/>
     <glob pattern="*.lcad"/>
-    <icon name="io.github.cheapazhobbies.LCAD"/>
+    <icon name="application-x-lcad"/>
   </mime-type>
 </mime-info>

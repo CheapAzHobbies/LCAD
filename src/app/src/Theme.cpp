@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QPalette>
+#include <QProcess>
 #include <QSettings>
 #include <QStyle>
 #include <QStyleFactory>
@@ -20,6 +21,17 @@ QString name(const QColor& color) {
 }
 
 } // namespace
+
+std::optional<bool> darkFromDesktopSetting(const QString& answer) {
+    if (answer.contains(QLatin1String("prefer-dark"))) {
+        return true;
+    }
+    if (answer.contains(QLatin1String("prefer-light")) ||
+        answer.contains(QLatin1String("default"))) {
+        return false;
+    }
+    return std::nullopt;
+}
 
 ThemeTokens lightTokens() {
     ThemeTokens t;
@@ -107,6 +119,26 @@ void Theme::load() {
         // Before the first apply() replaces it: the palette the desktop handed over.
         m_systemDark = QApplication::palette().color(QPalette::Window).lightness() < 128;
         m_systemProbed = true;
+#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
+        // This Qt cannot be asked, and its palette is light on a dark GNOME desktop. In a
+        // desktop session, ask the desktop's settings tool instead. It is not there on every
+        // desktop, and then the palette's answer stands.
+        if (qEnvironmentVariableIsSet("XDG_CURRENT_DESKTOP")) {
+            QProcess gsettings;
+            gsettings.start(QStringLiteral("gsettings"),
+                            {QStringLiteral("get"), QStringLiteral("org.gnome.desktop.interface"),
+                             QStringLiteral("color-scheme")});
+            if (gsettings.waitForFinished(1000) && gsettings.exitStatus() == QProcess::NormalExit &&
+                gsettings.exitCode() == 0) {
+                const auto dark =
+                    darkFromDesktopSetting(QString::fromUtf8(gsettings.readAllStandardOutput()));
+                m_systemDark = dark.value_or(m_systemDark);
+            } else {
+                gsettings.kill();
+                gsettings.waitForFinished(200);
+            }
+        }
+#endif
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
         connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
             if (m_choice == ThemeChoice::System) {

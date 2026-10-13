@@ -21,7 +21,7 @@ more than writing the code, now sets the pace.
 |---|---|---|---|---|---|
 | 0. Groundwork | Architecture, dependency and license decisions, build system, CI | 2026-10-12 | 2026-11-08 | 2026-10-12 | |
 | 1. Desktop foundation | Window, viewport, selection, documents, save/open, undo | 2026-10-12 | 2027-01-31 | 2026-10-12 | |
-| 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-13 | 2026-10-25 | | |
+| 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-12 | 2026-10-25 | 2026-10-12 | |
 | 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-26 | 2026-11-30 | | |
 | 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-12-01 | 2027-02-15 | | v0.1 alpha |
 | 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-16 | 2027-03-31 | | v0.2 |
@@ -86,35 +86,40 @@ Left out on purpose, with where each belongs: autosave and crash recovery (Phase
 brief's release criteria need them), inches as a display unit, and per-body colors. Tabs and
 command search are in Phase 1b.
 
-## Phase 1b: Interface shell (2026-10-13 to 2026-10-25)
+## Phase 1b: Interface shell (finished 2026-10-12)
 
 Added on 2026-10-12, when the owner's [GUI specification](docs/GUI_SPEC.md) arrived. It asks for
 the application shell and design system to be built first, and for commands to be connected to
-them as they become real. [docs/INTERFACE_STATUS.md](docs/INTERFACE_STATUS.md) compares Phase 1
-with the specification section by section; this phase closes the gaps that do not depend on
-sketches or features.
+them as they become real. [docs/INTERFACE_STATUS.md](docs/INTERFACE_STATUS.md) compares the
+interface with the specification section by section.
 
-- [ ] Design system: colors, spacing, and type sizes defined once as tokens; light and dark
-      themes built from them, following the system by default, with the choice remembered.
-- [ ] LCAD's own icons for its tools, in one consistent style, and a document icon.
-- [ ] Command registry: each command defined once, with its name, aliases, shortcut, and when it
-      applies, and used by the toolbar, menus, context menus, shortcuts, and search alike.
-- [ ] Command search.
-- [ ] Properties panel: what is selected, when no command is running.
-- [ ] Context menu in the 3D view, driven by the selection.
-- [ ] Several documents in tabs, and a list of recent files.
-- [ ] Layout: remembered between launches, a command to reset it, a collapsible timeline, and a
-      mode that gives the whole window to the 3D view.
-- [ ] 3D view: reference grid, display styles (shaded, with edges, wireframe, hidden line,
-      transparent), zoom to selection, choosing among overlapping objects, navigation presets.
-- [ ] Browser: isolate, reveal hidden, filter by name, origin planes and axes.
-- [ ] Status bar: brief messages such as "saved", the active command, progress.
-- [ ] Shortcuts that can be changed.
-- [ ] Interface tests at several window sizes and scale factors, in both themes.
+- [x] Design system: colors and sizes defined once as tokens; light and dark themes built from
+      them, following the system by default, with the choice remembered.
+- [x] LCAD's own icons for its tools, in one consistent style, and a document icon.
+- [x] Command registry: each command defined once, with its name, aliases, shortcuts, icon, and
+      when it applies, and used by the toolbar, menus, context menus, shortcuts, and search alike.
+- [x] Command search.
+- [x] Properties panel: what is selected, when no command is running.
+- [x] Context menu in the 3D view, driven by the selection.
+- [x] Several documents in tabs, and a list of recent files.
+- [x] Layout: remembered between launches, a command to reset it, a timeline that can be hidden,
+      and a mode that gives the whole window to the 3D view.
+- [x] 3D view: reference grid, display styles (shaded, with edges, wireframe, hidden line,
+      transparent), zoom to selection, choosing among overlapping objects, a second navigation
+      preset. The view cube can be dragged to orbit.
+- [x] Browser: isolate, show all, filter by name, origin planes and axes.
+- [x] Status bar: brief messages such as "Saved", and the active command.
+- [x] Shortcuts that can be changed.
+- [x] Interface tests at three window sizes and two display scales, in both themes.
 
-Acceptance: every command LCAD has can be started from the toolbar, a menu, its shortcut, and
-the search, through one definition; the window comes back as it was left, in the theme that was
-chosen; and the interface tests pass in both themes at 1280 by 800 and at twice the scale.
+Acceptance: every command can be started from a menu and from the search through one definition,
+which the toolbar buttons and shortcuts use too; the window comes back as it was left, in the
+theme that was chosen; and the interface tests pass in both themes, at 1280 by 800 and at twice
+the display scale. All three are automated in `tests/gui/InterfaceTest.cpp`.
+
+Moved to later phases, with the reason beside each in
+[docs/INTERFACE_STATUS.md](docs/INTERFACE_STATUS.md): controls mounted on the edges of the 3D
+view, density modes, a progress display, and a scale setting of LCAD's own.
 
 ## Phase 2: Sketcher (2026-10-26 to 2026-11-30)
 
@@ -209,7 +214,8 @@ Decided in Phases 0 and 1, with the reasoning in [docs/ARCHITECTURE.md](docs/ARC
 | Document model | LCAD's own, not OCCT's application framework |
 | Supported OCCT versions | 7.6 to 7.9 |
 | Undo | Reversible edits recorded by the document, grouped by transactions |
-| Commands | A panel beside the viewport with a live preview, not a modal dialog |
+| Commands | Defined once in a registry; settings in a panel beside the viewport with a live preview, not a modal dialog |
+| Appearance | Design tokens; a light and a dark theme; Qt's Fusion widget style on every desktop |
 | Up direction | Z. The front view looks along +Y |
 | Mouse | Fusion's mapping. Wheel away from the user zooms in, with a setting to reverse it |
 

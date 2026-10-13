@@ -8,6 +8,8 @@
 #include <QObject>
 #include <QString>
 
+#include <optional>
+
 namespace lcad::app {
 
 /// Which theme the user asked for.
@@ -52,10 +54,17 @@ struct ThemeTokens {
 [[nodiscard]] ThemeTokens lightTokens();
 [[nodiscard]] ThemeTokens darkTokens();
 
+/// Whether the desktop asks for a dark interface, read from what its `color-scheme` setting
+/// says ("'prefer-dark'", "'prefer-light'", or "'default'"). Nothing when the answer is none of
+/// those. GNOME and the desktops built on it have this setting.
+[[nodiscard]] std::optional<bool> darkFromDesktopSetting(const QString& answer);
+
 /// The application's theme. One per process.
 ///
 /// The choice (system, light, or dark) is remembered in the settings. "System" follows the
-/// desktop's light or dark preference as far as Qt reports it.
+/// desktop's light or dark preference. Qt reports it from version 6.5 on; with an older Qt it
+/// is read once at startup, from the desktop's settings where those can be asked, and
+/// otherwise guessed from the palette the desktop gave the application.
 class Theme : public QObject {
     Q_OBJECT
 

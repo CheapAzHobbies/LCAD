@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The icon of an LCAD document: a sheet with a folded corner, carrying the cube of the
+     application's icon. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <path d="M56,16 H160 L208,64 V232 a8,8 0 0 1 -8,8 H56 a8,8 0 0 1 -8,-8 V24 a8,8 0 0 1 8,-8 Z"
+        fill="#f4f6f8" stroke="#2e3136" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M160,16 V64 H208" fill="#d5dae1" stroke="#2e3136" stroke-width="6"
+        stroke-linejoin="round"/>
+  <polygon points="128,104 172,129 128,154 84,129" fill="#3d8bfd"/>
+  <polygon points="84,129 128,154 128,204 84,179" fill="#c9d1db"/>
+  <polygon points="128,154 172,129 172,179 128,204" fill="#8f99a6"/>
+  <g fill="none" stroke="#1e2024" stroke-width="4" stroke-linejoin="round">
+    <polygon points="128,104 172,129 172,179 128,204 84,179 84,129"/>
+    <polyline points="84,129 128,154 172,129"/>
+    <line x1="128" y1="154" x2="128" y2="204"/>
+  </g>
+</svg>

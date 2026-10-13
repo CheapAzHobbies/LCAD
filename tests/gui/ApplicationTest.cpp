@@ -108,7 +108,9 @@ class ApplicationTest : public QObject {
 public:
     static void initMain() {
         lcad::viewport::prepareApplication();
-        // Keep the tests away from the real settings of whoever runs them.
+        // Keep the tests away from the real settings of whoever runs them, and from their
+        // desktop's choice of a light or dark theme.
+        qunsetenv("XDG_CURRENT_DESKTOP");
         static QTemporaryDir settingsDirectory;
         QCoreApplication::setOrganizationName(QStringLiteral("LCAD"));
         QCoreApplication::setApplicationName(QStringLiteral("LCAD"));
