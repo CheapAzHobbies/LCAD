@@ -49,6 +49,17 @@ double surfaceArea(const Shape& shape) {
     return properties.Mass();
 }
 
+double length(const Shape& shape) {
+    if (shape.isNull()) {
+        return 0.0;
+    }
+    GProp_GProps properties;
+    // Count an edge once however many faces share it.
+    const bool skipShared = true;
+    BRepGProp::LinearProperties(occt::unwrap(shape), properties, skipShared);
+    return properties.Mass();
+}
+
 std::optional<Point> centerOfMass(const Shape& shape) {
     if (shape.isNull()) {
         return std::nullopt;

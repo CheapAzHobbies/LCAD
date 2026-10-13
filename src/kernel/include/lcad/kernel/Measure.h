@@ -41,6 +41,9 @@ struct TopologyCount {
 /// Total area of the shape's faces, in square millimeters.
 [[nodiscard]] double surfaceArea(const Shape& shape);
 
+/// Total length of the shape's edges, in millimeters. An edge shared by two faces counts once.
+[[nodiscard]] double length(const Shape& shape);
+
 /// Centroid of the shape's solids, or nothing when the shape encloses no volume.
 [[nodiscard]] std::optional<Point> centerOfMass(const Shape& shape);
 
