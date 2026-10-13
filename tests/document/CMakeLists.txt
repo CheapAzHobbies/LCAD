@@ -4,7 +4,8 @@ add_executable(lcad_document_tests
     DocumentTest.cpp
     FileTest.cpp
     MigrationTest.cpp
-    ReferenceModelTest.cpp)
+    ReferenceModelTest.cpp
+    SketchShapesTest.cpp)
 target_link_libraries(lcad_document_tests PRIVATE
     lcad::core
     lcad::document

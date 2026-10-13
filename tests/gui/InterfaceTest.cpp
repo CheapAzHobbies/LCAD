@@ -383,17 +383,17 @@ void InterfaceTest::shortcutsDialogRefusesAShortcutInUse() {
     QVERIFY(torus->keySequence().isEmpty());
 
     // Give Torus a shortcut of its own.
-    torus->setKeySequence(QKeySequence(Qt::Key_T));
+    torus->setKeySequence(QKeySequence(Qt::Key_U));
     emit torus->editingFinished();
     QVERIFY(dialog.message().isEmpty());
-    QCOMPARE(action(window, "create.torus")->shortcut(), QKeySequence(Qt::Key_T));
+    QCOMPARE(action(window, "create.torus")->shortcut(), QKeySequence(Qt::Key_U));
 
     // Then try to give it Save's.
     torus->setKeySequence(QKeySequence(QKeySequence::Save));
     emit torus->editingFinished();
     QVERIFY2(dialog.message().contains(QStringLiteral("already belongs to \"Save\"")),
              qPrintable(dialog.message()));
-    QCOMPARE(torus->keySequence(), QKeySequence(Qt::Key_T));
+    QCOMPARE(torus->keySequence(), QKeySequence(Qt::Key_U));
     QCOMPARE(action(window, "file.save")->shortcut(), QKeySequence(QKeySequence::Save));
 
     dialog.findChild<QPushButton*>(QStringLiteral("restoreDefaults"))->click();
@@ -1171,9 +1171,11 @@ void InterfaceTest::viewportMenuOffersWhatApplies() {
     menu.reset(window.createViewportMenu(onTheBox));
     QCOMPARE(viewport->selection().size(), std::size_t{1});
     QCOMPARE(viewport->selection()[0].kind, SelectedItem::Kind::Face);
+    // The face is flat, so a sketch can be started on it.
     QCOMPARE(entriesOf(menu.get()),
              (QStringList{QStringLiteral("Select Other"), QStringLiteral("Zoom to Selection"),
-                          QStringLiteral("Hide"), QStringLiteral("Isolate"), QStringLiteral("Fit"),
+                          QStringLiteral("Hide"), QStringLiteral("Isolate"),
+                          QStringLiteral("New Sketch"), QStringLiteral("Fit"),
                           QStringLiteral("Home")}));
     // Delete is for whole bodies, and a face is selected, so it is not offered.
     QVERIFY(!entriesOf(menu.get()).contains(QStringLiteral("Delete")));

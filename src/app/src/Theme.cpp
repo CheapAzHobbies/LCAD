@@ -61,6 +61,14 @@ ThemeTokens lightTokens() {
     t.viewport.gridMajor = QColor(0xbd, 0xc3, 0xcc);
     t.viewport.cube = QColor(0xfb, 0xfc, 0xfd);
     t.viewport.cubeText = QColor(0x2a, 0x2f, 0x37);
+    // A sketch: blue while it can still move, the color of text once it cannot.
+    t.viewport.sketch = QColor(0x1b, 0x5f, 0xc4);
+    t.viewport.sketchFree = QColor(0x1a, 0x73, 0xe8);
+    t.viewport.sketchConstrained = QColor(0x1d, 0x21, 0x27);
+    t.viewport.sketchReference = QColor(0x8e, 0x44, 0xc9);
+    t.viewport.sketchConflict = t.error;
+    t.viewport.sketchDimension = QColor(0x5b, 0x63, 0x70);
+    t.viewport.label = QColor(0xfb, 0xfc, 0xfd);
     return t;
 }
 
@@ -92,6 +100,13 @@ ThemeTokens darkTokens() {
     t.viewport.gridMajor = QColor(0x4e, 0x53, 0x5c);
     t.viewport.cube = QColor(0xd6, 0xda, 0xe0);
     t.viewport.cubeText = QColor(0x28, 0x2c, 0x32);
+    t.viewport.sketch = QColor(0x7c, 0xb7, 0xff);
+    t.viewport.sketchFree = QColor(0x5a, 0xaa, 0xff);
+    t.viewport.sketchConstrained = QColor(0xec, 0xee, 0xf2);
+    t.viewport.sketchReference = QColor(0xc4, 0x8c, 0xf0);
+    t.viewport.sketchConflict = t.error;
+    t.viewport.sketchDimension = QColor(0xaa, 0xb0, 0xba);
+    t.viewport.label = QColor(0x26, 0x28, 0x2d);
     return t;
 }
 
@@ -212,13 +227,13 @@ void Theme::apply() {
         QMenu::item:selected { background: %5; color: %6; }
         QMenu::item:disabled { color: %8; }
         QMenu::separator { height: 1px; background: %4; margin: 4px 6px; }
-        QToolBar#modelingToolbar { background: %2; border: none; border-bottom: 1px solid %4;
+        QToolBar[tools="true"] { background: %2; border: none; border-bottom: 1px solid %4;
                                    padding: 2px 6px; spacing: 2px; min-height: %10px; }
-        QToolBar#modelingToolbar QToolButton, QWidget#topBar QToolButton {
+        QToolBar[tools="true"] QToolButton, QWidget#topBar QToolButton {
             padding: 4px 8px; border-radius: %9px; border: 1px solid transparent; }
-        QToolBar#modelingToolbar QToolButton:hover, QWidget#topBar QToolButton:hover {
+        QToolBar[tools="true"] QToolButton:hover, QWidget#topBar QToolButton:hover {
             background: %7; }
-        QToolBar#modelingToolbar QToolButton:pressed, QToolBar#modelingToolbar QToolButton:checked {
+        QToolBar[tools="true"] QToolButton:pressed, QToolBar[tools="true"] QToolButton:checked {
             background: %7; border-color: %5; }
         QLabel#groupLabel { color: %3; font-weight: 600; padding: 0 4px 0 8px; }
         QLabel#secondary, QLabel#timeline { color: %3; }
@@ -232,6 +247,17 @@ void Theme::apply() {
         QFrame#commandSearch QLineEdit { border: none; padding: 6px 8px; background: %12; }
         QFrame#commandSearch QListWidget { border: none; background: %2; }
         QLabel#errorText { color: %13; }
+        QToolBar#sketchToolbar QToolButton { padding: 4px 5px; }
+        QToolBar#sketchToolbar QToolButton#constraintsButton { padding: 4px 18px 4px 8px; }
+        QToolBar#sketchToolbar QToolButton#finishSketch {
+            background: %5; color: %6; font-weight: 600; padding: 4px 12px;
+            border-radius: %9px; }
+        QLineEdit#sketchValue { background: %12; color: %11; border: 1px solid %5;
+                                border-radius: %9px; padding: 2px 6px; }
+        QLineEdit#sketchValue[invalid="true"] { border: 2px solid %13; }
+        QLabel#sketchState { font-weight: 600; }
+        QLabel#sketchState[state="free"] { color: %5; }
+        QLabel#sketchState[state="conflict"] { color: %13; }
         QToolTip { background: %12; color: %11; border: 1px solid %4; padding: 3px 6px; }
     )")
             .arg(name(t.window), name(t.panel), name(t.textSecondary), name(t.border),

@@ -13,16 +13,20 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace lcad::kernel {
 class Shape;
-}
+struct Plane;
+} // namespace lcad::kernel
 namespace lcad::document {
 class Document;
 }
 
 namespace lcad::viewport {
+
+class SketchEditor;
 
 /// Process-wide setup the viewport depends on. Call it once, before constructing QApplication.
 ///
@@ -84,6 +88,18 @@ struct ViewportColors {
     QColor gridMajor{84, 89, 98};
     QColor cube{214, 218, 224};
     QColor cubeText{40, 44, 50};
+    /// A sketch seen among the bodies, not being edited.
+    QColor sketch{120, 180, 255};
+    // A sketch being edited: geometry that can still move, geometry that is fully constrained,
+    // reference geometry the sketch does not own, and whatever is part of a conflict.
+    QColor sketchFree{90, 170, 255};
+    QColor sketchConstrained{236, 238, 242};
+    QColor sketchReference{196, 140, 240};
+    QColor sketchConflict{240, 90, 90};
+    /// Dimension lines and constraint markers.
+    QColor sketchDimension{170, 176, 186};
+    /// Behind a dimension's value and a marker.
+    QColor label{38, 40, 45};
 
     friend bool operator==(const ViewportColors&, const ViewportColors&) = default;
 };
@@ -97,13 +113,15 @@ struct CameraState {
     Projection projection = Projection::Orthographic;
 };
 
-/// One entry of the selection: a whole body, or one face, edge, or vertex of a body.
+/// One entry of the selection: a whole body, one face, edge, or vertex of a body, or a sketch.
 struct SelectedItem {
-    enum class Kind { Body, Face, Edge, Vertex };
+    enum class Kind { Body, Face, Edge, Vertex, Sketch };
 
+    /// The body, or for Kind::Sketch the sketch.
     document::ObjectId body;
     Kind kind = Kind::Body;
-    /// The number kernel::subShape() knows the face, edge, or vertex by. -1 for a whole body.
+    /// The number kernel::subShape() knows the face, edge, or vertex by. -1 for a whole body
+    /// and for a sketch.
     int index = -1;
 
     friend bool operator==(const SelectedItem&, const SelectedItem&) = default;
@@ -120,6 +138,10 @@ struct SelectedItem {
 /// adds to or removes from the selection, and dragging with the left button selects what lies
 /// inside the rectangle. Clicking the view cube turns the camera to that side; dragging it
 /// orbits.
+///
+/// While a sketch is open for editing (editSketch()), the left button and the keyboard belong
+/// to the sketch editor instead, and bodies cannot be picked. The middle button and the wheel
+/// move the camera as always.
 class ViewportWidget : public QOpenGLWidget {
     Q_OBJECT
 
@@ -171,6 +193,26 @@ public:
     [[nodiscard]] QPointF project(double x, double y, double z) const;
     /// The middle of the view cube, in the widget's coordinates.
     [[nodiscard]] QPointF viewCubeCenter() const;
+    /// Where the line of sight through a position in the widget meets a plane, in the plane's
+    /// own coordinates (u, v). Nothing if the plane is seen edge-on.
+    [[nodiscard]] std::optional<QPointF> positionOnPlane(const kernel::Plane& plane,
+                                                         const QPointF& position) const;
+    /// Turns the camera to look straight at a plane from the side its normal points to, with
+    /// the plane's u to the right and its v up. Keeps looking at the same place.
+    void lookAt(const kernel::Plane& plane);
+
+    // Sketching
+
+    /// Opens a sketch of the document for editing in place: turns the camera to face it, draws
+    /// it with its constraints and dimensions, and gives the left button to the sketch tools.
+    /// Returns false if there is no such sketch.
+    bool editSketch(document::ObjectId sketch);
+    /// Closes the sketch being edited and puts the camera back where it was.
+    void finishSketch();
+    /// The sketch being edited. Not valid when none is.
+    [[nodiscard]] document::ObjectId editedSketch() const;
+    /// The editor of the sketch. It exists always, and is active while a sketch is open.
+    [[nodiscard]] SketchEditor* sketchEditor() const;
 
     // What is drawn besides the document
 
@@ -197,7 +239,8 @@ public:
     /// displayed are ignored.
     void setSelectedBodies(const std::vector<document::ObjectId>& bodies);
     /// Makes exactly these items the selection. Faces, edges, and vertices can only be
-    /// selected while the filter lets them be picked; others are ignored.
+    /// selected while the filter lets them be picked; others are ignored. A sketch is picked
+    /// as a whole, while the filter lets edges be picked.
     void setSelection(const std::vector<SelectedItem>& items);
     void clearSelection();
     /// Everything the filter lets be picked at a position in the widget, nearest first: also
@@ -215,6 +258,10 @@ public:
 
 signals:
     void selectionChanged();
+    /// A sketch was opened for editing, or closed.
+    void sketchEditingChanged();
+    /// The user double-clicked something that can be picked.
+    void itemActivated(const lcad::viewport::SelectedItem& item);
     /// Emitted once if the viewport cannot start rendering.
     void initializationFailed(const QString& reason);
 
@@ -226,6 +273,8 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     class Impl;

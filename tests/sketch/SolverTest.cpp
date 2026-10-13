@@ -805,9 +805,8 @@ TEST_CASE("Tangency at a shared end takes away exactly one freedom", "[sketch][s
         CHECK_THAT(distanceBetween(c1, c2),
                    WithinAbs(sketch.radiusOf(first) + sketch.radiusOf(second), lengthTolerance));
         const Point2 meet = sketch.position(sketch.find(first)->start);
-        const double turned =
-            ((meet.x - c1.x) * (c2.y - c1.y) - (meet.y - c1.y) * (c2.x - c1.x)) /
-            (sketch.radiusOf(first) * distanceBetween(c1, c2));
+        const double turned = ((meet.x - c1.x) * (c2.y - c1.y) - (meet.y - c1.y) * (c2.x - c1.x)) /
+                              (sketch.radiusOf(first) * distanceBetween(c1, c2));
         CHECK_THAT(turned, WithinAbs(0.0, angleTolerance));
     }
 }

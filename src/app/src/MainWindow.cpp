@@ -9,11 +9,14 @@
 #include <lcad/app/Icons.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/ShortcutsDialog.h>
+#include <lcad/app/SketchPanel.h>
 #include <lcad/app/Theme.h>
 #include <lcad/document/File.h>
 #include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Plane.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/Version.h>
+#include <lcad/viewport/SketchEditor.h>
 
 #include <QBuffer>
 #include <QCloseEvent>
@@ -50,11 +53,12 @@ using viewport::NavigationPreset;
 using viewport::OriginItem;
 using viewport::SelectedItem;
 using viewport::SelectionFilter;
+using viewport::SketchTool;
 using viewport::StandardView;
 
 // Settings keys. The layout version goes up when the set of panels changes, so that a layout
 // saved by an older LCAD is not applied to a window it no longer fits.
-const int layoutVersion = 2;
+const int layoutVersion = 3;
 const char* const geometryKey = "window/geometry";
 const char* const layoutKey = "window/layout";
 const char* const reverseZoomKey = "view/reverseZoom";
@@ -93,6 +97,7 @@ MainWindow::MainWindow(QWidget* parent)
     defineCommands();
     createTopBar();
     createToolbar();
+    createSketchToolbar();
     m_search = new CommandSearch(m_commands, this);
 
     m_selectionLabel = new QLabel(this);
@@ -111,32 +116,86 @@ MainWindow::MainWindow(QWidget* parent)
     // selected must not clear it there.
     connect(m_browser, &BrowserPanel::bodySelectionChanged, this, [this] {
         m_selectionComesFromBrowser = true;
-        m_viewport->setSelectedBodies(m_browser->selectedBodies());
+        std::vector<SelectedItem> items;
+        for (const document::ObjectId id : m_browser->selectedBodies()) {
+            items.push_back({id, SelectedItem::Kind::Body, -1});
+        }
+        for (const document::ObjectId id : m_browser->selectedSketches()) {
+            items.push_back({id, SelectedItem::Kind::Sketch, -1});
+        }
+        m_viewport->setSelection(items);
         m_selectionComesFromBrowser = false;
         updateSelectionState();
     });
     connect(m_viewport, &viewport::ViewportWidget::selectionChanged, this, [this] {
+        if (m_planePanel != nullptr) {
+            // A new sketch is waiting for its plane: a flat face that is clicked is it.
+            const std::vector<SelectedItem> picked = m_viewport->selection();
+            if (picked.size() == 1 && picked.front().kind == SelectedItem::Kind::Face) {
+                if (const auto plane = selectedFacePlane()) {
+                    const kernel::Plane chosen = *plane;
+                    // Later: this is the viewport telling what was clicked, which is no time to
+                    // change what it shows.
+                    QMetaObject::invokeMethod(
+                        this, [this, chosen] { createSketch(chosen); }, Qt::QueuedConnection);
+                } else {
+                    statusBar()->showMessage(
+                        tr("That face is not flat. A sketch needs a flat face or a plane."), 6000);
+                }
+            }
+        }
         if (!m_selectionComesFromBrowser) {
             std::vector<document::ObjectId> bodies;
+            std::vector<document::ObjectId> sketches;
             for (const SelectedItem& item : m_viewport->selection()) {
                 if (item.kind == SelectedItem::Kind::Body) {
                     bodies.push_back(item.body);
+                } else if (item.kind == SelectedItem::Kind::Sketch) {
+                    sketches.push_back(item.body);
                 }
             }
             if (m_documentIsChanging) {
-                // The viewport let go of a body because the document hid it, not because the
-                // user picked something else. It stays selected in the browser.
+                // The viewport let go of something because the document changed, not because
+                // the user picked something else: a body that was hidden, a sketch with
+                // nothing in it to show. What is selected in the browser and still exists
+                // stays selected there.
                 for (const document::ObjectId id : m_browser->selectedBodies()) {
                     const document::Body* body = document()->findBody(id);
-                    if (body != nullptr && !body->visible) {
+                    if (body != nullptr && !body->visible &&
+                        std::find(bodies.begin(), bodies.end(), id) == bodies.end()) {
                         bodies.push_back(id);
                     }
                 }
+                for (const document::ObjectId id : m_browser->selectedSketches()) {
+                    if (document()->findSketch(id) != nullptr &&
+                        std::find(sketches.begin(), sketches.end(), id) == sketches.end()) {
+                        sketches.push_back(id);
+                    }
+                }
             }
-            m_browser->setSelectedBodies(bodies);
+            if (isSketching()) {
+                // The viewport lets go of everything while a sketch is open. The browser keeps
+                // showing which sketch that is.
+                sketches = {m_viewport->editedSketch()};
+            }
+            m_browser->setSelection(bodies, sketches);
         }
         updateSelectionState();
     });
+    connect(m_viewport, &viewport::ViewportWidget::sketchEditingChanged, this,
+            &MainWindow::onSketchEditingChanged);
+    connect(m_viewport, &viewport::ViewportWidget::itemActivated, this,
+            [this](const SelectedItem& item) {
+                if (item.kind == SelectedItem::Kind::Sketch) {
+                    editSketch(item.body);
+                }
+            });
+    connect(m_browser, &BrowserPanel::sketchActivated, this,
+            [this](document::ObjectId sketch) { editSketch(sketch); });
+    connect(m_viewport->sketchEditor(), &viewport::SketchEditor::changed, this,
+            [this] { updateSelectionState(); });
+    connect(m_viewport->sketchEditor(), &viewport::SketchEditor::message, this,
+            [this](const QString& text) { statusBar()->showMessage(text, 9000); });
     connect(m_browser, &BrowserPanel::originItemToggled, this,
             [this](OriginItem item, bool visible) {
                 current().origin[static_cast<std::size_t>(item)] = visible;
@@ -146,7 +205,8 @@ MainWindow::MainWindow(QWidget* parent)
         m_commands->refresh();
         auto* menu = new QMenu(this);
         menu->setAttribute(Qt::WA_DeleteOnClose);
-        for (const char* id : {"body.rename", "body.hide", "body.show", "body.isolate"}) {
+        for (const char* id :
+             {"sketch.edit", "body.rename", "body.hide", "body.show", "body.isolate"}) {
             if (m_commands->action(QLatin1String(id))->isEnabled()) {
                 menu->addAction(m_commands->action(QLatin1String(id)));
             }
@@ -272,56 +332,85 @@ void MainWindow::defineCommands() {
         };
         m_commands->add(std::move(c));
 
-        c = make("edit.delete", tr("&Delete"), edit, tr("Delete the selected bodies"));
+        c = make("edit.delete", tr("&Delete"), edit, tr("Delete what is selected"));
         c.iconName = QStringLiteral("delete");
         c.shortcuts = {QKeySequence::Delete};
         c.aliases = {tr("remove"), tr("erase")};
-        c.run = [this](bool) { deleteSelectedBodies(); };
-        c.isEnabled = [this] { return !selectedBodies().empty(); };
+        c.run = [this](bool) {
+            if (isSketching()) {
+                m_viewport->sketchEditor()->deleteSelection();
+            } else {
+                deleteSelectedBodies();
+            }
+        };
+        c.isEnabled = [this] {
+            if (isSketching()) {
+                const viewport::SketchEditor* editor = m_viewport->sketchEditor();
+                return !editor->selectedEntities().empty() ||
+                       !editor->selectedConstraints().empty();
+            }
+            return !selectedBodies().empty() || !selectedSketches().empty();
+        };
         m_commands->add(std::move(c));
 
-        c = make("edit.cancel", tr("&Cancel Command"), edit, tr("Leave the command in progress"));
+        c = make("edit.cancel", tr("&Cancel Command"), edit,
+                 tr("Leave the command or the sketch tool in progress"));
         c.shortcuts = {QKeySequence(Qt::Key_Escape)};
         c.aliases = {tr("escape"), tr("abort")};
-        c.run = [this](bool) { cancelCommand(); };
-        c.isEnabled = [this] { return m_panel != nullptr; };
+        c.run = [this](bool) {
+            if (m_panel != nullptr || m_planePanel != nullptr) {
+                cancelCommand();
+            } else if (isSketching()) {
+                m_viewport->sketchEditor()->cancel();
+            }
+        };
+        c.isEnabled = [this] {
+            return m_panel != nullptr || m_planePanel != nullptr ||
+                   (isSketching() && m_viewport->sketchEditor()->canCancel());
+        };
         m_commands->add(std::move(c));
 
-        c = make("body.rename", tr("Re&name"), edit, tr("Rename the selected body"));
+        c = make("body.rename", tr("Re&name"), edit, tr("Rename the selected body or sketch"));
         c.shortcuts = {QKeySequence(Qt::Key_F2)};
         c.run = [this](bool) {
             const auto bodies = selectedBodies();
-            if (bodies.size() == 1) {
+            const auto sketches = selectedSketches();
+            if (bodies.size() == 1 && sketches.empty()) {
                 m_browser->editBody(bodies.front());
+            } else if (sketches.size() == 1 && bodies.empty()) {
+                m_browser->editSketchName(sketches.front());
             }
         };
-        c.isEnabled = [this] { return selectedBodies().size() == 1; };
+        c.isEnabled = [this] { return selectedBodies().size() + selectedSketches().size() == 1; };
         m_commands->add(std::move(c));
 
-        c = make("body.hide", tr("&Hide"), edit, tr("Hide the selected bodies"));
+        // Hide and Show act on bodies and sketches alike.
+        const auto anyShown = [this](bool shown) {
+            const auto bodies = targetBodies();
+            const auto sketches = selectedSketches();
+            return std::any_of(bodies.begin(), bodies.end(),
+                               [this, shown](document::ObjectId id) {
+                                   const document::Body* body = document()->findBody(id);
+                                   return body != nullptr && body->visible == shown;
+                               }) ||
+                   std::any_of(sketches.begin(), sketches.end(),
+                               [this, shown](document::ObjectId id) {
+                                   const document::SketchItem* sketch = document()->findSketch(id);
+                                   return sketch != nullptr && sketch->visible == shown;
+                               });
+        };
+        c = make("body.hide", tr("&Hide"), edit, tr("Hide the selected bodies and sketches"));
         c.iconName = QStringLiteral("eye-off");
         c.aliases = {tr("invisible")};
         c.run = [this](bool) { setBodiesVisible(targetBodies(), false, tr("Hide")); };
-        c.isEnabled = [this] {
-            const auto bodies = targetBodies();
-            return std::any_of(bodies.begin(), bodies.end(), [this](document::ObjectId id) {
-                const document::Body* body = document()->findBody(id);
-                return body != nullptr && body->visible;
-            });
-        };
+        c.isEnabled = [this, anyShown] { return !isSketching() && anyShown(true); };
         m_commands->add(std::move(c));
 
-        c = make("body.show", tr("&Show"), edit, tr("Show the selected bodies"));
+        c = make("body.show", tr("&Show"), edit, tr("Show the selected bodies and sketches"));
         c.iconName = QStringLiteral("eye");
         c.aliases = {tr("visible"), tr("unhide")};
         c.run = [this](bool) { setBodiesVisible(targetBodies(), true, tr("Show")); };
-        c.isEnabled = [this] {
-            const auto bodies = targetBodies();
-            return std::any_of(bodies.begin(), bodies.end(), [this](document::ObjectId id) {
-                const document::Body* body = document()->findBody(id);
-                return body != nullptr && !body->visible;
-            });
-        };
+        c.isEnabled = [this, anyShown] { return !isSketching() && anyShown(false); };
         m_commands->add(std::move(c));
 
         c = make("body.isolate", tr("&Isolate"), edit,
@@ -382,8 +471,10 @@ void MainWindow::defineCommands() {
         c.iconName = QString::fromLatin1(iconName);
         c.aliases = aliases;
         c.run = [this, kind = kind](bool) { startPrimitive(kind); };
+        c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
     }
+    defineSketchCommands();
 
     // Select
     const std::tuple<SelectionFilter, const char*, QString> filters[] = {
@@ -402,6 +493,8 @@ void MainWindow::defineCommands() {
         c.aliases = {tr("selection filter"), tr("pick")};
         c.run = [this, filter = filter](bool) { m_viewport->setSelectionFilter(filter); };
         c.isChecked = [this, filter = filter] { return m_viewport->selectionFilter() == filter; };
+        // While a sketch is open, a click picks what is in the sketch.
+        c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
     }
 
@@ -420,7 +513,7 @@ void MainWindow::defineCommands() {
         c.shortcuts = {QKeySequence(Qt::SHIFT | Qt::Key_F6)};
         c.aliases = {tr("frame selection"), tr("zoom selected")};
         c.run = [this](bool) { m_viewport->fitSelection(); };
-        c.isEnabled = [this] { return !m_viewport->selection().empty(); };
+        c.isEnabled = [this] { return !isSketching() && !m_viewport->selection().empty(); };
         m_commands->add(std::move(c));
     }
     const std::tuple<StandardView, QString, const char*> views[] = {
@@ -632,6 +725,263 @@ void MainWindow::defineCommands() {
     }
 }
 
+void MainWindow::defineSketchCommands() {
+    const QString group = tr("Sketch");
+    const auto make = [&group](const char* id, const QString& text, const QString& description,
+                               const char* iconName) {
+        Command command;
+        command.id = QString::fromLatin1(id);
+        command.text = text;
+        command.group = group;
+        command.description = description;
+        command.iconName = QString::fromLatin1(iconName);
+        return command;
+    };
+    const auto editor = [this] { return m_viewport->sketchEditor(); };
+    const auto sketching = [this] { return isSketching(); };
+
+    // Starting and finishing
+    {
+        Command c = make("sketch.new", tr("New &Sketch"),
+                         tr("Start a sketch on a plane or on a flat face"), "sketch");
+        c.aliases = {tr("create sketch"), tr("draw"), tr("2d")};
+        c.run = [this](bool) { startSketch(); };
+        c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
+        const std::tuple<const char*, QString, int> planes[] = {
+            {"sketch.new.xy", tr("Sketch on the &XY Plane"), 0},
+            {"sketch.new.xz", tr("Sketch on the X&Z Plane"), 1},
+            {"sketch.new.yz", tr("Sketch on the &YZ Plane"), 2},
+        };
+        for (const auto& [id, text, which] : planes) {
+            c = make(id, text, tr("Start a sketch on this plane through the origin"), "sketch");
+            c.aliases = {tr("create sketch")};
+            c.run = [this, which = which](bool) {
+                createSketch(which == 0   ? kernel::planeXY()
+                             : which == 1 ? kernel::planeXZ()
+                                          : kernel::planeYZ());
+            };
+            c.isEnabled = [this] { return !isSketching(); };
+            m_commands->add(std::move(c));
+        }
+
+        c = make("sketch.edit", tr("&Edit Sketch"), tr("Open the selected sketch for editing"),
+                 "sketch");
+        c.aliases = {tr("open sketch")};
+        c.run = [this](bool) {
+            const auto sketches = selectedSketches();
+            if (sketches.size() == 1) {
+                editSketch(sketches.front());
+            }
+        };
+        c.isEnabled = [this] { return !isSketching() && selectedSketches().size() == 1; };
+        m_commands->add(std::move(c));
+
+        c = make("sketch.finish", tr("&Finish Sketch"),
+                 tr("Close the sketch and go back to the model"), "finish");
+        c.shortcuts = {QKeySequence(Qt::CTRL | Qt::Key_Return)};
+        c.aliases = {tr("done"), tr("exit sketch"), tr("stop sketch"), tr("close sketch")};
+        c.run = [this](bool) { finishSketch(); };
+        c.isEnabled = sketching;
+        m_commands->add(std::move(c));
+    }
+
+    // Tools
+    struct ToolEntry {
+        SketchTool tool;
+        const char* id;
+        QString text;
+        QString description;
+        const char* icon;
+        QKeySequence shortcut;
+        QStringList aliases;
+    };
+    const ToolEntry tools[] = {
+        {SketchTool::Select,
+         "sketch.select",
+         tr("&Select"),
+         tr("Select sketch geometry, and drag what can still move"),
+         "select",
+         {},
+         {tr("pick")}},
+        {SketchTool::Line,
+         "sketch.line",
+         tr("&Line"),
+         tr("Draw lines, one after another; a typed number sets the length"),
+         "line",
+         QKeySequence(Qt::Key_L),
+         {tr("segment"), tr("polyline")}},
+        {SketchTool::Rectangle,
+         "sketch.rectangle",
+         tr("&Rectangle"),
+         tr("Draw a rectangle by two opposite corners"),
+         "rectangle",
+         QKeySequence(Qt::Key_R),
+         {tr("box"), tr("square")}},
+        {SketchTool::Circle,
+         "sketch.circle",
+         tr("&Circle"),
+         tr("Draw a circle by its center and a point on it"),
+         "circle",
+         QKeySequence(Qt::Key_C),
+         {tr("round"), tr("hole")}},
+        {SketchTool::Arc,
+         "sketch.arc",
+         tr("&Arc"),
+         tr("Draw an arc by its center, its start, and its end"),
+         "arc",
+         QKeySequence(Qt::Key_A),
+         {tr("curve")}},
+        {SketchTool::Point,
+         "sketch.point",
+         tr("&Point"),
+         tr("Put a point in the sketch"),
+         "point",
+         {},
+         {tr("dot")}},
+        {SketchTool::Polygon,
+         "sketch.polygon",
+         tr("Pol&ygon"),
+         tr("Draw a regular polygon by its center and a corner"),
+         "polygon",
+         {},
+         {tr("hexagon"), tr("triangle"), tr("pentagon")}},
+        {SketchTool::Slot,
+         "sketch.slot",
+         tr("Sl&ot"),
+         tr("Draw a slot by its two centers and its width"),
+         "slot",
+         {},
+         {tr("oblong")}},
+        {SketchTool::Trim,
+         "sketch.trim",
+         tr("&Trim"),
+         tr("Remove the part of a curve between the curves that cross it"),
+         "trim",
+         QKeySequence(Qt::Key_T),
+         {tr("cut")}},
+        {SketchTool::Extend,
+         "sketch.extend",
+         tr("E&xtend"),
+         tr("Lengthen a line or an arc to the next curve it meets"),
+         "extend",
+         {},
+         {tr("lengthen")}},
+        {SketchTool::Offset,
+         "sketch.offset",
+         tr("&Offset"),
+         tr("Copy an outline at a distance"),
+         "offset",
+         QKeySequence(Qt::Key_O),
+         {tr("parallel copy")}},
+        {SketchTool::Mirror,
+         "sketch.mirror",
+         tr("&Mirror"),
+         tr("Mirror the selected geometry in a line"),
+         "mirror",
+         {},
+         {tr("reflect"), tr("flip")}},
+    };
+    for (const ToolEntry& entry : tools) {
+        Command c = make(entry.id, entry.text, entry.description, entry.icon);
+        c.checkable = true;
+        c.exclusiveGroup = QStringLiteral("sketchTool");
+        if (!entry.shortcut.isEmpty()) {
+            c.shortcuts = {entry.shortcut};
+        }
+        c.aliases = entry.aliases;
+        c.run = [editor, tool = entry.tool](bool) { editor()->setTool(tool); };
+        c.isEnabled = sketching;
+        c.isChecked = [this, editor, tool = entry.tool] {
+            return isSketching() && editor()->tool() == tool;
+        };
+        m_commands->add(std::move(c));
+    }
+    {
+        Command c =
+            make("sketch.dimension", tr("&Dimension"),
+                 tr("Give a length, a distance, a radius, or an angle its value"), "dimension");
+        c.checkable = true;
+        c.exclusiveGroup = QStringLiteral("sketchTool");
+        c.shortcuts = {QKeySequence(Qt::Key_D)};
+        c.aliases = {tr("measure"),  tr("size"),   tr("length"),
+                     tr("distance"), tr("radius"), tr("angle")};
+        // On what is selected, or else on what is clicked next.
+        c.run = [editor](bool) { editor()->addDimension(); };
+        c.isEnabled = sketching;
+        c.isChecked = [this, editor] {
+            return isSketching() && editor()->tool() == SketchTool::Dimension;
+        };
+        m_commands->add(std::move(c));
+
+        c = make("sketch.construction", tr("Co&nstruction"),
+                 tr("Turn the selected curves into construction geometry and back, or, with "
+                    "nothing selected, draw construction geometry"),
+                 "construction");
+        c.checkable = true;
+        c.shortcuts = {QKeySequence(Qt::Key_X)};
+        c.aliases = {tr("reference line"), tr("helper"), tr("guide")};
+        c.run = [editor](bool) { editor()->toggleConstruction(); };
+        c.isEnabled = sketching;
+        c.isChecked = [this, editor] { return isSketching() && editor()->constructionMode(); };
+        m_commands->add(std::move(c));
+
+        c = make("sketch.inference", tr("Pick Up Constraints &While Drawing"),
+                 tr("Keep ends on the points and curves they land on, and make nearly level or "
+                    "upright lines exactly so"),
+                 "inference");
+        c.checkable = true;
+        c.aliases = {tr("snap"), tr("inference"), tr("automatic constraints")};
+        c.run = [editor](bool on) { editor()->setInference(on); };
+        c.isEnabled = sketching;
+        c.isChecked = [editor] { return editor()->hasInference(); };
+        m_commands->add(std::move(c));
+    }
+
+    // Constraints
+    using Kind = sketch::ConstraintKind;
+    const std::tuple<Kind, const char*, QString, QString, const char*> constraints[] = {
+        {Kind::Coincident, "sketch.coincident", tr("Coi&ncident"),
+         tr("Join two points, or put a point on a line or a circle"), "c-coincident"},
+        {Kind::Horizontal, "sketch.horizontal", tr("&Horizontal"),
+         tr("Make a line level, or put two points at the same height"), "c-horizontal"},
+        {Kind::Vertical, "sketch.vertical", tr("&Vertical"),
+         tr("Make a line upright, or put one point straight above another"), "c-vertical"},
+        {Kind::Parallel, "sketch.parallel", tr("Pa&rallel"), tr("Make two lines parallel"),
+         "c-parallel"},
+        {Kind::Perpendicular, "sketch.perpendicular", tr("Per&pendicular"),
+         tr("Make two lines square to each other"), "c-perpendicular"},
+        {Kind::Tangent, "sketch.tangent", tr("Tan&gent"),
+         tr("Make a line touch a circle or an arc, or two of those touch each other"), "c-tangent"},
+        {Kind::Equal, "sketch.equal", tr("E&qual"),
+         tr("Make two lines the same length, or two circles or arcs the same radius"), "c-equal"},
+        {Kind::Concentric, "sketch.concentric", tr("Conc&entric"),
+         tr("Give two circles or arcs the same center"), "c-concentric"},
+        {Kind::Midpoint, "sketch.midpoint", tr("Mi&dpoint"),
+         tr("Put a point on the middle of a line"), "c-midpoint"},
+        {Kind::Symmetric, "sketch.symmetric", tr("S&ymmetric"),
+         tr("Make two points mirror images of each other in a line"), "c-symmetric"},
+        {Kind::Collinear, "sketch.collinear", tr("Co&llinear"),
+         tr("Put two lines on one straight line"), "c-collinear"},
+        {Kind::Fix, "sketch.fix", tr("Fi&x"), tr("Keep the selected points where they are"),
+         "c-fix"},
+    };
+    for (const auto& [kind, id, text, description, iconName] : constraints) {
+        Command c = make(id, text, description, iconName);
+        c.checkable = true;
+        c.aliases = {tr("constraint"), tr("constrain")};
+        // On what is selected, if it fits; otherwise it becomes the tool and waits for clicks.
+        c.run = [editor, kind = kind](bool) { editor()->constrain(kind); };
+        c.isEnabled = sketching;
+        c.isChecked = [this, editor, kind = kind] {
+            return isSketching() && editor()->tool() == SketchTool::Constraint &&
+                   editor()->constraintTool() == kind;
+        };
+        m_commands->add(std::move(c));
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The window's parts
 
@@ -669,6 +1019,34 @@ void MainWindow::createTopBar() {
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
         create->addAction(action(id));
     }
+
+    QMenu* sketchMenu = m_menuBar->addMenu(tr("S&ketch"));
+    sketchMenu->addAction(action("sketch.new"));
+    QMenu* onPlane = sketchMenu->addMenu(tr("New Sketch &On"));
+    onPlane->addActions(
+        {action("sketch.new.xy"), action("sketch.new.xz"), action("sketch.new.yz")});
+    sketchMenu->addActions({action("sketch.edit"), action("sketch.finish")});
+    sketchMenu->addSeparator();
+    for (const char* id : {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle",
+                           "sketch.arc", "sketch.point", "sketch.polygon", "sketch.slot"}) {
+        sketchMenu->addAction(action(id));
+    }
+    sketchMenu->addSeparator();
+    for (const char* id : {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror"}) {
+        sketchMenu->addAction(action(id));
+    }
+    sketchMenu->addSeparator();
+    sketchMenu->addAction(action("sketch.dimension"));
+    QMenu* constrain = sketchMenu->addMenu(tr("&Constrain"));
+    constrain->setObjectName(QStringLiteral("menu.constrain"));
+    for (const char* id :
+         {"sketch.coincident", "sketch.horizontal", "sketch.vertical", "sketch.parallel",
+          "sketch.perpendicular", "sketch.tangent", "sketch.equal", "sketch.concentric",
+          "sketch.midpoint", "sketch.symmetric", "sketch.collinear", "sketch.fix"}) {
+        constrain->addAction(action(id));
+    }
+    sketchMenu->addSeparator();
+    sketchMenu->addActions({action("sketch.construction"), action("sketch.inference")});
 
     QMenu* select = m_menuBar->addMenu(tr("&Select"));
     for (const char* id : {"select.everything", "select.bodies", "select.faces", "select.edges",
@@ -757,7 +1135,9 @@ void MainWindow::createToolbar() {
     const auto action = [this](const char* id) { return m_commands->action(QLatin1String(id)); };
 
     QToolBar* toolbar = addToolBar(tr("Modeling"));
+    m_modelToolbar = toolbar;
     toolbar->setObjectName(QStringLiteral("modelingToolbar"));
+    toolbar->setProperty("tools", true);
     toolbar->setMovable(false);
     toolbar->setFloatable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -765,7 +1145,9 @@ void MainWindow::createToolbar() {
     const int iconSize = Theme::instance().tokens().iconSize;
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
+    // A sketch is where most solids start, so it leads the group.
     toolbar->addWidget(groupLabel(tr("Create"), toolbar));
+    toolbar->addAction(action("sketch.new"));
     for (const char* id :
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
         toolbar->addAction(action(id));
@@ -799,6 +1181,116 @@ void MainWindow::createToolbar() {
     toolbar->addWidget(m_styleButton);
 }
 
+// The toolbar that takes the modeling toolbar's place while a sketch is open: the drawing,
+// modifying, and constraining tools, each in its group, and the way out on the right.
+void MainWindow::createSketchToolbar() {
+    const auto action = [this](const char* id) { return m_commands->action(QLatin1String(id)); };
+
+    QToolBar* toolbar = addToolBar(tr("Sketching"));
+    m_sketchToolbar = toolbar;
+    toolbar->setObjectName(QStringLiteral("sketchToolbar"));
+    toolbar->setProperty("tools", true);
+    toolbar->setMovable(false);
+    toolbar->setFloatable(false);
+    toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    toolbar->setContextMenuPolicy(Qt::PreventContextMenu);
+    const int iconSize = Theme::instance().tokens().iconSize;
+    toolbar->setIconSize(QSize(iconSize, iconSize));
+
+    toolbar->addWidget(groupLabel(tr("Draw"), toolbar));
+    for (const char* id : {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle",
+                           "sketch.arc", "sketch.point", "sketch.polygon", "sketch.slot"}) {
+        toolbar->addAction(action(id));
+    }
+    toolbar->addAction(action("sketch.construction"));
+    toolbar->addSeparator();
+    toolbar->addWidget(groupLabel(tr("Modify"), toolbar));
+    for (const char* id : {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror"}) {
+        toolbar->addAction(action(id));
+    }
+    toolbar->addSeparator();
+    toolbar->addWidget(groupLabel(tr("Constrain"), toolbar));
+    toolbar->addAction(action("sketch.dimension"));
+    // Each constraint has a button of its own while there is room. In a narrow window they
+    // fold into one button that opens the list: see fitToolbar().
+    for (const char* id :
+         {"sketch.coincident", "sketch.horizontal", "sketch.vertical", "sketch.parallel",
+          "sketch.perpendicular", "sketch.tangent", "sketch.equal", "sketch.concentric",
+          "sketch.midpoint", "sketch.symmetric", "sketch.collinear", "sketch.fix"}) {
+        auto* button = new QToolButton(toolbar);
+        button->setDefaultAction(action(id));
+        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        m_constraintButtons.append(toolbar->addWidget(button));
+    }
+    auto* constraints = new QToolButton(toolbar);
+    constraints->setObjectName(QStringLiteral("constraintsButton"));
+    constraints->setText(tr("Constraints"));
+    constraints->setToolTip(tr("Geometric constraints"));
+    constraints->setPopupMode(QToolButton::InstantPopup);
+    constraints->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    constraints->setMenu(m_menuBar->findChild<QMenu*>(QStringLiteral("menu.constrain")));
+    m_constraintsFolded = toolbar->addWidget(constraints);
+    m_constraintsFolded->setVisible(false);
+
+    auto* spacer = new QWidget(toolbar);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    toolbar->addWidget(spacer);
+    auto* finish = new QToolButton(toolbar);
+    finish->setObjectName(QStringLiteral("finishSketch"));
+    finish->setDefaultAction(action("sketch.finish"));
+    finish->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->addWidget(finish);
+    toolbar->hide();
+}
+
+void MainWindow::updateMode() {
+    const bool sketching = isSketching();
+    const bool focused = isViewportFocused();
+    m_modelToolbar->setVisible(!sketching && !focused);
+    m_sketchToolbar->setVisible(sketching && !focused);
+}
+
+// A toolbar that does not fit hides what is left over behind an arrow. Before it comes to
+// that, the primitives give up their labels: their icons and tooltips still say what they are.
+void MainWindow::fitToolbar() {
+    if (m_modelToolbar == nullptr) {
+        return;
+    }
+    const auto setStyle = [this](Qt::ToolButtonStyle style) {
+        for (const char* id :
+             {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
+            if (auto* button = qobject_cast<QToolButton*>(
+                    m_modelToolbar->widgetForAction(m_commands->action(QLatin1String(id))))) {
+                button->setToolButtonStyle(style);
+            }
+        }
+    };
+    setStyle(Qt::ToolButtonTextBesideIcon);
+    if (m_modelToolbar->sizeHint().width() > width()) {
+        setStyle(Qt::ToolButtonIconOnly);
+    }
+
+    // The sketch toolbar gives up the constraints' own buttons for one that lists them.
+    if (m_sketchToolbar == nullptr || m_constraintsFolded == nullptr) {
+        return;
+    }
+    const auto fold = [this](bool folded) {
+        for (QAction* button : std::as_const(m_constraintButtons)) {
+            button->setVisible(!folded);
+        }
+        m_constraintsFolded->setVisible(folded);
+    };
+    fold(false);
+    if (m_sketchToolbar->sizeHint().width() > width()) {
+        fold(true);
+    }
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    fitToolbar();
+}
+
 void MainWindow::createDocks() {
     m_browser = new BrowserPanel(this);
     m_browserDock = new QDockWidget(tr("Browser"), this);
@@ -829,6 +1321,9 @@ void MainWindow::createDocks() {
     auto* stack = new QStackedWidget(this);
     stack->setObjectName(QStringLiteral("inspectorStack"));
     stack->addWidget(m_properties);
+    m_sketchPanel = new SketchPanel(m_viewport->sketchEditor(), this);
+    stack->addWidget(m_sketchPanel);
+    connect(m_sketchPanel, &SketchPanel::finishRequested, this, &MainWindow::finishSketch);
     // In a scroll area, so that what the panel shows never changes how wide the panel is: the
     // 3D view must not jump sideways each time something else is selected.
     auto* scroll = new QScrollArea(this);
@@ -875,10 +1370,12 @@ void MainWindow::restoreSettings() {
     if (!layout.isEmpty()) {
         restoreState(layout, layoutVersion);
     }
+    updateMode();
 }
 
 void MainWindow::applyTheme() {
     m_viewport->setColors(Theme::instance().tokens().viewport);
+    fitToolbar();
     // Icons are drawn in the theme's colors, so fetch them again.
     for (const QString& id : m_commands->ids()) {
         const Command* command = m_commands->command(id);
@@ -910,6 +1407,7 @@ void MainWindow::resetLayout() {
         m_focusState.reset();
     }
     restoreState(m_defaultLayout, layoutVersion);
+    updateMode();
     m_commands->refresh();
 }
 
@@ -922,12 +1420,12 @@ void MainWindow::setViewportFocus(bool focused) {
         for (QDockWidget* dock : {m_browserDock, m_inspectorDock, m_timelineDock}) {
             dock->hide();
         }
-        findChild<QToolBar*>(QStringLiteral("modelingToolbar"))->hide();
     } else {
         const QByteArray state = *m_focusState;
         m_focusState.reset();
         restoreState(state, layoutVersion);
     }
+    updateMode();
     m_commands->refresh();
 }
 
@@ -1219,24 +1717,60 @@ std::vector<document::ObjectId> MainWindow::selectedBodies() const {
     return bodies;
 }
 
+std::vector<document::ObjectId> MainWindow::selectedSketches() const {
+    std::vector<document::ObjectId> sketches = m_browser->selectedSketches();
+    for (const SelectedItem& item : m_viewport->selection()) {
+        if (item.kind == SelectedItem::Kind::Sketch &&
+            std::find(sketches.begin(), sketches.end(), item.body) == sketches.end()) {
+            sketches.push_back(item.body);
+        }
+    }
+    return sketches;
+}
+
 std::vector<document::ObjectId> MainWindow::targetBodies() const {
     std::vector<document::ObjectId> bodies = selectedBodies();
     for (const SelectedItem& item : m_viewport->selection()) {
-        if (std::find(bodies.begin(), bodies.end(), item.body) == bodies.end()) {
+        if (item.kind != SelectedItem::Kind::Sketch &&
+            std::find(bodies.begin(), bodies.end(), item.body) == bodies.end()) {
             bodies.push_back(item.body);
         }
     }
     return bodies;
 }
 
+std::optional<kernel::Plane> MainWindow::selectedFacePlane() const {
+    const std::vector<SelectedItem> picked = m_viewport->selection();
+    if (picked.size() != 1 || picked.front().kind != SelectedItem::Kind::Face) {
+        return std::nullopt;
+    }
+    const document::Body* body = document()->findBody(picked.front().body);
+    if (body == nullptr) {
+        return std::nullopt;
+    }
+    try {
+        return kernel::planeOfFace(
+            kernel::subShape(body->shape, kernel::SubShapeKind::Face, picked.front().index));
+    } catch (const std::out_of_range&) {
+        return std::nullopt;
+    }
+}
+
+// Shows or hides bodies, and the sketches that are selected with them, as one undo step.
 void MainWindow::setBodiesVisible(const std::vector<document::ObjectId>& bodies, bool visible,
                                   const QString& label) {
-    if (bodies.empty()) {
+    const std::vector<document::ObjectId> sketches = label == tr("Hide") || label == tr("Show")
+                                                         ? selectedSketches()
+                                                         : std::vector<document::ObjectId>();
+    if (bodies.empty() && sketches.empty()) {
         return;
     }
     document::Transaction transaction(*document(), label.toStdString());
     for (const document::ObjectId id : bodies) {
         document()->setBodyVisible(id, visible);
+    }
+    for (const document::ObjectId id : sketches) {
+        document()->setSketchVisible(id, visible);
     }
     transaction.commit();
 }
@@ -1252,12 +1786,36 @@ void MainWindow::updateSelectionState() {
         }
     }
     m_selectionLabel->setText(selectionSummary());
-    if (m_panel == nullptr) {
-        m_properties->refresh(document(), selectedBodies(), m_viewport->selection());
+    if (isSketching()) {
+        const document::SketchItem* sketch = document()->findSketch(m_viewport->editedSketch());
+        m_sketchPanel->refresh(sketch != nullptr ? QString::fromStdString(sketch->name)
+                                                 : QString());
+        if (m_panel == nullptr && m_planePanel == nullptr) {
+            m_commandLabel->setText(m_viewport->sketchEditor()->hint());
+        }
+    } else if (m_panel == nullptr && m_planePanel == nullptr) {
+        // A sketch selected in the browser while it is hidden is not in the viewport's
+        // selection, and is what is selected all the same.
+        std::vector<SelectedItem> parts = m_viewport->selection();
+        for (const document::ObjectId id : m_browser->selectedSketches()) {
+            const SelectedItem item{id, SelectedItem::Kind::Sketch, -1};
+            if (std::find(parts.begin(), parts.end(), item) == parts.end()) {
+                parts.push_back(item);
+            }
+        }
+        m_properties->refresh(document(), selectedBodies(), parts);
     }
 }
 
 QString MainWindow::describe(const SelectedItem& item) const {
+    if (item.kind == SelectedItem::Kind::Sketch) {
+        const document::SketchItem* sketch = document()->findSketch(item.body);
+        if (sketch == nullptr) {
+            return {};
+        }
+        return tr("%1 · %2").arg(QString::fromStdString(sketch->name),
+                                 describeSketchState(sketch->geometry, sketch->geometry.state()));
+    }
     const document::Body* body = document()->findBody(item.body);
     if (body == nullptr) {
         return {};
@@ -1287,6 +1845,8 @@ QString MainWindow::describe(const SelectedItem& item) const {
                 .arg(owner, formatNumber(point->min.x), formatNumber(point->min.y),
                      formatNumber(point->min.z));
         }
+        case SelectedItem::Kind::Sketch:
+            break;
         }
     } catch (const std::out_of_range&) {
         // The body changed under the selection; there is nothing to say about it.
@@ -1295,11 +1855,42 @@ QString MainWindow::describe(const SelectedItem& item) const {
 }
 
 QString MainWindow::selectionSummary() const {
+    if (isSketching()) {
+        // The sketch being edited, how much of it can still move, and what is selected in it.
+        const viewport::SketchEditor* editor = m_viewport->sketchEditor();
+        const document::SketchItem* sketch = document()->findSketch(m_viewport->editedSketch());
+        if (sketch == nullptr) {
+            return {};
+        }
+        QString text = tr("%1 · %2").arg(QString::fromStdString(sketch->name),
+                                         describeSketchState(editor->geometry(), editor->state()));
+        const std::vector<sketch::EntityId> entities = editor->selectedEntities();
+        const std::vector<sketch::ConstraintId> constraints = editor->selectedConstraints();
+        const std::size_t total = entities.size() + constraints.size();
+        if (total > 1) {
+            text += tr(" · %1 items selected").arg(total);
+        } else if (entities.size() == 1) {
+            text += QStringLiteral(" · ") + describeSketchEntity(editor->geometry(), entities[0]);
+        } else if (constraints.size() == 1) {
+            if (const sketch::Constraint* constraint =
+                    editor->geometry().findConstraint(constraints[0])) {
+                text += QStringLiteral(" · ") + describeConstraint(*constraint);
+            }
+        }
+        return text;
+    }
     const std::vector<SelectedItem> picked = m_viewport->selection();
     const std::vector<document::ObjectId> bodies = selectedBodies();
     std::vector<SelectedItem> parts;
     for (const SelectedItem& item : picked) {
         if (item.kind != SelectedItem::Kind::Body) {
+            parts.push_back(item);
+        }
+    }
+    // Sketches selected in the browser only, because they are hidden.
+    for (const document::ObjectId id : m_browser->selectedSketches()) {
+        const SelectedItem item{id, SelectedItem::Kind::Sketch, -1};
+        if (std::find(parts.begin(), parts.end(), item) == parts.end()) {
             parts.push_back(item);
         }
     }
@@ -1316,6 +1907,39 @@ QString MainWindow::selectionSummary() const {
 
 QMenu* MainWindow::createViewportMenu(const QPoint& position) {
     const auto action = [this](const char* id) { return m_commands->action(QLatin1String(id)); };
+    if (isSketching()) {
+        // A right-click on something of the sketch that is not selected selects it.
+        viewport::SketchEditor* editor = m_viewport->sketchEditor();
+        const sketch::ConstraintId constraint = editor->constraintAt(position);
+        const sketch::EntityId entity = constraint == 0 ? editor->entityAt(position) : 0;
+        const auto entities = editor->selectedEntities();
+        const auto constraints = editor->selectedConstraints();
+        if (constraint != 0 &&
+            std::find(constraints.begin(), constraints.end(), constraint) == constraints.end()) {
+            editor->setSelection({}, {constraint});
+        } else if (entity != 0 &&
+                   std::find(entities.begin(), entities.end(), entity) == entities.end()) {
+            editor->setSelection({entity});
+        }
+        m_commands->refresh();
+        auto* menu = new QMenu(this);
+        if (!editor->selectedEntities().empty()) {
+            menu->addAction(action("sketch.dimension"));
+            menu->addAction(action("sketch.construction"));
+            QMenu* constrain = menu->addMenu(tr("&Constrain"));
+            constrain->addActions(
+                m_menuBar->findChild<QMenu*>(QStringLiteral("menu.constrain"))->actions());
+        }
+        if (action("edit.delete")->isEnabled()) {
+            menu->addAction(action("edit.delete"));
+        }
+        menu->addSeparator();
+        menu->addAction(action("sketch.select"));
+        menu->addAction(action("view.fit"));
+        menu->addSeparator();
+        menu->addAction(action("sketch.finish"));
+        return menu;
+    }
     const std::vector<SelectedItem> under = m_viewport->itemsAt(position);
     // A right-click on something that is not selected selects it, as a click would.
     if (!under.empty()) {
@@ -1338,6 +1962,9 @@ QMenu* MainWindow::createViewportMenu(const QPoint& position) {
         menu->addSeparator();
     }
     if (!under.empty()) {
+        if (action("sketch.edit")->isEnabled()) {
+            menu->addAction(action("sketch.edit"));
+        }
         menu->addAction(action("view.fitSelection"));
         for (const char* id : {"body.hide", "body.isolate"}) {
             if (action(id)->isEnabled()) {
@@ -1348,6 +1975,10 @@ QMenu* MainWindow::createViewportMenu(const QPoint& position) {
             menu->addAction(action("edit.delete"));
         }
         menu->addSeparator();
+    }
+    if (selectedFacePlane().has_value()) {
+        // On the flat face that was clicked.
+        menu->addAction(action("sketch.new"));
     }
     if (action("body.showAll")->isEnabled()) {
         menu->addAction(action("body.showAll"));
@@ -1373,6 +2004,14 @@ void MainWindow::showInspector() {
         const QString title = tr("Create %1").arg(primitiveName(m_panel->kind()));
         m_inspectorDock->setWindowTitle(title);
         m_commandLabel->setText(title);
+    } else if (m_planePanel != nullptr) {
+        stack->setCurrentWidget(m_planePanel);
+        m_inspectorDock->setWindowTitle(tr("New Sketch"));
+        m_commandLabel->setText(tr("New Sketch: choose a plane"));
+    } else if (isSketching()) {
+        stack->setCurrentWidget(m_sketchPanel);
+        m_inspectorDock->setWindowTitle(tr("Sketch"));
+        m_commandLabel->setText(m_viewport->sketchEditor()->hint());
     } else {
         stack->setCurrentWidget(m_properties);
         m_inspectorDock->setWindowTitle(tr("Properties"));
@@ -1416,14 +2055,27 @@ void MainWindow::acceptCommand() {
 }
 
 void MainWindow::cancelCommand() {
-    if (m_panel == nullptr) {
+    if (m_panel == nullptr && m_planePanel == nullptr) {
         return;
     }
-    m_viewport->setPreview(kernel::Shape());
-    m_inspectorStack->removeWidget(m_panel);
-    // Later: this may be running inside one of the panel's own signals.
-    m_panel->deleteLater();
-    m_panel = nullptr;
+    if (m_panel != nullptr) {
+        m_viewport->setPreview(kernel::Shape());
+        m_inspectorStack->removeWidget(m_panel);
+        // Later: this may be running inside one of the panel's own signals.
+        m_panel->deleteLater();
+        m_panel = nullptr;
+    }
+    if (m_planePanel != nullptr) {
+        m_inspectorStack->removeWidget(m_planePanel);
+        m_planePanel->deleteLater();
+        m_planePanel = nullptr;
+        // The planes were shown to choose from. Show what the user had ticked again.
+        if (m_current >= 0) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                m_viewport->setOriginItemVisible(static_cast<OriginItem>(i), current().origin[i]);
+            }
+        }
+    }
     showInspector();
     m_viewport->setFocus();
     updateSelectionState();
@@ -1431,16 +2083,110 @@ void MainWindow::cancelCommand() {
 
 void MainWindow::deleteSelectedBodies() {
     const std::vector<document::ObjectId> bodies = selectedBodies();
-    if (bodies.empty()) {
+    const std::vector<document::ObjectId> sketches = selectedSketches();
+    const std::size_t total = bodies.size() + sketches.size();
+    if (total == 0) {
         return;
     }
-    document::Transaction transaction(
-        *document(), bodies.size() == 1 ? tr("Delete Body").toStdString()
-                                        : tr("Delete %1 Bodies").arg(bodies.size()).toStdString());
+    QString label = tr("Delete %1 Items").arg(total);
+    if (sketches.empty()) {
+        label = bodies.size() == 1 ? tr("Delete Body") : tr("Delete %1 Bodies").arg(bodies.size());
+    } else if (bodies.empty()) {
+        label = sketches.size() == 1 ? tr("Delete Sketch")
+                                     : tr("Delete %1 Sketches").arg(sketches.size());
+    }
+    document::Transaction transaction(*document(), label.toStdString());
     for (const document::ObjectId id : bodies) {
         document()->removeBody(id);
     }
+    for (const document::ObjectId id : sketches) {
+        document()->removeSketch(id);
+    }
     transaction.commit();
+    updateSelectionState();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sketching
+
+bool MainWindow::isSketching() const {
+    return m_viewport->editedSketch().isValid() && m_viewport->sketchEditor()->isActive();
+}
+
+QString MainWindow::commandText() const {
+    return m_commandLabel->text();
+}
+
+void MainWindow::startSketch() {
+    if (isSketching()) {
+        return;
+    }
+    // A flat face that is selected is where the sketch goes.
+    const std::optional<kernel::Plane> face = selectedFacePlane();
+    cancelCommand();
+    if (face.has_value()) {
+        createSketch(*face);
+        return;
+    }
+    m_planePanel = new SketchPlanePanel(m_inspectorStack);
+    m_inspectorStack->addWidget(m_planePanel);
+    connect(m_planePanel, &SketchPlanePanel::planeChosen, this, [this](int which) {
+        createSketch(which == 0   ? kernel::planeXY()
+                     : which == 1 ? kernel::planeXZ()
+                                  : kernel::planeYZ());
+    });
+    connect(m_planePanel, &SketchPlanePanel::canceled, this, &MainWindow::cancelCommand);
+    // The three planes, to see what is being chosen between.
+    for (const OriginItem plane : {OriginItem::PlaneXY, OriginItem::PlaneXZ, OriginItem::PlaneYZ}) {
+        m_viewport->setOriginItemVisible(plane, true);
+    }
+    showInspector();
+    m_inspectorDock->show();
+    m_planePanel->setFocus();
+    m_commands->refresh();
+    statusBar()->showMessage(
+        tr("Choose a plane in the panel on the right, or click a flat face of a body."), 9000);
+}
+
+document::ObjectId MainWindow::createSketch(const kernel::Plane& plane) {
+    if (isSketching()) {
+        finishSketch();
+    }
+    cancelCommand();
+    const document::ObjectId id =
+        document()->addSketch(document()->uniqueSketchName("Sketch"), plane);
+    editSketch(id);
+    return id;
+}
+
+bool MainWindow::editSketch(document::ObjectId sketch) {
+    cancelCommand();
+    if (!m_viewport->editSketch(sketch)) {
+        return false;
+    }
+    m_viewport->setFocus();
+    return true;
+}
+
+void MainWindow::finishSketch() {
+    m_viewport->finishSketch();
+}
+
+void MainWindow::onSketchEditingChanged() {
+    const bool sketching = isSketching();
+    m_browser->setEditedSketch(m_viewport->editedSketch());
+    if (sketching) {
+        m_browser->setSelection({}, {m_viewport->editedSketch()});
+        // The sketch needs its panel, even if the user had closed it.
+        m_inspectorDock->show();
+        statusBar()->showMessage(
+            tr("Editing a sketch. Draw with the tools above; Finish Sketch returns to the model."),
+            9000);
+    } else {
+        statusBar()->clearMessage();
+    }
+    updateMode();
+    showInspector();
     updateSelectionState();
 }
 
@@ -1570,7 +2316,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         }
     }
     cancelCommand();
-    // Remember the layout with its panels, not the 3D view on its own.
+    // Remember the layout as it is for modeling, with its panels, not the sketch tools or the
+    // 3D view on its own.
+    finishSketch();
     setViewportFocus(false);
     QSettings settings;
     settings.setValue(QLatin1String(geometryKey), saveGeometry());
