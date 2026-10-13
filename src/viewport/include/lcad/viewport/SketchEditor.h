@@ -3,6 +3,7 @@
 #pragma once
 
 #include <lcad/document/Document.h>
+#include <lcad/kernel/Shape.h>
 #include <lcad/sketch/Edit.h>
 #include <lcad/sketch/Sketch.h>
 
@@ -43,6 +44,8 @@ enum class SketchTool {
     Extend,
     Offset,
     Mirror,
+    /// Click an edge or a corner of a body to bring it into the sketch as reference geometry.
+    Project,
 };
 
 /// Edits one sketch of a document inside a ViewportWidget.
@@ -123,6 +126,11 @@ public:
     bool toggleConstruction();
     /// Mirrors the selected geometry in a line. Returns false if `axis` is not a line.
     bool mirrorSelection(sketch::EntityId axis);
+    /// Brings an edge or a vertex of a body into the sketch as reference geometry: dropped
+    /// straight onto the sketch's plane, and fixed there. Returns false for a shape that cannot
+    /// be projected: anything but a straight edge, a circle or arc lying flat to the sketch,
+    /// or a vertex.
+    bool projectShape(const kernel::Shape& edgeOrVertex);
 
     // Typing a value in the view
 

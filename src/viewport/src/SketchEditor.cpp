@@ -1206,7 +1206,7 @@ public:
                     placeDimension();
                 }
             } else if (!pending.empty()) {
-                placeDimension();
+                placeDimension(cursor.position);
             } else {
                 emit q->message(tr("Click a line, a circle, an arc, or a point to measure."));
             }
@@ -1291,6 +1291,9 @@ public:
             } else {
                 q->mirrorSelection(hover);
             }
+            break;
+        case SketchTool::Project:
+            // The viewport knows what of a body is under the pointer, and hands it over.
             break;
         }
         update();
@@ -1438,18 +1441,40 @@ public:
         return true;
     }
 
-    void placeDimension() {
+    void placeDimension(std::optional<Point2> placedAt = std::nullopt) {
         const std::vector<EntityId> measured = pending;
         pending.clear();
-        addDimensionFor(measured);
+        addDimensionFor(measured, placedAt);
     }
 
-    bool addDimensionFor(const std::vector<EntityId>& entities) {
+    // `placedAt` is where the value was put, if it was put anywhere. Between the two points
+    // sideways, and above or below both, it asks for their horizontal distance; beside them,
+    // for the vertical one; anywhere else, for the distance straight across.
+    bool addDimensionFor(const std::vector<EntityId>& entities,
+                         std::optional<Point2> placedAt = std::nullopt) {
         sketch::Sketch g = geometry();
-        const auto choice = sketch::dimensionFor(g, entities);
+        auto choice = sketch::dimensionFor(g, entities);
         if (!choice.has_value()) {
             emit q->message(needsOf(ConstraintKind::Distance));
             return false;
+        }
+        if (choice->kind == ConstraintKind::Distance && placedAt.has_value()) {
+            const Point2 a = g.position(choice->first);
+            const Point2 b = g.position(choice->second);
+            const double least = 1e-6;
+            if (std::abs(a.x - b.x) > least && std::abs(a.y - b.y) > least) {
+                const bool betweenX =
+                    placedAt->x > std::min(a.x, b.x) && placedAt->x < std::max(a.x, b.x);
+                const bool betweenY =
+                    placedAt->y > std::min(a.y, b.y) && placedAt->y < std::max(a.y, b.y);
+                if (betweenX && !betweenY) {
+                    choice->kind = ConstraintKind::DistanceX;
+                    choice->value = std::abs(a.x - b.x);
+                } else if (betweenY && !betweenX) {
+                    choice->kind = ConstraintKind::DistanceY;
+                    choice->value = std::abs(a.y - b.y);
+                }
+            }
         }
         const sketch::Outcome outcome = sketch::tryConstraint(
             g, choice->kind, choice->first, choice->second, choice->third, choice->value);
@@ -1933,7 +1958,7 @@ public:
         const bool draws = tool != SketchTool::Select && tool != SketchTool::Dimension &&
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
                            tool != SketchTool::Extend && tool != SketchTool::Offset &&
-                           tool != SketchTool::Mirror;
+                           tool != SketchTool::Mirror && tool != SketchTool::Project;
         if (cursorValid && draws) {
             const QPointF at = toWidget(cursor.position);
             painter.setPen(QPen(colors.preview, 1.4));
@@ -2255,7 +2280,7 @@ bool SketchEditor::deleteSelection() {
         if (entity == nullptr) {
             continue;
         }
-        if (entity->owner != 0 || id == g.origin() || entity->fixed) {
+        if (entity->owner != 0 || id == g.origin()) {
             // The end of a curve goes with its curve, not on its own.
             continue;
         }
@@ -2332,6 +2357,48 @@ bool SketchEditor::mirrorSelection(sketch::EntityId axis) {
     m_impl->tool = SketchTool::Select;
     m_impl->resetTool();
     m_impl->commit(std::move(g), tr("Mirror"));
+    return true;
+}
+
+bool SketchEditor::projectShape(const kernel::Shape& edgeOrVertex) {
+    if (!isActive()) {
+        return false;
+    }
+    if (edgeOrVertex.isNull()) {
+        emit message(tr("Click an edge or a corner of a body to project it into the sketch."));
+        return false;
+    }
+    const document::SketchItem* item = m_impl->item();
+    const std::optional<kernel::PlaneCurve> curve = kernel::projectOnto(item->plane, edgeOrVertex);
+    if (!curve.has_value()) {
+        emit message(tr("That cannot be projected yet. Straight edges, circles and arcs that lie "
+                        "flat to the sketch, and corners can."));
+        return false;
+    }
+    sketch::Sketch g = geometry();
+    sketch::EntityId made = 0;
+    try {
+        switch (curve->kind) {
+        case kernel::PlaneCurve::Kind::Point:
+            made = g.addPoint({curve->u1, curve->v1});
+            break;
+        case kernel::PlaneCurve::Kind::Segment:
+            made = g.addLine({curve->u1, curve->v1}, {curve->u2, curve->v2});
+            break;
+        case kernel::PlaneCurve::Kind::Circle:
+            made = g.addCircle({curve->u1, curve->v1}, curve->radius);
+            break;
+        case kernel::PlaneCurve::Kind::Arc:
+            made = g.addArc({curve->u1, curve->v1}, {curve->u2, curve->v2}, {curve->u3, curve->v3});
+            break;
+        }
+    } catch (const std::invalid_argument&) {
+        emit message(tr("That edge has no size when seen from the sketch."));
+        return false;
+    }
+    // Reference geometry: it stays where the body put it.
+    g.setFixed(made, true);
+    m_impl->commit(std::move(g), tr("Project"));
     return true;
 }
 
@@ -2428,6 +2495,8 @@ QString SketchEditor::hint() const {
                                         : tr("Offset: click where the copy should go");
     case SketchTool::Mirror:
         return tr("Mirror: click the line to mirror in");
+    case SketchTool::Project:
+        return tr("Project: click an edge or a corner of a body");
     }
     return {};
 }

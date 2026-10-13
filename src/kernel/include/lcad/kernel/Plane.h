@@ -58,6 +58,31 @@ struct PlaneCoordinates {
 /// allows. Nothing if `face` is not one flat face.
 [[nodiscard]] std::optional<Plane> planeOfFace(const Shape& face);
 
+/// What an edge or a vertex becomes when it is dropped straight onto a plane, in the plane's
+/// own coordinates.
+struct PlaneCurve {
+    enum class Kind {
+        Point,   ///< at (u1, v1)
+        Segment, ///< from (u1, v1) to (u2, v2)
+        Circle,  ///< around (u1, v1) with `radius`
+        Arc,     ///< around (u1, v1), from (u2, v2) counter-clockwise to (u3, v3)
+    };
+    Kind kind = Kind::Point;
+    double u1 = 0.0;
+    double v1 = 0.0;
+    double u2 = 0.0;
+    double v2 = 0.0;
+    double u3 = 0.0;
+    double v3 = 0.0;
+    double radius = 0.0;
+};
+
+/// Drops a vertex, a straight edge, or a circular edge whose circle is parallel to the plane
+/// onto the plane, along the plane's normal. A straight edge that is square to the plane
+/// becomes a point. Nothing for any other shape: a circle seen at a slant is an ellipse, which
+/// this cannot describe.
+[[nodiscard]] std::optional<PlaneCurve> projectOnto(const Plane& plane, const Shape& shape);
+
 // Curves, as shapes. These are what a sketch's geometry becomes in model space.
 
 /// A straight edge from `start` to `end`. Throws std::invalid_argument if they coincide.

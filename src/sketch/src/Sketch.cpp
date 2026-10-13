@@ -295,6 +295,14 @@ void Sketch::setConstruction(EntityId id, bool construction) {
     item.construction = construction;
 }
 
+void Sketch::setFixed(EntityId id, bool fixed) {
+    Entity& item = entity(id);
+    if (item.owner != 0 || item.id == m_origin) {
+        throw std::invalid_argument("setFixed: choose a curve or a free-standing point");
+    }
+    item.fixed = fixed;
+}
+
 void Sketch::validate(const Constraint& c) const {
     const Entity* a = find(c.first);
     const Entity* b = find(c.second);

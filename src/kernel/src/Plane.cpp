@@ -5,10 +5,12 @@
 #include <lcad/kernel/occt/Guard.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
@@ -199,6 +201,73 @@ Shape makeCompound(const std::vector<Shape>& parts) {
             }
         }
         return any ? occt::wrap(compound) : Shape();
+    });
+}
+
+std::optional<PlaneCurve> projectOnto(const Plane& plane, const Shape& shape) {
+    if (shape.isNull()) {
+        return std::nullopt;
+    }
+    return occt::guarded("projectOnto", [&]() -> std::optional<PlaneCurve> {
+        const TopoDS_Shape& source = occt::unwrap(shape);
+        const auto local = [&plane](const gp_Pnt& p) {
+            return toLocal(plane, Point{p.X(), p.Y(), p.Z()});
+        };
+        PlaneCurve result;
+        if (source.ShapeType() == TopAbs_VERTEX) {
+            const PlaneCoordinates at = local(BRep_Tool::Pnt(TopoDS::Vertex(source)));
+            result.kind = PlaneCurve::Kind::Point;
+            result.u1 = at.u;
+            result.v1 = at.v;
+            return result;
+        }
+        if (source.ShapeType() != TopAbs_EDGE) {
+            return std::nullopt;
+        }
+        const BRepAdaptor_Curve curve(TopoDS::Edge(source));
+        const double first = curve.FirstParameter();
+        const double last = curve.LastParameter();
+        const PlaneCoordinates start = local(curve.Value(first));
+        const PlaneCoordinates end = local(curve.Value(last));
+        if (curve.GetType() == GeomAbs_Line) {
+            result.u1 = start.u;
+            result.v1 = start.v;
+            result.u2 = end.u;
+            result.v2 = end.v;
+            // Seen end-on, a line is a point.
+            result.kind = std::hypot(end.u - start.u, end.v - start.v) < 1e-7
+                              ? PlaneCurve::Kind::Point
+                              : PlaneCurve::Kind::Segment;
+            return result;
+        }
+        if (curve.GetType() != GeomAbs_Circle) {
+            return std::nullopt;
+        }
+        const gp_Circ circle = curve.Circle();
+        const gp_Dir axis = circle.Axis().Direction();
+        const double facing =
+            axis.X() * plane.normal.x + axis.Y() * plane.normal.y + axis.Z() * plane.normal.z;
+        if (std::abs(std::abs(facing) - 1.0) > 1e-9) {
+            return std::nullopt;
+        }
+        const PlaneCoordinates center = local(circle.Location());
+        result.u1 = center.u;
+        result.v1 = center.v;
+        result.radius = circle.Radius();
+        if (std::abs(last - first) >= 2.0 * M_PI - 1e-9) {
+            result.kind = PlaneCurve::Kind::Circle;
+            return result;
+        }
+        // The edge runs counter-clockwise about the circle's own axis. Seen from the plane's
+        // side that is counter-clockwise too only if the axis points the plane's way.
+        result.kind = PlaneCurve::Kind::Arc;
+        const PlaneCoordinates& from = facing > 0.0 ? start : end;
+        const PlaneCoordinates& to = facing > 0.0 ? end : start;
+        result.u2 = from.u;
+        result.v2 = from.v;
+        result.u3 = to.u;
+        result.v3 = to.v;
+        return result;
     });
 }
 

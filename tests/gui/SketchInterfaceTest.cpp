@@ -941,7 +941,8 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     for (const char* tool :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.construction", "sketch.trim",
-          "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.dimension", "sketch.finish"}) {
+          "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project", "sketch.dimension",
+          "sketch.finish"}) {
         QVERIFY2(shown.contains(QLatin1String(tool)), tool);
     }
     // The constraints have a button each where there is room, and otherwise one button that

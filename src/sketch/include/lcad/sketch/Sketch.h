@@ -157,6 +157,9 @@ public:
     /// The origin cannot be removed.
     void remove(EntityId id);
     void setConstruction(EntityId id, bool construction);
+    /// Makes a curve or a free-standing point reference geometry, which has a place of its own
+    /// that the solver leaves alone, or ordinary geometry again. Not for the origin.
+    void setFixed(EntityId id, bool fixed);
 
     [[nodiscard]] const std::vector<Entity>& entities() const { return m_entities; }
     /// The entity, or nullptr.

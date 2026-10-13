@@ -9,6 +9,7 @@
 #include <lcad/document/Document.h>
 #include <lcad/document/SketchShapes.h>
 #include <lcad/kernel/Plane.h>
+#include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
 #include <lcad/viewport/SketchEditor.h>
 
@@ -60,6 +61,7 @@
 #include <array>
 #include <cmath>
 #include <optional>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace lcad::viewport {
@@ -287,6 +289,8 @@ public:
     SketchEditor* editor = nullptr;
     // The sketch being edited, and the camera to go back to when it is closed.
     document::ObjectId activeSketch;
+    // Whether the bodies' edges and corners are switched on for the Project tool.
+    bool projecting = false;
     std::optional<CameraState> cameraBeforeSketch;
     bool fitAfterSketch = false;
     SelectionFilter filter = SelectionFilter::FacesEdgesVertices;
@@ -580,7 +584,15 @@ public:
     void applyFilter(const Handle(AIS_Shape)& object) const {
         context->Deactivate(object);
         if (sketching()) {
-            // While a sketch is open, clicks belong to the sketch.
+            // While a sketch is open, clicks belong to the sketch. Only the Project tool has
+            // use for the bodies: their edges and corners are what it brings into the sketch.
+            if (editor->tool() == SketchTool::Project) {
+                for (const int mode : {AIS_Shape::SelectionMode(TopAbs_VERTEX),
+                                       AIS_Shape::SelectionMode(TopAbs_EDGE)}) {
+                    context->SetSelectionModeActive(object, mode, true,
+                                                    AIS_SelectionModesConcurrency_Multiple);
+                }
+            }
             return;
         }
         for (const int mode : selectionModes(filter)) {
@@ -849,6 +861,17 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setFormat(surfaceFormat());
     m_impl->editor = new SketchEditor(this);
+    // Whether bodies can be pointed at while a sketch is open depends on the sketch tool.
+    connect(m_impl->editor, &SketchEditor::changed, this, [this] {
+        const bool projecting =
+            m_impl->sketching() && m_impl->editor->tool() == SketchTool::Project;
+        if (projecting != m_impl->projecting && !m_impl->context.IsNull()) {
+            m_impl->projecting = projecting;
+            m_impl->context->ClearDetected(false);
+            m_impl->applyFilters();
+            m_impl->redraw();
+        }
+    });
 
     try {
         Handle(Aspect_DisplayConnection) display = new Aspect_DisplayConnection();
@@ -1648,6 +1671,32 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
         return;
     }
     if (m_impl->sketching() && event->button() == Qt::LeftButton) {
+        if (m_impl->editor->tool() == SketchTool::Project) {
+            // What of a body is under the pointer goes into the sketch: a corner if there is
+            // one there, which is what was aimed at where edges meet, and otherwise an edge.
+            const std::vector<SelectedItem> under = itemsAt(event->position().toPoint());
+            for (const SelectedItem::Kind wanted :
+                 {SelectedItem::Kind::Vertex, SelectedItem::Kind::Edge}) {
+                for (const SelectedItem& item : under) {
+                    const document::Body* body = m_impl->document->findBody(item.body);
+                    if (body == nullptr || item.kind != wanted) {
+                        continue;
+                    }
+                    try {
+                        m_impl->editor->projectShape(kernel::subShape(
+                            body->shape,
+                            wanted == SelectedItem::Kind::Edge ? kernel::SubShapeKind::Edge
+                                                               : kernel::SubShapeKind::Vertex,
+                            item.index));
+                        return;
+                    } catch (const std::out_of_range&) {
+                        // The body changed under the pointer. Try what lies behind.
+                    }
+                }
+            }
+            m_impl->editor->projectShape(kernel::Shape());
+            return;
+        }
         m_impl->editor->mousePress(event->position(), event->modifiers());
         return;
     }

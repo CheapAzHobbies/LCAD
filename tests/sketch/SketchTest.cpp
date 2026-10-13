@@ -261,3 +261,43 @@ TEST_CASE("A sketch rebuilt from stored parts is the same sketch, and bad parts 
         CHECK_THROWS_AS(Sketch(original.entities(), {}, 2, 1), std::invalid_argument);
     }
 }
+
+TEST_CASE("Reference geometry stays where it is put", "[sketch]") {
+    Sketch sketch;
+    const EntityId wall = sketch.addLine({30.0, -20.0}, {30.0, 20.0});
+    const EntityId hole = sketch.addCircle({10.0, 10.0}, 4.0);
+    const EntityId mark = sketch.addPoint({-5.0, 5.0});
+    for (const EntityId id : {wall, hole, mark}) {
+        sketch.setFixed(id, true);
+        CHECK(sketch.find(id)->fixed);
+    }
+    // Nothing of it counts as free to move, and dragging it does nothing.
+    SolveResult state = sketch.solve();
+    CHECK(state.degreesOfFreedom == 0);
+    CHECK(state.underconstrained.empty());
+    sketch.dragBy(wall, 5.0, 5.0);
+    sketch.dragRadius(hole, {30.0, 10.0});
+    CHECK(sketch.position(sketch.find(wall)->start).x == 30.0);
+    CHECK(sketch.find(hole)->radius == 4.0);
+
+    // What is constrained to it moves to it; it does not move to meet that.
+    const EntityId line = sketch.addLine({0.0, 1.0}, {20.0, 3.0});
+    sketch.addConstraint(ConstraintKind::PointOnLine, sketch.find(line)->end, wall);
+    sketch.addConstraint(ConstraintKind::Coincident, sketch.find(line)->start, mark);
+    state = sketch.solve();
+    CHECK(state.status == SolveStatus::Solved);
+    CHECK(std::abs(sketch.position(sketch.find(line)->end).x - 30.0) < 1e-9);
+    CHECK(sketch.position(sketch.find(line)->start).x == -5.0);
+    CHECK(sketch.position(sketch.find(wall)->start).x == 30.0);
+    CHECK(sketch.position(sketch.find(wall)->end).y == 20.0);
+    // One freedom is left: the line's end can slide along the wall.
+    CHECK(state.degreesOfFreedom == 1);
+    CHECK(state.underconstrained == std::vector<EntityId>{line});
+
+    // It can be made ordinary again, and then it is as free as anything.
+    sketch.setFixed(hole, false);
+    CHECK(sketch.solve().degreesOfFreedom == 4);
+    CHECK_THROWS_AS(sketch.setFixed(sketch.origin(), false), std::invalid_argument);
+    CHECK_THROWS_AS(sketch.setFixed(sketch.find(line)->start, true), std::invalid_argument);
+    CHECK_THROWS_AS(sketch.setFixed(9999, true), std::invalid_argument);
+}

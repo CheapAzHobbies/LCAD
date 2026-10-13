@@ -103,6 +103,8 @@ private slots:
     // Modifying
     void trimAndExtendActOnTheCurveClicked();
     void offsetAndMirror();
+    void projectBringsEdgesOfABodyIntoTheSketch();
+    void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
 
     // Drawing on screen
     void geometryIsColoredByItsState();
@@ -1320,6 +1322,139 @@ void SketchViewTest::offsetAndMirror() {
                 apart(endOf(line.id), {140.0, 10.0}) < 0.5;
     }
     QVERIFY(found);
+}
+
+void SketchViewTest::projectBringsEdgesOfABodyIntoTheSketch() {
+    // A box from the origin to (100, 60, 40), and a sketch on its top face.
+    m_document->addBody("Box", lcad::kernel::makeBox(100.0, 60.0, 40.0));
+    lcad::kernel::Plane top = lcad::kernel::planeXY();
+    top.origin = {0.0, 0.0, 40.0};
+    m_sketch = m_document->addSketch("Sketch 1", top);
+    QVERIFY(m_viewport->editSketch(m_sketch));
+    render();
+    // With any other tool the box is not there to be pointed at.
+    QVERIFY(m_viewport->itemsAt(at(50.0, 0.0)).empty());
+
+    editor()->setTool(SketchTool::Project);
+    QVERIFY(!editor()->hint().isEmpty());
+    render();
+    QVERIFY(!m_viewport->itemsAt(at(50.0, 0.0)).empty());
+
+    // The front edge of the top face.
+    click(at(50.0, 0.0));
+    std::vector<Entity> lines = curves(EntityKind::Line);
+    QCOMPARE(lines.size(), std::size_t{1});
+    QVERIFY(lines[0].fixed);
+    const Point2 a = startOf(lines[0].id);
+    const Point2 b = endOf(lines[0].id);
+    QVERIFY(qAbs(a.y) < 1e-9 && qAbs(b.y) < 1e-9);
+    QVERIFY(qAbs(qAbs(b.x - a.x) - 100.0) < 1e-9);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Project"));
+    // Reference geometry cannot move, so it leaves the sketch fully constrained.
+    QVERIFY(editor()->state().isFullyConstrained());
+
+    // A corner comes in as a point. (The far left one: the right one is under the view cube.)
+    click(at(0.0, 60.0));
+    const std::vector<Entity> points = curves(EntityKind::Point);
+    QCOMPARE(points.size(), std::size_t{1});
+    QVERIFY(points[0].fixed);
+    QVERIFY(apart({points[0].x, points[0].y}, {0.0, 60.0}) < 1e-9);
+
+    // The middle of a face is neither an edge nor a corner: nothing is projected, and the
+    // tool says what it takes.
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    click(at(50.0, 30.0));
+    QCOMPARE(curves(EntityKind::Line).size(), std::size_t{1});
+    QCOMPARE(curves(EntityKind::Point).size(), std::size_t{1});
+    QCOMPARE(messages.count(), 1);
+
+    // It is drawn in the color of reference geometry.
+    editor()->setTool(SketchTool::Select);
+    move(at(50.0, 30.0));
+    const QImage image = overlayImage();
+    const QPoint onTheLine = (editor()->toWidget({30.0, 0.0}) * image.devicePixelRatio()).toPoint();
+    bool seen = false;
+    for (int dy = -3; dy <= 3 && !seen; ++dy) {
+        const QPoint p = onTheLine + QPoint(0, dy);
+        seen = qAlpha(image.pixel(p)) > 200 &&
+               isNear(image.pixel(p), m_viewport->colors().sketchReference, 30);
+    }
+    QVERIFY(seen);
+    // With the tool put away, the box cannot be pointed at any more.
+    QVERIFY(m_viewport->itemsAt(at(50.0, 0.0)).empty());
+
+    // New geometry is tied to it like to any other: a circle centered on the projected corner
+    // has only its radius left to decide. And the reference does not get dragged along.
+    editor()->setTool(SketchTool::Circle);
+    click(at(0.0, 60.0));
+    click(at(0.0, 45.0));
+    QCOMPARE(editor()->state().degreesOfFreedom, 1);
+    editor()->setTool(SketchTool::Select);
+    drag(at(50.0, 0.0), at(50.0, 20.0));
+    QVERIFY(qAbs(startOf(lines[0].id).y) < 1e-9);
+    // It can be deleted like anything else.
+    editor()->setSelection({lines[0].id});
+    QVERIFY(editor()->deleteSelection());
+    QVERIFY(curves(EntityKind::Line).empty());
+}
+
+void SketchViewTest::aDimensionIsHorizontalOrVerticalByWhereItIsPut() {
+    openSketch();
+    editor()->setInference(false);
+    editor()->setTool(SketchTool::Line);
+    // Three slanted lines, each 40 across and 30 up.
+    for (const double y : {0.0, -40.0, 40.0}) {
+        click(at(10.0, y));
+        click(at(50.0, y + 30.0));
+        editor()->cancel();
+    }
+    const std::vector<Entity> lines = curves(EntityKind::Line);
+    QCOMPARE(lines.size(), std::size_t{3});
+    editor()->setTool(SketchTool::Dimension);
+    const auto dimensioned = [this](ConstraintKind kind) {
+        for (const Constraint& constraint : sketch().constraints()) {
+            if (constraint.kind == kind) {
+                return constraint.value;
+            }
+        }
+        return -1.0;
+    };
+
+    // Put below the line, between its ends: how far it runs sideways.
+    click(at(30.0, 15.0));
+    click(at(30.0, -8.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QVERIFY(qAbs(editor()->valueField()->text().toDouble() - 40.0) < 0.5);
+    type(QStringLiteral("44"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    QCOMPARE(dimensioned(ConstraintKind::DistanceX), 44.0);
+    QVERIFY(qAbs(qAbs(endOf(lines[0].id).x - startOf(lines[0].id).x) - 44.0) < 1e-6);
+
+    // Put beside the second line, level with it: how far it runs up.
+    click(at(30.0, -25.0));
+    click(at(70.0, -25.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    type(QStringLiteral("25"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    QCOMPARE(dimensioned(ConstraintKind::DistanceY), 25.0);
+    QVERIFY(qAbs(qAbs(endOf(lines[1].id).y - startOf(lines[1].id).y) - 25.0) < 1e-6);
+
+    // Put off to a corner of the third: its length, straight across.
+    click(at(30.0, 55.0));
+    click(at(70.0, 90.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QVERIFY(qAbs(editor()->valueField()->text().toDouble() - 50.0) < 0.5);
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    QCOMPARE(count(ConstraintKind::Distance), 1);
+    QCOMPARE(count(ConstraintKind::DistanceX), 1);
+    QCOMPARE(count(ConstraintKind::DistanceY), 1);
+
+    // Each is drawn with its value near what it measures, and can be opened again.
+    for (const Constraint& constraint : sketch().constraints()) {
+        const QRectF label = editor()->dimensionRect(constraint.id);
+        QVERIFY(!label.isEmpty());
+        QVERIFY(m_viewport->rect().contains(label.toRect()));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

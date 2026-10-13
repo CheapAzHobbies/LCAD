@@ -370,6 +370,16 @@ const QHash<QString, Drawing>& drawings() {
              i.p.setPen(QPen(i.accent, 1.4, Qt::DashLine, Qt::RoundCap));
              i.line(12, 3.5, 12, 20.5);
          }},
+        {QStringLiteral("project"),
+         [](const Ink& i) {
+             i.poly({{3.5, 20.5}, {8, 13.5}, {20.5, 13.5}, {16, 20.5}});
+             i.line(7, 5, 17, 5);
+             i.p.setPen(QPen(i.accent, 1.5, Qt::DotLine, Qt::RoundCap));
+             i.line(7, 5, 7, 17);
+             i.line(17, 5, 17, 17);
+             i.p.setPen(QPen(i.accent, 1.8, Qt::SolidLine, Qt::RoundCap));
+             i.line(7, 17, 17, 17);
+         }},
         {QStringLiteral("construction"),
          [](const Ink& i) {
              i.line(4.5, 19.5, 8, 16);

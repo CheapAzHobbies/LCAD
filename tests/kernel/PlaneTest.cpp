@@ -172,3 +172,118 @@ TEST_CASE("A flat face gives its plane, facing out of the solid", "[kernel][plan
         CHECK_FALSE(planeOfFace(subShape(box, SubShapeKind::Edge, 0)).has_value());
     }
 }
+
+TEST_CASE("Edges and vertices drop onto a plane as lines, circles, arcs, and points",
+          "[kernel][plane]") {
+    // A box from (10, 20, 0) to (110, 80, 40), and the XY plane under it.
+    const Shape box = translated(makeBox(100.0, 60.0, 40.0), 10.0, 20.0, 0.0);
+    const Plane floor = planeXY();
+
+    SECTION("straight edges: along the plane as lines, square to it as points") {
+        int flat = 0;
+        int upright = 0;
+        for (int i = 0; i < subShapeCount(box, SubShapeKind::Edge); ++i) {
+            const auto curve = projectOnto(floor, subShape(box, SubShapeKind::Edge, i));
+            REQUIRE(curve.has_value());
+            if (curve->kind == PlaneCurve::Kind::Point) {
+                ++upright;
+                // One of the four corners of the footprint.
+                CHECK((std::abs(curve->u1 - 10.0) < 1e-9 || std::abs(curve->u1 - 110.0) < 1e-9));
+                CHECK((std::abs(curve->v1 - 20.0) < 1e-9 || std::abs(curve->v1 - 80.0) < 1e-9));
+            } else {
+                REQUIRE(curve->kind == PlaneCurve::Kind::Segment);
+                ++flat;
+                const double length = std::hypot(curve->u2 - curve->u1, curve->v2 - curve->v1);
+                CHECK((std::abs(length - 100.0) < 1e-9 || std::abs(length - 60.0) < 1e-9));
+            }
+        }
+        // Eight edges lie flat (four at the bottom, four at the top), four stand upright.
+        CHECK(flat == 8);
+        CHECK(upright == 4);
+    }
+
+    SECTION("a vertex is a point, at its place on the plane") {
+        // On the XZ plane, u is X and v is Z.
+        bool found = false;
+        for (int i = 0; i < subShapeCount(box, SubShapeKind::Vertex); ++i) {
+            const auto point = projectOnto(planeXZ(), subShape(box, SubShapeKind::Vertex, i));
+            REQUIRE(point.has_value());
+            REQUIRE(point->kind == PlaneCurve::Kind::Point);
+            found =
+                found || (std::abs(point->u1 - 110.0) < 1e-9 && std::abs(point->v1 - 40.0) < 1e-9);
+        }
+        CHECK(found);
+    }
+
+    SECTION("a circle parallel to the plane is a circle; at a slant it is nothing") {
+        // A cylinder standing on the XY plane at (30, 40): radius 12, height 25.
+        const Shape cylinder = translated(makeCylinder(12.0, 25.0), 30.0, 40.0, 0.0);
+        int circles = 0;
+        int seams = 0;
+        for (int i = 0; i < subShapeCount(cylinder, SubShapeKind::Edge); ++i) {
+            const Shape edge = subShape(cylinder, SubShapeKind::Edge, i);
+            const auto onFloor = projectOnto(floor, edge);
+            REQUIRE(onFloor.has_value());
+            if (onFloor->kind == PlaneCurve::Kind::Circle) {
+                ++circles;
+                CHECK_THAT(onFloor->u1, WithinAbs(30.0, 1e-9));
+                CHECK_THAT(onFloor->v1, WithinAbs(40.0, 1e-9));
+                CHECK_THAT(onFloor->radius, WithinAbs(12.0, 1e-9));
+                // Seen from the front the same circle is an ellipse squashed to a line.
+                CHECK_FALSE(projectOnto(planeXZ(), edge).has_value());
+            } else {
+                // The seam down the side: upright, so a point on the circle.
+                CHECK(onFloor->kind == PlaneCurve::Kind::Point);
+                CHECK_THAT(std::hypot(onFloor->u1 - 30.0, onFloor->v1 - 40.0),
+                           WithinAbs(12.0, 1e-9));
+                ++seams;
+            }
+        }
+        CHECK(circles == 2);
+        CHECK(seams == 1);
+    }
+
+    SECTION("part of a circle is an arc, the same part from whichever side it is seen") {
+        // A quarter of a circle of radius 20 around (5, 5) at height 3, from angle 0 to 90
+        // degrees: from (25, 5) to (5, 25).
+        Plane high = planeXY();
+        high.origin = {0.0, 0.0, 3.0};
+        const Shape quarter = makeArcEdge(high, 5.0, 5.0, 25.0, 5.0, 5.0, 25.0);
+        CHECK_THAT(length(quarter), WithinAbs(M_PI * 10.0, 1e-9));
+
+        const auto fromAbove = projectOnto(floor, quarter);
+        REQUIRE(fromAbove.has_value());
+        REQUIRE(fromAbove->kind == PlaneCurve::Kind::Arc);
+        CHECK_THAT(fromAbove->u1, WithinAbs(5.0, 1e-9));
+        CHECK_THAT(fromAbove->v1, WithinAbs(5.0, 1e-9));
+        CHECK_THAT(fromAbove->u2, WithinAbs(25.0, 1e-9));
+        CHECK_THAT(fromAbove->v2, WithinAbs(5.0, 1e-9));
+        CHECK_THAT(fromAbove->u3, WithinAbs(5.0, 1e-9));
+        CHECK_THAT(fromAbove->v3, WithinAbs(25.0, 1e-9));
+        // Built again from what was projected, it is the same quarter, not the other three.
+        CHECK_THAT(length(makeArcEdge(floor, fromAbove->u1, fromAbove->v1, fromAbove->u2,
+                                      fromAbove->v2, fromAbove->u3, fromAbove->v3)),
+                   WithinAbs(M_PI * 10.0, 1e-9));
+
+        // From below, left and right are swapped, and the arc still has to be that quarter.
+        const Plane below = makePlane({0.0, 0.0, 0.0}, {0.0, 0.0, -1.0}, {1.0, 0.0, 0.0});
+        const auto fromBelow = projectOnto(below, quarter);
+        REQUIRE(fromBelow.has_value());
+        REQUIRE(fromBelow->kind == PlaneCurve::Kind::Arc);
+        const Shape rebuilt = makeArcEdge(below, fromBelow->u1, fromBelow->v1, fromBelow->u2,
+                                          fromBelow->v2, fromBelow->u3, fromBelow->v3);
+        CHECK_THAT(length(rebuilt), WithinAbs(M_PI * 10.0, 1e-9));
+        // Its middle is under the middle of the original: (5 + 20 cos 45, 5 + 20 sin 45).
+        const auto box2 = boundingBox(rebuilt);
+        REQUIRE(box2.has_value());
+        CHECK_THAT(box2->max.x, WithinAbs(25.0, 1e-6));
+        CHECK_THAT(box2->max.y, WithinAbs(25.0, 1e-6));
+        CHECK_THAT(box2->min.x, WithinAbs(5.0, 1e-6));
+    }
+
+    SECTION("anything else is not projected") {
+        CHECK_FALSE(projectOnto(floor, Shape()).has_value());
+        CHECK_FALSE(projectOnto(floor, box).has_value());
+        CHECK_FALSE(projectOnto(floor, subShape(box, SubShapeKind::Face, 0)).has_value());
+    }
+}

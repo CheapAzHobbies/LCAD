@@ -247,7 +247,7 @@ void Theme::apply() {
         QFrame#commandSearch QLineEdit { border: none; padding: 6px 8px; background: %12; }
         QFrame#commandSearch QListWidget { border: none; background: %2; }
         QLabel#errorText { color: %13; }
-        QToolBar#sketchToolbar QToolButton { padding: 4px 5px; }
+        QToolBar#sketchToolbar QToolButton { padding: 4px 4px; }
         QToolBar#sketchToolbar QToolButton#constraintsButton { padding: 4px 18px 4px 8px; }
         QToolBar#sketchToolbar QToolButton#finishSketch {
             background: %5; color: %6; font-weight: 600; padding: 4px 12px;

@@ -882,6 +882,13 @@ void MainWindow::defineSketchCommands() {
          "mirror",
          {},
          {tr("reflect"), tr("flip")}},
+        {SketchTool::Project,
+         "sketch.project",
+         tr("Pro&ject"),
+         tr("Bring an edge or a corner of a body into the sketch as reference geometry"),
+         "project",
+         QKeySequence(Qt::Key_P),
+         {tr("reference"), tr("include"), tr("use edge")}},
     };
     for (const ToolEntry& entry : tools) {
         Command c = make(entry.id, entry.text, entry.description, entry.icon);
@@ -1032,7 +1039,8 @@ void MainWindow::createTopBar() {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
-    for (const char* id : {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror"}) {
+    for (const char* id :
+         {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
@@ -1205,7 +1213,8 @@ void MainWindow::createSketchToolbar() {
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
     toolbar->addWidget(groupLabel(tr("Modify"), toolbar));
-    for (const char* id : {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror"}) {
+    for (const char* id :
+         {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
