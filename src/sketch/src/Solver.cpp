@@ -197,6 +197,16 @@ public:
                 m_values.push_back(entity.radius);
             }
         }
+        // Which points constraints hold together, for endOn().
+        for (const Constraint& constraint : sketch.constraints()) {
+            if (constraint.kind == ConstraintKind::Coincident) {
+                const EntityId a = spot(constraint.first);
+                const EntityId b = spot(constraint.second);
+                if (a != b) {
+                    m_joined[a] = b;
+                }
+            }
+        }
         // An arc's two ends are the same distance from its center.
         for (const Entity& entity : SolverAccess::entities(sketch)) {
             if (entity.kind != EntityKind::Arc) {
@@ -299,6 +309,34 @@ public:
         case ConstraintKind::Tangent: {
             if (first->kind == EntityKind::Line || second->kind == EntityKind::Line) {
                 const bool lineFirst = first->kind == EntityKind::Line;
+                const Entity& straight = lineFirst ? *first : *second;
+                const Entity& curved = lineFirst ? *second : *first;
+                if (const EntityId shared = endOn(straight, curved); shared != 0) {
+                    // The line ends on the circle. There, "as far from the center as the
+                    // radius" stops telling a tangent line from one that is slightly turned:
+                    // the distance is at its largest. Ask instead for the line to be a quarter
+                    // turn from the radius at that end, to the side it is on now: the angle
+                    // itself, which is zero for one direction of the line only.
+                    const auto [a, b] = line(block, straight.id);
+                    const PointSlots center = point(block, curved.center);
+                    const PointSlots touch = point(block, shared);
+                    const Point2 pa = m_sketch.position(straight.start);
+                    const Point2 pb = m_sketch.position(straight.end);
+                    const Point2 pc = m_sketch.position(curved.center);
+                    const Point2 pe = m_sketch.position(shared);
+                    const double quarter =
+                        sign((pe.x - pc.x) * (pb.y - pa.y) - (pe.y - pc.y) * (pb.x - pa.x)) * pi /
+                        2.0;
+                    block.rows = 1;
+                    block.evaluate = [=](const Dual* local, Dual* out) {
+                        const Vec d = at(local, b) - at(local, a);
+                        const Vec radius = at(local, touch) - at(local, center);
+                        Dual angle = arcTangent(cross(radius, d), dot(radius, d));
+                        angle.v = wrapAngle(angle.v - quarter);
+                        out[0] = angle;
+                    };
+                    break;
+                }
                 const auto [a, b] = line(block, lineFirst ? c.first : c.second);
                 const RoundSlots round = this->round(block, lineFirst ? c.second : c.first);
                 // The side of the line the center is on now.
@@ -316,6 +354,34 @@ public:
                         radiusOf(local, round);
                 };
             } else {
+                EntityId shared = endOn(*first, *second);
+                if (shared == 0) {
+                    shared = endOn(*second, *first);
+                }
+                if (shared != 0) {
+                    // The curves meet at an end of one of them. They are tangent there when
+                    // the two centers and that end lie on one line: seen from the end, the
+                    // centers are in the same direction or in opposite ones, whichever they
+                    // are nearer to now.
+                    const PointSlots c1 = point(block, first->center);
+                    const PointSlots c2 = point(block, second->center);
+                    const PointSlots touch = point(block, shared);
+                    const Point2 pe = m_sketch.position(shared);
+                    const Point2 p1 = m_sketch.position(first->center);
+                    const Point2 p2 = m_sketch.position(second->center);
+                    const bool sameSide =
+                        (pe.x - p1.x) * (pe.x - p2.x) + (pe.y - p1.y) * (pe.y - p2.y) > 0.0;
+                    const double target = sameSide ? 0.0 : pi;
+                    block.rows = 1;
+                    block.evaluate = [=](const Dual* local, Dual* out) {
+                        const Vec toFirst = at(local, touch) - at(local, c1);
+                        const Vec toSecond = at(local, touch) - at(local, c2);
+                        Dual angle = arcTangent(cross(toFirst, toSecond), dot(toFirst, toSecond));
+                        angle.v = wrapAngle(angle.v - target);
+                        out[0] = angle;
+                    };
+                    break;
+                }
                 const RoundSlots r1 = this->round(block, c.first);
                 const RoundSlots r2 = this->round(block, c.second);
                 // Touching from outside or from inside, whichever is nearer now.
@@ -520,6 +586,38 @@ private:
         return block.count++;
     }
 
+    // The representative of the points a point is held together with by Coincident
+    // constraints.
+    EntityId spot(EntityId point) const {
+        for (auto found = m_joined.find(point); found != m_joined.end();
+             found = m_joined.find(point)) {
+            point = found->second;
+        }
+        return point;
+    }
+
+    // An end of `curve` (a line or an arc) that constraints keep on `round`: one that
+    // coincides with an end of that arc, or has a PointOnCircle constraint to it. 0 if none.
+    EntityId endOn(const Entity& curve, const Entity& round) const {
+        if (curve.kind != EntityKind::Line && curve.kind != EntityKind::Arc) {
+            return 0;
+        }
+        for (const EntityId end : {curve.start, curve.end}) {
+            const EntityId here = spot(end);
+            if (round.kind == EntityKind::Arc &&
+                (here == spot(round.start) || here == spot(round.end))) {
+                return end;
+            }
+            for (const Constraint& constraint : m_sketch.constraints()) {
+                if (constraint.kind == ConstraintKind::PointOnCircle &&
+                    constraint.second == round.id && spot(constraint.first) == here) {
+                    return end;
+                }
+            }
+        }
+        return 0;
+    }
+
     PointSlots point(Block& block, EntityId id) const {
         const Point2 at = m_sketch.position(id);
         return {slot(block, id, 0, at.x), slot(block, id, 1, at.y)};
@@ -544,6 +642,7 @@ private:
     }
 
     const Sketch& m_sketch;
+    std::unordered_map<EntityId, EntityId> m_joined;
     std::unordered_map<std::uint64_t, int> m_index;
     std::vector<double> m_values;
     std::vector<Block> m_rules;

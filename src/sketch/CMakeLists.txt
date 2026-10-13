@@ -4,6 +4,7 @@
 # the solver that moves the geometry to satisfy the constraints. No Qt and no OCCT; Eigen is
 # used inside the solver only.
 add_library(lcad_sketch STATIC
+    src/Edit.cpp
     src/Profiles.cpp
     src/Sketch.cpp
     src/Solver.cpp)

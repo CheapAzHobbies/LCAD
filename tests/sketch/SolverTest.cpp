@@ -685,3 +685,129 @@ TEST_CASE("Sketches far from the origin and of very different sizes still solve"
     CHECK_THAT(centerOf(sketch, circle).y,
                WithinAbs(offset + 1.0 * scale, 1e-6 * std::max(1.0, scale)));
 }
+
+// A line that ends on a circle and is tangent to it there is the commonest thing in a sketch
+// after a rectangle: every rounded corner and every slot has it. "As far from the center as the
+// radius" cannot tell such a line from one turned slightly about its end, so these check the
+// count of freedoms, not just that the constraint is met.
+TEST_CASE("Tangency at a shared end takes away exactly one freedom", "[sketch][solver]") {
+    Sketch sketch;
+
+    SECTION("a line running into an arc") {
+        // A quarter arc around (10, 5) from (10, 0) up to (15, 5), and a line arriving at its
+        // start a little off tangent.
+        const EntityId arc = sketch.addArc({10.0, 5.0}, {10.0, 0.0}, {15.0, 5.0});
+        const EntityId line = sketch.addLine({0.0, 0.6}, {10.0, 0.0});
+        sketch.addConstraint(ConstraintKind::Coincident, sketch.find(line)->end,
+                             sketch.find(arc)->start);
+        const int before = sketch.solve().degreesOfFreedom;
+        sketch.addConstraint(ConstraintKind::Tangent, line, arc);
+        const SolveResult result = sketch.solve();
+
+        CHECK(result.status == SolveStatus::Solved);
+        CHECK(result.degreesOfFreedom == before - 1);
+        // Tangent: the line is square to the radius at the shared end.
+        const Point2 a = startOf(sketch, line);
+        const Point2 b = endOf(sketch, line);
+        const Point2 c = centerOf(sketch, arc);
+        const double along = ((b.x - a.x) * (b.x - c.x) + (b.y - a.y) * (b.y - c.y)) /
+                             (lengthOf(sketch, line) * sketch.radiusOf(arc));
+        CHECK_THAT(along, WithinAbs(0.0, angleTolerance));
+        CHECK_THAT(distanceBetween(b, sketch.position(sketch.find(arc)->start)),
+                   WithinAbs(0.0, lengthTolerance));
+    }
+
+    SECTION("a slot: two lines and two arcs, fully constrained by three dimensions") {
+        // Centers at (0, 0) and (30, 0), radius 5.
+        const EntityId left = sketch.addArc({0.0, 0.0}, {0.0, 5.0}, {0.0, -5.0});
+        const EntityId right = sketch.addArc({30.0, 0.0}, {30.0, -5.0}, {30.0, 5.0});
+        const EntityId bottom = sketch.addLine({0.0, -5.0}, {30.0, -5.0});
+        const EntityId top = sketch.addLine({30.0, 5.0}, {0.0, 5.0});
+        const auto join = [&sketch](EntityId a, EntityId b) {
+            sketch.addConstraint(ConstraintKind::Coincident, a, b);
+        };
+        join(sketch.find(left)->end, sketch.find(bottom)->start);
+        join(sketch.find(bottom)->end, sketch.find(right)->start);
+        join(sketch.find(right)->end, sketch.find(top)->start);
+        join(sketch.find(top)->end, sketch.find(left)->start);
+        for (const EntityId line : {bottom, top}) {
+            sketch.addConstraint(ConstraintKind::Tangent, line, left);
+            sketch.addConstraint(ConstraintKind::Tangent, right, line);
+        }
+        sketch.addConstraint(ConstraintKind::Equal, left, right);
+        SolveResult result = sketch.solve();
+        CHECK(result.status == SolveStatus::Solved);
+        // Two centers and one radius.
+        CHECK(result.degreesOfFreedom == 5);
+
+        sketch.addConstraint(ConstraintKind::Coincident, sketch.find(left)->center,
+                             sketch.origin());
+        sketch.addConstraint(ConstraintKind::Horizontal, sketch.find(left)->center,
+                             sketch.find(right)->center);
+        const ConstraintId length =
+            sketch.addConstraint(ConstraintKind::Distance, sketch.find(left)->center,
+                                 sketch.find(right)->center, 0, 30.0);
+        const ConstraintId radius = sketch.addConstraint(ConstraintKind::Radius, left, 0, 0, 5.0);
+        result = sketch.solve();
+        CHECK(result.isFullyConstrained());
+        CHECK(result.underconstrained.empty());
+
+        // And it follows its dimensions.
+        sketch.setConstraintValue(length, 50.0);
+        sketch.setConstraintValue(radius, 8.0);
+        CHECK(sketch.solve().isFullyConstrained());
+        CHECK_THAT(centerOf(sketch, right).x, WithinAbs(50.0, lengthTolerance));
+        CHECK_THAT(sketch.radiusOf(right), WithinAbs(8.0, lengthTolerance));
+        CHECK_THAT(startOf(sketch, top).x, WithinAbs(50.0, lengthTolerance));
+        CHECK_THAT(startOf(sketch, top).y, WithinAbs(8.0, lengthTolerance));
+        CHECK_THAT(endOf(sketch, bottom).y, WithinAbs(-8.0, lengthTolerance));
+        REQUIRE(sketch.profiles().size() == 1);
+        CHECK_THAT(sketch.profiles()[0].area, WithinAbs(50.0 * 16.0 + pi * 64.0, 1e-6));
+    }
+
+    SECTION("a line whose end lies on a circle") {
+        const EntityId circle = sketch.addCircle({0.0, 0.0}, 5.0);
+        const EntityId line = sketch.addLine({-12.0, 5.5}, {0.5, 5.0});
+        sketch.addConstraint(ConstraintKind::PointOnCircle, sketch.find(line)->end, circle);
+        const int before = sketch.solve().degreesOfFreedom;
+        sketch.addConstraint(ConstraintKind::Tangent, circle, line);
+        const SolveResult result = sketch.solve();
+        CHECK(result.status == SolveStatus::Solved);
+        CHECK(result.degreesOfFreedom == before - 1);
+        CHECK_THAT(distanceToLine(sketch, centerOf(sketch, circle), line),
+                   WithinAbs(sketch.radiusOf(circle), lengthTolerance));
+        CHECK_THAT(distanceBetween(endOf(sketch, line), centerOf(sketch, circle)),
+                   WithinAbs(sketch.radiusOf(circle), lengthTolerance));
+        // Exactly tangent, which means square to the radius at the end. A line a hundredth of
+        // a degree off would pass the distance checks above.
+        const Point2 a = startOf(sketch, line);
+        const Point2 b = endOf(sketch, line);
+        const Point2 c = centerOf(sketch, circle);
+        const double along = ((b.x - a.x) * (b.x - c.x) + (b.y - a.y) * (b.y - c.y)) /
+                             (lengthOf(sketch, line) * sketch.radiusOf(circle));
+        CHECK_THAT(along, WithinAbs(0.0, angleTolerance));
+    }
+
+    SECTION("two arcs meeting end to end") {
+        // An S: a half turn around (0, 0), then one around (10, 0) the other way.
+        const EntityId first = sketch.addArc({0.0, 0.0}, {5.0, 0.0}, {-5.0, 0.0});
+        const EntityId second = sketch.addArc({10.2, 0.8}, {5.0, 0.0}, {15.0, 0.5});
+        sketch.addConstraint(ConstraintKind::Coincident, sketch.find(first)->start,
+                             sketch.find(second)->start);
+        const int before = sketch.solve().degreesOfFreedom;
+        sketch.addConstraint(ConstraintKind::Tangent, first, second);
+        const SolveResult result = sketch.solve();
+        CHECK(result.status == SolveStatus::Solved);
+        CHECK(result.degreesOfFreedom == before - 1);
+        // The centers and the shared end are in line, with the end between the centers.
+        const Point2 c1 = centerOf(sketch, first);
+        const Point2 c2 = centerOf(sketch, second);
+        CHECK_THAT(distanceBetween(c1, c2),
+                   WithinAbs(sketch.radiusOf(first) + sketch.radiusOf(second), lengthTolerance));
+        const Point2 meet = sketch.position(sketch.find(first)->start);
+        const double turned =
+            ((meet.x - c1.x) * (c2.y - c1.y) - (meet.y - c1.y) * (c2.x - c1.x)) /
+            (sketch.radiusOf(first) * distanceBetween(c1, c2));
+        CHECK_THAT(turned, WithinAbs(0.0, angleTolerance));
+    }
+}
