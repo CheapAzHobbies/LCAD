@@ -2,6 +2,7 @@
 
 #include <lcad/app/Application.h>
 #include <lcad/app/MainWindow.h>
+#include <lcad/app/Theme.h>
 #include <lcad/viewport/ViewportWidget.h>
 
 #include <QApplication>
@@ -29,6 +30,7 @@ int main(int argc, char* argv[]) {
     parser.process(application);
 
     lcad::app::startLogging();
+    lcad::app::Theme::instance().load();
 
     lcad::app::MainWindow window;
     window.show();

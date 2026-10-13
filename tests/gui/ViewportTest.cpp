@@ -494,6 +494,9 @@ void ViewportTest::displayStylesChangeHowBodiesAreDrawn() {
     const double visibleLines = drawnFraction(hiddenLine, background);
     QVERIFY2(visibleLines > 0.001 && visibleLines < solid * 0.3,
              qPrintable(QString::number(visibleLines)));
+    // Not the same lines as the wireframe: the ball's outline as seen from here, which the
+    // wireframe does not have, and none of the seam that runs around its back.
+    QVERIFY(differingFraction(wireframe, hiddenLine) > 0.002);
 
     // Shaded without edges: as filled as before, minus the outline.
     m_viewport->setDisplayStyle(DisplayStyle::Shaded);

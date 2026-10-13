@@ -4,12 +4,24 @@
 qt_add_library(lcad_app STATIC
     include/lcad/app/Application.h
     include/lcad/app/BrowserPanel.h
+    include/lcad/app/CommandSearch.h
+    include/lcad/app/Commands.h
+    include/lcad/app/Icons.h
     include/lcad/app/MainWindow.h
     include/lcad/app/PrimitivePanel.h
+    include/lcad/app/PropertiesPanel.h
+    include/lcad/app/ShortcutsDialog.h
+    include/lcad/app/Theme.h
     src/Application.cpp
     src/BrowserPanel.cpp
+    src/CommandSearch.cpp
+    src/Commands.cpp
+    src/Icons.cpp
     src/MainWindow.cpp
-    src/PrimitivePanel.cpp)
+    src/PrimitivePanel.cpp
+    src/PropertiesPanel.cpp
+    src/ShortcutsDialog.cpp
+    src/Theme.cpp)
 add_library(lcad::app ALIAS lcad_app)
 target_include_directories(lcad_app PUBLIC include)
 target_link_libraries(lcad_app

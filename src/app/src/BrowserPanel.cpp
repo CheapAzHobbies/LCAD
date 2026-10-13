@@ -4,7 +4,7 @@
 
 #include <QFont>
 #include <QHeaderView>
-#include <QMenu>
+#include <QLineEdit>
 #include <QSignalBlocker>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -23,10 +23,18 @@ document::ObjectId idOf(const QTreeWidgetItem* item) {
 
 } // namespace
 
-BrowserPanel::BrowserPanel(QWidget* parent) : QWidget(parent), m_tree(new QTreeWidget(this)) {
+BrowserPanel::BrowserPanel(QWidget* parent)
+    : QWidget(parent), m_filter(new QLineEdit(this)), m_tree(new QTreeWidget(this)) {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(m_filter);
     layout->addWidget(m_tree);
+
+    m_filter->setObjectName(QStringLiteral("browserFilter"));
+    m_filter->setPlaceholderText(tr("Filter bodies by name"));
+    m_filter->setClearButtonEnabled(true);
+    connect(m_filter, &QLineEdit::textChanged, this, &BrowserPanel::applyFilter);
 
     m_tree->setHeaderHidden(true);
     m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -100,10 +108,48 @@ QTreeWidgetItem* BrowserPanel::bodyItem(document::ObjectId id) const {
     return nullptr;
 }
 
+QTreeWidgetItem* BrowserPanel::originItem(viewport::OriginItem item) const {
+    return m_origin != nullptr ? m_origin->child(static_cast<int>(item)) : nullptr;
+}
+
+void BrowserPanel::editBody(document::ObjectId id) {
+    if (QTreeWidgetItem* item = bodyItem(id)) {
+        m_tree->editItem(item, 0);
+    }
+}
+
+void BrowserPanel::setFilter(const QString& text) {
+    m_filter->setText(text);
+}
+
+void BrowserPanel::setOriginVisibility(const std::array<bool, 6>& visible) {
+    m_originVisible = visible;
+    if (m_origin == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_tree);
+    for (int i = 0; i < m_origin->childCount(); ++i) {
+        m_origin->child(i)->setCheckState(0, visible[static_cast<std::size_t>(i)] ? Qt::Checked
+                                                                                  : Qt::Unchecked);
+    }
+}
+
+void BrowserPanel::applyFilter() {
+    if (m_bodies == nullptr) {
+        return;
+    }
+    const QString wanted = m_filter->text().trimmed();
+    for (int i = 0; i < m_bodies->childCount(); ++i) {
+        QTreeWidgetItem* item = m_bodies->child(i);
+        item->setHidden(!wanted.isEmpty() && !item->text(0).contains(wanted, Qt::CaseInsensitive));
+    }
+}
+
 void BrowserPanel::rebuild() {
     const QSignalBlocker blocker(m_tree);
     m_tree->clear();
     m_root = nullptr;
+    m_origin = nullptr;
     m_bodies = nullptr;
     if (m_document == nullptr) {
         return;
@@ -113,12 +159,28 @@ void BrowserPanel::rebuild() {
     bold.setBold(true);
     m_root->setFont(0, bold);
     m_root->setFlags(Qt::ItemIsEnabled);
+
+    // In the order of viewport::OriginItem.
+    m_origin = new QTreeWidgetItem(m_root, {tr("Origin")});
+    m_origin->setFlags(Qt::ItemIsEnabled);
+    const QStringList names{tr("XY Plane"), tr("XZ Plane"), tr("YZ Plane"),
+                            tr("X Axis"),   tr("Y Axis"),   tr("Z Axis")};
+    for (int i = 0; i < names.size(); ++i) {
+        auto* item = new QTreeWidgetItem(m_origin, {names.at(i)});
+        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, m_originVisible[static_cast<std::size_t>(i)] ? Qt::Checked
+                                                                            : Qt::Unchecked);
+        item->setToolTip(0, tr("Check to show this guide in the 3D view."));
+    }
+
     m_bodies = new QTreeWidgetItem(m_root, {tr("Bodies")});
     m_bodies->setFlags(Qt::ItemIsEnabled);
     for (const document::Body& body : m_document->bodies()) {
         m_bodies->addChild(makeBodyItem(body));
     }
-    m_tree->expandAll();
+    m_root->setExpanded(true);
+    m_bodies->setExpanded(true);
+    applyFilter();
 }
 
 QTreeWidgetItem* BrowserPanel::makeBodyItem(const document::Body& body) {
@@ -169,6 +231,7 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
     case Kind::HistoryChanged:
         break;
     }
+    applyFilter();
     if (selectionAffected) {
         // Signals are blocked here, and a selected entry has just gone.
         QMetaObject::invokeMethod(this, &BrowserPanel::bodySelectionChanged, Qt::QueuedConnection);
@@ -176,6 +239,13 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
 }
 
 void BrowserPanel::onItemChanged(QTreeWidgetItem* item) {
+    if (m_document != nullptr && item->parent() == m_origin && m_origin != nullptr) {
+        const int index = m_origin->indexOfChild(item);
+        const bool visible = item->checkState(0) == Qt::Checked;
+        m_originVisible[static_cast<std::size_t>(index)] = visible;
+        emit originItemToggled(static_cast<viewport::OriginItem>(index), visible);
+        return;
+    }
     if (m_document == nullptr || item->parent() != m_bodies) {
         return;
     }
@@ -209,25 +279,12 @@ void BrowserPanel::showContextMenu(const QPoint& position) {
     if (m_document == nullptr || item == nullptr || item->parent() != m_bodies) {
         return;
     }
-    const document::ObjectId id = idOf(item);
-    const document::Body* body = m_document->findBody(id);
-    if (body == nullptr) {
-        return;
+    // The menu acts on the selection, so the body that was clicked has to be in it.
+    if (!item->isSelected()) {
+        m_tree->clearSelection();
+        item->setSelected(true);
     }
-    QMenu menu(this);
-    menu.addAction(tr("Rename"), this, [this, item] { m_tree->editItem(item, 0); });
-    const bool visible = body->visible;
-    menu.addAction(visible ? tr("Hide") : tr("Show"), this,
-                   [this, id, visible] { m_document->setBodyVisible(id, !visible); });
-    menu.addSeparator();
-    menu.addAction(tr("Delete"), this, [this, item] {
-        if (!item->isSelected()) {
-            m_tree->clearSelection();
-            item->setSelected(true);
-        }
-        emit deleteRequested();
-    });
-    menu.exec(m_tree->viewport()->mapToGlobal(position));
+    emit contextMenuRequested(m_tree->viewport()->mapToGlobal(position));
 }
 
 } // namespace lcad::app
