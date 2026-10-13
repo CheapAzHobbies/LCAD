@@ -32,14 +32,22 @@ BrowserPanel::BrowserPanel(QWidget* parent)
     layout->addWidget(m_tree);
 
     m_filter->setObjectName(QStringLiteral("browserFilter"));
-    m_filter->setPlaceholderText(tr("Filter bodies by name"));
+    m_filter->setPlaceholderText(tr("Filter by name"));
     m_filter->setClearButtonEnabled(true);
     connect(m_filter, &QLineEdit::textChanged, this, &BrowserPanel::applyFilter);
 
     m_tree->setHeaderHidden(true);
     m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_tree->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::DoubleClicked);
+    // A double-click renames a body and opens a sketch, so it is handled here, not by the tree.
+    m_tree->setEditTriggers(QAbstractItemView::EditKeyPressed);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item) {
+        if (item->parent() == m_bodies && m_bodies != nullptr) {
+            m_tree->editItem(item, 0);
+        } else if (item->parent() == m_sketches && m_sketches != nullptr) {
+            emit sketchActivated(idOf(item));
+        }
+    });
 
     connect(m_tree, &QTreeWidget::itemChanged, this, &BrowserPanel::onItemChanged);
     connect(m_tree, &QTreeWidget::itemSelectionChanged, this, &BrowserPanel::bodySelectionChanged);
@@ -86,13 +94,72 @@ std::vector<document::ObjectId> BrowserPanel::selectedBodies() const {
     return ids;
 }
 
+std::vector<document::ObjectId> BrowserPanel::selectedSketches() const {
+    std::vector<document::ObjectId> ids;
+    if (m_sketches == nullptr) {
+        return ids;
+    }
+    for (int i = 0; i < m_sketches->childCount(); ++i) {
+        if (m_sketches->child(i)->isSelected()) {
+            ids.push_back(idOf(m_sketches->child(i)));
+        }
+    }
+    return ids;
+}
+
 void BrowserPanel::setSelectedBodies(const std::vector<document::ObjectId>& bodies) {
+    setSelection(bodies, {});
+}
+
+void BrowserPanel::setSelection(const std::vector<document::ObjectId>& bodies,
+                                const std::vector<document::ObjectId>& sketches) {
     const QSignalBlocker blocker(m_tree);
     m_tree->clearSelection();
     for (const document::ObjectId id : bodies) {
         if (QTreeWidgetItem* item = bodyItem(id)) {
             item->setSelected(true);
         }
+    }
+    for (const document::ObjectId id : sketches) {
+        if (QTreeWidgetItem* item = sketchItem(id)) {
+            item->setSelected(true);
+        }
+    }
+}
+
+QTreeWidgetItem* BrowserPanel::sketchItem(document::ObjectId id) const {
+    if (m_sketches == nullptr) {
+        return nullptr;
+    }
+    for (int i = 0; i < m_sketches->childCount(); ++i) {
+        if (idOf(m_sketches->child(i)) == id) {
+            return m_sketches->child(i);
+        }
+    }
+    return nullptr;
+}
+
+void BrowserPanel::editSketchName(document::ObjectId id) {
+    if (QTreeWidgetItem* item = sketchItem(id)) {
+        m_tree->editItem(item, 0);
+    }
+}
+
+void BrowserPanel::setEditedSketch(document::ObjectId id) {
+    m_editedSketch = id;
+    markEditedSketch();
+}
+
+void BrowserPanel::markEditedSketch() {
+    if (m_sketches == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_tree);
+    for (int i = 0; i < m_sketches->childCount(); ++i) {
+        QTreeWidgetItem* item = m_sketches->child(i);
+        QFont font = item->font(0);
+        font.setBold(idOf(item) == m_editedSketch);
+        item->setFont(0, font);
     }
 }
 
@@ -135,14 +202,19 @@ void BrowserPanel::setOriginVisibility(const std::array<bool, 6>& visible) {
 }
 
 void BrowserPanel::applyFilter() {
-    if (m_bodies == nullptr) {
+    if (m_bodies == nullptr || m_sketches == nullptr) {
         return;
     }
     const QString wanted = m_filter->text().trimmed();
-    for (int i = 0; i < m_bodies->childCount(); ++i) {
-        QTreeWidgetItem* item = m_bodies->child(i);
-        item->setHidden(!wanted.isEmpty() && !item->text(0).contains(wanted, Qt::CaseInsensitive));
+    for (QTreeWidgetItem* group : {m_bodies, m_sketches}) {
+        for (int i = 0; i < group->childCount(); ++i) {
+            QTreeWidgetItem* item = group->child(i);
+            item->setHidden(!wanted.isEmpty() &&
+                            !item->text(0).contains(wanted, Qt::CaseInsensitive));
+        }
     }
+    // A document without sketches has no use for an empty "Sketches" entry.
+    m_sketches->setHidden(m_sketches->childCount() == 0);
 }
 
 void BrowserPanel::rebuild() {
@@ -151,6 +223,7 @@ void BrowserPanel::rebuild() {
     m_root = nullptr;
     m_origin = nullptr;
     m_bodies = nullptr;
+    m_sketches = nullptr;
     if (m_document == nullptr) {
         return;
     }
@@ -178,9 +251,26 @@ void BrowserPanel::rebuild() {
     for (const document::Body& body : m_document->bodies()) {
         m_bodies->addChild(makeBodyItem(body));
     }
+    m_sketches = new QTreeWidgetItem(m_root, {tr("Sketches")});
+    m_sketches->setFlags(Qt::ItemIsEnabled);
+    for (const document::SketchItem& sketch : m_document->sketches()) {
+        m_sketches->addChild(makeSketchItem(sketch));
+    }
     m_root->setExpanded(true);
     m_bodies->setExpanded(true);
+    m_sketches->setExpanded(true);
+    markEditedSketch();
     applyFilter();
+}
+
+QTreeWidgetItem* BrowserPanel::makeSketchItem(const document::SketchItem& sketch) {
+    auto* item = new QTreeWidgetItem({QString::fromStdString(sketch.name)});
+    item->setData(0, idRole, QVariant::fromValue<qulonglong>(sketch.id.value));
+    item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable |
+                   Qt::ItemIsUserCheckable);
+    item->setCheckState(0, sketch.visible ? Qt::Checked : Qt::Unchecked);
+    item->setToolTip(0, tr("Check to show, clear to hide. Double-click to edit the sketch."));
+    return item;
 }
 
 QTreeWidgetItem* BrowserPanel::makeBodyItem(const document::Body& body) {
@@ -200,7 +290,9 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
     }
     const QSignalBlocker blocker(m_tree);
     const document::Body* body = m_document->findBody(change.body);
+    const document::SketchItem* sketch = m_document->findSketch(change.body);
     QTreeWidgetItem* item = bodyItem(change.body);
+    QTreeWidgetItem* sketchEntry = sketchItem(change.body);
     bool selectionAffected = false;
     switch (change.kind) {
     case Kind::BodyAdded: {
@@ -228,6 +320,32 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
             item->setCheckState(0, body->visible ? Qt::Checked : Qt::Unchecked);
         }
         break;
+    case Kind::SketchAdded: {
+        if (sketch == nullptr || m_sketches == nullptr) {
+            break;
+        }
+        const auto& sketches = m_document->sketches();
+        m_sketches->insertChild(static_cast<int>(sketch - sketches.data()),
+                                makeSketchItem(*sketch));
+        m_sketches->setExpanded(true);
+        markEditedSketch();
+        break;
+    }
+    case Kind::SketchRemoved:
+        selectionAffected = sketchEntry != nullptr && sketchEntry->isSelected();
+        delete sketchEntry;
+        break;
+    case Kind::SketchRenamed:
+        if (sketchEntry != nullptr && sketch != nullptr) {
+            sketchEntry->setText(0, QString::fromStdString(sketch->name));
+        }
+        break;
+    case Kind::SketchVisibilityChanged:
+        if (sketchEntry != nullptr && sketch != nullptr) {
+            sketchEntry->setCheckState(0, sketch->visible ? Qt::Checked : Qt::Unchecked);
+        }
+        break;
+    case Kind::SketchGeometryChanged:
     case Kind::HistoryChanged:
         break;
     }
@@ -244,6 +362,31 @@ void BrowserPanel::onItemChanged(QTreeWidgetItem* item) {
         const bool visible = item->checkState(0) == Qt::Checked;
         m_originVisible[static_cast<std::size_t>(index)] = visible;
         emit originItemToggled(static_cast<viewport::OriginItem>(index), visible);
+        return;
+    }
+    if (m_document != nullptr && item->parent() == m_sketches && m_sketches != nullptr) {
+        const document::ObjectId id = idOf(item);
+        const document::SketchItem* sketch = m_document->findSketch(id);
+        if (sketch == nullptr) {
+            return;
+        }
+        const std::string name = item->text(0).trimmed().toStdString();
+        const bool visible = item->checkState(0) == Qt::Checked;
+        try {
+            if (name != sketch->name) {
+                m_document->renameSketch(id, name);
+            } else if (visible != sketch->visible) {
+                m_document->setSketchVisible(id, visible);
+            }
+        } catch (const std::invalid_argument&) {
+            // An empty name. Fall through and show what the document has.
+        }
+        sketch = m_document->findSketch(id);
+        if (sketch != nullptr) {
+            const QSignalBlocker blocker(m_tree);
+            item->setText(0, QString::fromStdString(sketch->name));
+            item->setCheckState(0, sketch->visible ? Qt::Checked : Qt::Unchecked);
+        }
         return;
     }
     if (m_document == nullptr || item->parent() != m_bodies) {
@@ -276,10 +419,11 @@ void BrowserPanel::onItemChanged(QTreeWidgetItem* item) {
 
 void BrowserPanel::showContextMenu(const QPoint& position) {
     QTreeWidgetItem* item = m_tree->itemAt(position);
-    if (m_document == nullptr || item == nullptr || item->parent() != m_bodies) {
+    if (m_document == nullptr || item == nullptr ||
+        (item->parent() != m_bodies && item->parent() != m_sketches)) {
         return;
     }
-    // The menu acts on the selection, so the body that was clicked has to be in it.
+    // The menu acts on the selection, so the entry that was clicked has to be in it.
     if (!item->isSelected()) {
         m_tree->clearSelection();
         item->setSelected(true);

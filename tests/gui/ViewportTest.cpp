@@ -70,6 +70,7 @@ private slots:
     void standardViewsLookAlongTheirAxes();
     void projectionSwitchesBetweenOrthographicAndPerspective();
     void clickingTheViewCubeTurnsTheCamera();
+    void theViewCubeShowsItsSidesApart();
     void draggingTheViewCubeOrbits();
     void viewCubeCanTurnWithoutAnimation();
     void navigationPresetSwapsPanAndOrbit();
@@ -330,6 +331,61 @@ void ViewportTest::clickingTheViewCubeTurnsTheCamera() {
     QVERIFY(!sameDirection(home, m_viewport->viewDirection()));
     // Clicking the cube is navigation, not selection.
     QVERIFY(m_viewport->selection().empty());
+}
+
+// The cube is there to say which way the model is turned. With every side the same near-white,
+// only its words said so.
+void ViewportTest::theViewCubeShowsItsSidesApart() {
+    addBox();
+    m_viewport->setStandardView(StandardView::Home);
+    for (const bool light : {false, true}) {
+        ViewportColors colors;
+        if (light) {
+            colors.background = QColor(228, 231, 236);
+            colors.cube = QColor(251, 252, 253);
+            colors.cubeEdge = QColor(35, 39, 46);
+        }
+        m_viewport->setColors(colors);
+        const QImage frame = m_viewport->grabFramebuffer();
+        keepFrame(frame, light ? "viewport-cube-light" : "viewport-cube-dark");
+        // In the home view the cube shows its top, its front (lower left), and its right
+        // (lower right), around the corner nearest the viewer. The shade of a side is that of
+        // its lightest pixels thereabouts, which leaves out the word written on it; the shade
+        // of an edge that of its darkest.
+        const auto lightness = [&](const QPointF& offset, bool lightest) {
+            const QPoint at =
+                ((m_viewport->viewCubeCenter() + offset) * frame.devicePixelRatio()).toPoint();
+            const int reach = qRound(3 * frame.devicePixelRatio());
+            int found = lightest ? 0 : 255;
+            for (int dy = -reach; dy <= reach; ++dy) {
+                for (int dx = -reach; dx <= reach; ++dx) {
+                    const int value = frame.pixelColor(at + QPoint(dx, dy)).lightness();
+                    found = lightest ? qMax(found, value) : qMin(found, value);
+                }
+            }
+            return found;
+        };
+        const int top = lightness({0.0, -25.0}, true);
+        const int front = lightness({-22.0, 14.0}, true);
+        const int right = lightness({22.0, 14.0}, true);
+        // Three sides, three shades.
+        QVERIFY2(qAbs(top - front) > 14 && qAbs(top - right) > 14 && qAbs(front - right) > 14,
+                 qPrintable(QStringLiteral("%1 %2 %3").arg(top).arg(front).arg(right)));
+        // Between them run the cube's edges, dark: down from the near corner, and from it
+        // toward the back on either side of the top.
+        for (const QPointF& onAnEdge :
+             {QPointF(0.0, 18.0), QPointF(-17.0, -11.0), QPointF(17.0, -11.0)}) {
+            const int edge = lightness(onAnEdge, false);
+            QVERIFY2(edge < 70 && edge < qMin(top, qMin(front, right)) - 60,
+                     qPrintable(QStringLiteral("%1 at %2,%3 against %4 %5 %6")
+                                    .arg(edge)
+                                    .arg(onAnEdge.x())
+                                    .arg(onAnEdge.y())
+                                    .arg(top)
+                                    .arg(front)
+                                    .arg(right)));
+        }
+    }
 }
 
 void ViewportTest::draggingTheViewCubeOrbits() {

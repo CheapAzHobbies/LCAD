@@ -22,7 +22,7 @@ more than writing the code, now sets the pace.
 | 0. Groundwork | Architecture, dependency and license decisions, build system, CI | 2026-10-12 | 2026-11-08 | 2026-10-12 | |
 | 1. Desktop foundation | Window, viewport, selection, documents, save/open, undo | 2026-10-12 | 2027-01-31 | 2026-10-12 | |
 | 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-12 | 2026-10-25 | 2026-10-12 | |
-| 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-26 | 2026-11-30 | | |
+| 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-12 | 2026-11-30 | 2026-10-13 | |
 | 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-12-01 | 2027-02-15 | | v0.1 alpha |
 | 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-16 | 2027-03-31 | | v0.2 |
 | 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-04-01 | 2027-07-15 | | v0.5 beta |
@@ -31,6 +31,12 @@ more than writing the code, now sets the pace.
 | 7. Advanced capabilities | Surfaces, sheet metal, mesh repair, rendering, plugins | 2028-01-16 | ongoing | | |
 
 The targets of Phases 0 and 1 are the original ones, kept for the record.
+
+**Revised on 2026-10-13.** Phase 2 was finished in two days, with ellipse and spline carried
+over. The targets of the later phases are left as they are: Phase 3 holds the problem this plan
+is most worried about (references to faces and edges that survive edits), and a sketcher that
+has been tested by its author is not yet a sketcher that has been used. Phase 3 starts when the
+owner has drawn with this one and says so.
 
 v0.5 is the first release that meets the acceptance criteria in section 32 of the brief. The repository
 stays private until the owner decides to open it; v0.1 is the earliest point where there is something
@@ -121,23 +127,47 @@ Moved to later phases, with the reason beside each in
 [docs/INTERFACE_STATUS.md](docs/INTERFACE_STATUS.md): controls mounted on the edges of the 3D
 view, density modes, a progress display, and a scale setting of LCAD's own.
 
-## Phase 2: Sketcher (2026-10-26 to 2026-11-30)
+## Phase 2: Sketcher (finished 2026-10-13, except ellipse and spline)
 
-- [ ] Sketch on origin planes and planar faces, with automatic camera orientation.
-- [ ] Line, rectangle, circle, arc, point, construction geometry first; ellipse, spline, polygon, slot after.
-- [ ] Geometric constraints: coincident, horizontal, vertical, parallel, perpendicular, tangent, equal,
+- [x] Sketch on origin planes and planar faces, with automatic camera orientation.
+- [x] Line, rectangle, circle, arc, point, construction geometry; polygon and slot.
+- [ ] Ellipse and spline. Not done. Each needs a new kind of curve in the sketch, the solver, the
+      file format, and the outline finder, which is more than a drawing tool. Carried into Phase 3.
+- [x] Geometric constraints: coincident, horizontal, vertical, parallel, perpendicular, tangent, equal,
       concentric, midpoint, symmetry, collinear, fix.
-- [ ] Dimensional constraints: distance, length, radius, diameter, angle, editable in the canvas.
-- [ ] Solver integration with under-, fully, and overconstrained states and conflict reporting.
-- [ ] Dragging underconstrained geometry.
-- [ ] Inference while drawing (endpoints, alignment, tangency), with an off switch.
-- [ ] Trim, extend, offset, mirror, project.
-- [ ] Closed profile detection for later features.
+- [x] Dimensional constraints: distance (straight across, horizontal, or vertical), length, radius,
+      diameter, angle, typed and changed in the 3D view.
+- [x] A solver with under-, fully, and overconstrained states and conflict reporting.
+- [x] Dragging underconstrained geometry.
+- [x] Inference while drawing (ends on existing points, curves, and midpoints; level and upright
+      lines), with an off switch. Tangency is not inferred: it is a constraint to add.
+- [x] Trim, extend, offset, mirror, project.
+- [x] Closed profile detection for later features.
 
-Acceptance: create a fully constrained rectangle, change its dimensions, and verify the geometry updates.
+Acceptance: create a fully constrained rectangle, change its dimensions, and verify the geometry
+updates. Met, and tested at three levels: in the sketch module, in the 3D view with the pointer
+and the keyboard, and through the whole window including save, close, and reopen.
+
+What Phase 2 leaves for later, besides ellipse and spline:
+
+- **Curves that cross are not split.** An outline is found where curves meet at their ends. Two
+  lines that cross in the middle do not make four regions; trim them first.
+- **A projected edge does not follow its body.** It is a copy made when it was projected. Following
+  needs the feature history of Phase 3.
+- **A sketch on a face does not follow the face** either, for the same reason.
+- **Offset keeps one dimension.** The copy's lines stay parallel to their originals and its corners
+  stay joined, but only the first line carries the offset distance. There is no constraint yet
+  that says "the same distance all round".
+- **Dimension values place themselves.** They are drawn next to what they measure and cannot be
+  dragged somewhere else. That needs a place for them in the file.
+- **Values are numbers.** `40`, `40 mm`, `40,5`. Expressions and named parameters come with the
+  parameter table in Phase 3.
+- **A sketch being edited is drawn over the model**, not hidden by bodies in front of it.
+- **Tangent arcs in a chain of lines, fillets, patterns, and text** are not there yet.
 
 ## Phase 3: Parametric solids (2026-12-01 to 2027-02-15)
 
+- [ ] Carried over from Phase 2: ellipse and spline in the sketcher.
 - [ ] Feature graph with dependency tracking and incremental recompute.
 - [ ] Stable references to faces and edges that survive upstream edits (topological naming).
 - [ ] Extrude (join, cut, intersect, new body; symmetric, two-sided, to-object, taper), revolve.
@@ -218,12 +248,13 @@ Decided in Phases 0 and 1, with the reasoning in [docs/ARCHITECTURE.md](docs/ARC
 | Appearance | Design tokens; a light and a dark theme; Qt's Fusion widget style on every desktop |
 | Up direction | Z. The front view looks along +Y |
 | Mouse | Fusion's mapping. Wheel away from the user zooms in, with a setting to reverse it |
+| Sketch solver | LCAD's own, built on Eigen. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for what was weighed |
+| Sketch display | Drawn by LCAD over the 3D view while a sketch is open; as OCCT wires among the bodies otherwise |
 
 Still open:
 
 | Decision | Options | Needed by |
 |---|---|---|
-| Sketch solver | SolveSpace (libslvs), planegcs, or ezpz; chosen by a spike | Start of Phase 2 |
 | Stable references to faces and edges | To be designed | Start of Phase 3 |
 | When to make the repository public | v0.1, v0.5, or later | Owner's call |
 
@@ -241,6 +272,13 @@ Still open:
   window that no longer existed. Both are covered by tests now, and the tests fail on anything OCCT
   complains about. The next such fault will most likely show up the same way, as a message and not as
   a wrong picture.
+- **The sketch solver is LCAD's own, and new.** The plan was to adopt a proven solver. The spike
+  at the start of Phase 2 found that the packaged one says how many freedoms a sketch has but not
+  which curves have them, which is what coloring a sketch by its state needs, and that it is
+  packaged for only one of the four distributions. LCAD's solver has the sketch module's 46 test
+  cases behind it and none of the years of use the others have. It sits behind the `sketch` module's interface, so
+  it can be replaced without touching the rest. Expect sketches that it solves badly; each one
+  that turns up becomes a test.
 - **Mouse wheel direction.** Fusion's pan, orbit, and zoom buttons were checked against Autodesk's
   documentation. Which way its wheel zooms by default was not confirmed, so LCAD zooms in when the
   wheel rolls away from the user, as most Linux applications do, and has a setting to reverse it.

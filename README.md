@@ -8,16 +8,27 @@ Linux comes first. Windows and macOS ports are planned once the core modeling wo
 
 ## Status
 
-Early. LCAD cannot sketch or extrude yet.
+Early. LCAD can sketch, and cannot extrude yet: a sketch does not become a solid until Phase 3.
 
-What works today: creating box, cylinder, sphere, cone, and torus solids by their sizes with a
-live preview; a 3D view with a view cube, standard views, display styles, and a grid; selecting
-bodies, faces, edges, and vertices, with their measurements; a browser tree and a properties
-panel to rename, hide, isolate, and delete bodies; several documents in tabs; undo and redo;
-saving and opening `.lcad` documents; a command search; and a light and a dark theme.
+What works today:
+
+- **Sketching.** A sketch on a plane or on a flat face of a body, with lines, rectangles,
+  circles, arcs, points, polygons, slots, and construction geometry; twelve geometric
+  constraints; dimensions typed in the 3D view; a solver that shows what can still move and
+  refuses what contradicts; dragging; trim, extend, offset, mirror, and projecting edges of a
+  body into the sketch.
+- **Solids from primitives.** Box, cylinder, sphere, cone, and torus by their sizes, with a
+  live preview.
+- **The window.** A 3D view with a view cube, standard views, display styles, and a grid;
+  selecting bodies, faces, edges, vertices, and sketches, with their measurements; a browser
+  tree and a properties panel to rename, hide, isolate, and delete; several documents in tabs;
+  undo and redo; a command search; a light and a dark theme.
+- **Files.** Saving and opening `.lcad` documents.
+
 [docs/USING.md](docs/USING.md) shows how.
 
-Next is Phase 2, the sketcher. See the [roadmap](ROADMAP.md).
+Next is Phase 3: extrude, revolve, fillet, and the feature timeline. See the
+[roadmap](ROADMAP.md).
 
 ## Building
 

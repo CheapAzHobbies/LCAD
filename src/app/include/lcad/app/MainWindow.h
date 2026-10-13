@@ -4,9 +4,11 @@
 
 #include <lcad/app/PrimitivePanel.h>
 #include <lcad/document/Document.h>
+#include <lcad/kernel/Plane.h>
 #include <lcad/viewport/ViewportWidget.h>
 
 #include <QByteArray>
+#include <QList>
 #include <QMainWindow>
 #include <QStringList>
 
@@ -23,6 +25,7 @@ class QMenu;
 class QMenuBar;
 class QStackedWidget;
 class QTabBar;
+class QToolBar;
 class QToolButton;
 
 namespace lcad::app {
@@ -31,15 +34,18 @@ class BrowserPanel;
 class CommandRegistry;
 class CommandSearch;
 class PropertiesPanel;
+class SketchPanel;
+class SketchPlanePanel;
 
 /// LCAD's window. It holds the open documents, one per tab, and shows the current one in the
 /// regions of the interface:
 ///
 ///   top bar       menus; new, open, save, undo, redo; the document tabs; command search
-///   toolbar       the modeling tools, in groups
+///   toolbar       the modeling tools, in groups; while a sketch is open, the sketch tools
 ///   browser       the document as a tree (left)
 ///   viewport      the 3D view (center)
-///   properties    the command in progress, or else what is selected (right)
+///   properties    the command in progress, or the sketch being edited, or else what is
+///                 selected (right)
 ///   timeline      the feature history (bottom; empty until parametric features exist)
 ///   status bar    what is selected and its measurement, the active command, the units
 ///
@@ -106,8 +112,29 @@ public:
     /// Adds the previewed solid to the document as one undo step and closes the panel.
     void acceptCommand();
     void cancelCommand();
-    /// Deletes the bodies selected in the browser or the viewport, as one undo step.
+    /// Deletes the bodies and sketches selected in the browser or the viewport, as one undo
+    /// step.
     void deleteSelectedBodies();
+
+    // Sketching
+
+    /// Starts a new sketch: on the flat face that is selected, or else by asking for a plane in
+    /// the right-hand panel. Cancels a command in progress.
+    void startSketch();
+    /// The panel that asks where a new sketch goes, or nullptr.
+    [[nodiscard]] SketchPlanePanel* planePanel() const { return m_planePanel; }
+    /// Adds a sketch on a plane, as one undo step, and opens it for editing.
+    document::ObjectId createSketch(const kernel::Plane& plane);
+    /// Opens a sketch for editing: the camera turns to face it and the toolbar shows the sketch
+    /// tools. Returns false if there is no such sketch.
+    bool editSketch(document::ObjectId sketch);
+    /// Closes the sketch being edited and brings the modeling tools back.
+    void finishSketch();
+    [[nodiscard]] bool isSketching() const;
+    /// The panel shown on the right while a sketch is open.
+    [[nodiscard]] SketchPanel* sketchPanel() const { return m_sketchPanel; }
+    /// What the status bar says about the command or tool in use.
+    [[nodiscard]] QString commandText() const;
 
     // The interactive File commands. Each returns false if the user canceled or it failed.
     bool fileNew();
@@ -129,6 +156,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     struct Session {
@@ -141,8 +169,15 @@ private:
     };
 
     void defineCommands();
+    void defineSketchCommands();
     void createTopBar();
     void createToolbar();
+    void createSketchToolbar();
+    /// Shows the toolbar that goes with what is being done: modeling, or sketching.
+    void updateMode();
+    /// Drops the labels of the primitive buttons when the window is too narrow for them.
+    void fitToolbar();
+    void onSketchEditingChanged();
     void createDocks();
     void restoreSettings();
     void applyTheme();
@@ -161,6 +196,9 @@ private:
     void showInspector();
 
     [[nodiscard]] std::vector<document::ObjectId> selectedBodies() const;
+    [[nodiscard]] std::vector<document::ObjectId> selectedSketches() const;
+    /// The plane of the one flat face that is selected, if that is what is selected.
+    [[nodiscard]] std::optional<kernel::Plane> selectedFacePlane() const;
     /// The bodies a command about bodies acts on: those selected, and those whose faces,
     /// edges, or vertices are.
     [[nodiscard]] std::vector<document::ObjectId> targetBodies() const;
@@ -187,6 +225,13 @@ private:
     QDockWidget* m_inspectorDock = nullptr;
     QStackedWidget* m_inspectorStack = nullptr;
     PrimitivePanel* m_panel = nullptr;
+    SketchPanel* m_sketchPanel = nullptr;
+    SketchPlanePanel* m_planePanel = nullptr;
+    QToolBar* m_modelToolbar = nullptr;
+    QToolBar* m_sketchToolbar = nullptr;
+    /// The sketch toolbar's buttons for single constraints, and the one that lists them all.
+    QList<QAction*> m_constraintButtons;
+    QAction* m_constraintsFolded = nullptr;
     QLabel* m_selectionLabel = nullptr;
     QLabel* m_commandLabel = nullptr;
     QComboBox* m_filterBox = nullptr;

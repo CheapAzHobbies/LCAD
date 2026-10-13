@@ -6,7 +6,7 @@
 
 namespace lcad::app {
 
-/// LCAD's own version, for example "0.0.2".
+/// LCAD's own version, for example "0.0.1".
 [[nodiscard]] QString versionString();
 
 /// Where LCAD keeps its log: lcad/lcad.log under $XDG_STATE_HOME, or under ~/.local/state when

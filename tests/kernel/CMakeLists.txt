@@ -4,6 +4,7 @@ add_executable(lcad_kernel_tests
     ErrorTest.cpp
     MeasureTest.cpp
     MessagesTest.cpp
+    PlaneTest.cpp
     PrimitivesTest.cpp
     SerializationTest.cpp
     ShapeTest.cpp

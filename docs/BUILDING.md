@@ -46,6 +46,7 @@ To install by hand, or on a distribution the script does not know, you need:
 | Qt 6.4+ | `qt6-base-dev` | `qt6-qtbase-devel` | `qt6-base` |
 | Open CASCADE 7.6 to 7.9 | `libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev libocct-visualization-dev` | `opencascade-devel` | `opencascade` |
 | File format: libzip, nlohmann/json | `libzip-dev nlohmann-json3-dev` | `libzip-devel json-devel` | `libzip nlohmann-json` |
+| Sketch solver: Eigen 3.4 or 5 | `libeigen3-dev` | `eigen3-devel` | `eigen` |
 | Tests: Catch2 3, xcb headers | `catch2 libxcb1-dev` | `catch-devel libxcb-devel` | `catch2 libxcb` |
 | Tests: virtual display, software OpenGL | `xvfb xauth libgl1-mesa-dri` | `xorg-x11-server-Xvfb xorg-x11-xauth mesa-dri-drivers mesa-libGL` | `xorg-server-xvfb xorg-xauth mesa` |
 

@@ -7,7 +7,11 @@
 #include <lcad/viewport/ViewportWidget.h>
 
 #include <lcad/document/Document.h>
+#include <lcad/document/SketchShapes.h>
+#include <lcad/kernel/Plane.h>
+#include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
+#include <lcad/viewport/SketchEditor.h>
 
 #include <AIS_AnimationCamera.hxx>
 #include <AIS_InteractiveContext.hxx>
@@ -19,6 +23,8 @@
 #include <Aspect_NeutralWindow.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <Bnd_Box.hxx>
+#include <Graphic3d_CView.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
 #include <Graphic3d_TransformPers.hxx>
@@ -44,6 +50,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
@@ -54,6 +61,7 @@
 #include <array>
 #include <cmath>
 #include <optional>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace lcad::viewport {
@@ -97,6 +105,21 @@ Graphic3d_MaterialAspect bodyMaterial() {
 // The origin planes and axes are this large on screen, in pixels, at any zoom.
 const double originPlaneSize = 46.0;
 const double originAxisLength = 70.0;
+// And this large while one of the planes is being chosen: large enough to aim at.
+const double pickPlaneSize = 120.0;
+
+// The plane an origin item is, as a point on it, its normal, and the direction of its own X.
+gp_Ax3 originPlaneAxes(OriginItem item) {
+    const gp_Pnt origin(0.0, 0.0, 0.0);
+    switch (item) {
+    case OriginItem::PlaneXZ:
+        return gp_Ax3(origin, gp::DY().Reversed(), gp::DX());
+    case OriginItem::PlaneYZ:
+        return gp_Ax3(origin, gp::DX(), gp::DY());
+    default:
+        return gp_Ax3(origin, gp::DZ(), gp::DX());
+    }
+}
 
 // The selection modes of AIS_Shape that a filter switches on.
 std::vector<int> selectionModes(SelectionFilter filter) {
@@ -270,6 +293,21 @@ public:
     document::Document::ListenerId listener = 0;
     std::unordered_map<document::ObjectId, Handle(AIS_Shape)> bodyObjects;
     std::unordered_map<const Standard_Transient*, document::ObjectId> bodyOfObject;
+    // A sketch that is shown but not being edited is two objects: its ordinary geometry, and
+    // its construction geometry drawn dashed.
+    struct SketchObjects {
+        Handle(AIS_Shape) ordinary;
+        Handle(AIS_Shape) construction;
+    };
+    std::unordered_map<document::ObjectId, SketchObjects> sketchObjects;
+    std::unordered_map<const Standard_Transient*, document::ObjectId> sketchOfObject;
+    SketchEditor* editor = nullptr;
+    // The sketch being edited, and the camera to go back to when it is closed.
+    document::ObjectId activeSketch;
+    // Whether the bodies' edges and corners are switched on for the Project tool.
+    bool projecting = false;
+    std::optional<CameraState> cameraBeforeSketch;
+    bool fitAfterSketch = false;
     SelectionFilter filter = SelectionFilter::FacesEdgesVertices;
     std::vector<SelectedItem> lastSelection;
     const Standard_Transient* lastDetected = nullptr;
@@ -283,6 +321,14 @@ public:
     bool axesVisible = true;
     bool animated = true;
     std::array<Handle(AIS_Shape), 6> originObjects;
+    // The patches shown while a plane is being chosen, and which of them the pointer is on and
+    // which the button went down on (-1 for none).
+    std::array<Handle(AIS_Shape), 3> pickPlanes;
+    // For X, Y, and Z: +1 if the patches reach the positive way along it, -1 if the negative.
+    std::array<int, 3> pickSides{1, 1, 1};
+    bool planePicking = false;
+    int hoveredPlane = -1;
+    int pressedPlane = -1;
     // Physical pixels per logical pixel of the screen the viewport is on.
     double pixelRatio = 1.0;
 
@@ -302,6 +348,20 @@ public:
             Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(offset, offset)));
         if (context->IsDisplayed(viewCube)) {
             context->Redisplay(viewCube, false);
+        }
+        // How near the pointer has to come to pick something is meant in what the user sees
+        // as pixels, too. A sketch is thin lines and nothing else, so it gets twice the reach.
+        context->SetPixelTolerance(static_cast<int>(std::lround(2.0 * ratio)));
+        for (const auto& entry : sketchObjects) {
+            for (const Handle(AIS_Shape)& object :
+                 {entry.second.ordinary, entry.second.construction}) {
+                if (!object.IsNull()) {
+                    applySketchFilter(object);
+                }
+            }
+        }
+        if (planePicking) {
+            showPickPlanes();
         }
         // The origin guides are built at their pixel size; build the shown ones again.
         for (std::size_t i = 0; i < originObjects.size(); ++i) {
@@ -385,7 +445,13 @@ public:
             selected->SetDisplayMode(AIS_Shaded);
             selected->SetTransparency(0.45F);
         }
+        // The sides in one color with the matte finish the bodies have, so that the three in
+        // view are three plainly different shades, and the edges and corners between them dark,
+        // so that every side has an outline whatever the light does.
+        viewCube->SetMaterial(bodyMaterial());
         viewCube->SetBoxColor(toOcct(colors.cube));
+        viewCube->BoxEdgeStyle()->SetColor(toOcct(colors.cubeEdge));
+        viewCube->BoxCornerStyle()->SetColor(toOcct(colors.cubeEdge));
         viewCube->SetTextColor(toOcct(colors.cubeText));
         if (context->IsDisplayed(viewCube)) {
             context->Redisplay(viewCube, false);
@@ -395,6 +461,15 @@ public:
             context->Redisplay(previewObject, false);
         }
         restyleBodies();
+        for (const auto& entry : sketchObjects) {
+            for (const Handle(AIS_Shape)& object :
+                 {entry.second.ordinary, entry.second.construction}) {
+                if (!object.IsNull()) {
+                    styleSketch(object, object == entry.second.construction);
+                    context->Redisplay(object, false);
+                }
+            }
+        }
         applyAxes();
         applyGrid();
     }
@@ -432,40 +507,29 @@ public:
             return BRepBuilderAPI_MakeEdge(origin, origin.Translated(gp_Vec(along) * axisLength))
                 .Shape();
         };
-        // X is red, Y green, Z blue, as on the axis marker. A plane takes the color of the
-        // axis it is square to.
-        const QColor red(214, 72, 72);
-        const QColor green(72, 170, 86);
-        const QColor blue(66, 120, 220);
         TopoDS_Shape shape;
-        QColor color;
+        const QColor color = ViewportWidget::originColor(item);
         bool isPlane = true;
         switch (item) {
         case OriginItem::PlaneXY:
             shape = plane(gp::DZ(), gp::DX());
-            color = blue;
             break;
         case OriginItem::PlaneXZ:
             shape = plane(gp::DY().Reversed(), gp::DX());
-            color = green;
             break;
         case OriginItem::PlaneYZ:
             shape = plane(gp::DX(), gp::DY());
-            color = red;
             break;
         case OriginItem::AxisX:
             shape = axis(gp::DX());
-            color = red;
             isPlane = false;
             break;
         case OriginItem::AxisY:
             shape = axis(gp::DY());
-            color = green;
             isPlane = false;
             break;
         case OriginItem::AxisZ:
             shape = axis(gp::DZ());
-            color = blue;
             isPlane = false;
             break;
         }
@@ -484,11 +548,108 @@ public:
         return object;
     }
 
+    // A patch of an origin plane to click on, while a plane is being chosen: larger than the
+    // guide, drawn over everything else, and lit up under the pointer.
+    //
+    // The patches are solid, not see-through. Seen from most directions one patch lies in front
+    // of part of another, and see-through patches mix their colors there, so that the plane a
+    // click would get is drawn in a color that belongs to none of them. Solid, what is seen is
+    // what is clicked.
+    //
+    // Each patch reaches from the origin along its two axes toward the side the viewer was on
+    // when the choosing began (pickSides). Three patches laid out that way are the inside of a
+    // corner seen from within, and none of them is in front of another. All reaching the
+    // positive way, as the guides do, the one in front covers half of each of the others in
+    // the home view.
+    Handle(AIS_Shape) makePickPlane(OriginItem item) const {
+        const double size = pickPlaneSize * pixelRatio;
+        // Which of X, Y, Z the patch's own two directions are.
+        const std::size_t u = item == OriginItem::PlaneYZ ? 1 : 0;
+        const std::size_t v = item == OriginItem::PlaneXY ? 1 : 2;
+        const auto range = [this, size](std::size_t axis) {
+            return pickSides[axis] > 0 ? std::pair(0.0, size) : std::pair(-size, 0.0);
+        };
+        Handle(AIS_Shape) object =
+            new AIS_Shape(BRepBuilderAPI_MakeFace(gp_Pln(originPlaneAxes(item)), range(u).first,
+                                                  range(u).second, range(v).first, range(v).second)
+                              .Shape());
+        // Not marked as infinite, as the guides are: OCCT draws an infinite shape as its
+        // outline only, and these are meant to be seen as planes.
+        object->SetTransformPersistence(
+            new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, gp_Pnt(0.0, 0.0, 0.0)));
+        object->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        stylePickPlane(object, item, false);
+        return object;
+    }
+
+    // A patch as it is at rest, or as it is under the pointer: lighter, with a bold outline in
+    // the color of whatever the pointer is on.
+    void stylePickPlane(const Handle(AIS_Shape)& object, OriginItem item, bool hovered) const {
+        QColor fill = ViewportWidget::originColor(item);
+        if (hovered) {
+            fill = fill.lighter(140);
+        }
+        object->SetMaterial(bodyMaterial());
+        object->SetColor(toOcct(fill));
+        object->Attributes()->SetFaceBoundaryDraw(true);
+        object->Attributes()->SetFaceBoundaryAspect(
+            new Prs3d_LineAspect(toOcct(hovered ? colors.hover : colors.bodyEdge), Aspect_TOL_SOLID,
+                                 hovered ? 3.0 : 1.0));
+    }
+
+    // Lights up the patch the pointer is on, and puts the one it left back.
+    void showHoveredPlane(int plane) {
+        for (std::size_t i = 0; i < pickPlanes.size(); ++i) {
+            if (pickPlanes[i].IsNull()) {
+                continue;
+            }
+            stylePickPlane(pickPlanes[i], static_cast<OriginItem>(i), static_cast<int>(i) == plane);
+            context->Redisplay(pickPlanes[i], false);
+        }
+        redraw();
+    }
+
+    void showPickPlanes() {
+        hidePickPlanes();
+        for (std::size_t i = 0; i < pickPlanes.size(); ++i) {
+            pickPlanes[i] = makePickPlane(static_cast<OriginItem>(i));
+            context->Display(pickPlanes[i], AIS_Shaded, AIS_Shape::SelectionMode(TopAbs_SHAPE),
+                             false);
+        }
+    }
+
+    void hidePickPlanes() {
+        for (Handle(AIS_Shape)& object : pickPlanes) {
+            if (!object.IsNull()) {
+                context->Remove(object, false);
+                object.Nullify();
+            }
+        }
+    }
+
+    // Which plane's patch OCCT last found under the pointer: 0 to 2, or -1.
+    [[nodiscard]] int detectedPickPlane() const {
+        if (!planePicking || context.IsNull() || !context->HasDetected()) {
+            return -1;
+        }
+        const Handle(AIS_InteractiveObject) under = context->DetectedInteractive();
+        for (std::size_t i = 0; i < pickPlanes.size(); ++i) {
+            if (!pickPlanes[i].IsNull() && under == pickPlanes[i]) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
     // The selection entry an owner stands for, if it belongs to a body.
     [[nodiscard]] std::optional<SelectedItem>
     itemOf(const Handle(SelectMgr_EntityOwner)& owner) const {
         if (owner.IsNull()) {
             return std::nullopt;
+        }
+        if (const auto sketch = sketchOfObject.find(owner->Selectable().get());
+            sketch != sketchOfObject.end()) {
+            return SelectedItem{sketch->second, SelectedItem::Kind::Sketch, -1};
         }
         const auto body = bodyOfObject.find(owner->Selectable().get());
         if (body == bodyOfObject.end()) {
@@ -532,12 +693,156 @@ public:
         m_widget->update();
     }
 
+    [[nodiscard]] bool sketching() const { return activeSketch.isValid(); }
+
     void applyFilter(const Handle(AIS_Shape)& object) const {
         context->Deactivate(object);
+        if (sketching()) {
+            // While a sketch is open, clicks belong to the sketch. Only the Project tool has
+            // use for the bodies: their edges and corners are what it brings into the sketch.
+            if (editor->tool() == SketchTool::Project) {
+                for (const int mode : {AIS_Shape::SelectionMode(TopAbs_VERTEX),
+                                       AIS_Shape::SelectionMode(TopAbs_EDGE)}) {
+                    context->SetSelectionModeActive(object, mode, true,
+                                                    AIS_SelectionModesConcurrency_Multiple);
+                }
+            }
+            return;
+        }
         for (const int mode : selectionModes(filter)) {
             context->SetSelectionModeActive(object, mode, true,
                                             AIS_SelectionModesConcurrency_Multiple);
         }
+    }
+
+    // A sketch is picked as a whole, by its curves, when the filter lets edges be picked.
+    void applySketchFilter(const Handle(AIS_Shape)& object) const {
+        context->Deactivate(object);
+        if (!sketching() &&
+            (filter == SelectionFilter::FacesEdgesVertices || filter == SelectionFilter::Edges)) {
+            const int mode = AIS_Shape::SelectionMode(TopAbs_SHAPE);
+            context->SetSelectionModeActive(object, mode, true,
+                                            AIS_SelectionModesConcurrency_Multiple);
+            // After switching the mode on: OCCT keeps count of the reaches in use, and can
+            // only change that of a selection it is counting.
+            context->SetSelectionSensitivity(object, mode,
+                                             static_cast<int>(std::lround(4.0 * pixelRatio)));
+        }
+    }
+
+    void applyFilters() {
+        for (const auto& entry : bodyObjects) {
+            applyFilter(entry.second);
+        }
+        for (const auto& entry : sketchObjects) {
+            for (const Handle(AIS_Shape)& object :
+                 {entry.second.ordinary, entry.second.construction}) {
+                if (!object.IsNull()) {
+                    applySketchFilter(object);
+                }
+            }
+        }
+    }
+
+    void styleSketch(const Handle(AIS_Shape)& object, bool construction) const {
+        const Quantity_Color color = toOcct(colors.sketch);
+        object->SetColor(color);
+        const Handle(Prs3d_Drawer)& drawer = object->Attributes();
+        const auto line = [&color, construction] {
+            return new Prs3d_LineAspect(color, construction ? Aspect_TOL_DASH : Aspect_TOL_SOLID,
+                                        construction ? 1.0 : 1.6);
+        };
+        drawer->SetWireAspect(line());
+        drawer->SetLineAspect(line());
+        drawer->SetFreeBoundaryAspect(line());
+        drawer->SetUnFreeBoundaryAspect(line());
+        drawer->SetSeenLineAspect(line());
+    }
+
+    void hideSketch(document::ObjectId id) {
+        const auto found = sketchObjects.find(id);
+        if (found == sketchObjects.end()) {
+            return;
+        }
+        for (const Handle(AIS_Shape)& object :
+             {found->second.ordinary, found->second.construction}) {
+            if (!object.IsNull()) {
+                context->Remove(object, false);
+                sketchOfObject.erase(object.get());
+            }
+        }
+        sketchObjects.erase(found);
+    }
+
+    void hideAllSketches() {
+        while (!sketchObjects.empty()) {
+            hideSketch(sketchObjects.begin()->first);
+        }
+    }
+
+    // Shows a sketch as it is now, replacing whatever was shown of it. The sketch being edited
+    // is not shown this way: the editor draws it.
+    void showSketch(const document::SketchItem& sketch) {
+        if (context.IsNull()) {
+            return;
+        }
+        hideSketch(sketch.id);
+        if (!sketch.visible || sketch.id == activeSketch) {
+            return;
+        }
+        const bool wasEmpty = bodyObjects.empty() && sketchObjects.empty();
+        SketchObjects objects;
+        const auto make = [this, &sketch](document::SketchPart part) {
+            Handle(AIS_Shape) object;
+            const kernel::Shape shape = document::sketchShape(sketch, part);
+            if (shape.isNull()) {
+                return object;
+            }
+            object = new AIS_Shape(kernel::occt::unwrap(shape));
+            styleSketch(object, part == document::SketchPart::Construction);
+            context->Display(object, AIS_WireFrame, AIS_Shape::SelectionMode(TopAbs_SHAPE), false);
+            applySketchFilter(object);
+            sketchOfObject.emplace(object.get(), sketch.id);
+            return object;
+        };
+        objects.ordinary = make(document::SketchPart::Ordinary);
+        objects.construction = make(document::SketchPart::Construction);
+        if (objects.ordinary.IsNull() && objects.construction.IsNull()) {
+            return;
+        }
+        sketchObjects.emplace(sketch.id, objects);
+        if (wasEmpty && !sketching()) {
+            fitPending = true;
+        }
+    }
+
+    // Puts the reference grid in the plane of the sketch being edited, or back in the XY plane.
+    void applyGridPlane() {
+        gp_Ax3 axes;
+        const document::SketchItem* sketch =
+            document != nullptr && sketching() ? document->findSketch(activeSketch) : nullptr;
+        if (sketch != nullptr) {
+            const kernel::Plane& plane = sketch->plane;
+            axes = gp_Ax3(gp_Pnt(plane.origin.x, plane.origin.y, plane.origin.z),
+                          gp_Dir(plane.normal.x, plane.normal.y, plane.normal.z),
+                          gp_Dir(plane.xDirection.x, plane.xDirection.y, plane.xDirection.z));
+        }
+        viewer->SetPrivilegedPlane(axes);
+        applyGrid();
+    }
+
+    // Everything that is shown, and the sketch being edited, which is not among OCCT's objects.
+    [[nodiscard]] Bnd_Box sceneBounds() const {
+        Bnd_Box box = view->View()->MinMaxValues();
+        const document::SketchItem* sketch =
+            document != nullptr && sketching() ? document->findSketch(activeSketch) : nullptr;
+        if (sketch != nullptr) {
+            if (const auto bounds = document::sketchBounds(*sketch)) {
+                box.Add(gp_Pnt(bounds->min.x, bounds->min.y, bounds->min.z));
+                box.Add(gp_Pnt(bounds->max.x, bounds->max.y, bounds->max.z));
+            }
+        }
+        return box;
     }
 
     void showBody(const document::Body& body) {
@@ -575,6 +880,7 @@ public:
         }
         bodyObjects.clear();
         bodyOfObject.clear();
+        hideAllSketches();
     }
 
     void onDocumentChanged(const document::Change& change) {
@@ -595,7 +901,25 @@ public:
         case Kind::BodyRemoved:
             hideBody(change.body);
             break;
+        case Kind::SketchAdded:
+        case Kind::SketchVisibilityChanged:
+        case Kind::SketchGeometryChanged:
+            if (const document::SketchItem* sketch = document->findSketch(change.body)) {
+                showSketch(*sketch);
+            } else {
+                hideSketch(change.body);
+            }
+            editor->documentChanged(change);
+            break;
+        case Kind::SketchRemoved:
+            hideSketch(change.body);
+            if (change.body == activeSketch) {
+                // The sketch being edited is gone: its creation was undone.
+                m_widget->finishSketch();
+            }
+            break;
         case Kind::BodyRenamed:
+        case Kind::SketchRenamed:
         case Kind::HistoryChanged:
             return;
         }
@@ -650,6 +974,18 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setFormat(surfaceFormat());
+    m_impl->editor = new SketchEditor(this);
+    // Whether bodies can be pointed at while a sketch is open depends on the sketch tool.
+    connect(m_impl->editor, &SketchEditor::changed, this, [this] {
+        const bool projecting =
+            m_impl->sketching() && m_impl->editor->tool() == SketchTool::Project;
+        if (projecting != m_impl->projecting && !m_impl->context.IsNull()) {
+            m_impl->projecting = projecting;
+            m_impl->context->ClearDetected(false);
+            m_impl->applyFilters();
+            m_impl->redraw();
+        }
+    });
 
     try {
         Handle(Aspect_DisplayConnection) display = new Aspect_DisplayConnection();
@@ -732,6 +1068,9 @@ ViewportWidget::~ViewportWidget() {
     for (Handle(AIS_Shape)& object : m_impl->originObjects) {
         object.Nullify();
     }
+    for (Handle(AIS_Shape)& object : m_impl->pickPlanes) {
+        object.Nullify();
+    }
     m_impl->context.Nullify();
     if (!m_impl->view.IsNull()) {
         m_impl->view->Remove();
@@ -756,6 +1095,11 @@ void ViewportWidget::setDocument(document::Document* document) {
     if (document == m_impl->document) {
         return;
     }
+    // The sketch being edited belongs to the document that is leaving. The camera is the next
+    // document's business.
+    m_impl->cameraBeforeSketch.reset();
+    m_impl->fitAfterSketch = false;
+    finishSketch();
     if (m_impl->document != nullptr) {
         m_impl->document->removeListener(m_impl->listener);
         m_impl->listener = 0;
@@ -773,6 +1117,9 @@ void ViewportWidget::setDocument(document::Document* document) {
             if (body.visible) {
                 m_impl->showBody(body);
             }
+        }
+        for (const document::SketchItem& sketch : document->sketches()) {
+            m_impl->showSketch(sketch);
         }
     }
     fitAll();
@@ -865,15 +1212,151 @@ QPointF ViewportWidget::project(double x, double y, double z) const {
     if (!m_impl->canRender() || m_impl->view->Window().IsNull()) {
         return {};
     }
-    int pixelX = 0;
-    int pixelY = 0;
-    m_impl->view->Convert(x, y, z, pixelX, pixelY);
+    // Through the camera, not V3d_View::Convert(), which rounds to whole pixels: what is drawn
+    // over the view has to sit exactly on what the view draws.
+    const gp_Pnt device = m_impl->view->Camera()->Project(gp_Pnt(x, y, z));
+    int widthPixels = 0;
+    int heightPixels = 0;
+    m_impl->view->Window()->Size(widthPixels, heightPixels);
     const qreal scale = devicePixelRatioF();
-    return QPointF(pixelX / scale, pixelY / scale);
+    return QPointF((device.X() + 1.0) / 2.0 * widthPixels / scale,
+                   (1.0 - device.Y()) / 2.0 * heightPixels / scale);
 }
 
 QPointF ViewportWidget::viewCubeCenter() const {
     return QPointF(width() - viewCubeOffset, viewCubeOffset);
+}
+
+std::optional<QPointF> ViewportWidget::positionOnPlane(const kernel::Plane& plane,
+                                                       const QPointF& position) const {
+    if (!m_impl->canRender() || m_impl->view->Window().IsNull()) {
+        return std::nullopt;
+    }
+    // The line of sight through that position, from the camera: the exact inverse of
+    // project(), with no rounding to whole pixels.
+    int widthPixels = 0;
+    int heightPixels = 0;
+    m_impl->view->Window()->Size(widthPixels, heightPixels);
+    if (widthPixels <= 0 || heightPixels <= 0) {
+        return std::nullopt;
+    }
+    const qreal scale = devicePixelRatioF();
+    const double deviceX = position.x() * scale / widthPixels * 2.0 - 1.0;
+    const double deviceY = 1.0 - position.y() * scale / heightPixels * 2.0;
+    const Handle(Graphic3d_Camera)& camera = m_impl->view->Camera();
+    const gp_Pnt nearer = camera->UnProject(gp_Pnt(deviceX, deviceY, -1.0));
+    const gp_Pnt farther = camera->UnProject(gp_Pnt(deviceX, deviceY, 1.0));
+    const double reach = nearer.Distance(farther);
+    if (!(reach > 1e-12)) {
+        return std::nullopt;
+    }
+    const double x = nearer.X();
+    const double y = nearer.Y();
+    const double z = nearer.Z();
+    const double dx = (farther.X() - x) / reach;
+    const double dy = (farther.Y() - y) / reach;
+    const double dz = (farther.Z() - z) / reach;
+    // Where the line through (x, y, z) along (dx, dy, dz) meets the plane.
+    const double facing = dx * plane.normal.x + dy * plane.normal.y + dz * plane.normal.z;
+    if (std::abs(facing) < 1e-6) {
+        return std::nullopt;
+    }
+    const double along =
+        ((plane.origin.x - x) * plane.normal.x + (plane.origin.y - y) * plane.normal.y +
+         (plane.origin.z - z) * plane.normal.z) /
+        facing;
+    const kernel::PlaneCoordinates local =
+        kernel::toLocal(plane, {x + along * dx, y + along * dy, z + along * dz});
+    if (!std::isfinite(local.u) || !std::isfinite(local.v)) {
+        return std::nullopt;
+    }
+    return QPointF(local.u, local.v);
+}
+
+void ViewportWidget::lookAt(const kernel::Plane& plane) {
+    if (!m_impl->canRender()) {
+        return;
+    }
+    m_impl->AbortViewAnimation();
+    const kernel::Vector v = kernel::yDirection(plane);
+    const gp_Dir normal(plane.normal.x, plane.normal.y, plane.normal.z);
+    const Handle(Graphic3d_Camera)& camera = m_impl->view->Camera();
+    const gp_Pnt center = camera->Center();
+    const double distance = camera->Distance();
+    camera->SetEyeAndCenter(center.Translated(gp_Vec(normal) * distance), center);
+    camera->SetUp(gp_Dir(v.x, v.y, v.z));
+    m_impl->redraw();
+}
+
+bool ViewportWidget::editSketch(document::ObjectId sketch) {
+    if (!m_impl->canRender() || m_impl->document == nullptr) {
+        return false;
+    }
+    const document::SketchItem* found = m_impl->document->findSketch(sketch);
+    if (found == nullptr) {
+        return false;
+    }
+    if (m_impl->activeSketch == sketch) {
+        return true;
+    }
+    finishSketch();
+    // Before anything changes: where the camera was, and whether it was framing anything.
+    m_impl->cameraBeforeSketch = cameraState();
+    m_impl->fitAfterSketch = m_impl->view->View()->MinMaxValues().IsVoid();
+    setPreview(kernel::Shape());
+
+    m_impl->activeSketch = sketch;
+    m_impl->context->ClearSelected(false);
+    m_impl->context->ClearDetected(false);
+    m_impl->applyFilters();
+    // The editor draws the sketch from here on.
+    m_impl->hideSketch(sketch);
+    setProjection(Projection::Orthographic);
+    lookAt(found->plane);
+    m_impl->applyGridPlane();
+    m_impl->editor->begin(m_impl->document, sketch);
+    fitAll();
+    m_impl->reportSelection();
+    emit sketchEditingChanged();
+    return true;
+}
+
+void ViewportWidget::finishSketch() {
+    if (!m_impl->sketching()) {
+        return;
+    }
+    // No sketch is open from here on, for whoever asks while the editor is winding up.
+    const document::ObjectId closed = m_impl->activeSketch;
+    m_impl->activeSketch = {};
+    m_impl->editor->end();
+    if (!m_impl->context.IsNull()) {
+        m_impl->applyGridPlane();
+        if (m_impl->document != nullptr) {
+            if (const document::SketchItem* sketch = m_impl->document->findSketch(closed)) {
+                m_impl->showSketch(*sketch);
+            }
+        }
+        m_impl->applyFilters();
+        if (m_impl->cameraBeforeSketch.has_value()) {
+            setCameraState(*m_impl->cameraBeforeSketch);
+            if (m_impl->fitAfterSketch) {
+                // The view was of an empty scene; there is something to look at now.
+                fitAll();
+            }
+        }
+        m_impl->redraw();
+    }
+    m_impl->cameraBeforeSketch.reset();
+    m_impl->fitAfterSketch = false;
+    emit sketchEditingChanged();
+}
+
+document::ObjectId ViewportWidget::editedSketch() const {
+    return m_impl->activeSketch;
+}
+
+SketchEditor* ViewportWidget::sketchEditor() const {
+    return m_impl->editor;
 }
 
 void ViewportWidget::fitSelection() {
@@ -1014,6 +1497,66 @@ bool ViewportWidget::isOriginItemVisible(OriginItem item) const {
     return !m_impl->originObjects[static_cast<std::size_t>(item)].IsNull();
 }
 
+QColor ViewportWidget::originColor(OriginItem item) {
+    // X is red, Y green, Z blue, as on the axis marker. A plane takes the color of the axis it
+    // is square to.
+    switch (item) {
+    case OriginItem::PlaneYZ:
+    case OriginItem::AxisX:
+        return QColor(214, 72, 72);
+    case OriginItem::PlaneXZ:
+    case OriginItem::AxisY:
+        return QColor(72, 170, 86);
+    case OriginItem::PlaneXY:
+    case OriginItem::AxisZ:
+        break;
+    }
+    return QColor(66, 120, 220);
+}
+
+void ViewportWidget::setPlanePicking(bool on) {
+    if (on == m_impl->planePicking || !m_impl->canRender()) {
+        return;
+    }
+    m_impl->planePicking = on;
+    m_impl->pressedPlane = -1;
+    if (on) {
+        // Toward the viewer, along each axis, as the view is now. Decided once: patches that
+        // jumped about as the view was turned would be hard to aim at.
+        const gp_Dir looking = m_impl->view->Camera()->Direction();
+        m_impl->pickSides = {looking.X() > 1e-6 ? -1 : 1, looking.Y() > 1e-6 ? -1 : 1,
+                             looking.Z() > 1e-6 ? -1 : 1};
+        m_impl->showPickPlanes();
+    } else {
+        m_impl->context->ClearDetected(false);
+        m_impl->hidePickPlanes();
+        unsetCursor();
+        if (m_impl->hoveredPlane != -1) {
+            m_impl->hoveredPlane = -1;
+            emit planeHovered(-1);
+        }
+    }
+    m_impl->redraw();
+}
+
+bool ViewportWidget::isPlanePicking() const {
+    return m_impl->planePicking;
+}
+
+std::optional<OriginItem> ViewportWidget::pickPlaneAt(const QPoint& position) {
+    if (!m_impl->planePicking || !m_impl->canRender() || m_impl->view->Window().IsNull()) {
+        return std::nullopt;
+    }
+    const Graphic3d_Vec2i pixel = m_impl->toFramebufferPixels(position);
+    m_impl->context->MoveTo(pixel.x(), pixel.y(), m_impl->view, false);
+    update();
+    const int plane = m_impl->detectedPickPlane();
+    if (plane < 0) {
+        return std::nullopt;
+    }
+    return static_cast<OriginItem>(plane);
+}
+
 void ViewportWidget::setSelectionFilter(SelectionFilter filter) {
     if (filter == m_impl->filter) {
         return;
@@ -1025,9 +1568,7 @@ void ViewportWidget::setSelectionFilter(SelectionFilter filter) {
     // What was selected, or is under the pointer, may be something the new filter cannot pick.
     m_impl->context->ClearSelected(false);
     m_impl->context->ClearDetected(false);
-    for (const auto& entry : m_impl->bodyObjects) {
-        m_impl->applyFilter(entry.second);
-    }
+    m_impl->applyFilters();
     m_impl->redraw();
     m_impl->reportSelection();
 }
@@ -1061,6 +1602,17 @@ void ViewportWidget::setSelection(const std::vector<SelectedItem>& items) {
     }
     m_impl->context->ClearSelected(false);
     for (const SelectedItem& wanted : items) {
+        if (wanted.kind == SelectedItem::Kind::Sketch) {
+            const auto sketch = m_impl->sketchObjects.find(wanted.body);
+            if (sketch != m_impl->sketchObjects.end()) {
+                // One of the two stands for the sketch; either reports it as selected.
+                const Handle(AIS_Shape)& object = !sketch->second.ordinary.IsNull()
+                                                      ? sketch->second.ordinary
+                                                      : sketch->second.construction;
+                m_impl->context->AddOrRemoveSelected(object, false);
+            }
+            continue;
+        }
         const auto found = m_impl->bodyObjects.find(wanted.body);
         if (found == m_impl->bodyObjects.end()) {
             continue;
@@ -1225,7 +1777,24 @@ void ViewportWidget::paintGL() {
 
     if (m_impl->fitPending) {
         m_impl->fitPending = false;
-        m_impl->view->FitAll(0.05, false);
+        if (m_impl->sketching()) {
+            const Bnd_Box bounds = m_impl->sceneBounds();
+            if (bounds.IsVoid()) {
+                // Nothing to frame yet: a view some 200 mm tall, centered on the sketch.
+                const document::SketchItem* sketch =
+                    m_impl->document->findSketch(m_impl->activeSketch);
+                const Handle(Graphic3d_Camera)& camera = m_impl->view->Camera();
+                const gp_Pnt origin(sketch->plane.origin.x, sketch->plane.origin.y,
+                                    sketch->plane.origin.z);
+                const gp_Vec back = gp_Vec(camera->Direction()).Reversed() * camera->Distance();
+                camera->SetEyeAndCenter(origin.Translated(back), origin);
+                camera->SetScale(200.0);
+            } else {
+                m_impl->view->FitAll(bounds, 0.12, false);
+            }
+        } else {
+            m_impl->view->FitAll(0.05, false);
+        }
         m_impl->view->Invalidate();
     }
 
@@ -1253,11 +1822,34 @@ void ViewportWidget::paintGL() {
         m_impl->lastDetected = detected;
         update();
     }
+    if (const int plane = m_impl->detectedPickPlane(); plane != m_impl->hoveredPlane) {
+        m_impl->hoveredPlane = plane;
+        // Told once painting is over: whoever listens may want to change what is on screen.
+        QMetaObject::invokeMethod(
+            this,
+            [this, plane] {
+                if (m_impl->planePicking && m_impl->hoveredPlane == plane) {
+                    if (plane >= 0) {
+                        setCursor(Qt::PointingHandCursor);
+                    } else {
+                        unsetCursor();
+                    }
+                    m_impl->showHoveredPlane(plane);
+                    emit planeHovered(plane);
+                }
+            },
+            Qt::QueuedConnection);
+    }
 
     // And restore what Qt expects, or it draws text and other textures corrupted.
     gl->glPixelStorei(GL_PACK_ALIGNMENT, 4);
     gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     gl->glActiveTexture(GL_TEXTURE0);
+
+    if (m_impl->sketching()) {
+        // The sketch is drawn over this frame, and has to follow the camera.
+        m_impl->editor->overlay()->update();
+    }
 }
 
 void ViewportWidget::mousePressEvent(QMouseEvent* event) {
@@ -1271,6 +1863,43 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
         m_impl->cubeDragging = false;
         m_impl->cubePressPosition = event->position();
         m_impl->cubePressModifiers = event->modifiers();
+        return;
+    }
+    if (m_impl->planePicking && event->button() == Qt::LeftButton) {
+        if (const auto plane = pickPlaneAt(event->position().toPoint())) {
+            // A plane is being chosen, and this is one. OCCT is not to select anything.
+            m_impl->pressedPlane = static_cast<int>(*plane);
+            return;
+        }
+    }
+    if (m_impl->sketching() && event->button() == Qt::LeftButton) {
+        if (m_impl->editor->tool() == SketchTool::Project) {
+            // What of a body is under the pointer goes into the sketch: a corner if there is
+            // one there, which is what was aimed at where edges meet, and otherwise an edge.
+            const std::vector<SelectedItem> under = itemsAt(event->position().toPoint());
+            for (const SelectedItem::Kind wanted :
+                 {SelectedItem::Kind::Vertex, SelectedItem::Kind::Edge}) {
+                for (const SelectedItem& item : under) {
+                    const document::Body* body = m_impl->document->findBody(item.body);
+                    if (body == nullptr || item.kind != wanted) {
+                        continue;
+                    }
+                    try {
+                        m_impl->editor->projectShape(kernel::subShape(
+                            body->shape,
+                            wanted == SelectedItem::Kind::Edge ? kernel::SubShapeKind::Edge
+                                                               : kernel::SubShapeKind::Vertex,
+                            item.index));
+                        return;
+                    } catch (const std::out_of_range&) {
+                        // The body changed under the pointer. Try what lies behind.
+                    }
+                }
+            }
+            m_impl->editor->projectShape(kernel::Shape());
+            return;
+        }
+        m_impl->editor->mousePress(event->position(), event->modifiers());
         return;
     }
     if (m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(event->position()),
@@ -1298,6 +1927,18 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
         m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(m_impl->cubePressPosition),
                                    Aspect_VKeyMouse_LeftButton,
                                    toOcctModifiers(m_impl->cubePressModifiers), false);
+    } else if (m_impl->pressedPlane >= 0 && event->button() == Qt::LeftButton) {
+        // Chosen if the button comes up on the patch it went down on.
+        const int pressed = m_impl->pressedPlane;
+        m_impl->pressedPlane = -1;
+        const auto plane = pickPlaneAt(event->position().toPoint());
+        if (plane.has_value() && static_cast<int>(*plane) == pressed) {
+            emit planePicked(*plane);
+        }
+        return;
+    } else if (m_impl->sketching() && event->button() == Qt::LeftButton) {
+        m_impl->editor->mouseRelease(event->position(), event->modifiers());
+        return;
     }
     if (m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(event->position()),
                                    toOcctButtons(event->buttons()),
@@ -1329,9 +1970,19 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
         update();
         return;
     }
+    Qt::MouseButtons buttons = event->buttons();
+    if (m_impl->sketching()) {
+        m_impl->editor->mouseMove(event->position(), buttons, event->modifiers());
+        // OCCT never heard of the left button going down, and is not to act on it.
+        buttons.setFlag(Qt::LeftButton, false);
+    }
+    if (m_impl->pressedPlane >= 0) {
+        // Nor of a press on a plane that is being chosen.
+        buttons.setFlag(Qt::LeftButton, false);
+    }
     if (m_impl->UpdateMousePosition(m_impl->toFramebufferPixels(event->position()),
-                                    toOcctButtons(event->buttons()),
-                                    toOcctModifiers(event->modifiers()), false)) {
+                                    toOcctButtons(buttons), toOcctModifiers(event->modifiers()),
+                                    false)) {
         update();
     }
 }
@@ -1341,8 +1992,31 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event) {
         fitAll();
         return;
     }
+    if (event->button() == Qt::LeftButton && m_impl->canRender() && !m_impl->isOverViewCube()) {
+        if (m_impl->sketching()) {
+            m_impl->editor->mouseDoubleClick(event->position(), event->modifiers());
+            return;
+        }
+        const std::vector<SelectedItem> under = itemsAt(event->position().toPoint());
+        if (!under.empty()) {
+            emit itemActivated(under.front());
+        }
+    }
     // The second press of a double-click is still a press.
     mousePressEvent(event);
+}
+
+void ViewportWidget::keyPressEvent(QKeyEvent* event) {
+    if (m_impl->sketching() && m_impl->editor->keyPress(event)) {
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::keyPressEvent(event);
+}
+
+void ViewportWidget::resizeEvent(QResizeEvent* event) {
+    QOpenGLWidget::resizeEvent(event);
+    m_impl->editor->overlay()->setGeometry(rect());
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* event) {

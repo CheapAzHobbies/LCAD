@@ -202,10 +202,10 @@ void ApplicationTest::windowHasItsFiveRegions() {
     for (const QAction* menu : window.mainMenu()->actions()) {
         menus << menu->text().remove(QLatin1Char('&'));
     }
-    QCOMPARE(menus,
-             (QStringList{QStringLiteral("File"), QStringLiteral("Edit"), QStringLiteral("Create"),
-                          QStringLiteral("Select"), QStringLiteral("View"),
-                          QStringLiteral("Window"), QStringLiteral("Help")}));
+    QCOMPARE(menus, (QStringList{QStringLiteral("File"), QStringLiteral("Edit"),
+                                 QStringLiteral("Create"), QStringLiteral("Sketch"),
+                                 QStringLiteral("Select"), QStringLiteral("View"),
+                                 QStringLiteral("Window"), QStringLiteral("Help")}));
     QList<QAction*> quickActions;
     for (const QToolButton* button :
          topBar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
@@ -574,8 +574,11 @@ void ApplicationTest::browserListsBodiesAndEditsThem() {
     QCOMPARE(tree->topLevelItemCount(), 1);
     QTreeWidgetItem* root = tree->topLevelItem(0);
     QCOMPARE(root->text(0), QStringLiteral("Untitled"));
-    QCOMPARE(root->childCount(), 2);
+    QCOMPARE(root->childCount(), 3);
     QCOMPARE(root->child(0)->text(0), QStringLiteral("Origin"));
+    // The entry for sketches is not shown while the document has none.
+    QCOMPARE(root->child(2)->text(0), QStringLiteral("Sketches"));
+    QVERIFY(root->child(2)->isHidden());
     QTreeWidgetItem* group = root->child(1);
     QCOMPARE(group->text(0), QStringLiteral("Bodies"));
     QCOMPARE(group->childCount(), 2);

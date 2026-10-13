@@ -31,10 +31,10 @@ cmake --preset asan && cmake --build --preset asan && ctest --preset asan    # s
 
 | Kind | Framework | Label | Needs a display | Covers today |
 |---|---|---|---|---|
-| Unit | Catch2 | `unit` | No | `core`: the log. `kernel`: primitives, measurement, moving, sub-shapes, serialization, errors, message routing. `document`: the model, undo, transactions, the file format |
+| Unit | Catch2 | `unit` | No | `core`: the log. `kernel`: primitives, measurement, moving, sub-shapes, serialization, errors, message routing, planes and projection onto them. `sketch`: geometry, every constraint, the solver's states, dragging, closed outlines, and the sketch tools. `document`: the model, undo, transactions, the file format, sketches as shapes |
 | Save and reopen | Catch2 | `unit` | No | A reopened document measures the same as the one saved; damaged, foreign, and newer files are refused |
 | Reference models | Catch2 | `unit` | No | The documents in `tests/models/` open and measure correctly, whichever OCCT wrote them |
-| Interface | Qt Test | `gui` | A virtual one | Three programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts |
+| Interface | Qt Test | `gui` | A virtual one | Five programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen |
 | Sanitizers | All of the above, built with ASan and UBSan | all | A virtual one | Memory errors, leaks, undefined behavior |
 | Package | A shell script, in CI | | A virtual one | The AppImage starts on another distribution and draws a document |
 
@@ -42,7 +42,6 @@ Planned, each when the code it tests arrives:
 
 | Kind | Phase | What it checks |
 |---|---|---|
-| Solver | 2 | Constraint systems with known solutions; under-, fully, and overconstrained states |
 | Recompute | 3 | Edit an early feature or parameter, then measure the result |
 | Migration | With the first format change | Every older format version still opens |
 | Round trip | 4 | Export to STEP, import again, compare measurements |
@@ -62,6 +61,39 @@ Phase 1b's acceptance test is about the interface itself, and is in
 the search under its own name; no two commands share a shortcut; the window's layout, theme, and
 view settings come back after a restart; and at three window sizes, in both themes and at both
 display scales, no control overlaps another or is cut off.
+
+Phase 2's is "create a fully constrained rectangle, change its dimensions, and verify the
+geometry updates". It exists three times, each closer to the user than the one before:
+
+- `tests/sketch/SolverTest.cpp` builds the rectangle from lines and constraints, and checks the
+  solver's count of freedoms after each one, down to zero.
+- `tests/gui/SketchViewTest.cpp` draws it in the 3D view with the rectangle tool, dimensions it
+  with the dimension tool by clicking and typing into the field that opens in the view, then
+  double-clicks a value and types another.
+- `tests/gui/SketchInterfaceTest.cpp` does the same through the window's commands, starting
+  from New Sketch, and goes on to finish the sketch, save, close the window, open the file in a
+  new one, open the sketch from the browser, and change a dimension there.
+
+All three end by measuring the sketch: where its corners are, and the area its outline
+encloses. None of them judges a picture.
+
+## Sketch assertions
+
+A sketch test asserts on three things, in this order of preference:
+
+- **Measurements of the geometry**: positions, lengths, radii, the area of a closed outline.
+  Positions that came from a click are compared to within a pixel's worth of the view; positions
+  that came from a typed value or a constraint are compared to a millionth of a millimeter.
+- **What the solver reports**: the number of degrees of freedom, and which curves are free. A
+  constraint that is "met" but takes away the wrong number of freedoms is a bug the geometry
+  alone does not show. The tangent constraint had exactly that fault.
+- **What was drawn**, only for what a picture is the specification of: that geometry which can
+  still move is in one color and fully constrained geometry in another. The sketch is drawn on
+  a widget of its own, which the tests read back and probe at the places where the geometry is.
+
+Refusals are tested as much as successes: a redundant or conflicting constraint, an impossible
+dimension value, and text that is not a number each have to leave the sketch exactly as it was,
+add no undo step, and say why.
 
 ## Geometry assertions
 
@@ -113,7 +145,7 @@ direction, where a model point lands on screen, and above all what a click selec
 then measured with the kernel. A test that clicks the middle of a box's top face asserts that
 the selected face has an area of 6000 mm², not that some pixels turned blue.
 
-Seven lessons are built into them:
+Nine lessons are built into them:
 
 - **Look at the screen, not only at the widget.** The first viewport rendered correctly into its
   own framebuffer while the window on screen was blank. `ApplicationTest` therefore reads the
@@ -133,6 +165,16 @@ Seven lessons are built into them:
 - **Fonts are part of the environment.** OCCT warns when the font it wants for the labels in
   the 3D view is not installed and it has to substitute. Bare containers have almost no fonts,
   so the CI jobs for Arch and Fedora install DejaVu, as a desktop would have.
+- **A projection rounded to whole pixels is not good enough to draw on.** OCCT's own function
+  for "where is this point on screen" answers in whole pixels. A sketch drawn from that sat up
+  to half a pixel off the view it was drawn over, and a click mapped back to the sketch landed a
+  third of a millimeter from where it was aimed. Positions now go through the camera's own
+  matrices in both directions, and a test maps points to the screen and back and expects them
+  to within a millionth of a millimeter, on a slanted plane and after the view is turned.
+- **A window that does not have the keyboard gets no shortcuts.** Under a virtual display with
+  no window manager, a test window is shown but not active, and a key sent to it reaches the
+  widget but not the shortcut that key is bound to. Tests that press a shortcut activate the
+  window first and wait until it is.
 - **A clean developer machine hides missing dependencies.** Both Ubuntu builds failed in CI on
   packages that happened to be installed locally. CI installs into a bare container using the
   same script the build instructions give.

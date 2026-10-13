@@ -6,10 +6,11 @@ add_library(lcad_document STATIC
     src/Archive.cpp
     src/Document.cpp
     src/File.cpp
-    src/Migration.cpp)
+    src/Migration.cpp
+    src/SketchShapes.cpp)
 add_library(lcad::document ALIAS lcad_document)
 target_include_directories(lcad_document PUBLIC include)
 target_link_libraries(lcad_document
-    PUBLIC lcad::kernel
+    PUBLIC lcad::kernel lcad::sketch
     PRIVATE lcad::core lcad_libzip lcad_json)
 lcad_target_defaults(lcad_document)

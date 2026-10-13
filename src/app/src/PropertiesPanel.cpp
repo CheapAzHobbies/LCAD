@@ -2,6 +2,8 @@
 
 #include <lcad/app/PropertiesPanel.h>
 
+#include <lcad/app/SketchPanel.h>
+
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/SubShapes.h>
 
@@ -143,6 +145,25 @@ void PropertiesPanel::refresh(document::Document* document,
         m_heading->setText(tr("%1 items selected").arg(total));
         return;
     }
+    if (bodies.empty() && subShapes.front().kind == SelectedItem::Kind::Sketch) {
+        const document::SketchItem* sketch = document->findSketch(subShapes.front().body);
+        if (sketch == nullptr) {
+            m_heading->setText(tr("Nothing selected"));
+            return;
+        }
+        m_heading->setText(QString::fromStdString(sketch->name));
+        const sketch::Sketch& geometry = sketch->geometry;
+        int curves = 0;
+        for (const sketch::Entity& entity : geometry.entities()) {
+            curves += entity.kind != sketch::EntityKind::Point ? 1 : 0;
+        }
+        addRow(tr("State"), describeSketchState(geometry, geometry.state()));
+        addRow(tr("Curves"), QString::number(curves));
+        addRow(tr("Constraints"), QString::number(geometry.constraints().size()));
+        addRow(tr("Closed outlines"), QString::number(geometry.profiles().size()));
+        addRow(tr("Shown"), sketch->visible ? tr("Yes") : tr("No"));
+        return;
+    }
     if (body == nullptr) {
         m_heading->setText(tr("Nothing selected"));
         return;
@@ -223,6 +244,7 @@ void PropertiesPanel::refresh(document::Document* document,
             break;
         }
         case SelectedItem::Kind::Body:
+        case SelectedItem::Kind::Sketch:
             break;
         }
     } catch (const std::out_of_range&) {

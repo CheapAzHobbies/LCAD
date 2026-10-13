@@ -2,6 +2,7 @@
 
 #include <lcad/document/Document.h>
 #include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Primitives.h>
 
 #include <Tolerances.h>
@@ -9,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -417,5 +419,157 @@ TEST_CASE("A document rebuilt from saved state is clean, and bad state is refuse
         empty.bodies.push_back(Body{ObjectId{1}, "A", true, lcad::kernel::Shape()});
         empty.nextId = 2;
         CHECK_THROWS_AS(Document(std::move(empty)), std::invalid_argument);
+    }
+}
+
+TEST_CASE("Sketches are objects of the document, with undoable edits", "[document][sketch]") {
+    Document document;
+    const ObjectId box = document.addBody("Box", makeBox(1.0, 1.0, 1.0));
+    std::vector<Change::Kind> heard;
+    document.addListener([&](const Change& change) {
+        if (change.kind != Change::Kind::HistoryChanged) {
+            heard.push_back(change.kind);
+        }
+    });
+
+    CHECK(document.uniqueSketchName("Sketch") == "Sketch 1");
+    const ObjectId first = document.addSketch("Sketch 1", lcad::kernel::planeXY());
+    const ObjectId second = document.addSketch("Sketch 2", lcad::kernel::planeXZ());
+    CHECK(document.uniqueSketchName("Sketch") == "Sketch 3");
+
+    // Bodies and sketches share one space of ids.
+    CHECK(first != box);
+    CHECK(second != first);
+    REQUIRE(document.sketches().size() == 2);
+    REQUIRE(document.findSketch(first) != nullptr);
+    CHECK(document.findSketch(box) == nullptr);
+    CHECK(document.findBody(first) == nullptr);
+    CHECK(document.findSketch(second)->plane.normal.y == -1.0);
+    // A new sketch holds its origin point and nothing else.
+    CHECK(document.findSketch(first)->geometry.entities().size() == 1);
+    CHECK(document.undoLabel() == "Create Sketch");
+
+    // Drawing replaces the sketch's geometry, one named step at a time.
+    lcad::sketch::Sketch geometry = document.findSketch(first)->geometry;
+    const lcad::sketch::EntityId line = geometry.addLine({0.0, 0.0}, {10.0, 0.0});
+    document.setSketchGeometry(first, geometry, "Line");
+    geometry.addConstraint(lcad::sketch::ConstraintKind::Horizontal, line);
+    document.setSketchGeometry(first, geometry, "Horizontal");
+    CHECK(document.findSketch(first)->geometry.constraints().size() == 1);
+    CHECK(document.undoLabel() == "Horizontal");
+
+    document.undo();
+    CHECK(document.findSketch(first)->geometry.constraints().empty());
+    CHECK(document.findSketch(first)->geometry.find(line) != nullptr);
+    CHECK(document.undoLabel() == "Line");
+    document.undo();
+    CHECK(document.findSketch(first)->geometry.find(line) == nullptr);
+    document.redo();
+    document.redo();
+    CHECK(document.findSketch(first)->geometry.constraints().size() == 1);
+
+    document.renameSketch(first, "Outline");
+    document.setSketchVisible(first, false);
+    CHECK(document.findSketch(first)->name == "Outline");
+    CHECK_FALSE(document.findSketch(first)->visible);
+
+    // Removing and undoing puts it back in its place, with everything in it.
+    document.removeSketch(first);
+    CHECK(document.findSketch(first) == nullptr);
+    CHECK(document.sketches().size() == 1);
+    document.undo();
+    REQUIRE(document.sketches().size() == 2);
+    CHECK(document.sketches()[0].id == first);
+    CHECK(document.sketches()[0].name == "Outline");
+    CHECK(document.sketches()[0].geometry.constraints().size() == 1);
+
+    using Kind = Change::Kind;
+    CHECK(heard == std::vector<Kind>{Kind::SketchAdded, Kind::SketchAdded,
+                                     Kind::SketchGeometryChanged, Kind::SketchGeometryChanged,
+                                     Kind::SketchGeometryChanged, Kind::SketchGeometryChanged,
+                                     Kind::SketchGeometryChanged, Kind::SketchGeometryChanged,
+                                     Kind::SketchRenamed, Kind::SketchVisibilityChanged,
+                                     Kind::SketchRemoved, Kind::SketchAdded});
+
+    CHECK_THROWS_AS(document.addSketch("  ", lcad::kernel::planeXY()), std::invalid_argument);
+    CHECK_THROWS_AS(document.removeSketch(box), std::invalid_argument);
+    CHECK_THROWS_AS(document.renameSketch(first, ""), std::invalid_argument);
+    CHECK_THROWS_AS(document.setSketchGeometry(box, geometry, "Line"), std::invalid_argument);
+    CHECK_THROWS_AS(document.setSketchVisible(ObjectId{999}, true), std::invalid_argument);
+}
+
+TEST_CASE("A sketch edit inside an abandoned transaction is taken back", "[document][sketch]") {
+    Document document;
+    const ObjectId sketch = document.addSketch("Sketch 1", lcad::kernel::planeXY());
+    document.markSaved();
+    {
+        Transaction transaction(document, "Rectangle");
+        lcad::sketch::Sketch geometry = document.findSketch(sketch)->geometry;
+        geometry.addLine({0.0, 0.0}, {10.0, 0.0});
+        document.setSketchGeometry(sketch, geometry, "Line");
+        geometry.addLine({10.0, 0.0}, {10.0, 5.0});
+        document.setSketchGeometry(sketch, geometry, "Line");
+    }
+    CHECK(document.findSketch(sketch)->geometry.entities().size() == 1);
+    CHECK_FALSE(document.isModified());
+}
+
+TEST_CASE("Many sketch edits in one transaction are one undo step", "[document][sketch]") {
+    // What dragging does: the sketch is replaced at every pointer movement.
+    Document document;
+    const ObjectId sketch = document.addSketch("Sketch 1", lcad::kernel::planeXY());
+    lcad::sketch::Sketch geometry = document.findSketch(sketch)->geometry;
+    const auto point = geometry.addPoint({1.0, 1.0});
+    document.setSketchGeometry(sketch, geometry, "Point");
+
+    std::vector<Change::Kind> heard;
+    document.addListener([&heard](const Change& change) { heard.push_back(change.kind); });
+    {
+        Transaction transaction(document, "Drag");
+        for (int i = 0; i < 50; ++i) {
+            geometry.dragBy(point, 1.0, 0.5);
+            document.setSketchGeometry(sketch, geometry, "Drag");
+        }
+        transaction.commit();
+    }
+    // Every position on the way was shown to the listeners.
+    CHECK(std::count(heard.begin(), heard.end(), Change::Kind::SketchGeometryChanged) == 50);
+    CHECK(document.findSketch(sketch)->geometry.position(point).x == 51.0);
+    CHECK(document.undoLabel() == "Drag");
+
+    document.undo();
+    CHECK(document.findSketch(sketch)->geometry.position(point).x == 1.0);
+    CHECK(document.findSketch(sketch)->geometry.position(point).y == 1.0);
+    document.redo();
+    CHECK(document.findSketch(sketch)->geometry.position(point).x == 51.0);
+    CHECK(document.findSketch(sketch)->geometry.position(point).y == 26.0);
+    document.undo();
+    document.undo();
+    CHECK(document.findSketch(sketch)->geometry.entities().size() == 1);
+}
+
+TEST_CASE("Saved state with sketches is checked like the rest", "[document][sketch]") {
+    DocumentState state;
+    state.bodies.push_back(Body{ObjectId{1}, "Box", true, makeBox(1.0, 1.0, 1.0)});
+    state.sketches.push_back(
+        SketchItem{ObjectId{2}, "Sketch 1", true, lcad::kernel::planeXY(), {}});
+    state.nextId = 3;
+
+    SECTION("consistent") {
+        const Document document(std::move(state));
+        CHECK(document.sketches().size() == 1);
+        CHECK_FALSE(document.isModified());
+    }
+    SECTION("a sketch with the id of a body") {
+        state.sketches[0].id = ObjectId{1};
+        CHECK_THROWS_AS(Document(std::move(state)), std::invalid_argument);
+    }
+    SECTION("a sketch without a name") {
+        state.sketches[0].name = "";
+        CHECK_THROWS_AS(Document(std::move(state)), std::invalid_argument);
+    }
+    SECTION("a sketch id not handed out yet") {
+        state.sketches[0].id = ObjectId{8};
+        CHECK_THROWS_AS(Document(std::move(state)), std::invalid_argument);
     }
 }

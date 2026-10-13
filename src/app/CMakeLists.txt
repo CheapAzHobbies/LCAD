@@ -11,6 +11,7 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/PrimitivePanel.h
     include/lcad/app/PropertiesPanel.h
     include/lcad/app/ShortcutsDialog.h
+    include/lcad/app/SketchPanel.h
     include/lcad/app/Theme.h
     src/Application.cpp
     src/BrowserPanel.cpp
@@ -21,6 +22,7 @@ qt_add_library(lcad_app STATIC
     src/PrimitivePanel.cpp
     src/PropertiesPanel.cpp
     src/ShortcutsDialog.cpp
+    src/SketchPanel.cpp
     src/Theme.cpp)
 add_library(lcad::app ALIAS lcad_app)
 target_include_directories(lcad_app PUBLIC include)

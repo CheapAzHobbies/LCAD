@@ -5,19 +5,27 @@ the reasons for each. The product requirements are in [PROJECT_BRIEF.md](PROJECT
 
 ## What exists today
 
-Phases 0 and 1 built the desktop foundation, and each decision below rests on running code:
+Phases 0 to 2 built the desktop foundation and the sketcher, and each decision below rests on
+running code:
 
 - `core` holds the log and LCAD's version.
 - `kernel` makes boxes, cylinders, spheres, cones, and tori, moves shapes, measures them (volume,
   area, length, center of mass, bounding box, topology counts, validity), numbers their faces,
   edges, and vertices, and writes and reads them as bytes.
-- `document` holds bodies with an undo history, and saves and opens `.lcad` files.
+  It also has planes with a coordinate system on them, the plane of a flat face, and what an
+  edge becomes when it is dropped onto a plane.
+- `sketch` holds 2D sketches: points, lines, circles, and arcs, the constraints between them,
+  the solver that moves the geometry to meet the constraints, the finder of closed outlines,
+  and what the sketch tools do (trim, extend, offset, mirror, and so on) as plain functions.
+- `document` holds bodies and sketches with an undo history, and saves and opens `.lcad` files.
 - `viewport` shows a document in OCCT's viewer inside a Qt widget, with camera navigation, a
-  view cube, and selection of bodies, faces, edges, and vertices.
+  view cube, and selection of bodies, faces, edges, vertices, and sketches. Its sketch editor
+  opens one sketch for editing in place.
 - `app` is the main window and everything in it: the command registry and search, the theme
-  and icons, document tabs, the toolbar, browser, properties panel, and timeline strip.
+  and icons, document tabs, the toolbars, browser, properties and sketch panels, and timeline
+  strip.
 
-Sketches, features, and everything after them are the plan the later phases build to.
+Features, and everything after them, are the plan the later phases build to.
 
 ## Modules
 
@@ -36,6 +44,7 @@ flowchart TD
     app --> document
     viewport --> document
     viewport --> kernel
+    viewport --> sketch
     document --> sketch
     document --> kernel
     kernel --> core
@@ -49,10 +58,10 @@ flowchart TD
 |---|---|---|
 | `core` | What every module may use: the log and LCAD's version. | In place |
 | `kernel` | Exact B-rep geometry: shapes, modeling operations, measurement, validity, tessellation, import and export. A thin layer over OCCT. | Primitives, measurement, and serialization in place |
-| `sketch` | Sketch entities, constraints, and the adapter to the constraint solver. | Phase 2 |
-| `document` | The model: components, bodies, sketches, parameters, and the feature history. Recompute, transactions and undo, saving and loading. | Bodies, undo, and files in place; features in Phase 3 |
-| `viewport` | Displays the document's geometry and turns pointer input into picks and camera motion. Wraps OCCT's viewer in a Qt widget. | In place |
-| `app` | Main window, browser, timeline, toolbars, the command system, and interactive tools. | Window and primitive commands in place |
+| `sketch` | Sketch entities, constraints, the constraint solver, closed outlines, and the geometry of the sketch tools. No Qt and no OCCT. | In place; ellipse and spline to come |
+| `document` | The model: components, bodies, sketches, parameters, and the feature history. Recompute, transactions and undo, saving and loading. | Bodies, sketches, undo, and files in place; features in Phase 3 |
+| `viewport` | Displays the document's geometry and turns pointer input into picks and camera motion. Wraps OCCT's viewer in a Qt widget. Edits a sketch in place. | In place |
+| `app` | Main window, browser, timeline, toolbars, the command system, and interactive tools. | Window, primitive commands, and sketch commands in place |
 
 Drawings, CAM, and scripting become modules of their own when their phases start. Each sits beside
 `app` and uses `document` and `kernel` the same way.
@@ -227,6 +236,49 @@ OCCT installs cannot be used as distributions ship it: on Ubuntu 24.04 its targe
 on Ubuntu 26.04 it refuses to load unless OCCT's separately packaged VTK bridge is installed.
 Both failures showed up in CI on clean installs and not on a developer machine that happened to
 have the extra packages.
+
+### 9. Sketches
+
+A sketch is a value: copying one copies its geometry and constraints. A tool makes its change on
+a copy and hands the copy to the document, which keeps the one before for undo. Nothing edits a
+sketch behind the document's back, and a drag is one undo step however many positions the
+pointer went through.
+
+Every position in a sketch is a point entity. A line owns two, a circle one, an arc three, and
+constraints refer to points and curves alike by ids that are never reused. Reference geometry
+(the origin, and what Project brings in from a body) is marked as fixed and left alone by the
+solver.
+
+**The solver** is LCAD's own; [DEPENDENCIES.md](DEPENDENCIES.md) says why. It writes each
+constraint as one or two equations, differentiates them exactly, and takes Newton steps of the
+smallest size that satisfies them, so geometry that need not move stays put. The same matrix of
+derivatives answers what the interface asks: its rank gives the degrees of freedom, a row that
+adds nothing to the rows before it is a redundant constraint, a constraint that cannot be met
+together with those added before it is a conflict, and a curve is free if some motion the
+constraints allow moves it. Where an equation has two mirror-image solutions (which side of a
+line, inside or outside a circle, which way an angle turns) the one the geometry is in now is
+kept, and angles are compared as angles and not through their sine, so a large change in a
+dimension does not flip the sketch.
+
+One formulation was got wrong first and is worth recording. "A line is tangent to a circle"
+is naturally "the center is as far from the line as the radius". Where the line also ends on
+the circle, as in every rounded corner and slot, that distance is at its largest, so the
+equation cannot tell a tangent line from one turned slightly about its end: the solver counted
+a freedom that was not there and met the constraint only to the square root of its tolerance.
+Such a pair is now written as "the line is a quarter turn from the radius at that end".
+
+**Drawing a sketch.** Among the bodies, a sketch is ordinary OCCT wire geometry: it sits in
+space, is hidden by what is in front of it, and is picked as a whole. While it is open for
+editing, LCAD draws it itself, on a transparent widget that lies over the 3D view, from the
+camera's own projection. That gives the sketch the interface's fonts and colors, exact control
+over what a click means (an end before the line it ends, a value before the geometry under
+it), and no changes to OCCT's OpenGL state. The price is that an open sketch is drawn over the
+model and is not hidden by bodies in front of it.
+
+**Where the tools live.** What a tool does to a sketch is a function in `sketch`, tested
+without a window. When and where it does it (which click, what is under the pointer, what to
+snap to) is the sketch editor in `viewport`. Which tool is active, and the buttons and keys
+for it, are commands in `app`, defined once in the registry like every other command.
 
 ### 11. Stable references (open)
 

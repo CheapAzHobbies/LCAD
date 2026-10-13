@@ -43,7 +43,7 @@ struct LoadedDocument {
     /// The format version the file was in. Smaller than currentFormatVersion when the content
     /// was converted on the way in; the file itself is never changed by loading.
     int formatVersion = 0;
-    /// The program that wrote the file, for example "LCAD 0.0.2".
+    /// The program that wrote the file, for example "LCAD 0.0.1".
     std::string writtenBy;
     /// Problems that did not prevent loading, as sentences for the user.
     std::vector<std::string> warnings;

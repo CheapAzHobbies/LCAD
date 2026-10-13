@@ -33,3 +33,14 @@ target_link_libraries(lcad_libzip INTERFACE "${LCAD_LIBZIP_LIBRARY}")
 
 add_library(lcad_json INTERFACE)
 target_include_directories(lcad_json SYSTEM INTERFACE "${LCAD_JSON_INCLUDE_DIR}")
+
+# Eigen: linear algebra for the sketch solver. Header only.
+find_path(LCAD_EIGEN_INCLUDE_DIR NAMES Eigen/Dense PATH_SUFFIXES eigen3
+    DOC "Directory with Eigen's headers")
+mark_as_advanced(LCAD_EIGEN_INCLUDE_DIR)
+if(NOT LCAD_EIGEN_INCLUDE_DIR)
+    message(FATAL_ERROR "Could not find Eigen (Eigen/Dense). Run scripts/install-deps.sh.")
+endif()
+message(STATUS "Found Eigen: ${LCAD_EIGEN_INCLUDE_DIR}")
+add_library(lcad_eigen INTERFACE)
+target_include_directories(lcad_eigen SYSTEM INTERFACE "${LCAD_EIGEN_INCLUDE_DIR}")

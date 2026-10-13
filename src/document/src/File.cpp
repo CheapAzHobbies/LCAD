@@ -185,6 +185,213 @@ std::string describeWriter(const json& manifest) {
     return version.empty() ? application : application + " " + version;
 }
 
+// A list of exactly `count` numbers.
+std::vector<double> numbersMember(const json& object, const char* key, std::size_t count,
+                                  std::string_view where, const std::filesystem::path& path) {
+    const json& value = member(object, key, where, path);
+    if (!value.is_array() || value.size() != count) {
+        damaged(path, "\"" + std::string(key) + "\" in " + std::string(where) +
+                          " is not a list of " + std::to_string(count) + " numbers");
+    }
+    std::vector<double> numbers;
+    for (const json& entry : value) {
+        if (!entry.is_number()) {
+            damaged(path, "\"" + std::string(key) + "\" in " + std::string(where) +
+                              " holds something that is not a number");
+        }
+        numbers.push_back(entry.get<double>());
+    }
+    return numbers;
+}
+
+double numberMember(const json& object, const char* key, std::string_view where,
+                    const std::filesystem::path& path) {
+    const json& value = member(object, key, where, path);
+    if (!value.is_number()) {
+        damaged(path, "\"" + std::string(key) + "\" in " + std::string(where) + " is not a number");
+    }
+    return value.get<double>();
+}
+
+const char* entityKindName(sketch::EntityKind kind) {
+    switch (kind) {
+    case sketch::EntityKind::Point:
+        return "point";
+    case sketch::EntityKind::Line:
+        return "line";
+    case sketch::EntityKind::Circle:
+        return "circle";
+    case sketch::EntityKind::Arc:
+        return "arc";
+    }
+    return "point";
+}
+
+nlohmann::ordered_json writeSketch(const SketchItem& item) {
+    using nlohmann::ordered_json;
+    ordered_json out;
+    out["id"] = item.id.value;
+    out["name"] = item.name;
+    out["visible"] = item.visible;
+    out["plane"] =
+        ordered_json{{"origin", {item.plane.origin.x, item.plane.origin.y, item.plane.origin.z}},
+                     {"normal", {item.plane.normal.x, item.plane.normal.y, item.plane.normal.z}},
+                     {"xDirection",
+                      {item.plane.xDirection.x, item.plane.xDirection.y, item.plane.xDirection.z}}};
+    out["nextEntityId"] = item.geometry.nextEntityId();
+    out["nextConstraintId"] = item.geometry.nextConstraintId();
+    out["entities"] = ordered_json::array();
+    for (const sketch::Entity& entity : item.geometry.entities()) {
+        ordered_json e;
+        e["id"] = entity.id;
+        e["kind"] = entityKindName(entity.kind);
+        switch (entity.kind) {
+        case sketch::EntityKind::Point:
+            e["x"] = entity.x;
+            e["y"] = entity.y;
+            e["owner"] = entity.owner;
+            break;
+        case sketch::EntityKind::Line:
+            e["start"] = entity.start;
+            e["end"] = entity.end;
+            break;
+        case sketch::EntityKind::Circle:
+            e["center"] = entity.center;
+            e["radius"] = entity.radius;
+            break;
+        case sketch::EntityKind::Arc:
+            e["center"] = entity.center;
+            e["start"] = entity.start;
+            e["end"] = entity.end;
+            break;
+        }
+        e["construction"] = entity.construction;
+        e["fixed"] = entity.fixed;
+        out["entities"].push_back(std::move(e));
+    }
+    out["constraints"] = ordered_json::array();
+    for (const sketch::Constraint& constraint : item.geometry.constraints()) {
+        ordered_json c;
+        c["id"] = constraint.id;
+        c["kind"] = sketch::toString(constraint.kind);
+        c["entities"] = {constraint.first, constraint.second, constraint.third};
+        c["value"] = constraint.value;
+        c["value2"] = constraint.value2;
+        out["constraints"].push_back(std::move(c));
+    }
+    return out;
+}
+
+SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
+    if (!entry.is_object()) {
+        damaged(path, "an entry of \"sketches\" is not an object");
+    }
+    SketchItem item;
+    item.id = ObjectId{idMember(entry, "id", "a sketch", path)};
+    const std::string where = "sketch " + std::to_string(item.id.value);
+    item.name = stringMember(entry, "name", where, path);
+    item.visible = boolMember(entry, "visible", where, path);
+
+    const json& plane = objectMember(entry, "plane", where, path);
+    const std::vector<double> origin = numbersMember(plane, "origin", 3, where, path);
+    const std::vector<double> normal = numbersMember(plane, "normal", 3, where, path);
+    const std::vector<double> along = numbersMember(plane, "xDirection", 3, where, path);
+    try {
+        item.plane =
+            kernel::makePlane({origin[0], origin[1], origin[2]}, {normal[0], normal[1], normal[2]},
+                              {along[0], along[1], along[2]});
+    } catch (const std::invalid_argument&) {
+        damaged(path, "the plane of " + where + " is not a plane");
+    }
+
+    const auto smallId = [&](const json& object, const char* key, const std::string& in) {
+        const std::uint64_t value = idMember(object, key, in, path);
+        if (value > 0xFFFFFFFFULL) {
+            damaged(path, "\"" + std::string(key) + "\" in " + in + " is out of range");
+        }
+        return static_cast<std::uint32_t>(value);
+    };
+
+    std::vector<sketch::Entity> entities;
+    const json& entityList = member(entry, "entities", where, path);
+    if (!entityList.is_array()) {
+        damaged(path, "\"entities\" in " + where + " is not a list");
+    }
+    for (const json& e : entityList) {
+        if (!e.is_object()) {
+            damaged(path, "an entity of " + where + " is not an object");
+        }
+        sketch::Entity entity;
+        entity.id = smallId(e, "id", "an entity of " + where);
+        const std::string in = "entity " + std::to_string(entity.id) + " of " + where;
+        const std::string kind = stringMember(e, "kind", in, path);
+        if (kind == "point") {
+            entity.kind = sketch::EntityKind::Point;
+            entity.x = numberMember(e, "x", in, path);
+            entity.y = numberMember(e, "y", in, path);
+            entity.owner = smallId(e, "owner", in);
+        } else if (kind == "line") {
+            entity.kind = sketch::EntityKind::Line;
+            entity.start = smallId(e, "start", in);
+            entity.end = smallId(e, "end", in);
+        } else if (kind == "circle") {
+            entity.kind = sketch::EntityKind::Circle;
+            entity.center = smallId(e, "center", in);
+            entity.radius = numberMember(e, "radius", in, path);
+        } else if (kind == "arc") {
+            entity.kind = sketch::EntityKind::Arc;
+            entity.center = smallId(e, "center", in);
+            entity.start = smallId(e, "start", in);
+            entity.end = smallId(e, "end", in);
+        } else {
+            damaged(path, in + " is of the unknown kind \"" + kind + "\"");
+        }
+        entity.construction = boolMember(e, "construction", in, path);
+        entity.fixed = boolMember(e, "fixed", in, path);
+        entities.push_back(entity);
+    }
+
+    std::vector<sketch::Constraint> constraints;
+    const json& constraintList = member(entry, "constraints", where, path);
+    if (!constraintList.is_array()) {
+        damaged(path, "\"constraints\" in " + where + " is not a list");
+    }
+    for (const json& c : constraintList) {
+        if (!c.is_object()) {
+            damaged(path, "a constraint of " + where + " is not an object");
+        }
+        sketch::Constraint constraint;
+        constraint.id = smallId(c, "id", "a constraint of " + where);
+        const std::string in = "constraint " + std::to_string(constraint.id) + " of " + where;
+        const std::string kind = stringMember(c, "kind", in, path);
+        const auto known = sketch::constraintKindFromString(kind);
+        if (!known.has_value()) {
+            damaged(path, in + " is of the unknown kind \"" + kind + "\"");
+        }
+        constraint.kind = *known;
+        const json& on = member(c, "entities", in, path);
+        if (!on.is_array() || on.size() != 3 || !on[0].is_number_unsigned() ||
+            !on[1].is_number_unsigned() || !on[2].is_number_unsigned()) {
+            damaged(path, "\"entities\" in " + in + " is not a list of three ids");
+        }
+        constraint.first = on[0].get<std::uint32_t>();
+        constraint.second = on[1].get<std::uint32_t>();
+        constraint.third = on[2].get<std::uint32_t>();
+        constraint.value = numberMember(c, "value", in, path);
+        constraint.value2 = numberMember(c, "value2", in, path);
+        constraints.push_back(constraint);
+    }
+
+    try {
+        item.geometry = sketch::Sketch(std::move(entities), std::move(constraints),
+                                       smallId(entry, "nextEntityId", where),
+                                       smallId(entry, "nextConstraintId", where));
+    } catch (const std::invalid_argument& error) {
+        damaged(path, where + " does not hold together (" + error.what() + ")");
+    }
+    return item;
+}
+
 DocumentState interpret(const ArchiveContents& contents, const std::filesystem::path& path,
                         std::vector<std::string>& warnings) {
     const json& units = objectMember(contents.manifest, "units", manifestName, path);
@@ -232,6 +439,18 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
         }
         state.bodies.push_back(std::move(body));
     }
+
+    // Sketches were added to the format before its first release; a file without the list
+    // has none.
+    const auto sketches = contents.document.find("sketches");
+    if (sketches != contents.document.end()) {
+        if (!sketches->is_array()) {
+            damaged(path, "\"sketches\" in document.json is not a list");
+        }
+        for (const json& entry : *sketches) {
+            state.sketches.push_back(readSketch(entry, path));
+        }
+    }
     return state;
 }
 
@@ -268,6 +487,11 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
         entry["visible"] = body.visible;
         entry["geometry"] = ordered_json{{"file", file}, {"role", "source"}};
         model["bodies"].push_back(std::move(entry));
+    }
+
+    model["sketches"] = ordered_json::array();
+    for (const SketchItem& item : document.sketches()) {
+        model["sketches"].push_back(writeSketch(item));
     }
 
     std::vector<std::pair<std::string, std::string>> entries;

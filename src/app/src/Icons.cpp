@@ -75,6 +75,13 @@ void isoBox(const Ink& ink, bool tinted) {
     ink.line(12, 13, 12, 20.5);
 }
 
+// A filled dot: an end, a center, a point of a sketch.
+void node(const Ink& ink, qreal x, qreal y) {
+    QPainterPath dot;
+    dot.addEllipse(QPointF(x, y), 1.9, 1.9);
+    ink.p.fillPath(dot, ink.accent);
+}
+
 const QHash<QString, Drawing>& drawings() {
     static const QHash<QString, Drawing> table{
         // Documents
@@ -270,6 +277,184 @@ const QHash<QString, Drawing>& drawings() {
              i.p.setOpacity(0.35);
              i.fill({{12, 4}, {20, 8.5}, {20, 16}, {12, 20.5}, {4, 16}, {4, 8.5}});
              i.p.setOpacity(1.0);
+         }},
+        // Sketching
+        {QStringLiteral("sketch"),
+         [](const Ink& i) {
+             i.poly({{3.5, 19.5}, {8, 11.5}, {20.5, 11.5}, {16, 19.5}});
+             i.line(10, 15.5, 18, 4.5);
+             i.fill({{10, 15.5}, {10.6, 12.6}, {12.6, 14.1}});
+         }},
+        {QStringLiteral("finish"),
+         [](const Ink& i) { i.poly({{5, 12.5}, {10, 17.5}, {19.5, 6.5}}, false); }},
+        {QStringLiteral("line"),
+         [](const Ink& i) {
+             i.line(6, 18, 18, 6);
+             node(i, 6, 18);
+             node(i, 18, 6);
+         }},
+        {QStringLiteral("rectangle"),
+         [](const Ink& i) {
+             i.poly({{4.5, 7}, {19.5, 7}, {19.5, 17}, {4.5, 17}});
+             node(i, 4.5, 17);
+             node(i, 19.5, 7);
+         }},
+        {QStringLiteral("circle"),
+         [](const Ink& i) {
+             i.ellipse(12, 12, 7.5, 7.5);
+             node(i, 12, 12);
+         }},
+        {QStringLiteral("arc"),
+         [](const Ink& i) {
+             i.arc(6, 18.5, 12.5, 12.5, 0, 90);
+             node(i, 18.5, 18.5);
+             node(i, 6, 6);
+             node(i, 6, 18.5);
+         }},
+        {QStringLiteral("point"),
+         [](const Ink& i) {
+             i.line(12, 4.5, 12, 8.5);
+             i.line(12, 15.5, 12, 19.5);
+             i.line(4.5, 12, 8.5, 12);
+             i.line(15.5, 12, 19.5, 12);
+             node(i, 12, 12);
+         }},
+        {QStringLiteral("polygon"),
+         [](const Ink& i) {
+             i.poly(
+                 {{12, 3.5}, {19.4, 7.75}, {19.4, 16.25}, {12, 20.5}, {4.6, 16.25}, {4.6, 7.75}});
+         }},
+        {QStringLiteral("slot"),
+         [](const Ink& i) {
+             QPainterPath path;
+             path.addRoundedRect(QRectF(3.5, 8, 17, 8), 4, 4);
+             i.p.drawPath(path);
+         }},
+        {QStringLiteral("dimension"),
+         [](const Ink& i) {
+             i.line(5, 5, 5, 13);
+             i.line(19, 5, 19, 13);
+             i.line(5, 8, 19, 8);
+             i.poly({{8, 6}, {5.4, 8}, {8, 10}}, false);
+             i.poly({{16, 6}, {18.6, 8}, {16, 10}}, false);
+             i.line(5, 18.5, 19, 18.5);
+         }},
+        {QStringLiteral("trim"),
+         [](const Ink& i) {
+             i.line(8.5, 4.5, 8.5, 19.5);
+             i.line(15.5, 4.5, 15.5, 19.5);
+             i.line(3.5, 12, 8.5, 12);
+             i.line(15.5, 12, 20.5, 12);
+             i.p.setPen(QPen(i.accent, 1.6, Qt::SolidLine, Qt::RoundCap));
+             i.line(10.6, 10.6, 13.4, 13.4);
+             i.line(13.4, 10.6, 10.6, 13.4);
+         }},
+        {QStringLiteral("extend"),
+         [](const Ink& i) {
+             i.line(19.5, 4.5, 19.5, 19.5);
+             i.line(3.5, 12, 10, 12);
+             i.p.setPen(QPen(i.accent, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+             i.line(12, 12, 17.5, 12);
+             i.poly({{14.8, 9.3}, {17.5, 12}, {14.8, 14.7}}, false);
+         }},
+        {QStringLiteral("offset"),
+         [](const Ink& i) {
+             i.poly({{4.5, 19.5}, {4.5, 5}, {19.5, 5}}, false);
+             i.p.setPen(QPen(i.accent, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+             i.poly({{9.5, 19.5}, {9.5, 10}, {19.5, 10}}, false);
+         }},
+        {QStringLiteral("mirror"),
+         [](const Ink& i) {
+             i.poly({{4, 17.5}, {9.5, 17.5}, {9.5, 7}});
+             i.poly({{20, 17.5}, {14.5, 17.5}, {14.5, 7}});
+             i.p.setPen(QPen(i.accent, 1.4, Qt::DashLine, Qt::RoundCap));
+             i.line(12, 3.5, 12, 20.5);
+         }},
+        {QStringLiteral("project"),
+         [](const Ink& i) {
+             i.poly({{3.5, 20.5}, {8, 13.5}, {20.5, 13.5}, {16, 20.5}});
+             i.line(7, 5, 17, 5);
+             i.p.setPen(QPen(i.accent, 1.5, Qt::DotLine, Qt::RoundCap));
+             i.line(7, 5, 7, 17);
+             i.line(17, 5, 17, 17);
+             i.p.setPen(QPen(i.accent, 1.8, Qt::SolidLine, Qt::RoundCap));
+             i.line(7, 17, 17, 17);
+         }},
+        {QStringLiteral("construction"),
+         [](const Ink& i) {
+             i.line(4.5, 19.5, 8, 16);
+             i.line(10.5, 13.5, 13.5, 10.5);
+             i.line(16, 8, 19.5, 4.5);
+         }},
+        {QStringLiteral("inference"),
+         [](const Ink& i) {
+             i.line(4.5, 17.5, 12, 10);
+             i.poly({{12, 6}, {16, 10}, {12, 14}, {8, 10}});
+             node(i, 18.5, 17.5);
+         }},
+        {QStringLiteral("c-coincident"),
+         [](const Ink& i) {
+             i.ellipse(12, 12, 5.5, 5.5);
+             node(i, 12, 12);
+         }},
+        {QStringLiteral("c-horizontal"),
+         [](const Ink& i) {
+             i.line(4.5, 12, 19.5, 12);
+             node(i, 4.5, 12);
+             node(i, 19.5, 12);
+         }},
+        {QStringLiteral("c-vertical"),
+         [](const Ink& i) {
+             i.line(12, 4.5, 12, 19.5);
+             node(i, 12, 4.5);
+             node(i, 12, 19.5);
+         }},
+        {QStringLiteral("c-parallel"),
+         [](const Ink& i) {
+             i.line(5, 19, 11, 5);
+             i.line(13, 19, 19, 5);
+         }},
+        {QStringLiteral("c-perpendicular"),
+         [](const Ink& i) {
+             i.line(4.5, 18.5, 19.5, 18.5);
+             i.line(12, 18.5, 12, 5);
+         }},
+        {QStringLiteral("c-tangent"),
+         [](const Ink& i) {
+             i.ellipse(11, 14, 6, 6);
+             i.line(4, 8, 20.5, 8);
+         }},
+        {QStringLiteral("c-equal"),
+         [](const Ink& i) {
+             i.line(5.5, 9.5, 18.5, 9.5);
+             i.line(5.5, 14.5, 18.5, 14.5);
+         }},
+        {QStringLiteral("c-concentric"),
+         [](const Ink& i) {
+             i.ellipse(12, 12, 8, 8);
+             i.ellipse(12, 12, 3.5, 3.5);
+         }},
+        {QStringLiteral("c-midpoint"),
+         [](const Ink& i) {
+             i.line(4, 17.5, 20, 17.5);
+             i.poly({{12, 17}, {8.5, 9}, {15.5, 9}});
+         }},
+        {QStringLiteral("c-symmetric"),
+         [](const Ink& i) {
+             i.line(12, 4, 12, 20);
+             i.poly({{3.5, 12}, {8.5, 8.5}, {8.5, 15.5}});
+             i.poly({{20.5, 12}, {15.5, 8.5}, {15.5, 15.5}});
+         }},
+        {QStringLiteral("c-collinear"),
+         [](const Ink& i) {
+             i.line(4, 20, 9.5, 14.5);
+             i.line(14.5, 9.5, 20, 4);
+             node(i, 12, 12);
+         }},
+        {QStringLiteral("c-fix"),
+         [](const Ink& i) {
+             i.poly({{7, 11}, {17, 11}, {17, 19.5}, {7, 19.5}});
+             i.arc(12, 11, 3.5, 5, 0, 180);
          }},
         // Window
         {QStringLiteral("layout"),
