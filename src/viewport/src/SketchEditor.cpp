@@ -39,7 +39,7 @@ constexpr double pointReach = 9.0;
 constexpr double curveReach = 7.0;
 // How far a dimension's line stands off from what it measures, and how large its arrowheads
 // and the constraint markers are.
-constexpr double dimensionOffset = 30.0;
+constexpr double dimensionOffset = 38.0;
 constexpr double arrowLength = 8.0;
 constexpr double markerSize = 14.0;
 

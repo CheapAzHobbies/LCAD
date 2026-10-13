@@ -664,6 +664,15 @@ void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
     QCOMPARE(rows.count(QStringLiteral("Coincident")), 2);
     QCOMPARE(rows.size(), 3);
 
+    // Each row is on screen, with a button that removes its constraint.
+    const QList<QToolButton*> removers =
+        panel->findChildren<QToolButton*>(QStringLiteral("removeConstraint"));
+    int shown = 0;
+    for (const QToolButton* remover : removers) {
+        shown += remover->isVisible() ? 1 : 0;
+    }
+    QCOMPARE(shown, 3);
+
     // Take the Horizontal away with its button: the side can tilt again.
     const int before = static_cast<int>(geometry().constraints().size());
     panel->removeConstraint(static_cast<int>(rows.indexOf(QStringLiteral("Horizontal"))));

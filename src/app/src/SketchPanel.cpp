@@ -247,6 +247,9 @@ void SketchPanel::rebuildConstraints() {
     m_signature = signature;
     while (QLayoutItem* item = m_constraintList->takeAt(0)) {
         if (QWidget* widget = item->widget()) {
+            // Out of sight at once. It is deleted later because this may be running inside a
+            // click on one of its own buttons.
+            widget->hide();
             widget->deleteLater();
         }
         delete item;
@@ -272,6 +275,8 @@ void SketchPanel::rebuildConstraints() {
         });
         line->addWidget(remove);
         m_constraintList->addWidget(row);
+        // Shown now, not when the event loop next gets round to it.
+        row->show();
         m_rows << text;
         m_listed.push_back(id);
     }
