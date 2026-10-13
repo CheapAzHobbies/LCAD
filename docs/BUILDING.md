@@ -45,6 +45,7 @@ To install by hand, or on a distribution the script does not know, you need:
 | C++20 compiler, CMake 3.28+, Ninja | `build-essential cmake ninja-build` | `gcc-c++ cmake ninja-build` | `base-devel cmake ninja` |
 | Qt 6.4+ | `qt6-base-dev` | `qt6-qtbase-devel` | `qt6-base` |
 | Open CASCADE 7.6 to 7.9 | `libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev libocct-visualization-dev` | `opencascade-devel` | `opencascade` |
+| File format: libzip, nlohmann/json | `libzip-dev nlohmann-json3-dev` | `libzip-devel json-devel` | `libzip nlohmann-json` |
 | Tests: Catch2 3, xcb headers | `catch2 libxcb1-dev` | `catch-devel libxcb-devel` | `catch2 libxcb` |
 | Tests: virtual display, software OpenGL | `xvfb xauth libgl1-mesa-dri` | `xorg-x11-server-Xvfb xorg-x11-xauth mesa-dri-drivers mesa-libGL` | `xorg-server-xvfb xorg-xauth mesa` |
 
@@ -74,6 +75,25 @@ not expected to succeed.
 
 Each preset builds into `build/<preset>/`, with programs in `build/<preset>/bin/`. All four work
 with `cmake --preset`, `cmake --build --preset`, and `ctest --preset`.
+
+## Installing, and the AppImage
+
+`cmake --install build/release --prefix ~/.local` installs the program together with its
+launcher, icon, and the file type for `.lcad` documents.
+
+To build LCAD as an AppImage, one file that carries Qt, Open CASCADE, and the other libraries
+with it:
+
+```sh
+sudo apt install curl file qmake6      # besides the build dependencies; names are Ubuntu's
+scripts/build-appimage.sh              # writes build/appimage/LCAD-<version>-x86_64.AppImage
+```
+
+The script downloads linuxdeploy and its Qt plugin at pinned versions and checks them against
+recorded checksums. An AppImage runs on distributions at least as new as the one it was built
+on, so CI builds it on Ubuntu 24.04; that one needs glibc 2.39 or newer, which rules out Ubuntu
+22.04 and Debian 12. It uses the graphics driver, X11 libraries, and fonts of the system it
+runs on.
 
 ## Wayland
 

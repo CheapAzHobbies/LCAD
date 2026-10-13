@@ -10,7 +10,8 @@ endif()
 
 function(lcad_add_gui_test name)
     qt_add_executable(${name} ${ARGN})
-    target_link_libraries(${name} PRIVATE Qt6::Test lcad::app lcad::kernel lcad_test_support)
+    target_link_libraries(${name} PRIVATE
+        Qt6::Test lcad::app lcad::core lcad::document lcad::kernel lcad_test_support)
     lcad_target_defaults(${name})
 
     if(LCAD_XVFB_RUN)

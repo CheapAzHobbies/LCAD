@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(LCAD
-    VERSION 0.0.1
+    VERSION 0.0.2
     DESCRIPTION "Local-first parametric 3D CAD for Linux"
     LANGUAGES CXX)
 
@@ -21,6 +21,7 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets)
 qt_standard_project_setup()
 
 include(LcadOpenCascade)
+include(LcadFileLibraries)
 include(LcadCompilerOptions)
 
 add_subdirectory(src)

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#2e3136"/>
+  <polygon points="128,44 200,86 128,128 56,86" fill="#3d8bfd"/>
+  <polygon points="56,86 128,128 128,212 56,170" fill="#c9d1db"/>
+  <polygon points="128,128 200,86 200,170 128,212" fill="#8f99a6"/>
+  <g fill="none" stroke="#1e2024" stroke-width="5" stroke-linejoin="round">
+    <polygon points="128,44 200,86 200,170 128,212 56,170 56,86"/>
+    <polyline points="56,86 128,128 200,86"/>
+    <line x1="128" y1="128" x2="128" y2="212"/>
+  </g>
+</svg>

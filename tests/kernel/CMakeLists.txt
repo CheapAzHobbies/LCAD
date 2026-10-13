@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 add_executable(lcad_kernel_tests
+    ErrorTest.cpp
     MeasureTest.cpp
+    MessagesTest.cpp
     PrimitivesTest.cpp
-    ShapeTest.cpp)
+    SerializationTest.cpp
+    ShapeTest.cpp
+    SubShapesTest.cpp
+    TransformTest.cpp)
 target_link_libraries(lcad_kernel_tests PRIVATE
+    lcad::core
     lcad::kernel
     lcad::kernel_occt
     lcad_test_support

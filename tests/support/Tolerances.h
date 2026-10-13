@@ -14,4 +14,10 @@ inline constexpr double lengthTolerance = 1e-6;
 /// integrates exactly up to floating-point rounding.
 inline constexpr double exactPropertyTolerance = 1e-9;
 
+/// Relative tolerance for areas and volumes of solids bounded by cylinders, spheres, cones, and
+/// tori. The kernel integrates these analytic surfaces to rounding as well (errors of about
+/// 1e-16 were measured with OCCT 7.6). Kept apart from the constant above because spline
+/// surfaces, when they arrive, will need a looser one and must not loosen this.
+inline constexpr double curvedPropertyTolerance = 1e-9;
+
 } // namespace lcad::test

@@ -44,13 +44,14 @@ family=" ${ID:-} ${ID_LIKE:-} "
 
 case "$family" in
     *" debian "* | *" ubuntu "*)
-        # Toolchain; Qt 6; Open CASCADE (kernel and viewer); test framework; and, for the GUI
-        # tests, a virtual X server with Mesa's software renderer.
+        # Toolchain; Qt 6; Open CASCADE (kernel and viewer); the file format's libraries; test
+        # framework; and, for the GUI tests, a virtual X server with Mesa's software renderer.
         packages="
             build-essential cmake ninja-build
             qt6-base-dev
             libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev
             libocct-visualization-dev
+            libzip-dev nlohmann-json3-dev
             catch2 libxcb1-dev
             xvfb xauth libgl1-mesa-dri"
         $sudo apt-get update
@@ -69,6 +70,7 @@ case "$family" in
             gcc-c++ cmake ninja-build
             qt6-qtbase-devel
             opencascade-devel
+            libzip-devel json-devel
             catch-devel libxcb-devel
             xorg-x11-server-Xvfb xorg-x11-xauth mesa-dri-drivers mesa-libGL"
         if $assume_yes; then
@@ -84,6 +86,7 @@ case "$family" in
             base-devel cmake ninja
             qt6-base
             opencascade
+            libzip nlohmann-json
             catch2 libxcb
             xorg-server-xvfb xorg-xauth mesa"
         # No -y here: refreshing the package database without a full upgrade leaves an Arch

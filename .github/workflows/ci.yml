@@ -33,7 +33,9 @@ jobs:
             preset: ci
           - name: Fedora 44
             image: fedora:44
-            bootstrap: dnf install -y git
+            # The bare Fedora image has one monospace font. The 3D view's labels ask for a
+            # sans-serif one, and OCCT warns when it has to substitute.
+            bootstrap: dnf install -y git dejavu-sans-fonts dejavu-sans-mono-fonts
             preset: ci
           - name: Arch Linux
             image: archlinux:latest
@@ -62,9 +64,17 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Test
+        # As an ordinary user, not as the root user of the container: one test saves into a
+        # folder it is not allowed to write to, and root is allowed everything.
+        #
         # $GITHUB_WORKSPACE, not the github.workspace context: inside a container job the
         # context still holds the path on the host.
-        run: LCAD_TEST_ARTIFACTS="$GITHUB_WORKSPACE/test-frames" ctest --preset ${{ matrix.preset }}
+        run: |
+          useradd --create-home tester
+          mkdir test-frames
+          chown -R tester build test-frames
+          runuser -u tester -- env LCAD_TEST_ARTIFACTS="$GITHUB_WORKSPACE/test-frames" \
+              ctest --preset ${{ matrix.preset }}
 
       - name: Keep the frames the GUI tests rendered
         if: always()
@@ -72,5 +82,88 @@ jobs:
         with:
           name: frames-${{ matrix.name }}
           path: test-frames
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # tests/models/ keeps one copy of this document per Open CASCADE version, and every job
+      # reads all of them. The copy written here is how a new one gets there.
+      - name: Write the reference document with this job's Open CASCADE
+        run: |
+          mkdir reference-model
+          build/${{ matrix.preset }}/bin/lcad_write_reference_model reference-model/primitives.lcad
+
+      - name: Keep the reference document
+        uses: actions/upload-artifact@v7
+        with:
+          name: reference-model-${{ matrix.name }}
+          path: reference-model
+          retention-days: 14
+
+  # One file that runs without installing anything. Built on the oldest supported distribution,
+  # because an AppImage runs on distributions at least as new as the one it was built on.
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y git ca-certificates
+
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          ./scripts/install-deps.sh --yes
+          apt-get install -y --no-install-recommends curl file qmake6
+
+      - name: Build the AppImage
+        run: ./scripts/build-appimage.sh appimage
+
+      - name: Keep the AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: LCAD-AppImage
+          path: appimage/LCAD-*.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
+  # The AppImage has to start on a distribution it was not built on, where neither Qt nor Open
+  # CASCADE is installed.
+  appimage-runs:
+    name: AppImage runs on Fedora 44
+    needs: appimage
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - name: Install git, a virtual display, and what a desktop provides
+        run: >
+          dnf install -y git xorg-x11-server-Xvfb ImageMagick
+          mesa-dri-drivers mesa-libGL mesa-libEGL
+          libglvnd-glx libglvnd-egl libglvnd-opengl
+          libX11 libX11-xcb libxcb libICE libSM libuuid
+          fontconfig freetype harfbuzz expat zlib libgpg-error
+          dejavu-sans-fonts dejavu-sans-mono-fonts
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: LCAD-AppImage
+          path: appimage
+
+      - name: Start LCAD from the AppImage and open a document
+        run: |
+          chmod +x appimage/LCAD-*.AppImage
+          ./scripts/smoke-test-appimage.sh appimage/LCAD-*.AppImage \
+              tests/models/format-1/primitives-occt-7.6.3.lcad appimage-screen.png
+
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: appimage-screen
+          path: appimage-screen.png
           if-no-files-found: ignore
           retention-days: 14
