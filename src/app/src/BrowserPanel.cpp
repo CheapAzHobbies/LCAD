@@ -228,6 +228,11 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
             item->setCheckState(0, body->visible ? Qt::Checked : Qt::Unchecked);
         }
         break;
+    case Kind::SketchAdded:
+    case Kind::SketchRemoved:
+    case Kind::SketchRenamed:
+    case Kind::SketchVisibilityChanged:
+    case Kind::SketchGeometryChanged:
     case Kind::HistoryChanged:
         break;
     }

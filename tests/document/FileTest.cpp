@@ -7,6 +7,7 @@
 #include <lcad/core/Log.h>
 #include <lcad/core/Version.h>
 #include <lcad/document/File.h>
+#include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Serialization.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
@@ -24,6 +25,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <functional>
 #include <sstream>
@@ -146,6 +148,195 @@ TEST_CASE("A saved document reopens with the same bodies and exact geometry", "[
         CHECK(original->isModified());
         CHECK(original->canUndo());
     }
+}
+
+namespace {
+
+// A document with a body and two sketches: a fully constrained 40 by 25 rectangle on the XZ
+// plane with a construction diagonal, and a loose circle and arc on a plane away from the
+// origin. Returns the ids of the width and height dimensions.
+struct SketchedDocument {
+    std::unique_ptr<Document> document;
+    ObjectId outline;
+    ObjectId loose;
+    lcad::sketch::ConstraintId width = 0;
+    lcad::sketch::ConstraintId height = 0;
+};
+
+SketchedDocument buildSketchedDocument() {
+    using lcad::sketch::ConstraintKind;
+    SketchedDocument made;
+    made.document = std::make_unique<Document>();
+    made.document->addBody("Box", makeBox(10.0, 20.0, 30.0));
+
+    made.outline = made.document->addSketch("Outline", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch s;
+    const auto bottom = s.addLine({0.0, 0.0}, {38.0, 1.0});
+    const auto right = s.addLine({38.0, 1.0}, {39.0, 24.0});
+    const auto top = s.addLine({39.0, 24.0}, {1.0, 25.0});
+    const auto left = s.addLine({1.0, 25.0}, {0.0, 0.0});
+    const auto join = [&s](lcad::sketch::EntityId a, lcad::sketch::EntityId b) {
+        s.addConstraint(ConstraintKind::Coincident, s.find(a)->end, s.find(b)->start);
+    };
+    join(bottom, right);
+    join(right, top);
+    join(top, left);
+    join(left, bottom);
+    s.addConstraint(ConstraintKind::Horizontal, bottom);
+    s.addConstraint(ConstraintKind::Horizontal, top);
+    s.addConstraint(ConstraintKind::Vertical, right);
+    s.addConstraint(ConstraintKind::Vertical, left);
+    s.addConstraint(ConstraintKind::Coincident, s.find(bottom)->start, s.origin());
+    made.width = s.addConstraint(ConstraintKind::Distance, s.find(bottom)->start,
+                                 s.find(bottom)->end, 0, 40.0);
+    made.height = s.addConstraint(ConstraintKind::Distance, s.find(right)->start,
+                                  s.find(right)->end, 0, 25.0);
+    // A construction line from corner to corner. It is tied to the corners, so it adds no freedom.
+    const auto diagonal = s.addLine({0.0, 0.0}, {40.0, 25.0});
+    s.setConstruction(diagonal, true);
+    s.addConstraint(ConstraintKind::Coincident, s.find(diagonal)->start, s.find(bottom)->start);
+    s.addConstraint(ConstraintKind::Coincident, s.find(diagonal)->end, s.find(right)->end);
+    REQUIRE(s.solve().isFullyConstrained());
+    made.document->setSketchGeometry(made.outline, s, "Rectangle");
+
+    made.loose = made.document->addSketch(
+        "Löcher", lcad::kernel::makePlane({5.0, 6.0, 7.0}, {1.0, 0.0, 1.0}, {0.0, 1.0, 0.0}));
+    lcad::sketch::Sketch t;
+    const auto circle = t.addCircle({12.5, -3.0}, 4.25);
+    t.addArc({0.0, 0.0}, {6.0, 0.0}, {0.0, 6.0});
+    t.addConstraint(ConstraintKind::Diameter, circle, 0, 0, 8.5);
+    made.document->setSketchGeometry(made.loose, t, "Circle");
+    made.document->setSketchVisible(made.loose, false);
+    return made;
+}
+
+} // namespace
+
+TEST_CASE("Sketches reopen with their plane, geometry, and constraints", "[document][file]") {
+    const TempDir directory;
+    const std::filesystem::path path = directory.file("sketched.lcad");
+    const SketchedDocument made = buildSketchedDocument();
+
+    saveDocument(*made.document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    Document& document = *loaded.document;
+
+    CHECK(loaded.warnings.empty());
+    REQUIRE(document.sketches().size() == 2);
+    CHECK(document.bodies().size() == 1);
+    CHECK(document.nextObjectId() == made.document->nextObjectId());
+
+    const SketchItem* outline = document.findSketch(made.outline);
+    REQUIRE(outline != nullptr);
+    CHECK(outline->name == "Outline");
+    CHECK(outline->visible);
+    CHECK(outline->plane.normal.y == -1.0);
+    const lcad::sketch::Sketch& original = made.document->findSketch(made.outline)->geometry;
+    const lcad::sketch::Sketch& copy = outline->geometry;
+    REQUIRE(copy.entities().size() == original.entities().size());
+    for (std::size_t i = 0; i < copy.entities().size(); ++i) {
+        const lcad::sketch::Entity& a = original.entities()[i];
+        const lcad::sketch::Entity& b = copy.entities()[i];
+        CAPTURE(a.id);
+        CHECK(b.id == a.id);
+        CHECK(b.kind == a.kind);
+        CHECK(b.construction == a.construction);
+        CHECK(b.fixed == a.fixed);
+        CHECK(b.owner == a.owner);
+        // Numbers are written with every digit, so they come back as they went.
+        CHECK(b.x == a.x);
+        CHECK(b.y == a.y);
+        CHECK(b.start == a.start);
+        CHECK(b.end == a.end);
+    }
+    REQUIRE(copy.constraints().size() == original.constraints().size());
+    for (std::size_t i = 0; i < copy.constraints().size(); ++i) {
+        CHECK(copy.constraints()[i].id == original.constraints()[i].id);
+        CHECK(copy.constraints()[i].kind == original.constraints()[i].kind);
+        CHECK(copy.constraints()[i].first == original.constraints()[i].first);
+        CHECK(copy.constraints()[i].value == original.constraints()[i].value);
+    }
+
+    // It is still the same working sketch: fully constrained, and it follows its dimensions.
+    CHECK(copy.state().isFullyConstrained());
+    REQUIRE(copy.profiles().size() == 1);
+    CHECK(std::abs(copy.profiles()[0].area - 1000.0) < 1e-6);
+    lcad::sketch::Sketch edited = copy;
+    edited.setConstraintValue(made.width, 60.0);
+    CHECK(edited.solve().isFullyConstrained());
+    CHECK(std::abs(edited.profiles()[0].area - 1500.0) < 1e-6);
+    // New geometry gets ids that were never used.
+    CHECK(edited.addPoint({1.0, 1.0}) == original.nextEntityId());
+
+    const SketchItem* loose = document.findSketch(made.loose);
+    REQUIRE(loose != nullptr);
+    CHECK(loose->name == "Löcher");
+    CHECK_FALSE(loose->visible);
+    CHECK(std::abs(loose->plane.normal.x - std::sqrt(0.5)) < 1e-12);
+    CHECK(loose->plane.origin.z == 7.0);
+    CHECK(loose->geometry.state().degreesOfFreedom ==
+          made.document->findSketch(made.loose)->geometry.state().degreesOfFreedom);
+
+    SECTION("in the file, a sketch is readable JSON") {
+        const json model = json::parse(detail::readArchive(path).at("document.json"));
+        REQUIRE(model["sketches"].size() == 2);
+        CHECK(model["sketches"][0]["name"] == "Outline");
+        CHECK(model["sketches"][0]["plane"]["normal"] == json::array({0.0, -1.0, 0.0}));
+        CHECK(model["sketches"][0]["entities"][0]["kind"] == "point");
+        CHECK(model["sketches"][0]["constraints"][0]["kind"] == "Coincident");
+        CHECK(model["sketches"][1]["constraints"][0]["kind"] == "Diameter");
+        CHECK(model["sketches"][1]["constraints"][0]["value"] == 8.5);
+    }
+}
+
+TEST_CASE("A document with a damaged sketch is refused", "[document][file]") {
+    using Change = std::function<void(json&)>;
+    struct Damage {
+        const char* what;
+        Change change; // applied to the first sketch
+        const char* expectedInMessage;
+    };
+    const Damage damage = GENERATE(
+        Damage{"no name", [](json& s) { s.erase("name"); }, "has no \"name\""},
+        Damage{"a plane without a normal", [](json& s) { s["plane"]["normal"] = {0, 0, 0}; },
+               "is not a plane"},
+        Damage{"a plane with two numbers", [](json& s) { s["plane"]["origin"] = {0, 0}; },
+               "is not a list of 3 numbers"},
+        Damage{"an entity of an unknown kind",
+               [](json& s) { s["entities"][1]["kind"] = "squiggle"; }, "unknown kind \"squiggle\""},
+        Damage{"a point without a coordinate", [](json& s) { s["entities"][0].erase("y"); },
+               "has no \"y\""},
+        Damage{"a line whose end is not there",
+               [](json& s) {
+                   for (json& e : s["entities"]) {
+                       if (e["kind"] == "line") {
+                           e["end"] = 9999;
+                           break;
+                       }
+                   }
+               },
+               "does not hold together"},
+        Damage{"a constraint of an unknown kind",
+               [](json& s) { s["constraints"][0]["kind"] = "Sideways"; },
+               "unknown kind \"Sideways\""},
+        Damage{"a constraint on something that is not there",
+               [](json& s) { s["constraints"][0]["entities"] = {9998, 9999, 0}; },
+               "does not hold together"},
+        Damage{"a constraint without a value", [](json& s) { s["constraints"][0].erase("value"); },
+               "has no \"value\""},
+        Damage{"no list of constraints", [](json& s) { s["constraints"] = "none"; },
+               "is not a list"});
+    CAPTURE(damage.what);
+    const TempDir directory;
+    saveDocument(*buildSketchedDocument().document, directory.file("good.lcad"));
+    writeVariant(
+        directory.file("good.lcad"), directory.file("bad.lcad"),
+        [&damage](json&, json& model, detail::Entries&) { damage.change(model["sketches"][0]); });
+
+    const std::string error = errorFrom(directory.file("bad.lcad"));
+
+    CHECK_THAT(error, ContainsSubstring(damage.expectedInMessage));
+    CHECK_THAT(error, ContainsSubstring("bad.lcad"));
 }
 
 TEST_CASE("An empty document can be saved and reopened", "[document][file]") {
@@ -373,7 +564,7 @@ TEST_CASE("A document with damaged content is refused, never opened partially",
                "body 1 has no \"name\""},
         Damage{"a body's name is empty",
                [](json&, json& d, detail::Entries&) { d["bodies"][0]["name"] = ""; },
-               "needs a name"},
+               "a name is needed"},
         Damage{"a body's id is text",
                [](json&, json& d, detail::Entries&) { d["bodies"][0]["id"] = "1"; },
                "is not a whole number"},

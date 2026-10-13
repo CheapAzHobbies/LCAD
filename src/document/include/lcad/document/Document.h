@@ -3,7 +3,9 @@
 #pragma once
 
 #include <lcad/document/ObjectId.h>
+#include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Shape.h>
+#include <lcad/sketch/Sketch.h>
 
 #include <cstdint>
 #include <functional>
@@ -22,6 +24,17 @@ struct Body {
     kernel::Shape shape;
 };
 
+/// A sketch in the document: 2D geometry and constraints, and the plane they lie in.
+struct SketchItem {
+    ObjectId id;
+    std::string name;
+    bool visible = true;
+    /// Where the sketch sits in space. Set when the sketch is created; if it was taken from a
+    /// face, it does not follow that face afterwards.
+    kernel::Plane plane;
+    sketch::Sketch geometry;
+};
+
 /// What a listener is told when the document changes.
 struct Change {
     enum class Kind {
@@ -29,17 +42,24 @@ struct Change {
         BodyRemoved,
         BodyRenamed,
         BodyVisibilityChanged,
+        SketchAdded,
+        SketchRemoved,
+        SketchRenamed,
+        SketchVisibilityChanged,
+        /// A sketch's geometry or constraints changed.
+        SketchGeometryChanged,
         /// What undo and redo would do, or whether there are unsaved changes, may have changed.
         HistoryChanged,
     };
     Kind kind = Kind::HistoryChanged;
-    /// The body concerned. Not valid for HistoryChanged.
+    /// The body or sketch concerned. Not valid for HistoryChanged.
     ObjectId body;
 };
 
 /// Everything needed to rebuild a document, as read from a file.
 struct DocumentState {
     std::vector<Body> bodies;
+    std::vector<SketchItem> sketches;
     /// The id the next new object gets. Larger than every id in use.
     std::uint64_t nextId = 1;
 };
@@ -73,6 +93,13 @@ public:
     [[nodiscard]] std::string uniqueBodyName(std::string_view base) const;
     [[nodiscard]] std::uint64_t nextObjectId() const { return m_nextId; }
 
+    /// The sketches, in the order they were created.
+    [[nodiscard]] const std::vector<SketchItem>& sketches() const { return m_sketches; }
+    /// The sketch with this id, or nullptr. The pointer is valid until the next edit.
+    [[nodiscard]] const SketchItem* findSketch(ObjectId id) const;
+    /// `base` followed by the lowest number no sketch has yet: "Sketch 1", "Sketch 2".
+    [[nodiscard]] std::string uniqueSketchName(std::string_view base) const;
+
     // Editing. Each throws std::invalid_argument for input that cannot be applied and leaves
     // the document unchanged.
 
@@ -82,6 +109,15 @@ public:
     void removeBody(ObjectId id);
     void renameBody(ObjectId id, std::string name);
     void setBodyVisible(ObjectId id, bool visible);
+
+    /// Adds an empty sketch on a plane and returns its id.
+    ObjectId addSketch(std::string name, const kernel::Plane& plane);
+    void removeSketch(ObjectId id);
+    void renameSketch(ObjectId id, std::string name);
+    void setSketchVisible(ObjectId id, bool visible);
+    /// Replaces a sketch's geometry and constraints. `label` names the undo step, for example
+    /// "Line" or "Horizontal".
+    void setSketchGeometry(ObjectId id, sketch::Sketch geometry, std::string label);
 
     // Undo
 
@@ -113,7 +149,17 @@ private:
     friend class Transaction;
 
     struct Edit {
-        enum class Kind { AddBody, RemoveBody, RenameBody, SetBodyVisible };
+        enum class Kind {
+            AddBody,
+            RemoveBody,
+            RenameBody,
+            SetBodyVisible,
+            AddSketch,
+            RemoveSketch,
+            RenameSketch,
+            SetSketchVisible,
+            SetSketchGeometry,
+        };
         Kind kind;
         ObjectId id;
         // AddBody and RemoveBody: the body, and where in the list it sits.
@@ -122,9 +168,13 @@ private:
         // RenameBody
         std::string oldName;
         std::string newName;
-        // SetBodyVisible
+        // SetBodyVisible, SetSketchVisible
         bool oldVisible = true;
         bool newVisible = true;
+        // AddSketch and RemoveSketch: the sketch. SetSketchGeometry: its geometry before.
+        SketchItem sketch;
+        // SetSketchGeometry: its geometry after.
+        sketch::Sketch newGeometry;
     };
 
     struct Step {
@@ -134,11 +184,12 @@ private:
         std::uint64_t serial = 0;
     };
 
-    void record(Edit edit, const char* label);
+    void record(Edit edit, const std::string& label);
     void apply(const Edit& edit);
     void revert(const Edit& edit);
     void notify(Change::Kind kind, ObjectId body = {});
     [[nodiscard]] std::size_t indexOf(ObjectId id) const;
+    [[nodiscard]] std::size_t sketchIndexOf(ObjectId id) const;
     [[nodiscard]] std::uint64_t currentSerial() const;
 
     void beginTransaction(std::string label);
@@ -146,6 +197,7 @@ private:
     void rollbackTransaction();
 
     std::vector<Body> m_bodies;
+    std::vector<SketchItem> m_sketches;
     std::uint64_t m_nextId = 1;
 
     std::vector<Step> m_undo;

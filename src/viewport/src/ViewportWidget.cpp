@@ -596,6 +596,11 @@ public:
             hideBody(change.body);
             break;
         case Kind::BodyRenamed:
+        case Kind::SketchAdded:
+        case Kind::SketchRemoved:
+        case Kind::SketchRenamed:
+        case Kind::SketchVisibilityChanged:
+        case Kind::SketchGeometryChanged:
         case Kind::HistoryChanged:
             return;
         }
