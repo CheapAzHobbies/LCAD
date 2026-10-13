@@ -14,6 +14,7 @@ This is an engineering summary, not legal advice.
 | [Qt 6](https://www.qt.io) (Core, Gui, Widgets, OpenGL, OpenGLWidgets) | Desktop interface | LGPL-3.0, GPL-2.0, GPL-3.0, or commercial | 6.12.0 | 6.4 |
 | [libzip](https://github.com/nih-at/libzip) | The `.lcad` container | BSD-3-Clause | 1.12 (2026-10-07) | 1.7.3 (oldest tested) |
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON inside `.lcad` files | MIT | 3.12.0 | 3.11.3 (oldest tested) |
+| [Eigen](https://gitlab.com/libeigen/eigen) | Linear algebra inside the sketch solver | MPL-2.0 | 5.0.1 | 3.4.0 (oldest tested) |
 | [Catch2](https://github.com/catchorg/Catch2) | Unit tests | BSL-1.0 | 3.16.1 (2026-10-08) | 3.4 (oldest tested) |
 | Qt Test | GUI tests | Same as Qt | Same as Qt | 6.4 |
 | CMake, Ninja, GCC or Clang | Build | Build tools only | | CMake 3.28, C++20 |
@@ -29,6 +30,7 @@ Catch2 and Qt Test are used only to build the tests. They are not part of what L
 | libzip | 1.7.3 | 1.11.4 | 1.11.4 | 1.11.4 |
 | nlohmann/json | 3.11.3 | 3.11.3 | 3.12.0 | 3.12.0 |
 | Catch2 | 3.4.0 | 3.7.1 | 3.13.0 | 3.16.1 |
+| Eigen | 3.4.0 | 3.4.0 | 5.0.1 | 5.0.1 |
 
 Linux Mint 22 is built on Ubuntu 24.04 and has the same versions. Ubuntu 24.04 is the floor: it
 sets the minimum Qt and OCCT that LCAD's source has to compile against.
@@ -71,22 +73,48 @@ Under the LGPL, the practical way to ship a binary release (AppImage, Flatpak) i
 dynamically, include the license texts, and leave users able to replace the Qt libraries. That is
 how Qt applications are normally packaged, so it costs nothing extra.
 
-## Sketch constraint solver (decision due at the start of Phase 2)
+## Sketch constraint solver (decided in Phase 2: LCAD's own)
+
+Before Phase 2 the plan was to adopt a solver, and the first candidate was SolveSpace's:
 
 | Candidate | License | Status | Packaged | Notes |
 |---|---|---|---|---|
 | [SolveSpace](https://github.com/solvespace/solvespace) solver (`libslvs`) | GPL-3.0-or-later | v3.2 (2026-03-27), active | Debian and Ubuntu only (`libslvs1-dev`, 3.1) | C interface. Handles 2D and 3D constraints, so it could also serve assemblies. Dune3D, a GPL parametric modeler, bundles it. Needs Eigen. Would be vendored for Fedora and Arch. |
 | FreeCAD's [planegcs](https://github.com/FreeCAD/FreeCAD/tree/main/src/Mod/Sketcher/App/planegcs) | LGPL-2.1-or-later | Maintained inside FreeCAD (1.1.4, 2026-09-28) | No, it is not a standalone library | 2D only. Reports redundant and conflicting constraints. Needs Eigen and Boost.Graph, and includes FreeCAD's own base headers, so it has to be extracted and patched, then kept in sync by hand. |
 | [ezpz](https://github.com/KittyCAD/ezpz) | MIT | Young (last push 2026-08-05) | No | Written in Rust for Zoo Design Studio. Would add a Rust toolchain to the build. |
-| A solver written for LCAD | n/a | n/a | n/a | Months of work before the first sketch solves. Not justified while two proven solvers exist. |
+| A solver written for LCAD | n/a | n/a | n/a | Chosen. See below. |
 
-LCAD is licensed under GPL-3.0-or-later, so every candidate can be used, including `libslvs`,
-which requires it. `libslvs` is the first candidate because it is a real library with a stable
-interface and is proven in a Fusion-style sketcher. The choice should be confirmed with a spike
-at the start of Phase 2 that checks conflict reporting and dragging of underconstrained geometry.
+The spike at the start of Phase 2 read `libslvs`'s interface (`slvs.h`, version 3.1 as Ubuntu
+packages it) against what the sketcher has to show, and found two things:
 
-Eigen differs by a major version between distributions (3.4.0 on Ubuntu, 5.0.1 on Arch and
-Fedora 44), which matters to whichever solver is vendored.
+- **It reports less than the interface needs.** A solve returns one number for the degrees of
+  freedom, a result code, and the list of constraints that failed. It does not say which curves
+  can still move. Coloring geometry by whether it is fully constrained, which is how a user finds
+  what is left to dimension, would have to be worked out by LCAD anyway, from a system of
+  equations LCAD would not have.
+- **It is packaged for one distribution of four.** Fedora and Arch would get it as vendored
+  source, with its own allocator (mimalloc) vendored along, built by LCAD on every platform.
+
+planegcs would have to be cut out of FreeCAD and kept in step by hand, and ezpz brings a second
+language into the build. Against that, a planar solver for points, lines, circles, and arcs is
+a few hundred lines on top of Eigen: Newton's method with the smallest step that satisfies the
+constraints, exact derivatives, and the rank of the constraint matrix for everything the
+interface wants to know (redundant constraints, conflicting ones, which curves are free).
+
+What this decision rests on, and what it does not:
+
+- `libslvs` was read, not run. Nothing here says it solves worse than LCAD's solver; it very
+  likely solves better. The reasons are what it reports and how it would have to be shipped.
+- LCAD's solver is new. Its tests cover each constraint, redundancy, conflicts, dragging, and
+  sketches far from the origin or of very different sizes (the sketch module has 46 test cases in
+  all). That is not the same as years of use.
+- The solver is private to the `sketch` module. Nothing outside it knows there is one, so it can
+  be replaced by any of the candidates above without touching the document, the viewport, or
+  the interface.
+- For assemblies (Phase 5) the question is open again: a 3D solver is a different thing.
+
+Eigen differs by a major version between distributions (3.4.0 on both Ubuntus, 5.0.1 on Arch
+and Fedora 44). LCAD uses only what both have, and CI builds against both.
 
 ## Native file format
 

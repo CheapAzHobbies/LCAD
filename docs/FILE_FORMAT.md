@@ -73,6 +73,45 @@ indented text.
 | `geometry.file` | The archive entry that holds the body's shape. |
 | `geometry.role` | What that entry is to the document; see below. Version 1 knows only `"source"`. |
 
+`document.json` may also hold `sketches`, a list. It is optional: a document without sketches
+has no such field, and a file written before sketches existed opens as it always did.
+
+```json
+{
+  "id": 2,
+  "name": "Sketch 1",
+  "visible": true,
+  "plane": { "origin": [0, 0, 0], "normal": [0, 0, 1], "xDirection": [1, 0, 0] },
+  "nextEntityId": 5,
+  "nextConstraintId": 3,
+  "entities": [
+    { "id": 1, "kind": "point", "x": 0, "y": 0, "owner": 0, "construction": false, "fixed": true },
+    { "id": 2, "kind": "line", "start": 3, "end": 4, "construction": false, "fixed": false },
+    { "id": 3, "kind": "point", "x": 0, "y": 0, "owner": 2, "construction": false, "fixed": false },
+    { "id": 4, "kind": "point", "x": 40, "y": 0, "owner": 2, "construction": false, "fixed": false }
+  ],
+  "constraints": [
+    { "id": 1, "kind": "Horizontal", "entities": [2, 0, 0], "value": 0, "value2": 0 },
+    { "id": 2, "kind": "Distance", "entities": [3, 4, 0], "value": 40, "value2": 0 }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `id`, `name`, `visible` | As for a body. Sketches and bodies share one range of ids. |
+| `plane` | Where the sketch sits in space: a point of the plane, its normal (the side the sketch is looked at from), and the direction of the sketch's own X. The directions are of unit length and square to each other. |
+| `entities` | The geometry. Every position is a `point`; a `line` names its `start` and `end`, a `circle` its `center` and has a `radius`, an `arc` names its `center`, `start`, and `end` (it runs counter-clockwise from start to end). `owner` is the curve a point belongs to, or 0. The first entity is the sketch's origin: a fixed point at (0, 0) that belongs to nothing. |
+| `construction` | Geometry that guides the sketch and is left out of its outlines. |
+| `fixed` | Reference geometry, which the solver leaves where it is. |
+| `constraints` | `kind` is one of `Coincident`, `PointOnLine`, `PointOnCircle`, `Horizontal`, `Vertical`, `Parallel`, `Perpendicular`, `Tangent`, `Equal`, `Concentric`, `Midpoint`, `Symmetric`, `Collinear`, `Fix`, `Distance`, `DistanceX`, `DistanceY`, `PointLineDistance`, `Radius`, `Diameter`, `Angle`. `entities` are the up to three entities it is about, 0 for none. `value` is a dimension's value in millimeters or radians. |
+| `nextEntityId`, `nextConstraintId` | The ids the next entity and constraint get, as `nextId` is for objects. |
+
+Numbers are written with every digit, so a sketch comes back exactly as it was saved and is as
+constrained on reopening as it was on saving. A sketch that does not fit together (a line whose
+end is not a point, a constraint on entities it does not take, no origin) makes the file
+damaged, and the file is refused as a whole like any other.
+
 A reader ignores fields and archive entries it does not know, so that a later LCAD can add
 optional ones without changing the version. Everything listed above is required, and a file
 with a missing or wrong value is refused as a whole. LCAD never opens a document partially.
@@ -116,6 +155,9 @@ hostile file cannot exhaust memory. Every entry is checked against its zip check
   version needed. It does not open such a file partially.
 - Every released format version keeps a sample file in the test suite, so each migration stays
   tested for as long as LCAD can read that version.
+- Version 1 is not frozen until LCAD's first release. Until then there is no older LCAD in
+  anyone's hands to protect, so what a phase adds goes into version 1: sketches were added in
+  Phase 2 as an optional field. The first release fixes version 1 as it is on that day.
 
 ### B-rep compatibility between OCCT versions
 
@@ -171,6 +213,10 @@ libzip for the archive, nlohmann/json for JSON, and OCCT's `BinTools` for B-rep.
 licenses are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ## Not done yet
+
+- **Where a sketch came from.** A sketch started on a face keeps the plane, not the face. A
+  projected edge keeps the geometry, not the edge. Both need the stable references of Phase 3.
+- **Where a dimension's value is drawn.** Not stored: values place themselves.
 
 - **The notice before converting.** When the first migration exists, LCAD has to say so before
   a save converts an older file to the newer format. There is no older format yet.
