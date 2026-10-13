@@ -28,7 +28,7 @@ indented text.
   "formatVersion": 1,
   "writtenBy": {
     "application": "LCAD",
-    "version": "0.0.2",
+    "version": "0.0.1",
     "kernel": "OCCT 7.6.3"
   },
   "units": {

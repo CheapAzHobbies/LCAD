@@ -9,5 +9,6 @@ target_include_directories(lcad_test_support INTERFACE support)
 
 add_subdirectory(core)
 add_subdirectory(kernel)
+add_subdirectory(sketch)
 add_subdirectory(document)
 add_subdirectory(gui)

@@ -6,7 +6,7 @@
 
 namespace lcad::core {
 
-/// LCAD's own version, for example "0.0.2".
+/// LCAD's own version, for example "0.0.1".
 [[nodiscard]] std::string version();
 
 } // namespace lcad::core
