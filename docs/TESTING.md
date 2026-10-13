@@ -141,13 +141,13 @@ This was done for the tests of Phases 0 and 1, by changing the code under test o
 time and running the tests. A few of the changes made, each of which fails at least one test:
 not drawing the shape; discarding pointer positions; not clearing what could be redone after a
 new edit; skipping the rollback of an abandoned transaction; restoring an undone deletion at
-the end of the list; accepting a file in a newer format; ignoring a zip checksum; writing into
-the existing file's place without keeping its permissions; treating a cylinder's diameter as
-its radius; giving OCCT the top-level window again.
+the end of the list; accepting a file in a newer format; ignoring a zip checksum; not giving
+the saved file the permissions of the one it replaces; treating a cylinder's diameter as its
+radius; giving OCCT the top-level window again.
 
-Two changes survived and were kept as they are, with a comment in the code: either of the two
-checks after reading geometry can be removed without a test failing, because OCCT 7.6 throws on
-every damaged input tried, before those checks are reached.
+One change survived and the code was kept as it is, with a comment: the check after reading
+geometry (an empty result, or a stream in a failed state) can be removed without a test
+failing, because OCCT 7.6 throws on every damaged input tried, before that check is reached.
 
 ## Regression tests
 

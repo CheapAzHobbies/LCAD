@@ -141,7 +141,8 @@ jobs:
           mesa-dri-drivers mesa-libGL mesa-libEGL
           libglvnd-glx libglvnd-egl libglvnd-opengl
           libX11 libX11-xcb libxcb libICE libSM libuuid
-          fontconfig freetype harfbuzz expat zlib libgpg-error dejavu-sans-fonts
+          fontconfig freetype harfbuzz expat zlib libgpg-error
+          dejavu-sans-fonts dejavu-sans-mono-fonts
 
       - uses: actions/checkout@v7
 

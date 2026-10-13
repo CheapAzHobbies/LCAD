@@ -9,4 +9,4 @@ Terminal=false
 Categories=Graphics;3DGraphics;Engineering;
 Keywords=CAD;3D;modeling;parametric;design;
 MimeType=application/x-lcad;
-StartupWMClass=lcad
+StartupWMClass=LCAD

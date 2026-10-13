@@ -9,6 +9,7 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -108,10 +109,25 @@ QDoubleSpinBox* PrimitivePanel::addField(const QString& name, const QString& lab
     box->setDecimals(3);
     box->setSuffix(tr(" mm"));
     box->setValue(value);
-    box->setKeyboardTracking(false);
     connect(box, &QDoubleSpinBox::valueChanged, this, &PrimitivePanel::rebuild);
     m_form->addRow(label, box);
     return box;
+}
+
+void PrimitivePanel::keyPressEvent(QKeyEvent* event) {
+    // Enter in one of the input boxes arrives here once the box has taken in what was typed.
+    // Outside a dialog, Qt does not press the default button by itself.
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        m_okButton->click();
+        return;
+    }
+    // The window's Cancel Command shortcut normally gets Esc first. This is for when it does
+    // not, as when the panel floats in a window of its own.
+    if (event->key() == Qt::Key_Escape) {
+        emit canceled();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
 double PrimitivePanel::value(const QString& field) const {

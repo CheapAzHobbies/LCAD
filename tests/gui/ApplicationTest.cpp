@@ -17,6 +17,7 @@
 #include <QAction>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QGuiApplication>
 #include <QLabel>
 #include <QMenuBar>
@@ -141,6 +142,7 @@ private slots:
     void everyPrimitiveCanBeCreated();
     void panelPreviewsAndRefusesSizesThatMakeNoSolid();
     void cancelingACommandLeavesTheDocumentAlone();
+    void sizesCanBeTypedAndConfirmedFromTheKeyboard();
     void undoAndRedoWorkFromTheMenu();
 
     void browserListsBodiesAndEditsThem();
@@ -488,6 +490,42 @@ void ApplicationTest::cancelingACommandLeavesTheDocumentAlone() {
     action(window, "create.cone")->trigger();
     QVERIFY(window.activePanel() != first);
     QCOMPARE(window.activePanel()->kind(), PrimitiveKind::Cone);
+}
+
+void ApplicationTest::sizesCanBeTypedAndConfirmedFromTheKeyboard() {
+    MainWindow window;
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const auto typeInto = [&window](const char* field, const char* text) {
+        auto* box = window.activePanel()->findChild<QDoubleSpinBox*>(QString::fromLatin1(field));
+        box->setFocus();
+        box->selectAll();
+        QTest::keyClicks(box, QString::fromLatin1(text));
+        return box;
+    };
+
+    action(window, "create.cylinder")->trigger();
+    typeInto("diameter", "30");
+    // The preview follows the typing; nothing has to be confirmed box by box.
+    QCOMPARE(window.activePanel()->value(QStringLiteral("diameter")), 30.0);
+    QDoubleSpinBox* height = typeInto("height", "12.5");
+    // Enter takes in what was typed and accepts the command.
+    QTest::keyClick(height, Qt::Key_Return);
+
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+    QVERIFY(near(volumeOf(window, 0), pi * 15.0 * 15.0 * 12.5));
+    QVERIFY(window.activePanel() == nullptr);
+
+    // Enter does nothing while the sizes describe no solid, and Esc leaves the command.
+    action(window, "create.sphere")->trigger();
+    QDoubleSpinBox* diameter = typeInto("diameter", "0");
+    QTest::keyClick(diameter, Qt::Key_Return);
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+    QVERIFY(window.activePanel() != nullptr);
+    QVERIFY(!window.activePanel()->errorText().isEmpty());
+    QTest::keyClick(diameter, Qt::Key_Escape);
+    QVERIFY(window.activePanel() == nullptr);
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
 }
 
 void ApplicationTest::undoAndRedoWorkFromTheMenu() {

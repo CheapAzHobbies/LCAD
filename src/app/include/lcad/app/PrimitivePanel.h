@@ -48,6 +48,9 @@ signals:
     void accepted();
     void canceled();
 
+protected:
+    void keyPressEvent(QKeyEvent* event) override;
+
 private:
     QDoubleSpinBox* addField(const QString& name, const QString& label, double value,
                              double minimum);
