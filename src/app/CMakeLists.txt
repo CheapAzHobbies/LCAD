@@ -17,6 +17,26 @@ target_link_libraries(lcad_app
     PRIVATE lcad::core)
 lcad_target_defaults(lcad_app)
 
+# The window icon is compiled in, so that it shows however LCAD was started.
+qt_add_resources(lcad_app "lcad_icons"
+    PREFIX "/icons"
+    BASE "${PROJECT_SOURCE_DIR}/packaging"
+    FILES "${PROJECT_SOURCE_DIR}/packaging/io.github.cheapazhobbies.LCAD.png")
+
 qt_add_executable(lcad src/main.cpp)
 target_link_libraries(lcad PRIVATE lcad::app)
 lcad_target_defaults(lcad)
+
+# What a package of LCAD contains: the program, its launcher, its icon, and the file type of
+# its documents.
+include(GNUInstallDirs)
+set(LCAD_APP_ID io.github.cheapazhobbies.LCAD)
+install(TARGETS lcad RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.desktop"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.svg"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.png"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps")
+install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.xml"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages")

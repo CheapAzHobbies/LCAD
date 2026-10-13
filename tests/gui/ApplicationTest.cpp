@@ -608,13 +608,20 @@ void ApplicationTest::selectionIsSharedBetweenBrowserAndViewport() {
     QVERIFY(window.browser()->bodyItem(box)->isSelected());
     QVERIFY(!window.browser()->bodyItem(sphere)->isSelected());
 
-    // A hidden body can still be selected in the browser, and deleted from there.
+    // A hidden body can still be selected in the browser, and deleted from there. The box is
+    // selected at this point; choosing the sphere's entry replaces that in one step.
     window.document()->setBodyVisible(sphere, false);
-    window.browser()->tree()->clearSelection();
-    window.browser()->bodyItem(sphere)->setSelected(true);
+    QCOMPARE(viewport->selection().size(), std::size_t{1});
+    window.browser()->tree()->setCurrentItem(window.browser()->bodyItem(sphere), 0,
+                                             QItemSelectionModel::ClearAndSelect);
     QVERIFY(viewport->selection().empty());
     QCOMPARE(window.browser()->selectedBodies(), (std::vector<ObjectId>{sphere}));
     QVERIFY(action(window, "edit.delete")->isEnabled());
+
+    // Picking in the viewport replaces the selection everywhere, the hidden body included.
+    QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, onTheBox);
+    viewport->grabFramebuffer();
+    QCOMPARE(window.browser()->selectedBodies(), (std::vector<ObjectId>{box}));
 }
 
 void ApplicationTest::statusBarMeasuresWhatIsPicked() {

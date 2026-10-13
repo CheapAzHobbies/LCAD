@@ -132,6 +132,7 @@ private:
     document::Document::ListenerId m_listener = 0;
     QString m_filePath;
     QStringList m_loadWarnings;
+    bool m_selectionComesFromBrowser = false;
 };
 
 } // namespace lcad::app

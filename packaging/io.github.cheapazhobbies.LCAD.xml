@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-lcad">
+    <comment>LCAD document</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.lcad"/>
+    <icon name="io.github.cheapazhobbies.LCAD"/>
+  </mime-type>
+</mime-info>

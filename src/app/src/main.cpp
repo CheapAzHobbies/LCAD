@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QIcon>
 #include <QMessageBox>
 
 int main(int argc, char* argv[]) {
@@ -16,6 +17,7 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationName(QStringLiteral("LCAD"));
     QApplication::setApplicationVersion(lcad::app::versionString());
     QApplication::setDesktopFileName(QStringLiteral("io.github.cheapazhobbies.LCAD"));
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/io.github.cheapazhobbies.LCAD.png")));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Local-first parametric 3D CAD."));

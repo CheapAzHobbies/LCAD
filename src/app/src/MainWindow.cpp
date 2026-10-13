@@ -90,26 +90,27 @@ MainWindow::MainWindow(QWidget* parent)
     units->setToolTip(tr("Lengths are in millimeters."));
     statusBar()->addPermanentWidget(units);
 
+    // The browser and the viewport show one selection of bodies. Whichever of them the user
+    // changed it in tells the other, and the other's report of that is not sent back: a hidden
+    // body can be selected in the browser only, and the viewport's answer that it has nothing
+    // selected must not clear it there.
     connect(m_browser, &BrowserPanel::bodySelectionChanged, this, [this] {
+        m_selectionComesFromBrowser = true;
         m_viewport->setSelectedBodies(m_browser->selectedBodies());
+        m_selectionComesFromBrowser = false;
         updateSelectionState();
     });
     connect(m_browser, &BrowserPanel::deleteRequested, this, &MainWindow::deleteSelectedBodies);
     connect(m_viewport, &viewport::ViewportWidget::selectionChanged, this, [this] {
-        std::vector<document::ObjectId> bodies;
-        for (const SelectedItem& item : m_viewport->selection()) {
-            if (item.kind == SelectedItem::Kind::Body) {
-                bodies.push_back(item.body);
+        if (!m_selectionComesFromBrowser) {
+            std::vector<document::ObjectId> bodies;
+            for (const SelectedItem& item : m_viewport->selection()) {
+                if (item.kind == SelectedItem::Kind::Body) {
+                    bodies.push_back(item.body);
+                }
             }
+            m_browser->setSelectedBodies(bodies);
         }
-        // A hidden body can be selected in the browser only. Keep it selected there.
-        for (const document::ObjectId id : m_browser->selectedBodies()) {
-            const document::Body* body = m_document->findBody(id);
-            if (body != nullptr && !body->visible) {
-                bodies.push_back(id);
-            }
-        }
-        m_browser->setSelectedBodies(bodies);
         updateSelectionState();
     });
     // Queued: the viewport reports failure while painting, which is no place to open a dialog.
