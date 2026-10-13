@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -17,7 +16,10 @@ struct ObjectId {
     /// Whether this refers to an object at all. A default-constructed id does not.
     [[nodiscard]] bool isValid() const { return value != 0; }
 
-    friend auto operator<=>(const ObjectId&, const ObjectId&) = default;
+    // Spelled out instead of a defaulted operator<=>: that needs <compare>, which the moc of
+    // Qt 6.4 cannot parse, and Qt headers include this one.
+    friend bool operator==(const ObjectId&, const ObjectId&) = default;
+    friend bool operator<(const ObjectId& a, const ObjectId& b) { return a.value < b.value; }
 };
 
 } // namespace lcad::document
