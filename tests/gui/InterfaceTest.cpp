@@ -1172,11 +1172,11 @@ void InterfaceTest::viewportMenuOffersWhatApplies() {
     QCOMPARE(viewport->selection().size(), std::size_t{1});
     QCOMPARE(viewport->selection()[0].kind, SelectedItem::Kind::Face);
     // The face is flat, so a sketch can be started on it.
-    QCOMPARE(entriesOf(menu.get()),
-             (QStringList{QStringLiteral("Select Other"), QStringLiteral("Zoom to Selection"),
-                          QStringLiteral("Hide"), QStringLiteral("Isolate"),
-                          QStringLiteral("New Sketch"), QStringLiteral("Fit"),
-                          QStringLiteral("Home")}));
+    QCOMPARE(
+        entriesOf(menu.get()),
+        (QStringList{QStringLiteral("Select Other"), QStringLiteral("Zoom to Selection"),
+                     QStringLiteral("Hide"), QStringLiteral("Isolate"),
+                     QStringLiteral("New Sketch"), QStringLiteral("Fit"), QStringLiteral("Home")}));
     // Delete is for whole bodies, and a face is selected, so it is not offered.
     QVERIFY(!entriesOf(menu.get()).contains(QStringLiteral("Delete")));
 
