@@ -1,6 +1,7 @@
 # LCAD roadmap
 
-Phases follow section 30 of the [project brief](docs/PROJECT_BRIEF.md). Each phase ends with working
+Phases follow section 30 of the [project brief](docs/PROJECT_BRIEF.md). The interface is built to the
+[GUI specification](docs/GUI_SPEC.md). Each phase ends with working
 software and an acceptance test, not a mockup. A phase is done when its acceptance test passes in an
 automated or scripted run.
 
@@ -20,13 +21,14 @@ more than writing the code, now sets the pace.
 |---|---|---|---|---|---|
 | 0. Groundwork | Architecture, dependency and license decisions, build system, CI | 2026-10-12 | 2026-11-08 | 2026-10-12 | |
 | 1. Desktop foundation | Window, viewport, selection, documents, save/open, undo | 2026-10-12 | 2027-01-31 | 2026-10-12 | |
-| 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-13 | 2026-11-15 | | |
-| 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-11-16 | 2027-01-31 | | v0.1 alpha |
-| 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-01 | 2027-03-15 | | v0.2 |
-| 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-03-16 | 2027-06-30 | | v0.5 beta |
-| Port | Windows and macOS builds | 2027-07-01 | 2027-08-31 | | v0.6 |
-| 6. Drawings and manufacturing | Associative drawings, PDF/DXF, 2.5D and 3-axis CAM | 2027-09-01 | 2027-12-31 | | v1.0 |
-| 7. Advanced capabilities | Surfaces, sheet metal, mesh repair, rendering, plugins | 2028-01-01 | ongoing | | |
+| 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-13 | 2026-10-25 | | |
+| 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-26 | 2026-11-30 | | |
+| 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-12-01 | 2027-02-15 | | v0.1 alpha |
+| 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-16 | 2027-03-31 | | v0.2 |
+| 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-04-01 | 2027-07-15 | | v0.5 beta |
+| Port | Windows and macOS builds | 2027-07-16 | 2027-09-15 | | v0.6 |
+| 6. Drawings and manufacturing | Associative drawings, PDF/DXF, 2.5D and 3-axis CAM | 2027-09-16 | 2028-01-15 | | v1.0 |
+| 7. Advanced capabilities | Surfaces, sheet metal, mesh repair, rendering, plugins | 2028-01-16 | ongoing | | |
 
 The targets of Phases 0 and 1 are the original ones, kept for the record.
 
@@ -81,10 +83,40 @@ identical. Automated twice, against the document module and through the interfac
 [docs/TESTING.md](docs/TESTING.md). How to use what exists is in [docs/USING.md](docs/USING.md).
 
 Left out on purpose, with where each belongs: autosave and crash recovery (Phase 5, where the
-brief's release criteria need them), several documents in tabs, inches as a display unit,
-per-body colors, and a search for commands (Phase 3).
+brief's release criteria need them), inches as a display unit, and per-body colors. Tabs and
+command search are in Phase 1b.
 
-## Phase 2: Sketcher (2026-10-13 to 2026-11-15)
+## Phase 1b: Interface shell (2026-10-13 to 2026-10-25)
+
+Added on 2026-10-12, when the owner's [GUI specification](docs/GUI_SPEC.md) arrived. It asks for
+the application shell and design system to be built first, and for commands to be connected to
+them as they become real. [docs/INTERFACE_STATUS.md](docs/INTERFACE_STATUS.md) compares Phase 1
+with the specification section by section; this phase closes the gaps that do not depend on
+sketches or features.
+
+- [ ] Design system: colors, spacing, and type sizes defined once as tokens; light and dark
+      themes built from them, following the system by default, with the choice remembered.
+- [ ] LCAD's own icons for its tools, in one consistent style, and a document icon.
+- [ ] Command registry: each command defined once, with its name, aliases, shortcut, and when it
+      applies, and used by the toolbar, menus, context menus, shortcuts, and search alike.
+- [ ] Command search.
+- [ ] Properties panel: what is selected, when no command is running.
+- [ ] Context menu in the 3D view, driven by the selection.
+- [ ] Several documents in tabs, and a list of recent files.
+- [ ] Layout: remembered between launches, a command to reset it, a collapsible timeline, and a
+      mode that gives the whole window to the 3D view.
+- [ ] 3D view: reference grid, display styles (shaded, with edges, wireframe, hidden line,
+      transparent), zoom to selection, choosing among overlapping objects, navigation presets.
+- [ ] Browser: isolate, reveal hidden, filter by name, origin planes and axes.
+- [ ] Status bar: brief messages such as "saved", the active command, progress.
+- [ ] Shortcuts that can be changed.
+- [ ] Interface tests at several window sizes and scale factors, in both themes.
+
+Acceptance: every command LCAD has can be started from the toolbar, a menu, its shortcut, and
+the search, through one definition; the window comes back as it was left, in the theme that was
+chosen; and the interface tests pass in both themes at 1280 by 800 and at twice the scale.
+
+## Phase 2: Sketcher (2026-10-26 to 2026-11-30)
 
 - [ ] Sketch on origin planes and planar faces, with automatic camera orientation.
 - [ ] Line, rectangle, circle, arc, point, construction geometry first; ellipse, spline, polygon, slot after.
@@ -99,7 +131,7 @@ per-body colors, and a search for commands (Phase 3).
 
 Acceptance: create a fully constrained rectangle, change its dimensions, and verify the geometry updates.
 
-## Phase 3: Parametric solids (2026-11-16 to 2027-01-31)
+## Phase 3: Parametric solids (2026-12-01 to 2027-02-15)
 
 - [ ] Feature graph with dependency tracking and incremental recompute.
 - [ ] Stable references to faces and edges that survive upstream edits (topological naming).
@@ -109,7 +141,6 @@ Acceptance: create a fully constrained rectangle, change its dimensions, and ver
 - [ ] Failure handling that keeps the last valid state and names the broken feature and reference.
 - [ ] Global parameter table with units and expressions.
 - [ ] Measure tool, construction planes and axes.
-- [ ] Command search.
 
 Acceptance: build a dimensioned bracket, edit the first sketch, and verify downstream features update or
 report a specific failure.
@@ -117,7 +148,7 @@ report a specific failure.
 Stable references are the hardest problem in this phase and the usual reason parametric CAD projects stall.
 Budget time for it first, not last.
 
-## Phase 4: Direct modeling and interchange (2027-02-01 to 2027-03-15)
+## Phase 4: Direct modeling and interchange (2027-02-16 to 2027-03-31)
 
 - [ ] STEP import and export, IGES import.
 - [ ] STL, 3MF, OBJ export with resolution control.
@@ -127,7 +158,7 @@ Budget time for it first, not last.
 
 Acceptance: import a STEP solid, offset a face, save, export STEP, and validate the result.
 
-## Phase 5: Components and assemblies (2027-03-16 to 2027-06-30)
+## Phase 5: Components and assemblies (2027-04-01 to 2027-07-15)
 
 - [ ] Components, bodies inside components, subassemblies.
 - [ ] Linked external parts with dependency tracking and project packaging.
@@ -140,7 +171,7 @@ Acceptance: import a STEP solid, offset a face, save, export STEP, and validate 
 Acceptance: assemble two independently editable parts, constrain them, reopen the project, and verify the
 placement survives.
 
-## Port: Windows and macOS (2027-07-01 to 2027-08-31)
+## Port: Windows and macOS (2027-07-16 to 2027-09-15)
 
 Qt 6 and OCCT both run on Windows and macOS, so the port is mostly build, packaging, and platform testing,
 provided the code stays portable from the start: no Linux-only APIs outside a small platform layer, CMake
@@ -150,7 +181,7 @@ throughout, and no hard-coded paths.
 - [ ] macOS build and app bundle.
 - [ ] CI on all three platforms.
 
-## Phase 6: Drawings and manufacturing (2027-09-01 to 2027-12-31)
+## Phase 6: Drawings and manufacturing (2027-09-16 to 2028-01-15)
 
 - [ ] Associative drawings: orthographic, isometric, section, and detail views; dimensions; title blocks.
 - [ ] PDF and DXF export.
@@ -161,7 +192,7 @@ throughout, and no hard-coded paths.
 Acceptance: produce a dimensioned drawing from a model, create a machining operation, simulate it, and
 export G-code through a validated postprocessor.
 
-## Phase 7: Advanced capabilities (2028-01-01 onward)
+## Phase 7: Advanced capabilities (2028-01-16 onward)
 
 Surface modeling, sheet metal, advanced mesh repair, advanced assembly motion, rendering, simulation
 integrations, advanced CAM, Python scripting and plugins. Ordered by user demand once v1.0 is out.

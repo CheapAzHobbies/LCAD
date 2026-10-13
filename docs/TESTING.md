@@ -107,7 +107,7 @@ direction, where a model point lands on screen, and above all what a click selec
 then measured with the kernel. A test that clicks the middle of a box's top face asserts that
 the selected face has an area of 6000 mm², not that some pixels turned blue.
 
-Five lessons are built into them:
+Six lessons are built into them:
 
 - **Look at the screen, not only at the widget.** The first viewport rendered correctly into its
   own framebuffer while the window on screen was blank. `ApplicationTest` therefore reads the
@@ -120,6 +120,9 @@ Five lessons are built into them:
 - **A frame can be one step behind.** OCCT reuses the last frame until told the scene changed,
   and a layout change reaches a widget only when the event loop runs. Tests that look at a
   frame after such a change wait for it.
+- **Fonts are part of the environment.** OCCT warns when the font it wants for the labels in
+  the 3D view is not installed and it has to substitute. Bare containers have almost no fonts,
+  so the CI jobs for Arch and Fedora install DejaVu, as a desktop would have.
 - **A clean developer machine hides missing dependencies.** Both Ubuntu builds failed in CI on
   packages that happened to be installed locally. CI installs into a bare container using the
   same script the build instructions give.

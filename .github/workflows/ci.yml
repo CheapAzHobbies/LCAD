@@ -33,7 +33,9 @@ jobs:
             preset: ci
           - name: Fedora 44
             image: fedora:44
-            bootstrap: dnf install -y git
+            # The bare Fedora image has one monospace font. The 3D view's labels ask for a
+            # sans-serif one, and OCCT warns when it has to substitute.
+            bootstrap: dnf install -y git dejavu-sans-fonts dejavu-sans-mono-fonts
             preset: ci
           - name: Arch Linux
             image: archlinux:latest

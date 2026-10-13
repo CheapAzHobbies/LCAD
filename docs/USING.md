@@ -5,7 +5,8 @@ What LCAD can do today, and how to do it. This grows with each phase; the
 
 LCAD cannot sketch or extrude yet. For now a solid is made from a primitive: a box, cylinder,
 sphere, cone, or torus, by its sizes. Sketching arrives in Phase 2, and extrude, revolve,
-fillet, and the timeline in Phase 3.
+fillet, and the timeline in Phase 3. Before those, Phase 1b reworks the look of the interface
+and adds themes, command search, and tabs.
 
 ## The window
 

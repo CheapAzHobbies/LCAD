@@ -16,7 +16,8 @@ controls; selecting bodies, faces, edges, and vertices, with their measurements 
 bar; a browser tree to rename, hide, and delete bodies; undo and redo; and saving and opening
 `.lcad` documents. [docs/USING.md](docs/USING.md) shows how.
 
-Next is Phase 2, the sketcher. See the [roadmap](ROADMAP.md).
+Next is the interface shell (themes, command search, tabs), then Phase 2, the sketcher. See the
+[roadmap](ROADMAP.md).
 
 ## Building
 
@@ -35,6 +36,8 @@ Details, supported distributions, how to run the tests, and how to build the App
 - [Using LCAD](docs/USING.md): what it can do today, and the mouse and keyboard controls.
 - [Roadmap](ROADMAP.md): phases, target dates, and open decisions.
 - [Project brief](docs/PROJECT_BRIEF.md): the full product requirements.
+- [GUI specification](docs/GUI_SPEC.md): the requirements for the interface, and
+  [where the interface stands](docs/INTERFACE_STATUS.md) against them.
 - [Architecture](docs/ARCHITECTURE.md): modules, the rules between them, and the decisions made so far.
 - [Dependencies](docs/DEPENDENCIES.md): what LCAD is built on, with licenses and versions.
 - [File format](docs/FILE_FORMAT.md): the design of the native `.lcad` format.
