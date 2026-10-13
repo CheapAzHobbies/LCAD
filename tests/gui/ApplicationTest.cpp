@@ -20,6 +20,7 @@
 #include <QDoubleSpinBox>
 #include <QGuiApplication>
 #include <QLabel>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
@@ -79,6 +80,38 @@ bool isXWayland() {
     const bool present = reply != nullptr && reply->present != 0;
     std::free(reply);
     return present;
+}
+
+// Chooses the entry called `text` from the next context menu that opens. Like a message box,
+// a menu blocks the code that opens it.
+void chooseFromNextMenu(const QString& text, QStringList* offered = nullptr) {
+    auto* timer = new QTimer(qApp);
+    timer->setInterval(20);
+    QObject::connect(timer, &QTimer::timeout, qApp, [timer, text, offered] {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (menu == nullptr) {
+            return;
+        }
+        timer->stop();
+        timer->deleteLater();
+        QAction* chosen = nullptr;
+        for (QAction* entry : menu->actions()) {
+            if (entry->isSeparator()) {
+                continue;
+            }
+            if (offered != nullptr) {
+                *offered << entry->text();
+            }
+            if (entry->text() == text) {
+                chosen = entry;
+            }
+        }
+        if (chosen != nullptr) {
+            chosen->trigger();
+        }
+        menu->close();
+    });
+    timer->start();
 }
 
 // Presses `button` on the next message box that opens, and notes what the box said. A message
@@ -146,6 +179,7 @@ private slots:
     void undoAndRedoWorkFromTheMenu();
 
     void browserListsBodiesAndEditsThem();
+    void browserContextMenuActsOnTheBodyClicked();
     void selectionIsSharedBetweenBrowserAndViewport();
     void statusBarMeasuresWhatIsPicked();
     void deleteRemovesTheSelectedBodiesInOneStep();
@@ -608,6 +642,47 @@ void ApplicationTest::browserListsBodiesAndEditsThem() {
     // Back in first place, not appended.
     QCOMPARE(group->child(0)->text(0), QStringLiteral("Box"));
     QCOMPARE(group->child(1)->text(0), QStringLiteral("Sphere"));
+}
+
+void ApplicationTest::browserContextMenuActsOnTheBodyClicked() {
+    MainWindow window;
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    create(window, PrimitiveKind::Box);
+    create(window, PrimitiveKind::Sphere);
+    const ObjectId box = window.document()->bodies()[0].id;
+    const ObjectId sphere = window.document()->bodies()[1].id;
+    QTreeWidget* tree = window.browser()->tree();
+    const auto rightClick = [&window, tree](ObjectId body) {
+        const QPoint where = tree->visualItemRect(window.browser()->bodyItem(body)).center();
+        emit tree->customContextMenuRequested(where);
+    };
+
+    QStringList offered;
+    chooseFromNextMenu(QStringLiteral("Hide"), &offered);
+    rightClick(sphere);
+    QCOMPARE(offered, (QStringList{QStringLiteral("Rename"), QStringLiteral("Hide"),
+                                   QStringLiteral("Delete")}));
+    QVERIFY(!window.document()->findBody(sphere)->visible);
+
+    // A hidden body is offered Show instead.
+    offered.clear();
+    chooseFromNextMenu(QStringLiteral("Show"), &offered);
+    rightClick(sphere);
+    QVERIFY(offered.contains(QStringLiteral("Show")) && !offered.contains(QStringLiteral("Hide")));
+    QVERIFY(window.document()->findBody(sphere)->visible);
+
+    // Delete acts on the body that was clicked, whatever else was selected before.
+    window.browser()->bodyItem(sphere)->setSelected(true);
+    chooseFromNextMenu(QStringLiteral("Delete"));
+    rightClick(box);
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+    QCOMPARE(window.document()->bodies()[0].id, sphere);
+    QCOMPARE(QString::fromStdString(window.document()->undoLabel()), QStringLiteral("Delete Body"));
+
+    // Clicking beside the entries opens no menu, so nothing is left waiting.
+    emit tree->customContextMenuRequested(QPoint(5, tree->viewport()->height() - 5));
+    QVERIFY(QApplication::activePopupWidget() == nullptr);
 }
 
 void ApplicationTest::selectionIsSharedBetweenBrowserAndViewport() {
