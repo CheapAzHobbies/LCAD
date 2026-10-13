@@ -14,19 +14,30 @@ function(lcad_add_gui_test name)
         Qt6::Test lcad::app lcad::core lcad::document lcad::kernel lcad_test_support)
     lcad_target_defaults(${name})
 
-    if(LCAD_XVFB_RUN)
-        add_test(NAME ${name}
-            COMMAND "${LCAD_XVFB_RUN}" --auto-servernum "--server-args=-screen 0 1280x1024x24"
-                    $<TARGET_FILE:${name}>)
-    else()
-        add_test(NAME ${name} COMMAND ${name})
-    endif()
     # Force X11 so the test never lands on a developer's Wayland session, and software rendering
     # so the result does not depend on the machine's GPU. LSAN_OPTIONS only has an effect in
     # sanitizer builds.
-    set_tests_properties(${name} PROPERTIES
-        LABELS gui
-        ENVIRONMENT "QT_QPA_PLATFORM=xcb;LIBGL_ALWAYS_SOFTWARE=1;LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=0")
+    set(environment
+        "QT_QPA_PLATFORM=xcb"
+        "LIBGL_ALWAYS_SOFTWARE=1"
+        "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=0")
+
+    # Each program runs twice: at the screen's own scale, and at twice that, as on a high-DPI
+    # display, where a logical pixel is two physical ones.
+    if(LCAD_XVFB_RUN)
+        add_test(NAME ${name}
+            COMMAND "${LCAD_XVFB_RUN}" --auto-servernum "--server-args=-screen 0 1700x1100x24"
+                    $<TARGET_FILE:${name}>)
+        add_test(NAME ${name}_2x
+            COMMAND "${LCAD_XVFB_RUN}" --auto-servernum "--server-args=-screen 0 3400x2200x24"
+                    $<TARGET_FILE:${name}>)
+    else()
+        add_test(NAME ${name} COMMAND ${name})
+        add_test(NAME ${name}_2x COMMAND ${name})
+    endif()
+    set_tests_properties(${name} PROPERTIES LABELS gui ENVIRONMENT "${environment}")
+    set_tests_properties(${name}_2x PROPERTIES
+        LABELS gui ENVIRONMENT "${environment};QT_SCALE_FACTOR=2")
 endfunction()
 
 lcad_add_gui_test(lcad_viewport_tests ViewportTest.cpp)

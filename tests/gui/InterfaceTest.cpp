@@ -513,9 +513,11 @@ void InterfaceTest::everyIconDrawsInBothThemes() {
                 }
             }
             // Something is drawn, it does not fill the square, and it is drawn in the
-            // theme's text color.
-            QVERIFY2(inked > 40 && inked < 48 * 48 * 0.7, qPrintable(name));
-            QVERIFY2(inTextColor > 20, qPrintable(name));
+            // theme's text color. In shares of the picture, which is larger on a high-DPI
+            // screen.
+            const double area = normal.width() * normal.height();
+            QVERIFY2(inked > area * 0.015 && inked < area * 0.7, qPrintable(name));
+            QVERIFY2(inTextColor > area * 0.008, qPrintable(name));
             QVERIFY2(normal != disabled, qPrintable(name));
         }
     }

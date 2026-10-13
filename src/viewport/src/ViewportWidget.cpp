@@ -283,6 +283,36 @@ public:
     bool axesVisible = true;
     bool animated = true;
     std::array<Handle(AIS_Shape), 6> originObjects;
+    // Physical pixels per logical pixel of the screen the viewport is on.
+    double pixelRatio = 1.0;
+
+    // OCCT measures what it draws at a fixed size on screen (the view cube, the origin guides,
+    // line widths, label text) in physical pixels. On a high-DPI screen those have to grow
+    // with the pixel ratio, or they come out at a fraction of their intended size.
+    void applyPixelRatio(double ratio) {
+        pixelRatio = ratio;
+        // Scales line widths and screen-space text. 96 is OCCT's reference density.
+        view->ChangeRenderingParams().Resolution =
+            static_cast<unsigned int>(std::lround(96.0 * ratio));
+        viewCube->SetSize(viewCubeSize * ratio);
+        // Not multiplied: the resolution above already scales text.
+        viewCube->SetFontHeight(viewCubeSize * 0.2);
+        const int offset = static_cast<int>(std::lround(viewCubeOffset * ratio));
+        viewCube->SetTransformPersistence(new Graphic3d_TransformPers(
+            Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(offset, offset)));
+        if (context->IsDisplayed(viewCube)) {
+            context->Redisplay(viewCube, false);
+        }
+        // The origin guides are built at their pixel size; build the shown ones again.
+        for (std::size_t i = 0; i < originObjects.size(); ++i) {
+            if (!originObjects[i].IsNull()) {
+                context->Remove(originObjects[i], false);
+                originObjects[i] = makeOriginObject(static_cast<OriginItem>(i));
+                context->Display(originObjects[i], AIS_Shaded, -1, false);
+            }
+        }
+        view->Invalidate();
+    }
 
     // A left button press on the view cube is held back until it is known to be a click (which
     // OCCT turns into a change of view) or the start of a drag (which orbits).
@@ -391,14 +421,15 @@ public:
 
     Handle(AIS_Shape) makeOriginObject(OriginItem item) const {
         const gp_Pnt origin(0.0, 0.0, 0.0);
-        const auto plane = [&origin](const gp_Dir& normal, const gp_Dir& along) {
-            return BRepBuilderAPI_MakeFace(gp_Pln(gp_Ax3(origin, normal, along)), 0.0,
-                                           originPlaneSize, 0.0, originPlaneSize)
+        const double planeSize = originPlaneSize * pixelRatio;
+        const double axisLength = originAxisLength * pixelRatio;
+        const auto plane = [&origin, planeSize](const gp_Dir& normal, const gp_Dir& along) {
+            return BRepBuilderAPI_MakeFace(gp_Pln(gp_Ax3(origin, normal, along)), 0.0, planeSize,
+                                           0.0, planeSize)
                 .Shape();
         };
-        const auto axis = [&origin](const gp_Dir& along) {
-            return BRepBuilderAPI_MakeEdge(origin,
-                                           origin.Translated(gp_Vec(along) * originAxisLength))
+        const auto axis = [&origin, axisLength](const gp_Dir& along) {
+            return BRepBuilderAPI_MakeEdge(origin, origin.Translated(gp_Vec(along) * axisLength))
                 .Shape();
         };
         // X is red, Y green, Z blue, as on the axis marker. A plane takes the color of the
@@ -1147,6 +1178,8 @@ void ViewportWidget::initializeGL() {
     m_impl->view->MustBeResized();
     m_impl->view->Invalidate();
 
+    m_impl->applyPixelRatio(devicePixelRatioF());
+
     // OCCT may have rebound the context while setting up; give Qt its framebuffer back.
     makeCurrent();
     m_impl->graphicsInfo = readGraphicsInfo(m_impl->view);
@@ -1165,7 +1198,7 @@ void ViewportWidget::paintGL() {
     Handle(ViewportWindow) window = Handle(ViewportWindow)::DownCast(m_impl->view->Window());
     if (window->DevicePixelRatio() != devicePixelRatioF()) {
         window->setDevicePixelRatio(devicePixelRatioF());
-        m_impl->view->Invalidate();
+        m_impl->applyPixelRatio(devicePixelRatioF());
     }
 
     // Point OCCT at the framebuffer Qt wants this frame drawn into.
