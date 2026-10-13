@@ -3,6 +3,7 @@
 #include <lcad/document/Document.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Primitives.h>
+#include <lcad/kernel/Transform.h>
 #include <lcad/sketch/Edit.h>
 #include <lcad/viewport/SketchEditor.h>
 #include <lcad/viewport/ViewportWidget.h>
@@ -15,6 +16,7 @@
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTest>
+#include <QWheelEvent>
 
 #include <cmath>
 #include <memory>
@@ -66,6 +68,10 @@ private slots:
     // Sketches among the bodies
     void sketchesAreDrawnAndFollowTheDocument();
     void aSketchIsPickedAsAWhole();
+
+    // Choosing a plane
+    void aPlaneIsChosenByClickingItInTheView();
+    void planesCanBeChosenThroughABodyAtTheOrigin();
 
     // Opening and closing
     void editingTurnsTheCameraToFaceThePlane_data();
@@ -119,6 +125,8 @@ private:
     [[nodiscard]] QPoint at(double u, double v) const {
         return editor()->toWidget({u, v}).toPoint();
     }
+    // A place in the view with nothing in it: clear of the origin, the view cube, and the axes.
+    [[nodiscard]] QPoint emptyCorner() const { return {40, 40}; }
     void move(const QPoint& point);
     void click(const QPoint& point, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
     void drag(const QPoint& from, const QPoint& to);
@@ -135,6 +143,27 @@ private:
         return sketch().position(sketch().find(curve)->end);
     }
     // What the editor drew, on a clear background, with colors as they were painted.
+    // The middle of the patch of an origin plane while a plane is being chosen. A patch is 120
+    // pixels along each of its axes as seen square on, and reaches from the origin toward the
+    // side the view is looked at from.
+    [[nodiscard]] QPoint onPlane(lcad::viewport::OriginItem plane) const {
+        using lcad::viewport::OriginItem;
+        const QVector3D looking = m_viewport->viewDirection();
+        const auto toward = [&looking](const QVector3D& axis) {
+            return QVector3D::dotProduct(looking, axis) > 1e-6F ? -axis : axis;
+        };
+        const QVector3D u =
+            toward(plane == OriginItem::PlaneYZ ? QVector3D(0, 1, 0) : QVector3D(1, 0, 0));
+        const QVector3D v =
+            toward(plane == OriginItem::PlaneXY ? QVector3D(0, 1, 0) : QVector3D(0, 0, 1));
+        const double pixelsPerMillimeter = m_viewport->height() / m_viewport->cameraState().scale;
+        const QPointF origin = m_viewport->project(0.0, 0.0, 0.0);
+        const auto onScreen = [&](const QVector3D& axis) {
+            return (m_viewport->project(axis.x(), axis.y(), axis.z()) - origin) /
+                   pixelsPerMillimeter * 120.0;
+        };
+        return (origin + (onScreen(u) + onScreen(v)) * 0.5).toPoint();
+    }
     [[nodiscard]] QImage overlayImage() const {
         return editor()->overlay()->grab().toImage().convertToFormat(QImage::Format_ARGB32);
     }
@@ -318,6 +347,140 @@ void SketchViewTest::aSketchIsPickedAsAWhole() {
     QTest::mouseDClick(m_viewport, Qt::LeftButton, Qt::NoModifier, onALine);
     QCOMPARE(activated.count(), 1);
     QCOMPARE(activated.first().first().value<SelectedItem>().body, id);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Choosing a plane
+
+void SketchViewTest::aPlaneIsChosenByClickingItInTheView() {
+    using lcad::viewport::OriginItem;
+    m_viewport->setStandardView(StandardView::Home);
+    render();
+    const QImage without = m_viewport->grabFramebuffer();
+    QVERIFY(!m_viewport->isPlanePicking());
+    QVERIFY(!m_viewport->pickPlaneAt(onPlane(OriginItem::PlaneXY)).has_value());
+
+    m_viewport->setPlanePicking(true);
+    QVERIFY(m_viewport->isPlanePicking());
+    render();
+    const QImage with = m_viewport->grabFramebuffer();
+    keepFrame(with, "sketch-plane-picking");
+    // The three planes are there to see: each patch in its own color, where there was nothing.
+    const auto tinted = [&](OriginItem plane) {
+        const QPoint pixel = onPlane(plane) * with.devicePixelRatio();
+        const QColor before = without.pixelColor(pixel);
+        const QColor now = with.pixelColor(pixel);
+        const QColor ink = ViewportWidget::originColor(plane);
+        // Nearer to the plane's color than the bare background was, in every channel that
+        // differs.
+        const auto distance = [&ink](const QColor& c) {
+            return qAbs(c.red() - ink.red()) + qAbs(c.green() - ink.green()) +
+                   qAbs(c.blue() - ink.blue());
+        };
+        return distance(now) < distance(before) - 20;
+    };
+    for (const OriginItem plane : {OriginItem::PlaneXY, OriginItem::PlaneXZ, OriginItem::PlaneYZ}) {
+        QVERIFY2(tinted(plane), qPrintable(QString::number(static_cast<int>(plane))));
+        // And each is where a click finds it.
+        const auto found = m_viewport->pickPlaneAt(onPlane(plane));
+        QVERIFY(found.has_value());
+        QCOMPARE(static_cast<int>(*found), static_cast<int>(plane));
+    }
+    QVERIFY(!m_viewport->pickPlaneAt(emptyCorner()).has_value());
+
+    // The one under the pointer lights up, and says which it is.
+    QSignalSpy hovered(m_viewport, &ViewportWidget::planeHovered);
+    const QPoint onXZ = onPlane(OriginItem::PlaneXZ);
+    const QColor resting = with.pixelColor(onXZ * with.devicePixelRatio());
+    move(onXZ);
+    render();
+    QTRY_COMPARE(hovered.count(), 1);
+    QCOMPARE(hovered.last().first().toInt(), static_cast<int>(OriginItem::PlaneXZ));
+    const QImage lit = m_viewport->grabFramebuffer();
+    keepFrame(lit, "sketch-plane-hovered");
+    const QColor glowing = lit.pixelColor(onXZ * lit.devicePixelRatio());
+    QVERIFY2(qAbs(glowing.green() - resting.green()) + qAbs(glowing.red() - resting.red()) +
+                     qAbs(glowing.blue() - resting.blue()) >
+                 25,
+             qPrintable(QStringLiteral("%1 %2").arg(resting.name(), glowing.name())));
+    move(emptyCorner());
+    render();
+    QTRY_COMPARE(hovered.count(), 2);
+    QCOMPARE(hovered.last().first().toInt(), -1);
+
+    // A click on a patch chooses that plane, and selects nothing.
+    QSignalSpy picked(m_viewport, &ViewportWidget::planePicked);
+    QSignalSpy selected(m_viewport, &ViewportWidget::selectionChanged);
+    click(onPlane(OriginItem::PlaneYZ));
+    QCOMPARE(picked.count(), 1);
+    QCOMPARE(static_cast<int>(picked.first().first().value<OriginItem>()),
+             static_cast<int>(OriginItem::PlaneYZ));
+    QCOMPARE(selected.count(), 0);
+    QVERIFY(m_viewport->selection().empty());
+    // A click beside the patches chooses none.
+    click(emptyCorner());
+    QCOMPARE(picked.count(), 1);
+    // Nor does a press on one patch that is let go somewhere else.
+    QTest::mousePress(m_viewport, Qt::LeftButton, Qt::NoModifier, onPlane(OriginItem::PlaneXY));
+    render();
+    QTest::mouseRelease(m_viewport, Qt::LeftButton, Qt::NoModifier, emptyCorner());
+    render();
+    QCOMPARE(picked.count(), 1);
+    // Or on another patch: which of the two was meant?
+    QTest::mousePress(m_viewport, Qt::LeftButton, Qt::NoModifier, onPlane(OriginItem::PlaneXY));
+    render();
+    QTest::mouseRelease(m_viewport, Qt::LeftButton, Qt::NoModifier, onPlane(OriginItem::PlaneXZ));
+    render();
+    QCOMPARE(picked.count(), 1);
+    QVERIFY(m_viewport->selection().empty());
+
+    // The patches keep their size on screen when the view is zoomed.
+    const QPoint spot = onPlane(OriginItem::PlaneXY);
+    QWheelEvent wheel(spot, m_viewport->mapToGlobal(spot), QPoint(), QPoint(0, 360), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(m_viewport, &wheel);
+    render();
+    QVERIFY(m_viewport->pickPlaneAt(onPlane(OriginItem::PlaneXY)).has_value());
+    QVERIFY(m_viewport->pickPlaneAt(onPlane(OriginItem::PlaneYZ)).has_value());
+
+    // Switched off, they are gone, and nothing is left to click.
+    m_viewport->setPlanePicking(false);
+    render();
+    QVERIFY(!m_viewport->pickPlaneAt(onPlane(OriginItem::PlaneXY)).has_value());
+    click(onPlane(OriginItem::PlaneXY));
+    QCOMPARE(picked.count(), 1);
+}
+
+void SketchViewTest::planesCanBeChosenThroughABodyAtTheOrigin() {
+    using lcad::viewport::OriginItem;
+    // A cube with the origin at its very middle: the planes' patches are all inside it.
+    m_document->addBody("Cube", lcad::kernel::translated(lcad::kernel::makeBox(100.0, 100.0, 100.0),
+                                                         -50.0, -50.0, -50.0));
+    m_viewport->setStandardView(StandardView::Home);
+    render();
+    m_viewport->setPlanePicking(true);
+    render();
+    keepFrame(m_viewport->grabFramebuffer(), "sketch-plane-picking-box");
+
+    // They are drawn over the cube all the same, and a click on one chooses the plane, not
+    // the face of the cube in front of it.
+    QSignalSpy picked(m_viewport, &ViewportWidget::planePicked);
+    for (const OriginItem plane : {OriginItem::PlaneXY, OriginItem::PlaneXZ, OriginItem::PlaneYZ}) {
+        const auto found = m_viewport->pickPlaneAt(onPlane(plane));
+        QVERIFY2(found.has_value(), qPrintable(QString::number(static_cast<int>(plane))));
+        QCOMPARE(static_cast<int>(*found), static_cast<int>(plane));
+    }
+    click(onPlane(OriginItem::PlaneXY));
+    QCOMPARE(picked.count(), 1);
+    QCOMPARE(static_cast<int>(picked.first().first().value<OriginItem>()),
+             static_cast<int>(OriginItem::PlaneXY));
+    QVERIFY(m_viewport->selection().empty());
+
+    // The rest of the cube can still be clicked: a flat face is a place for a sketch too.
+    click(m_viewport->project(-40.0, 40.0, 50.0).toPoint());
+    QCOMPARE(picked.count(), 1);
+    QCOMPARE(m_viewport->selection().size(), std::size_t{1});
+    QCOMPARE(m_viewport->selection()[0].kind, SelectedItem::Kind::Face);
 }
 
 // ---------------------------------------------------------------------------------------------

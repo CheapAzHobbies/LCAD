@@ -46,8 +46,11 @@ and dimensions.
 ### Starting and finishing
 
 1. Click **New Sketch** in the toolbar (or press S and type "sketch").
-2. Choose a plane in the panel on the right: XY, XZ, or YZ. Or click a flat face of a body. If a
-   flat face was already selected, the sketch goes straight onto it.
+2. The three planes through the origin appear in the 3D view: blue for XY, green for XZ, red
+   for YZ. Click one. The plane under the pointer lights up, and the status bar names it. Or
+   click a flat face of a body. If a flat face was already selected, the sketch goes straight
+   onto it. A plane that is seen edge-on is hard to click; turn the view, or use its button in
+   the panel on the right.
 3. The view turns to face the plane and the toolbar shows the sketch tools.
 4. Draw. When done, click **Finish Sketch** at the right of the toolbar, or press Ctrl + Enter.
 
@@ -172,7 +175,7 @@ projected edge is a copy, and does not follow its body if the body changes.
 | Fit everything in view | Double-click the middle button, or press F6. |
 | Zoom to what is selected | Press Shift + F6. |
 | Go to the home view | Press Home. |
-| Look from the front, top, and so on | Click a side, edge, or corner of the view cube, or use the View menu. |
+| Look from the front, top, and so on | Click a side, edge, or corner of the view cube, or use the View menu. The cube's sides are three different shades and its edges are dark, so that it shows which way the model is turned at a glance. |
 
 **View > Mouse** changes this:
 

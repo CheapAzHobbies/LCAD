@@ -8,8 +8,11 @@
 #include <QCheckBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -292,11 +295,12 @@ void SketchPanel::removeConstraint(int row) {
 
 SketchPlanePanel::SketchPlanePanel(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
-    auto* text = new QLabel(tr("Choose the plane to sketch on, or click a flat face of a body "
-                               "in the 3D view."),
-                            this);
+    auto* text = new QLabel(tr("Click a plane in the 3D view, or a flat face of a body."), this);
+    text->setObjectName(QStringLiteral("sketchPlaneHint"));
     text->setWordWrap(true);
     layout->addWidget(text);
+    layout->addSpacing(8);
+    layout->addWidget(secondary(tr("Or choose here"), this));
     const QString names[3] = {tr("XY Plane (seen from the top)"),
                               tr("XZ Plane (seen from the front)"),
                               tr("YZ Plane (seen from the right)")};
@@ -304,6 +308,18 @@ SketchPlanePanel::SketchPlanePanel(QWidget* parent) : QWidget(parent) {
     for (int i = 0; i < 3; ++i) {
         m_buttons[i] = new QPushButton(names[i], this);
         m_buttons[i]->setObjectName(QLatin1String(objectNames[i]));
+        // A swatch in the color the plane has in the 3D view, to tell which is which.
+        // With a clear strip on its right, to stand a little off the words.
+        QPixmap swatch(20, 14);
+        swatch.fill(Qt::transparent);
+        {
+            QPainter painter(&swatch);
+            painter.fillRect(
+                0, 0, 14, 14,
+                viewport::ViewportWidget::originColor(static_cast<viewport::OriginItem>(i)));
+        }
+        m_buttons[i]->setIcon(QIcon(swatch));
+        m_buttons[i]->setIconSize(swatch.size());
         layout->addWidget(m_buttons[i]);
         connect(m_buttons[i], &QPushButton::clicked, this, [this, i] { emit planeChosen(i); });
     }
@@ -314,6 +330,15 @@ SketchPlanePanel::SketchPlanePanel(QWidget* parent) : QWidget(parent) {
     connect(cancel, &QPushButton::clicked, this, &SketchPlanePanel::canceled);
     layout->addStretch(1);
     setFocusProxy(m_buttons[0]);
+}
+
+void SketchPlanePanel::setHoveredPlane(int plane) {
+    m_hovered = plane >= 0 && plane < 3 ? plane : -1;
+    for (int i = 0; i < 3; ++i) {
+        m_buttons[i]->setProperty("planeHovered", i == m_hovered);
+        m_buttons[i]->style()->unpolish(m_buttons[i]);
+        m_buttons[i]->style()->polish(m_buttons[i]);
+    }
 }
 
 QPushButton* SketchPlanePanel::planeButton(int plane) const {

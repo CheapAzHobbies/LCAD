@@ -190,6 +190,31 @@ MainWindow::MainWindow(QWidget* parent)
                     editSketch(item.body);
                 }
             });
+    // Choosing the plane of a new sketch in the 3D view. Queued: the viewport is in the middle
+    // of a click when it says so, and the answer changes what it shows.
+    connect(
+        m_viewport, &viewport::ViewportWidget::planePicked, this,
+        [this](OriginItem plane) {
+            if (m_planePanel != nullptr) {
+                createSketch(plane == OriginItem::PlaneXZ   ? kernel::planeXZ()
+                             : plane == OriginItem::PlaneYZ ? kernel::planeYZ()
+                                                            : kernel::planeXY());
+            }
+        },
+        Qt::QueuedConnection);
+    connect(m_viewport, &viewport::ViewportWidget::planeHovered, this, [this](int plane) {
+        if (m_planePanel == nullptr) {
+            return;
+        }
+        m_planePanel->setHoveredPlane(plane);
+        const QString names[3] = {tr("XY Plane"), tr("XZ Plane"), tr("YZ Plane")};
+        if (plane >= 0 && plane < 3) {
+            statusBar()->showMessage(tr("%1: click to sketch on it").arg(names[plane]));
+        } else {
+            statusBar()->showMessage(
+                tr("Click a plane in the 3D view, or a flat face of a body, to sketch on it."));
+        }
+    });
     connect(m_browser, &BrowserPanel::sketchActivated, this,
             [this](document::ObjectId sketch) { editSketch(sketch); });
     connect(m_viewport->sketchEditor(), &viewport::SketchEditor::changed, this,
@@ -2078,12 +2103,8 @@ void MainWindow::cancelCommand() {
         m_inspectorStack->removeWidget(m_planePanel);
         m_planePanel->deleteLater();
         m_planePanel = nullptr;
-        // The planes were shown to choose from. Show what the user had ticked again.
-        if (m_current >= 0) {
-            for (std::size_t i = 0; i < 3; ++i) {
-                m_viewport->setOriginItemVisible(static_cast<OriginItem>(i), current().origin[i]);
-            }
-        }
+        statusBar()->clearMessage();
+        m_viewport->setPlanePicking(false);
     }
     showInspector();
     m_viewport->setFocus();
@@ -2145,16 +2166,14 @@ void MainWindow::startSketch() {
                                   : kernel::planeYZ());
     });
     connect(m_planePanel, &SketchPlanePanel::canceled, this, &MainWindow::cancelCommand);
-    // The three planes, to see what is being chosen between.
-    for (const OriginItem plane : {OriginItem::PlaneXY, OriginItem::PlaneXZ, OriginItem::PlaneYZ}) {
-        m_viewport->setOriginItemVisible(plane, true);
-    }
+    // The three planes, large enough to click, in the 3D view.
+    m_viewport->setPlanePicking(true);
     showInspector();
     m_inspectorDock->show();
     m_planePanel->setFocus();
     m_commands->refresh();
     statusBar()->showMessage(
-        tr("Choose a plane in the panel on the right, or click a flat face of a body."), 9000);
+        tr("Click a plane in the 3D view, or a flat face of a body, to sketch on it."), 9000);
 }
 
 document::ObjectId MainWindow::createSketch(const kernel::Plane& plane) {

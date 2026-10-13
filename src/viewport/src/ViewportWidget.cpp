@@ -105,6 +105,21 @@ Graphic3d_MaterialAspect bodyMaterial() {
 // The origin planes and axes are this large on screen, in pixels, at any zoom.
 const double originPlaneSize = 46.0;
 const double originAxisLength = 70.0;
+// And this large while one of the planes is being chosen: large enough to aim at.
+const double pickPlaneSize = 120.0;
+
+// The plane an origin item is, as a point on it, its normal, and the direction of its own X.
+gp_Ax3 originPlaneAxes(OriginItem item) {
+    const gp_Pnt origin(0.0, 0.0, 0.0);
+    switch (item) {
+    case OriginItem::PlaneXZ:
+        return gp_Ax3(origin, gp::DY().Reversed(), gp::DX());
+    case OriginItem::PlaneYZ:
+        return gp_Ax3(origin, gp::DX(), gp::DY());
+    default:
+        return gp_Ax3(origin, gp::DZ(), gp::DX());
+    }
+}
 
 // The selection modes of AIS_Shape that a filter switches on.
 std::vector<int> selectionModes(SelectionFilter filter) {
@@ -306,6 +321,14 @@ public:
     bool axesVisible = true;
     bool animated = true;
     std::array<Handle(AIS_Shape), 6> originObjects;
+    // The patches shown while a plane is being chosen, and which of them the pointer is on and
+    // which the button went down on (-1 for none).
+    std::array<Handle(AIS_Shape), 3> pickPlanes;
+    // For X, Y, and Z: +1 if the patches reach the positive way along it, -1 if the negative.
+    std::array<int, 3> pickSides{1, 1, 1};
+    bool planePicking = false;
+    int hoveredPlane = -1;
+    int pressedPlane = -1;
     // Physical pixels per logical pixel of the screen the viewport is on.
     double pixelRatio = 1.0;
 
@@ -336,6 +359,9 @@ public:
                     applySketchFilter(object);
                 }
             }
+        }
+        if (planePicking) {
+            showPickPlanes();
         }
         // The origin guides are built at their pixel size; build the shown ones again.
         for (std::size_t i = 0; i < originObjects.size(); ++i) {
@@ -419,7 +445,13 @@ public:
             selected->SetDisplayMode(AIS_Shaded);
             selected->SetTransparency(0.45F);
         }
+        // The sides in one color with the matte finish the bodies have, so that the three in
+        // view are three plainly different shades, and the edges and corners between them dark,
+        // so that every side has an outline whatever the light does.
+        viewCube->SetMaterial(bodyMaterial());
         viewCube->SetBoxColor(toOcct(colors.cube));
+        viewCube->BoxEdgeStyle()->SetColor(toOcct(colors.cubeEdge));
+        viewCube->BoxCornerStyle()->SetColor(toOcct(colors.cubeEdge));
         viewCube->SetTextColor(toOcct(colors.cubeText));
         if (context->IsDisplayed(viewCube)) {
             context->Redisplay(viewCube, false);
@@ -475,40 +507,29 @@ public:
             return BRepBuilderAPI_MakeEdge(origin, origin.Translated(gp_Vec(along) * axisLength))
                 .Shape();
         };
-        // X is red, Y green, Z blue, as on the axis marker. A plane takes the color of the
-        // axis it is square to.
-        const QColor red(214, 72, 72);
-        const QColor green(72, 170, 86);
-        const QColor blue(66, 120, 220);
         TopoDS_Shape shape;
-        QColor color;
+        const QColor color = ViewportWidget::originColor(item);
         bool isPlane = true;
         switch (item) {
         case OriginItem::PlaneXY:
             shape = plane(gp::DZ(), gp::DX());
-            color = blue;
             break;
         case OriginItem::PlaneXZ:
             shape = plane(gp::DY().Reversed(), gp::DX());
-            color = green;
             break;
         case OriginItem::PlaneYZ:
             shape = plane(gp::DX(), gp::DY());
-            color = red;
             break;
         case OriginItem::AxisX:
             shape = axis(gp::DX());
-            color = red;
             isPlane = false;
             break;
         case OriginItem::AxisY:
             shape = axis(gp::DY());
-            color = green;
             isPlane = false;
             break;
         case OriginItem::AxisZ:
             shape = axis(gp::DZ());
-            color = blue;
             isPlane = false;
             break;
         }
@@ -525,6 +546,99 @@ public:
             new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, origin));
         object->SetInfiniteState(true);
         return object;
+    }
+
+    // A patch of an origin plane to click on, while a plane is being chosen: larger than the
+    // guide, drawn over everything else, and lit up under the pointer.
+    //
+    // The patches are solid, not see-through. Seen from most directions one patch lies in front
+    // of part of another, and see-through patches mix their colors there, so that the plane a
+    // click would get is drawn in a color that belongs to none of them. Solid, what is seen is
+    // what is clicked.
+    //
+    // Each patch reaches from the origin along its two axes toward the side the viewer was on
+    // when the choosing began (pickSides). Three patches laid out that way are the inside of a
+    // corner seen from within, and none of them is in front of another. All reaching the
+    // positive way, as the guides do, the one in front covers half of each of the others in
+    // the home view.
+    Handle(AIS_Shape) makePickPlane(OriginItem item) const {
+        const double size = pickPlaneSize * pixelRatio;
+        // Which of X, Y, Z the patch's own two directions are.
+        const std::size_t u = item == OriginItem::PlaneYZ ? 1 : 0;
+        const std::size_t v = item == OriginItem::PlaneXY ? 1 : 2;
+        const auto range = [this, size](std::size_t axis) {
+            return pickSides[axis] > 0 ? std::pair(0.0, size) : std::pair(-size, 0.0);
+        };
+        Handle(AIS_Shape) object =
+            new AIS_Shape(BRepBuilderAPI_MakeFace(gp_Pln(originPlaneAxes(item)), range(u).first,
+                                                  range(u).second, range(v).first, range(v).second)
+                              .Shape());
+        // Not marked as infinite, as the guides are: OCCT draws an infinite shape as its
+        // outline only, and these are meant to be seen as planes.
+        object->SetTransformPersistence(
+            new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, gp_Pnt(0.0, 0.0, 0.0)));
+        object->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        stylePickPlane(object, item, false);
+        return object;
+    }
+
+    // A patch as it is at rest, or as it is under the pointer: lighter, with a bold outline in
+    // the color of whatever the pointer is on.
+    void stylePickPlane(const Handle(AIS_Shape)& object, OriginItem item, bool hovered) const {
+        QColor fill = ViewportWidget::originColor(item);
+        if (hovered) {
+            fill = fill.lighter(140);
+        }
+        object->SetMaterial(bodyMaterial());
+        object->SetColor(toOcct(fill));
+        object->Attributes()->SetFaceBoundaryDraw(true);
+        object->Attributes()->SetFaceBoundaryAspect(
+            new Prs3d_LineAspect(toOcct(hovered ? colors.hover : colors.bodyEdge), Aspect_TOL_SOLID,
+                                 hovered ? 3.0 : 1.0));
+    }
+
+    // Lights up the patch the pointer is on, and puts the one it left back.
+    void showHoveredPlane(int plane) {
+        for (std::size_t i = 0; i < pickPlanes.size(); ++i) {
+            if (pickPlanes[i].IsNull()) {
+                continue;
+            }
+            stylePickPlane(pickPlanes[i], static_cast<OriginItem>(i), static_cast<int>(i) == plane);
+            context->Redisplay(pickPlanes[i], false);
+        }
+        redraw();
+    }
+
+    void showPickPlanes() {
+        hidePickPlanes();
+        for (std::size_t i = 0; i < pickPlanes.size(); ++i) {
+            pickPlanes[i] = makePickPlane(static_cast<OriginItem>(i));
+            context->Display(pickPlanes[i], AIS_Shaded, AIS_Shape::SelectionMode(TopAbs_SHAPE),
+                             false);
+        }
+    }
+
+    void hidePickPlanes() {
+        for (Handle(AIS_Shape)& object : pickPlanes) {
+            if (!object.IsNull()) {
+                context->Remove(object, false);
+                object.Nullify();
+            }
+        }
+    }
+
+    // Which plane's patch OCCT last found under the pointer: 0 to 2, or -1.
+    [[nodiscard]] int detectedPickPlane() const {
+        if (!planePicking || context.IsNull() || !context->HasDetected()) {
+            return -1;
+        }
+        const Handle(AIS_InteractiveObject) under = context->DetectedInteractive();
+        for (std::size_t i = 0; i < pickPlanes.size(); ++i) {
+            if (!pickPlanes[i].IsNull() && under == pickPlanes[i]) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
     }
 
     // The selection entry an owner stands for, if it belongs to a body.
@@ -954,6 +1068,9 @@ ViewportWidget::~ViewportWidget() {
     for (Handle(AIS_Shape)& object : m_impl->originObjects) {
         object.Nullify();
     }
+    for (Handle(AIS_Shape)& object : m_impl->pickPlanes) {
+        object.Nullify();
+    }
     m_impl->context.Nullify();
     if (!m_impl->view.IsNull()) {
         m_impl->view->Remove();
@@ -1380,6 +1497,66 @@ bool ViewportWidget::isOriginItemVisible(OriginItem item) const {
     return !m_impl->originObjects[static_cast<std::size_t>(item)].IsNull();
 }
 
+QColor ViewportWidget::originColor(OriginItem item) {
+    // X is red, Y green, Z blue, as on the axis marker. A plane takes the color of the axis it
+    // is square to.
+    switch (item) {
+    case OriginItem::PlaneYZ:
+    case OriginItem::AxisX:
+        return QColor(214, 72, 72);
+    case OriginItem::PlaneXZ:
+    case OriginItem::AxisY:
+        return QColor(72, 170, 86);
+    case OriginItem::PlaneXY:
+    case OriginItem::AxisZ:
+        break;
+    }
+    return QColor(66, 120, 220);
+}
+
+void ViewportWidget::setPlanePicking(bool on) {
+    if (on == m_impl->planePicking || !m_impl->canRender()) {
+        return;
+    }
+    m_impl->planePicking = on;
+    m_impl->pressedPlane = -1;
+    if (on) {
+        // Toward the viewer, along each axis, as the view is now. Decided once: patches that
+        // jumped about as the view was turned would be hard to aim at.
+        const gp_Dir looking = m_impl->view->Camera()->Direction();
+        m_impl->pickSides = {looking.X() > 1e-6 ? -1 : 1, looking.Y() > 1e-6 ? -1 : 1,
+                             looking.Z() > 1e-6 ? -1 : 1};
+        m_impl->showPickPlanes();
+    } else {
+        m_impl->context->ClearDetected(false);
+        m_impl->hidePickPlanes();
+        unsetCursor();
+        if (m_impl->hoveredPlane != -1) {
+            m_impl->hoveredPlane = -1;
+            emit planeHovered(-1);
+        }
+    }
+    m_impl->redraw();
+}
+
+bool ViewportWidget::isPlanePicking() const {
+    return m_impl->planePicking;
+}
+
+std::optional<OriginItem> ViewportWidget::pickPlaneAt(const QPoint& position) {
+    if (!m_impl->planePicking || !m_impl->canRender() || m_impl->view->Window().IsNull()) {
+        return std::nullopt;
+    }
+    const Graphic3d_Vec2i pixel = m_impl->toFramebufferPixels(position);
+    m_impl->context->MoveTo(pixel.x(), pixel.y(), m_impl->view, false);
+    update();
+    const int plane = m_impl->detectedPickPlane();
+    if (plane < 0) {
+        return std::nullopt;
+    }
+    return static_cast<OriginItem>(plane);
+}
+
 void ViewportWidget::setSelectionFilter(SelectionFilter filter) {
     if (filter == m_impl->filter) {
         return;
@@ -1645,6 +1822,24 @@ void ViewportWidget::paintGL() {
         m_impl->lastDetected = detected;
         update();
     }
+    if (const int plane = m_impl->detectedPickPlane(); plane != m_impl->hoveredPlane) {
+        m_impl->hoveredPlane = plane;
+        // Told once painting is over: whoever listens may want to change what is on screen.
+        QMetaObject::invokeMethod(
+            this,
+            [this, plane] {
+                if (m_impl->planePicking && m_impl->hoveredPlane == plane) {
+                    if (plane >= 0) {
+                        setCursor(Qt::PointingHandCursor);
+                    } else {
+                        unsetCursor();
+                    }
+                    m_impl->showHoveredPlane(plane);
+                    emit planeHovered(plane);
+                }
+            },
+            Qt::QueuedConnection);
+    }
 
     // And restore what Qt expects, or it draws text and other textures corrupted.
     gl->glPixelStorei(GL_PACK_ALIGNMENT, 4);
@@ -1669,6 +1864,13 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
         m_impl->cubePressPosition = event->position();
         m_impl->cubePressModifiers = event->modifiers();
         return;
+    }
+    if (m_impl->planePicking && event->button() == Qt::LeftButton) {
+        if (const auto plane = pickPlaneAt(event->position().toPoint())) {
+            // A plane is being chosen, and this is one. OCCT is not to select anything.
+            m_impl->pressedPlane = static_cast<int>(*plane);
+            return;
+        }
     }
     if (m_impl->sketching() && event->button() == Qt::LeftButton) {
         if (m_impl->editor->tool() == SketchTool::Project) {
@@ -1725,6 +1927,15 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
         m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(m_impl->cubePressPosition),
                                    Aspect_VKeyMouse_LeftButton,
                                    toOcctModifiers(m_impl->cubePressModifiers), false);
+    } else if (m_impl->pressedPlane >= 0 && event->button() == Qt::LeftButton) {
+        // Chosen if the button comes up on the patch it went down on.
+        const int pressed = m_impl->pressedPlane;
+        m_impl->pressedPlane = -1;
+        const auto plane = pickPlaneAt(event->position().toPoint());
+        if (plane.has_value() && static_cast<int>(*plane) == pressed) {
+            emit planePicked(*plane);
+        }
+        return;
     } else if (m_impl->sketching() && event->button() == Qt::LeftButton) {
         m_impl->editor->mouseRelease(event->position(), event->modifiers());
         return;
@@ -1763,6 +1974,10 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
     if (m_impl->sketching()) {
         m_impl->editor->mouseMove(event->position(), buttons, event->modifiers());
         // OCCT never heard of the left button going down, and is not to act on it.
+        buttons.setFlag(Qt::LeftButton, false);
+    }
+    if (m_impl->pressedPlane >= 0) {
+        // Nor of a press on a plane that is being chosen.
         buttons.setFlag(Qt::LeftButton, false);
     }
     if (m_impl->UpdateMousePosition(m_impl->toFramebufferPixels(event->position()),

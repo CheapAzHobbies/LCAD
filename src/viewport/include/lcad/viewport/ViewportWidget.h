@@ -86,7 +86,9 @@ struct ViewportColors {
     QColor preview{90, 170, 255};
     QColor grid{64, 68, 75};
     QColor gridMajor{84, 89, 98};
+    // The view cube: its sides, the edges and corners between them, and the words on the sides.
     QColor cube{214, 218, 224};
+    QColor cubeEdge{24, 26, 30};
     QColor cubeText{40, 44, 50};
     /// A sketch seen among the bodies, not being edited.
     QColor sketch{120, 180, 255};
@@ -229,6 +231,20 @@ public:
     /// The origin planes and axes keep their size on screen at any zoom, and cannot be picked.
     void setOriginItemVisible(OriginItem item, bool visible);
     [[nodiscard]] bool isOriginItemVisible(OriginItem item) const;
+    /// The color an origin plane or axis is drawn in: red, green, and blue for X, Y, and Z, and
+    /// a plane in the color of the axis it is square to.
+    [[nodiscard]] static QColor originColor(OriginItem item);
+
+    // Choosing a plane
+
+    /// While on, the three planes through the origin are shown as patches large enough to click,
+    /// drawn over the model so that a body at the origin does not hide them. Each lights up
+    /// under the pointer, and a click on one is reported by planePicked() and selects nothing.
+    /// This is how the plane of a new sketch is chosen. Off until switched on.
+    void setPlanePicking(bool on);
+    [[nodiscard]] bool isPlanePicking() const;
+    /// The plane whose patch is at a position in the widget, while plane picking is on.
+    [[nodiscard]] std::optional<OriginItem> pickPlaneAt(const QPoint& position);
 
     // The selection
 
@@ -262,6 +278,11 @@ signals:
     void sketchEditingChanged();
     /// The user double-clicked something that can be picked.
     void itemActivated(const lcad::viewport::SelectedItem& item);
+    /// While plane picking is on: the user clicked a plane's patch.
+    void planePicked(lcad::viewport::OriginItem plane);
+    /// While plane picking is on: the pointer came onto a plane's patch (0 for XY, 1 for XZ, 2
+    /// for YZ) or left the patches (-1).
+    void planeHovered(int plane);
     /// Emitted once if the viewport cannot start rendering.
     void initializationFailed(const QString& reason);
 

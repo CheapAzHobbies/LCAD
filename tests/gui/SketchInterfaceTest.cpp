@@ -122,6 +122,27 @@ private:
     static QPoint at(const MainWindow& window, double u, double v) {
         return editor(window)->toWidget({u, v}).toPoint();
     }
+    // The middle of an origin plane's patch in the 3D view, while a plane is being chosen: 120
+    // pixels along each axis as seen square on, reaching toward the side the view is seen from.
+    static QPoint onPlane(const MainWindow& window, lcad::viewport::OriginItem plane) {
+        using lcad::viewport::OriginItem;
+        const auto* viewport = window.viewport();
+        const QVector3D looking = viewport->viewDirection();
+        const auto toward = [&looking](const QVector3D& axis) {
+            return QVector3D::dotProduct(looking, axis) > 1e-6F ? -axis : axis;
+        };
+        const QVector3D u =
+            toward(plane == OriginItem::PlaneYZ ? QVector3D(0, 1, 0) : QVector3D(1, 0, 0));
+        const QVector3D v =
+            toward(plane == OriginItem::PlaneXY ? QVector3D(0, 1, 0) : QVector3D(0, 0, 1));
+        const double pixelsPerMillimeter = viewport->height() / viewport->cameraState().scale;
+        const QPointF origin = viewport->project(0.0, 0.0, 0.0);
+        const auto onScreen = [&](const QVector3D& axis) {
+            return (viewport->project(axis.x(), axis.y(), axis.z()) - origin) /
+                   pixelsPerMillimeter * 120.0;
+        };
+        return (origin + (onScreen(u) + onScreen(v)) * 0.5).toPoint();
+    }
     static void click(const MainWindow& window, const QPoint& point,
                       Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
         QTest::mouseMove(window.viewport(), point);
@@ -170,48 +191,74 @@ void SketchInterfaceTest::cleanup() {
 }
 
 void SketchInterfaceTest::aNewSketchAsksForItsPlane() {
+    using lcad::viewport::OriginItem;
     MainWindow window;
     show(window);
     auto* dock = window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"));
+    auto* viewport = window.viewport();
     QVERIFY(action(window, "sketch.new")->isEnabled());
     QVERIFY(!action(window, "sketch.finish")->isEnabled());
-    QVERIFY(!window.viewport()->isOriginItemVisible(lcad::viewport::OriginItem::PlaneXZ));
+    QVERIFY(!viewport->isPlanePicking());
 
-    // New Sketch, with nothing selected: the panel asks, and the three planes are shown.
+    // New Sketch, with nothing selected: the three planes appear in the 3D view to be clicked,
+    // and the panel says so.
     QVERIFY(trigger(window, "sketch.new"));
     QVERIFY(window.planePanel() != nullptr);
     QVERIFY(window.planePanel()->isVisible());
     QCOMPARE(dock->windowTitle(), QStringLiteral("New Sketch"));
     QVERIFY(window.commandText().contains(QStringLiteral("plane")));
-    QVERIFY(!window.statusBar()->currentMessage().isEmpty());
-    for (const auto plane :
-         {lcad::viewport::OriginItem::PlaneXY, lcad::viewport::OriginItem::PlaneXZ,
-          lcad::viewport::OriginItem::PlaneYZ}) {
-        QVERIFY(window.viewport()->isOriginItemVisible(plane));
+    QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("3D view")));
+    QVERIFY(window.planePanel()
+                ->findChild<QLabel*>(QStringLiteral("sketchPlaneHint"))
+                ->text()
+                .contains(QStringLiteral("3D view")));
+    QVERIFY(viewport->isPlanePicking());
+    render(window);
+    for (const OriginItem plane : {OriginItem::PlaneXY, OriginItem::PlaneXZ, OriginItem::PlaneYZ}) {
+        const auto found = viewport->pickPlaneAt(onPlane(window, plane));
+        QVERIFY(found.has_value());
+        QCOMPARE(static_cast<int>(*found), static_cast<int>(plane));
+        // Each has a button too, with a swatch in the plane's color.
+        QVERIFY(!window.planePanel()->planeButton(static_cast<int>(plane))->icon().isNull());
     }
     QVERIFY(window.document()->sketches().empty());
+
+    // Pointing at a plane says which it is: in the status bar, and by marking its button.
+    QTest::mouseMove(viewport, onPlane(window, OriginItem::PlaneXZ));
+    render(window);
+    QTRY_COMPARE(window.planePanel()->hoveredPlane(), 1);
+    QVERIFY(window.statusBar()->currentMessage().startsWith(QStringLiteral("XZ Plane")));
+    QVERIFY(window.planePanel()->planeButton(1)->property("planeHovered").toBool());
+    render(window);
+    keepFrame(window.grab().toImage(), "sketch-window-choose-plane");
+    QVERIFY(!window.planePanel()->planeButton(0)->property("planeHovered").toBool());
 
     // Esc gives it up: nothing was made, and the planes go away again.
     QVERIFY(trigger(window, "edit.cancel"));
     QTRY_VERIFY(window.planePanel() == nullptr);
-    QVERIFY(!window.viewport()->isOriginItemVisible(lcad::viewport::OriginItem::PlaneXZ));
+    QVERIFY(!viewport->isPlanePicking());
     QVERIFY(window.document()->sketches().empty());
     QVERIFY(!window.isSketching());
     QCOMPARE(dock->windowTitle(), QStringLiteral("Properties"));
 
-    // Again, and choose the XZ plane: the sketch exists, is open, and is seen from the front.
+    // Again, and click the XZ plane in the 3D view: the sketch exists, is open, and is seen
+    // from the front.
     QVERIFY(trigger(window, "sketch.new"));
-    QTest::mouseClick(window.planePanel()->planeButton(1), Qt::LeftButton);
-    QTRY_VERIFY(window.planePanel() == nullptr);
-    QCOMPARE(window.document()->sketches().size(), std::size_t{1});
+    render(window);
+    click(window, onPlane(window, OriginItem::PlaneXZ));
+    QTRY_COMPARE(window.document()->sketches().size(), std::size_t{1});
+    QVERIFY(window.planePanel() == nullptr);
+    QVERIFY(!viewport->isPlanePicking());
     const SketchItem& sketch = window.document()->sketches().front();
     QCOMPARE(QString::fromStdString(sketch.name), QStringLiteral("Sketch 1"));
     QCOMPARE(sketch.plane.normal.y, -1.0);
     QVERIFY(window.isSketching());
-    QCOMPARE(window.viewport()->editedSketch(), sketch.id);
+    QCOMPARE(viewport->editedSketch(), sketch.id);
     render(window);
-    QVERIFY(sameDirection(window.viewport()->viewDirection(), {0.0F, 1.0F, 0.0F}));
-    QVERIFY(!window.viewport()->isOriginItemVisible(lcad::viewport::OriginItem::PlaneXZ));
+    QVERIFY(sameDirection(viewport->viewDirection(), {0.0F, 1.0F, 0.0F}));
+    // The click chose a plane. It did not select anything, or draw anything.
+    QVERIFY(viewport->selection().empty());
+    QCOMPARE(sketch.geometry.entities().size(), std::size_t{1});
     // One undo step, which takes the sketch away again and closes it.
     QCOMPARE(QString::fromStdString(window.document()->undoLabel()),
              QStringLiteral("Create Sketch"));
@@ -219,13 +266,27 @@ void SketchInterfaceTest::aNewSketchAsksForItsPlane() {
     QVERIFY(window.document()->sketches().empty());
     QVERIFY(!window.isSketching());
 
-    // The planes are commands of their own, too.
-    QVERIFY(trigger(window, "sketch.new.yz"));
+    // The buttons in the panel do the same, for a plane that is hard to click: seen from the
+    // top, the other two are edge-on.
+    viewport->setStandardView(StandardView::Top);
+    render(window);
+    QVERIFY(trigger(window, "sketch.new"));
+    render(window);
+    QTest::mouseClick(window.planePanel()->planeButton(2), Qt::LeftButton);
+    QTRY_VERIFY(window.planePanel() == nullptr);
     QCOMPARE(window.document()->sketches().front().plane.normal.x, 1.0);
     QVERIFY(window.isSketching());
+    QVERIFY(!viewport->isPlanePicking());
     // While a sketch is open there is no starting another.
     QVERIFY(!action(window, "sketch.new")->isEnabled());
     QVERIFY(!trigger(window, "sketch.new.xy"));
+    window.finishSketch();
+
+    // The planes are commands of their own, too.
+    QVERIFY(trigger(window, "sketch.new.xy"));
+    QCOMPARE(window.document()->sketches().size(), std::size_t{2});
+    QCOMPARE(window.document()->sketches().back().plane.normal.z, 1.0);
+    QVERIFY(window.isSketching());
 }
 
 void SketchInterfaceTest::aNewSketchGoesOnTheFlatFaceThatIsSelected() {

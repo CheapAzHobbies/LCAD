@@ -81,8 +81,9 @@ private:
     QString m_signature;
 };
 
-/// Asks where a new sketch goes: on one of the three planes through the origin. (A flat face
-/// of a body is chosen by clicking it in the 3D view.)
+/// Asks where a new sketch goes. The answer is usually given in the 3D view, by clicking one of
+/// the three planes through the origin or a flat face of a body; this panel says so, and has a
+/// button for each plane for when a plane is hard to click, such as one seen edge-on.
 class SketchPlanePanel : public QWidget {
     Q_OBJECT
 
@@ -91,6 +92,9 @@ public:
 
     /// The button for a plane: 0 for XY, 1 for XZ, 2 for YZ.
     [[nodiscard]] QPushButton* planeButton(int plane) const;
+    /// Marks the button of the plane the pointer is on in the 3D view. -1 marks none.
+    void setHoveredPlane(int plane);
+    [[nodiscard]] int hoveredPlane() const { return m_hovered; }
 
 signals:
     /// 0 for the XY plane, 1 for XZ, 2 for YZ.
@@ -102,6 +106,7 @@ protected:
 
 private:
     QPushButton* m_buttons[3] = {nullptr, nullptr, nullptr};
+    int m_hovered = -1;
 };
 
 } // namespace lcad::app

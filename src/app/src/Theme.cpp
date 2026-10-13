@@ -60,6 +60,7 @@ ThemeTokens lightTokens() {
     t.viewport.grid = QColor(0xd3, 0xd7, 0xde);
     t.viewport.gridMajor = QColor(0xbd, 0xc3, 0xcc);
     t.viewport.cube = QColor(0xfb, 0xfc, 0xfd);
+    t.viewport.cubeEdge = QColor(0x23, 0x27, 0x2e);
     t.viewport.cubeText = QColor(0x2a, 0x2f, 0x37);
     // A sketch: blue while it can still move, the color of text once it cannot.
     t.viewport.sketch = QColor(0x1b, 0x5f, 0xc4);
@@ -99,6 +100,7 @@ ThemeTokens darkTokens() {
     t.viewport.grid = QColor(0x3d, 0x41, 0x48);
     t.viewport.gridMajor = QColor(0x4e, 0x53, 0x5c);
     t.viewport.cube = QColor(0xd6, 0xda, 0xe0);
+    t.viewport.cubeEdge = QColor(0x12, 0x14, 0x17);
     t.viewport.cubeText = QColor(0x28, 0x2c, 0x32);
     t.viewport.sketch = QColor(0x7c, 0xb7, 0xff);
     t.viewport.sketchFree = QColor(0x5a, 0xaa, 0xff);
@@ -255,6 +257,8 @@ void Theme::apply() {
         QLineEdit#sketchValue { background: %12; color: %11; border: 1px solid %5;
                                 border-radius: %9px; padding: 2px 6px; }
         QLineEdit#sketchValue[invalid="true"] { border: 2px solid %13; }
+        QPushButton[planeHovered="true"] { border: 2px solid %5; border-radius: %9px;
+                                           padding: 3px 10px; }
         QLabel#sketchState { font-weight: 600; }
         QLabel#sketchState[state="free"] { color: %5; }
         QLabel#sketchState[state="conflict"] { color: %13; }
