@@ -2,12 +2,16 @@
 
 #include <lcad/app/Application.h>
 #include <lcad/app/MainWindow.h>
+#include <lcad/app/Theme.h>
+#include <lcad/core/Log.h>
 #include <lcad/viewport/ViewportWidget.h>
 
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
 #include <QMessageBox>
+
+#include <string>
 
 int main(int argc, char* argv[]) {
     lcad::viewport::prepareApplication();
@@ -29,6 +33,13 @@ int main(int argc, char* argv[]) {
     parser.process(application);
 
     lcad::app::startLogging();
+    lcad::app::Theme& theme = lcad::app::Theme::instance();
+    theme.load();
+    lcad::core::log(lcad::core::LogLevel::Info, "app",
+                    std::string("Theme: ") + (theme.isDark() ? "dark" : "light") +
+                        (theme.choice() == lcad::app::ThemeChoice::System
+                             ? ", following the system"
+                             : ", chosen by the user"));
 
     lcad::app::MainWindow window;
     window.show();

@@ -81,9 +81,9 @@ PrimitivePanel::PrimitivePanel(PrimitiveKind kind, QWidget* parent)
     }
 
     m_errorLabel = new QLabel(this);
-    m_errorLabel->setObjectName(QStringLiteral("error"));
+    // "errorText" is what the theme's style sheet colors as an error.
+    m_errorLabel->setObjectName(QStringLiteral("errorText"));
     m_errorLabel->setWordWrap(true);
-    m_errorLabel->setStyleSheet(QStringLiteral("color: #d9534f;"));
     layout->addWidget(m_errorLabel);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);

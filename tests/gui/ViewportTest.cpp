@@ -25,10 +25,15 @@ using lcad::test::differingFraction;
 using lcad::test::drawnFraction;
 using lcad::test::isNear;
 using lcad::test::keepFrame;
+using lcad::viewport::CameraState;
+using lcad::viewport::DisplayStyle;
+using lcad::viewport::NavigationPreset;
+using lcad::viewport::OriginItem;
 using lcad::viewport::Projection;
 using lcad::viewport::SelectedItem;
 using lcad::viewport::SelectionFilter;
 using lcad::viewport::StandardView;
+using lcad::viewport::ViewportColors;
 using lcad::viewport::ViewportWidget;
 
 namespace {
@@ -65,6 +70,17 @@ private slots:
     void standardViewsLookAlongTheirAxes();
     void projectionSwitchesBetweenOrthographicAndPerspective();
     void clickingTheViewCubeTurnsTheCamera();
+    void draggingTheViewCubeOrbits();
+    void viewCubeCanTurnWithoutAnimation();
+    void navigationPresetSwapsPanAndOrbit();
+    void fitSelectionFramesWhatIsSelected();
+    void cameraStateCanBePutBack();
+
+    // What is drawn besides the document
+    void colorsCanBeReplaced();
+    void displayStylesChangeHowBodiesAreDrawn();
+    void gridAndAxesCanBeSwitched();
+    void originPlanesAndAxesCanBeShown();
     void middleButtonPans();
     void shiftMiddleButtonOrbits();
     void ctrlShiftMiddleButtonZooms();
@@ -80,6 +96,7 @@ private slots:
     void draggingARectangleSelectsWhatIsInside();
     void bodiesCanBeSelectedFromOutside();
     void selectionFollowsTheDocument();
+    void everythingUnderThePointerCanBeListedAndSelected();
 
 private:
     // Adds the 100 x 60 x 40 box and returns its id, with a frame drawn.
@@ -313,6 +330,271 @@ void ViewportTest::clickingTheViewCubeTurnsTheCamera() {
     QVERIFY(!sameDirection(home, m_viewport->viewDirection()));
     // Clicking the cube is navigation, not selection.
     QVERIFY(m_viewport->selection().empty());
+}
+
+void ViewportTest::draggingTheViewCubeOrbits() {
+    addBox();
+    const QVector3D home = m_viewport->viewDirection();
+    const QPointF origin = m_viewport->project(50.0, 30.0, 20.0);
+    const QPoint onTheCube = m_viewport->viewCubeCenter().toPoint();
+
+    // Hold the left button on the cube and move: the camera turns with the pointer.
+    drag(Qt::LeftButton, Qt::NoModifier, onTheCube, onTheCube + QPoint(-90, 30));
+    QTest::mouseMove(m_viewport, emptySpot());
+    const QImage after = m_viewport->grabFramebuffer();
+    keepFrame(after, "viewport-cube-dragged");
+
+    const QVector3D turned = m_viewport->viewDirection();
+    QVERIFY(!sameDirection(turned, home));
+    // A free orbit, not a jump to one of the cube's sides.
+    for (const QVector3D& axis : {QVector3D(1, 0, 0), QVector3D(0, 1, 0), QVector3D(0, 0, 1)}) {
+        QVERIFY(qAbs(QVector3D::dotProduct(turned, axis)) < 0.999F);
+    }
+    // The model turns about its middle, which stays where it was on screen, and stays in view.
+    const QPointF middle = m_viewport->project(50.0, 30.0, 20.0);
+    QVERIFY2(QLineF(origin, middle).length() < 3.0, qPrintable(QString::number(middle.x())));
+    QVERIFY(drawnFraction(after, m_viewport->backgroundColor()) > 0.10);
+    QVERIFY(m_viewport->selection().empty());
+
+    // Dragging further keeps turning, and a plain click on the cube still jumps to a side.
+    drag(Qt::LeftButton, Qt::NoModifier, onTheCube, onTheCube + QPoint(40, -60));
+    QVERIFY(!sameDirection(m_viewport->viewDirection(), turned));
+    m_viewport->setStandardView(StandardView::Home);
+    render();
+    click(m_viewport->viewCubeCenter() + QPointF(-14.0, 14.0));
+    QTRY_VERIFY_WITH_TIMEOUT(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}), 5000);
+}
+
+void ViewportTest::viewCubeCanTurnWithoutAnimation() {
+    addBox();
+    QVERIFY(m_viewport->isAnimated());
+    m_viewport->setAnimated(false);
+
+    click(m_viewport->viewCubeCenter() + QPointF(-14.0, 14.0));
+    // No waiting: a frame or two later the camera is there.
+    render();
+    render();
+
+    QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}));
+}
+
+void ViewportTest::navigationPresetSwapsPanAndOrbit() {
+    addBox();
+    QCOMPARE(m_viewport->navigationPreset(), NavigationPreset::MiddlePans);
+    m_viewport->setNavigationPreset(NavigationPreset::MiddleOrbits);
+    const QVector3D direction = m_viewport->viewDirection();
+
+    // The middle button alone now orbits.
+    drag(Qt::MiddleButton, Qt::NoModifier, QPoint(320, 240), QPoint(420, 270));
+    const QVector3D orbited = m_viewport->viewDirection();
+    QVERIFY(!sameDirection(orbited, direction));
+
+    // With Shift it pans: the model follows the pointer and the camera keeps facing as it did.
+    const QPointF before = m_viewport->project(0.0, 0.0, 0.0);
+    drag(Qt::MiddleButton, Qt::ShiftModifier, QPoint(320, 240), QPoint(420, 200));
+    const QPointF after = m_viewport->project(0.0, 0.0, 0.0);
+    QVERIFY(qAbs(after.x() - before.x() - 100.0) < 3.0);
+    QVERIFY(sameDirection(m_viewport->viewDirection(), orbited));
+
+    // And dragging the view cube still orbits.
+    const QPoint onTheCube = m_viewport->viewCubeCenter().toPoint();
+    QTest::mouseMove(m_viewport, onTheCube);
+    render();
+    render();
+    drag(Qt::LeftButton, Qt::NoModifier, onTheCube, onTheCube + QPoint(-70, 20));
+    QVERIFY(!sameDirection(m_viewport->viewDirection(), orbited));
+}
+
+void ViewportTest::fitSelectionFramesWhatIsSelected() {
+    addBox();
+    const ObjectId peg = m_document->addBody(
+        "Peg", lcad::kernel::translated(lcad::kernel::makeBox(4.0, 4.0, 4.0), 300.0, 0.0, 0.0));
+    m_viewport->fitAll();
+    render();
+    const auto pegWidth = [this] {
+        return QLineF(m_viewport->project(300.0, 0.0, 0.0), m_viewport->project(304.0, 0.0, 0.0))
+            .length();
+    };
+    const double small = pegWidth();
+
+    m_viewport->setSelectedBodies({peg});
+    m_viewport->fitSelection();
+    render();
+
+    // The 4 mm peg now fills a good part of the view, and sits in its middle.
+    QVERIFY2(pegWidth() > small * 10.0,
+             qPrintable(QStringLiteral("%1 -> %2").arg(small).arg(pegWidth())));
+    const QPointF center = m_viewport->project(302.0, 2.0, 2.0);
+    QVERIFY(QLineF(center, QPointF(m_viewport->rect().center())).length() < 20.0);
+
+    // With nothing selected it frames everything again.
+    m_viewport->clearSelection();
+    m_viewport->fitSelection();
+    render();
+    QVERIFY(qAbs(pegWidth() - small) < small * 0.05);
+}
+
+void ViewportTest::cameraStateCanBePutBack() {
+    addBox();
+    m_viewport->setProjection(Projection::Perspective);
+    drag(Qt::MiddleButton, Qt::ShiftModifier, QPoint(320, 240), QPoint(380, 300));
+    drag(Qt::MiddleButton, Qt::NoModifier, QPoint(320, 240), QPoint(250, 260));
+    QTest::mouseMove(m_viewport, emptySpot());
+    const QImage arranged = m_viewport->grabFramebuffer();
+    const CameraState state = m_viewport->cameraState();
+
+    m_viewport->setProjection(Projection::Orthographic);
+    m_viewport->setStandardView(StandardView::Top);
+    QVERIFY(differingFraction(arranged, m_viewport->grabFramebuffer()) > 0.05);
+
+    m_viewport->setCameraState(state);
+    QCOMPARE(m_viewport->projection(), Projection::Perspective);
+    QVERIFY(differingFraction(arranged, m_viewport->grabFramebuffer()) < 0.001);
+}
+
+void ViewportTest::colorsCanBeReplaced() {
+    addBox();
+    const QImage dark = m_viewport->grabFramebuffer();
+    ViewportColors light = m_viewport->colors();
+    light.background = QColor(236, 238, 241);
+    light.body = QColor(150, 160, 172);
+    light.line = QColor(30, 34, 40);
+
+    m_viewport->setColors(light);
+    const QImage frame = m_viewport->grabFramebuffer();
+    keepFrame(frame, "viewport-box-light");
+
+    QCOMPARE(m_viewport->colors(), light);
+    QCOMPARE(m_viewport->backgroundColor(), light.background);
+    QVERIFY(isNear(frame.pixel(0, 0), light.background));
+    // The box is drawn against the new background, and differs from it.
+    const double drawn = drawnFraction(frame, light.background);
+    QVERIFY2(drawn > 0.10 && drawn < 0.95, qPrintable(QString::number(drawn)));
+    QVERIFY(differingFraction(dark, frame) > 0.5);
+}
+
+void ViewportTest::displayStylesChangeHowBodiesAreDrawn() {
+    m_document->addBody("Ball", lcad::kernel::makeSphere(40.0));
+    const QColor background = m_viewport->backgroundColor();
+    QCOMPARE(m_viewport->displayStyle(), DisplayStyle::ShadedWithEdges);
+    const QImage withEdges = m_viewport->grabFramebuffer();
+    const double solid = drawnFraction(withEdges, background);
+    QVERIFY(solid > 0.10);
+
+    // Wireframe: a few lines where the filled ball was.
+    m_viewport->setDisplayStyle(DisplayStyle::Wireframe);
+    const QImage wireframe = m_viewport->grabFramebuffer();
+    keepFrame(wireframe, "viewport-ball-wireframe");
+    const double wires = drawnFraction(wireframe, background);
+    QVERIFY2(wires > 0.001 && wires < solid * 0.3, qPrintable(QString::number(wires)));
+
+    m_viewport->setDisplayStyle(DisplayStyle::HiddenLine);
+    const QImage hiddenLine = m_viewport->grabFramebuffer();
+    keepFrame(hiddenLine, "viewport-ball-hidden-line");
+    const double visibleLines = drawnFraction(hiddenLine, background);
+    QVERIFY2(visibleLines > 0.001 && visibleLines < solid * 0.3,
+             qPrintable(QString::number(visibleLines)));
+    // Not the same lines as the wireframe: the ball's outline as seen from here, which the
+    // wireframe does not have, and none of the seam that runs around its back.
+    QVERIFY(differingFraction(wireframe, hiddenLine) > 0.002);
+
+    // Shaded without edges: as filled as before, minus the outline.
+    m_viewport->setDisplayStyle(DisplayStyle::Shaded);
+    const QImage shaded = m_viewport->grabFramebuffer();
+    QVERIFY(qAbs(drawnFraction(shaded, background) - solid) < 0.02);
+    QVERIFY(differingFraction(withEdges, shaded) > 0.0005);
+
+    // Transparent: the same outline, with the background showing through.
+    m_viewport->setDisplayStyle(DisplayStyle::Transparent);
+    const QImage transparent = m_viewport->grabFramebuffer();
+    keepFrame(transparent, "viewport-ball-transparent");
+    QVERIFY(differingFraction(withEdges, transparent) > 0.10);
+    QVERIFY(drawnFraction(transparent, background) > solid * 0.8);
+
+    m_viewport->setDisplayStyle(DisplayStyle::ShadedWithEdges);
+    QVERIFY(differingFraction(withEdges, m_viewport->grabFramebuffer()) < 0.001);
+
+    // A body added later is drawn in the style that is set.
+    m_viewport->setDisplayStyle(DisplayStyle::Wireframe);
+    m_document->removeBody(m_document->bodies()[0].id);
+    m_document->addBody("Ball", lcad::kernel::makeSphere(40.0));
+    QVERIFY(drawnFraction(m_viewport->grabFramebuffer(), background) < solid * 0.3);
+}
+
+void ViewportTest::gridAndAxesCanBeSwitched() {
+    const QColor background = m_viewport->backgroundColor();
+    QVERIFY(!m_viewport->isGridVisible());
+    QVERIFY(m_viewport->areAxesVisible());
+    const QImage plain = m_viewport->grabFramebuffer();
+    const double withAxes = drawnFraction(plain, background);
+
+    m_viewport->setAxesVisible(false);
+    QVERIFY(drawnFraction(m_viewport->grabFramebuffer(), background) < withAxes - 0.0005);
+    m_viewport->setAxesVisible(true);
+    QVERIFY(differingFraction(plain, m_viewport->grabFramebuffer()) < 0.001);
+
+    addBox();
+    const QImage box = m_viewport->grabFramebuffer();
+    const double boxLength =
+        QLineF(m_viewport->project(0.0, 0.0, 0.0), m_viewport->project(100.0, 0.0, 0.0)).length();
+    m_viewport->setGridVisible(true);
+    QVERIFY(m_viewport->isGridVisible());
+    const QImage gridded = m_viewport->grabFramebuffer();
+    keepFrame(gridded, "viewport-box-grid");
+    // Grid lines appear around the box.
+    QVERIFY(differingFraction(box, gridded) > 0.01);
+
+    // The grid is a guide, not part of the model: fitting still frames the box.
+    m_viewport->fitAll();
+    render();
+    const double fitted =
+        QLineF(m_viewport->project(0.0, 0.0, 0.0), m_viewport->project(100.0, 0.0, 0.0)).length();
+    QVERIFY2(qAbs(fitted - boxLength) < boxLength * 0.02,
+             qPrintable(QStringLiteral("%1 -> %2").arg(boxLength).arg(fitted)));
+
+    m_viewport->setGridVisible(false);
+    QVERIFY(differingFraction(box, m_viewport->grabFramebuffer()) < 0.001);
+}
+
+void ViewportTest::originPlanesAndAxesCanBeShown() {
+    // Two bodies on either side of the origin, so that it is in view and nothing covers it.
+    m_document->addBody("Near", lcad::kernel::translated(lcad::kernel::makeBox(40.0, 40.0, 20.0),
+                                                         -160.0, -120.0, 0.0));
+    m_document->addBody(
+        "Far", lcad::kernel::translated(lcad::kernel::makeBox(40.0, 40.0, 20.0), 120.0, 90.0, 0.0));
+    m_viewport->fitAll();
+    render();
+    QTest::mouseMove(m_viewport, emptySpot());
+    const QImage plain = m_viewport->grabFramebuffer();
+    const double boxLength =
+        QLineF(m_viewport->project(0.0, 0.0, 0.0), m_viewport->project(100.0, 0.0, 0.0)).length();
+
+    for (const OriginItem item : {OriginItem::PlaneXY, OriginItem::PlaneXZ, OriginItem::PlaneYZ,
+                                  OriginItem::AxisX, OriginItem::AxisY, OriginItem::AxisZ}) {
+        QVERIFY(!m_viewport->isOriginItemVisible(item));
+        const QImage before = m_viewport->grabFramebuffer();
+        m_viewport->setOriginItemVisible(item, true);
+        QVERIFY(m_viewport->isOriginItemVisible(item));
+        QVERIFY2(differingFraction(before, m_viewport->grabFramebuffer()) > 0.0003,
+                 qPrintable(QStringLiteral("item %1").arg(static_cast<int>(item))));
+    }
+    keepFrame(m_viewport->grabFramebuffer(), "viewport-origin");
+
+    // They are guides: a click on one selects nothing, and fitting ignores them.
+    click(m_viewport->project(0.0, 0.0, 0.0) + QPointF(4.0, -14.0));
+    QVERIFY(m_viewport->selection().empty());
+    m_viewport->fitAll();
+    render();
+    const double fitted =
+        QLineF(m_viewport->project(0.0, 0.0, 0.0), m_viewport->project(100.0, 0.0, 0.0)).length();
+    QVERIFY(qAbs(fitted - boxLength) < boxLength * 0.02);
+
+    for (const OriginItem item : {OriginItem::PlaneXY, OriginItem::PlaneXZ, OriginItem::PlaneYZ,
+                                  OriginItem::AxisX, OriginItem::AxisY, OriginItem::AxisZ}) {
+        m_viewport->setOriginItemVisible(item, false);
+    }
+    QTest::mouseMove(m_viewport, emptySpot());
+    QVERIFY(differingFraction(plain, m_viewport->grabFramebuffer()) < 0.001);
 }
 
 void ViewportTest::middleButtonPans() {
@@ -645,6 +927,41 @@ void ViewportTest::selectionFollowsTheDocument() {
     render();
     QCOMPARE(m_viewport->selection().size(), std::size_t{1});
     QCOMPARE(m_viewport->selection()[0].kind, SelectedItem::Kind::Face);
+}
+
+void ViewportTest::everythingUnderThePointerCanBeListedAndSelected() {
+    const ObjectId box = addBox();
+    const lcad::kernel::Shape shape = m_document->findBody(box)->shape;
+    m_viewport->setStandardView(StandardView::Top);
+    m_viewport->setSelectionFilter(SelectionFilter::Faces);
+    render();
+    const QPoint middle = m_viewport->project(50.0, 30.0, 40.0).toPoint();
+
+    // Looking down on the box, the top face is in front and the bottom face behind it.
+    const std::vector<SelectedItem> under = m_viewport->itemsAt(middle);
+    QCOMPARE(under.size(), std::size_t{2});
+    const auto heightOf = [&shape](const SelectedItem& item) {
+        return lcad::kernel::boundingBox(
+                   lcad::kernel::subShape(shape, SubShapeKind::Face, item.index))
+            ->min.z;
+    };
+    QVERIFY(qAbs(heightOf(under[0]) - 40.0) < 1e-6);
+    QVERIFY(qAbs(heightOf(under[1])) < 1e-6);
+    QVERIFY(m_viewport->selection().empty());
+    QVERIFY(m_viewport->itemsAt(emptySpot()).empty());
+
+    // The one behind can be selected, which no click can do.
+    QSignalSpy changed(m_viewport, &ViewportWidget::selectionChanged);
+    m_viewport->setSelection({under[1]});
+    QCOMPARE(m_viewport->selection(), (std::vector<SelectedItem>{under[1]}));
+    QCOMPARE(changed.count(), 1);
+
+    // Whole bodies and several items at once work too; what the filter excludes is ignored.
+    m_viewport->setSelection({under[0],
+                              under[1],
+                              {box, SelectedItem::Kind::Body, -1},
+                              {box, SelectedItem::Kind::Edge, 0}});
+    QCOMPARE(m_viewport->selection().size(), std::size_t{3});
 }
 
 QTEST_MAIN(ViewportTest)

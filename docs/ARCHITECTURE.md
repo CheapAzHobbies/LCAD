@@ -14,8 +14,8 @@ Phases 0 and 1 built the desktop foundation, and each decision below rests on ru
 - `document` holds bodies with an undo history, and saves and opens `.lcad` files.
 - `viewport` shows a document in OCCT's viewer inside a Qt widget, with camera navigation, a
   view cube, and selection of bodies, faces, edges, and vertices.
-- `app` is the main window: top bar, toolbar, browser, viewport, timeline, and the panel for
-  the command in progress.
+- `app` is the main window and everything in it: the command registry and search, the theme
+  and icons, document tabs, the toolbar, browser, properties panel, and timeline strip.
 
 Sketches, features, and everything after them are the plan the later phases build to.
 
@@ -98,7 +98,8 @@ Each was made on 2026-10-12 unless noted.
 | 11 | Stable references to faces and edges | Open, designed at the start of Phase 3 | |
 | 12 | Sketch solver | Open, chosen by a spike at the start of Phase 2 | |
 | 13 | Undo | Reversible edits recorded by the document, grouped by transactions (2026-10-12, Phase 1) | Phase 3, when recompute arrives |
-| 14 | Commands | A panel beside the viewport with a live preview, not a modal dialog (2026-10-12, Phase 1) | Not expected |
+| 14 | Commands | Defined once in a registry; settings in a panel beside the viewport with a live preview, not a modal dialog (2026-10-12, Phases 1 and 1b) | Phase 2, when commands need parameters in the registry |
+| 15 | Appearance | Design tokens, a light and a dark theme, Qt's Fusion widget style everywhere (2026-10-12, Phase 1b) | Not expected |
 
 ### 1. Geometry kernel
 
@@ -268,6 +269,36 @@ accepted, as one undo step. The view can be turned and zoomed while the panel is
 progress, and every modeling command to come (extrude, fillet, pattern) needs the same pattern.
 Creating a primitive is its first user.
 
+**One definition per command.** A `CommandRegistry` holds every command: its identifier, name,
+description, group, aliases, shortcuts, icon, what it does, and the conditions under which it
+is enabled or checked. Registering a command yields one `QAction`, and that same action is what
+the toolbar button, the menu entry, the context menu entry, the shortcut, and the command
+search trigger. Nothing is wired a second time, so a command cannot behave differently
+depending on where it was started, and the search and the shortcut editor list every command
+without being told about new ones. The GUI specification asks for exactly this.
+
+What a command needs beyond that (its parameters, their validation, its preview) still lives in
+the command's panel. Phase 2 gives that a common shape when the sketch tools arrive.
+
+### 15. Appearance
+
+**Chosen:** every color and size the interface uses is a named token in `Theme.h`, in a light
+and a dark set. From the tokens come the application's palette, a short style sheet, the icons
+(line drawings painted in the theme's text and accent colors at the moment they are drawn),
+and the 3D view's colors. The widget style is Qt's built-in Fusion style on every desktop.
+
+**Alternative:** the desktop's own widget style, with LCAD's colors on top.
+
+**Why.** The desktop's style differs between GNOME, KDE, and others, and so would what the
+tokens mean; a dark theme laid over a style drawn for a light desktop does not hold together.
+One style makes the two themes testable: a test checks the contrast between the tokens, and
+another that nothing overlaps or is cut off in either theme. Menus, dialogs, and file choosers
+are still Qt's, so keyboard access and screen-reader roles are kept.
+
+**What it costs.** LCAD does not look like the applications around it. "Follow the System"
+reads the desktop's light or dark preference through Qt, which reports it from version 6.5 on;
+with an older Qt, LCAD asks the desktop's settings directly where it can.
+
 ## Threads
 
 The interface thread never runs a long geometry operation. Recompute runs on a worker thread and
@@ -288,7 +319,7 @@ src/<module>/
     src/                     its implementation
 tests/
     core/, kernel/, document/   unit tests (Catch2), no display needed
-    gui/            interface tests (Qt Test), run on a virtual display
+    gui/            interface tests (Qt Test), run on a virtual display at two scales
     models/         reference documents the tests read
     support/        shared tolerances, frame checks, and helpers
 docs/

@@ -2,8 +2,10 @@
 
 #include <lcad/app/Application.h>
 #include <lcad/app/BrowserPanel.h>
+#include <lcad/app/Commands.h>
 #include <lcad/app/MainWindow.h>
 #include <lcad/app/PrimitivePanel.h>
+#include <lcad/app/Theme.h>
 #include <lcad/core/Log.h>
 #include <lcad/document/File.h>
 #include <lcad/kernel/Measure.h>
@@ -13,6 +15,7 @@
 
 #include <FrameChecks.h>
 #include <GraphicsMessages.h>
+#include <GuiHelpers.h>
 
 #include <QAction>
 #include <QComboBox>
@@ -27,6 +30,7 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSettings>
+#include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -46,6 +50,8 @@ using lcad::app::BrowserPanel;
 using lcad::app::MainWindow;
 using lcad::app::PrimitiveKind;
 using lcad::document::ObjectId;
+using lcad::test::answerNextMessageBox;
+using lcad::test::chooseFromNextMenu;
 using lcad::test::differingFraction;
 using lcad::test::drawnFraction;
 using lcad::test::keepFrame;
@@ -82,59 +88,6 @@ bool isXWayland() {
     return present;
 }
 
-// Chooses the entry called `text` from the next context menu that opens. Like a message box,
-// a menu blocks the code that opens it.
-void chooseFromNextMenu(const QString& text, QStringList* offered = nullptr) {
-    auto* timer = new QTimer(qApp);
-    timer->setInterval(20);
-    QObject::connect(timer, &QTimer::timeout, qApp, [timer, text, offered] {
-        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-        if (menu == nullptr) {
-            return;
-        }
-        timer->stop();
-        timer->deleteLater();
-        QAction* chosen = nullptr;
-        for (QAction* entry : menu->actions()) {
-            if (entry->isSeparator()) {
-                continue;
-            }
-            if (offered != nullptr) {
-                *offered << entry->text();
-            }
-            if (entry->text() == text) {
-                chosen = entry;
-            }
-        }
-        if (chosen != nullptr) {
-            chosen->trigger();
-        }
-        menu->close();
-    });
-    timer->start();
-}
-
-// Presses `button` on the next message box that opens, and notes what the box said. A message
-// box blocks the code that opens it, so the answer has to be arranged beforehand.
-void answerNextMessageBox(QMessageBox::StandardButton button, QString* text = nullptr) {
-    auto* timer = new QTimer(qApp);
-    timer->setInterval(20);
-    QObject::connect(timer, &QTimer::timeout, qApp, [timer, button, text] {
-        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
-        if (box == nullptr) {
-            return;
-        }
-        // Stopped at once: a timer left running would answer the next box as well.
-        timer->stop();
-        timer->deleteLater();
-        if (text != nullptr) {
-            *text = box->text();
-        }
-        box->button(button)->click();
-    });
-    timer->start();
-}
-
 QAction* action(const MainWindow& window, const char* name) {
     return window.findChild<QAction*>(QString::fromLatin1(name));
 }
@@ -155,7 +108,9 @@ class ApplicationTest : public QObject {
 public:
     static void initMain() {
         lcad::viewport::prepareApplication();
-        // Keep the tests away from the real settings of whoever runs them.
+        // Keep the tests away from the real settings of whoever runs them, and from their
+        // desktop's choice of a light or dark theme.
+        qunsetenv("XDG_CURRENT_DESKTOP");
         static QTemporaryDir settingsDirectory;
         QCoreApplication::setOrganizationName(QStringLiteral("LCAD"));
         QCoreApplication::setApplicationName(QStringLiteral("LCAD"));
@@ -205,6 +160,10 @@ void ApplicationTest::init() {
     QTest::failOnWarning(QRegularExpression(QStringLiteral("OpenGL|QRhi|context|surface"),
                                             QRegularExpression::CaseInsensitiveOption));
     QSettings().clear();
+    // Frame comparisons in these tests are about the model, so the reference grid stays off
+    // here. InterfaceTest covers the grid.
+    QSettings().setValue(QStringLiteral("view/grid"), false);
+    lcad::app::Theme::instance().load();
     QVERIFY(m_directory.isValid());
 }
 
@@ -235,7 +194,7 @@ void ApplicationTest::windowHasItsFiveRegions() {
 
     QCOMPARE(window.windowTitle(), QStringLiteral("Untitled[*] - LCAD"));
 
-    // Top bar: the menus, the quick buttons, and the document's name.
+    // Top bar: the menus, the quick buttons, the document tabs, and the command search.
     auto* topBar = window.findChild<QWidget*>(QStringLiteral("topBar"));
     QVERIFY(topBar != nullptr);
     QCOMPARE(window.menuWidget(), topBar);
@@ -245,7 +204,8 @@ void ApplicationTest::windowHasItsFiveRegions() {
     }
     QCOMPARE(menus,
              (QStringList{QStringLiteral("File"), QStringLiteral("Edit"), QStringLiteral("Create"),
-                          QStringLiteral("View"), QStringLiteral("Help")}));
+                          QStringLiteral("Select"), QStringLiteral("View"),
+                          QStringLiteral("Window"), QStringLiteral("Help")}));
     QList<QAction*> quickActions;
     for (const QToolButton* button :
          topBar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
@@ -254,9 +214,11 @@ void ApplicationTest::windowHasItsFiveRegions() {
     QCOMPARE(quickActions,
              (QList<QAction*>{action(window, "file.new"), action(window, "file.open"),
                               action(window, "file.save"), action(window, "edit.undo"),
-                              action(window, "edit.redo")}));
-    QCOMPARE(topBar->findChild<QLabel*>(QStringLiteral("documentName"))->text(),
-             QStringLiteral("Untitled"));
+                              action(window, "edit.redo"), action(window, "window.search")}));
+    auto* tabs = topBar->findChild<QTabBar*>(QStringLiteral("documentTabs"));
+    QVERIFY(tabs != nullptr);
+    QCOMPARE(tabs->count(), 1);
+    QCOMPARE(tabs->tabText(0), QStringLiteral("Untitled"));
 
     // Toolbar: the Create group with one tool for each primitive.
     auto* toolbar = window.findChild<QToolBar*>(QStringLiteral("modelingToolbar"));
@@ -283,8 +245,12 @@ void ApplicationTest::windowHasItsFiveRegions() {
     // The viewport is the main thing in the window.
     QVERIFY(view.width() * view.height() > window.width() * window.height() / 2);
 
-    // The command panel only shows while a command runs.
-    QVERIFY(!window.findChild<QDockWidget*>(QStringLiteral("toolDock"))->isVisible());
+    // The properties panel is on the right, saying that nothing is selected.
+    auto* propertiesDock = window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"));
+    QVERIFY(propertiesDock != nullptr && propertiesDock->isVisible());
+    QCOMPARE(window.dockWidgetArea(propertiesDock), Qt::RightDockWidgetArea);
+    QVERIFY(propertiesDock->geometry().left() >= view.right());
+    QCOMPARE(propertiesDock->windowTitle(), QStringLiteral("Properties"));
     keepFrame(window.grab().toImage(), "main-window-empty");
 }
 
@@ -321,16 +287,16 @@ void ApplicationTest::viewportAndMenusReachTheScreenTogether() {
     const QColor background = window.viewport()->backgroundColor();
     QTRY_VERIFY_WITH_TIMEOUT(drawnFraction(onScreen(window.viewport()), background) > 0.10, 5000);
     const QImage shownViewport = onScreen(window.viewport());
-    const QImage shownMenuBar = onScreen(window.mainMenu());
+    QWidget* topBar = window.findChild<QWidget*>(QStringLiteral("topBar"));
+    const QImage shownTopBar = onScreen(topBar);
     keepFrame(window.screen()->grabWindow(window.winId()).toImage(), "main-window-on-screen");
 
     QVERIFY(drawnFraction(shownViewport, background) < 0.95);
-    // The menu bar on screen is the menu bar Qt's own painter produces.
-    const double menuBarDifference =
-        differingFraction(shownMenuBar, window.mainMenu()->grab().toImage());
+    // The top bar on screen, with its menus and buttons, is what Qt's own painter produces.
+    const double topBarDifference = differingFraction(shownTopBar, topBar->grab().toImage());
     QVERIFY2(
-        menuBarDifference < 0.01,
-        qPrintable(QStringLiteral("menu bar differs in %1 of its pixels").arg(menuBarDifference)));
+        topBarDifference < 0.01,
+        qPrintable(QStringLiteral("top bar differs in %1 of its pixels").arg(topBarDifference)));
     // And so is the browser, which sits beside the viewport.
     const BrowserPanel* browser = window.browser();
     QVERIFY(differingFraction(onScreen(browser),
@@ -464,7 +430,7 @@ void ApplicationTest::panelPreviewsAndRefusesSizesThatMakeNoSolid() {
 
     action(window, "create.torus")->trigger();
     auto* panel = window.activePanel();
-    auto* dock = window.findChild<QDockWidget*>(QStringLiteral("toolDock"));
+    auto* dock = window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"));
     QVERIFY(panel != nullptr);
     QVERIFY(dock->isVisible());
     QCOMPARE(dock->windowTitle(), QStringLiteral("Create Torus"));
@@ -480,7 +446,7 @@ void ApplicationTest::panelPreviewsAndRefusesSizesThatMakeNoSolid() {
     QVERIFY(panel->shape().isNull());
     QCOMPARE(panel->errorText(),
              QStringLiteral("The tube diameter must be smaller than the ring diameter."));
-    QVERIFY(panel->findChild<QLabel*>(QStringLiteral("error"))->isVisible());
+    QVERIFY(panel->findChild<QLabel*>(QStringLiteral("errorText"))->isVisible());
     auto* ok = panel->findChild<QPushButton*>();
     QVERIFY(!ok->isEnabled());
     QVERIFY(drawnFraction(window.viewport()->grabFramebuffer(), background) < empty + 0.005);
@@ -496,7 +462,8 @@ void ApplicationTest::panelPreviewsAndRefusesSizesThatMakeNoSolid() {
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
     QVERIFY(near(volumeOf(window, 0), 2.0 * pi * pi * 50.0 * 15.0 * 15.0));
     QVERIFY(window.activePanel() == nullptr);
-    QVERIFY(!dock->isVisible());
+    // The panel hands the place back to the properties.
+    QCOMPARE(dock->windowTitle(), QStringLiteral("Properties"));
 }
 
 void ApplicationTest::cancelingACommandLeavesTheDocumentAlone() {
@@ -607,8 +574,9 @@ void ApplicationTest::browserListsBodiesAndEditsThem() {
     QCOMPARE(tree->topLevelItemCount(), 1);
     QTreeWidgetItem* root = tree->topLevelItem(0);
     QCOMPARE(root->text(0), QStringLiteral("Untitled"));
-    QCOMPARE(root->childCount(), 1);
-    QTreeWidgetItem* group = root->child(0);
+    QCOMPARE(root->childCount(), 2);
+    QCOMPARE(root->child(0)->text(0), QStringLiteral("Origin"));
+    QTreeWidgetItem* group = root->child(1);
     QCOMPARE(group->text(0), QStringLiteral("Bodies"));
     QCOMPARE(group->childCount(), 2);
     QCOMPARE(group->child(0), window.browser()->bodyItem(box));
@@ -661,14 +629,16 @@ void ApplicationTest::browserContextMenuActsOnTheBodyClicked() {
     QStringList offered;
     chooseFromNextMenu(QStringLiteral("Hide"), &offered);
     rightClick(sphere);
+    QTRY_VERIFY(!offered.isEmpty());
     QCOMPARE(offered, (QStringList{QStringLiteral("Rename"), QStringLiteral("Hide"),
-                                   QStringLiteral("Delete")}));
+                                   QStringLiteral("Isolate"), QStringLiteral("Delete")}));
     QVERIFY(!window.document()->findBody(sphere)->visible);
 
     // A hidden body is offered Show instead.
     offered.clear();
     chooseFromNextMenu(QStringLiteral("Show"), &offered);
     rightClick(sphere);
+    QTRY_VERIFY(!offered.isEmpty());
     QVERIFY(offered.contains(QStringLiteral("Show")) && !offered.contains(QStringLiteral("Hide")));
     QVERIFY(window.document()->findBody(sphere)->visible);
 
@@ -676,7 +646,7 @@ void ApplicationTest::browserContextMenuActsOnTheBodyClicked() {
     window.browser()->bodyItem(sphere)->setSelected(true);
     chooseFromNextMenu(QStringLiteral("Delete"));
     rightClick(box);
-    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+    QTRY_COMPARE(window.document()->bodies().size(), std::size_t{1});
     QCOMPARE(window.document()->bodies()[0].id, sphere);
     QCOMPARE(QString::fromStdString(window.document()->undoLabel()), QStringLiteral("Delete Body"));
 
@@ -707,8 +677,12 @@ void ApplicationTest::selectionIsSharedBetweenBrowserAndViewport() {
 
     // Viewport to browser: with the Bodies filter, clicking the box selects its entry.
     auto* filter = window.findChild<QComboBox*>(QStringLiteral("selectionFilter"));
+    QCOMPARE(filter->currentText(), QStringLiteral("Faces, Edges, Vertices"));
+    // Choosing from the box, as a user does, and the box following the command.
     filter->setCurrentIndex(filter->findText(QStringLiteral("Bodies")));
+    emit filter->activated(filter->currentIndex());
     QCOMPARE(viewport->selectionFilter(), lcad::viewport::SelectionFilter::Bodies);
+    QVERIFY(action(window, "select.bodies")->isChecked());
     QVERIFY(window.browser()->selectedBodies().empty()); // the filter change cleared it
     viewport->setStandardView(StandardView::Top);
     viewport->grabFramebuffer();
@@ -884,9 +858,11 @@ void ApplicationTest::closingWithUnsavedChangesAsksFirst() {
     QCOMPARE(asked, QStringLiteral("Save the changes to \"Untitled\" before closing it?"));
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
 
-    // New is guarded the same way.
-    answerNextMessageBox(QMessageBox::Cancel);
-    QVERIFY(!window.fileNew());
+    // New does not need to ask: it opens another tab and leaves this document alone.
+    QVERIFY(window.fileNew());
+    QCOMPARE(window.documentCount(), 2);
+    window.closeDocument(1);
+    QCOMPARE(window.documentCount(), 1);
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
 
     // Save: the document has a file, so it is saved there and the window closes.
