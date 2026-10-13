@@ -50,6 +50,8 @@ Shape fromBrep(std::string_view bytes) {
         std::istringstream stream(std::string(bytes), std::ios::in | std::ios::binary);
         TopoDS_Shape shape;
         BinTools::Read(shape, stream);
+        // OCCT 7.6 throws on every damaged input the tests feed it, which guarded() reports.
+        // This check is for a reader that returns quietly instead.
         if (shape.IsNull() || stream.fail()) {
             throw Error("read geometry", "the data is incomplete or damaged");
         }

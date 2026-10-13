@@ -122,3 +122,16 @@ TEST_CASE("Geometry cut short is refused, wherever the cut falls", "[kernel][ser
     }
     CHECK(accepted == 0);
 }
+
+TEST_CASE("A valid signature followed by something else is refused", "[kernel][serialization]") {
+    const std::string bytes = toBrep(makeBox(1.0, 2.0, 3.0));
+    // The signature line ends at the second line break.
+    const std::size_t headerEnd = bytes.find('\n', 1);
+    REQUIRE(headerEnd != std::string::npos);
+    const std::string header = bytes.substr(0, headerEnd + 1);
+    CAPTURE(header);
+
+    CHECK_THROWS_AS(fromBrep(header), Error);
+    CHECK_THROWS_AS(fromBrep(header + std::string(256, '\0')), Error);
+    CHECK_THROWS_AS(fromBrep(header + "Locations 0\nand then nothing useful"), Error);
+}
