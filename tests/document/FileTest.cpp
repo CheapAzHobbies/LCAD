@@ -263,7 +263,10 @@ TEST_CASE("A save that cannot happen says why and leaves nothing behind", "[docu
 
     SECTION("into a folder that cannot be written to, keeping the existing file") {
         if (::geteuid() == 0) {
-            SKIP("root can write to a read-only folder; this needs an ordinary user");
+            // Not SKIP(): that marks the whole test case skipped, which older versions of
+            // Catch2 report to CTest as a failure.
+            WARN("not checked: root can write to a read-only folder; run as an ordinary user");
+            return;
         }
         const std::filesystem::path path = directory.file("part.lcad");
         saveDocument(document, path);

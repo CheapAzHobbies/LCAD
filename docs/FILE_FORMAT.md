@@ -1,7 +1,7 @@
 # Native file format
 
-Decided on 2026-10-12. Nothing here is implemented yet; Phase 1 builds saving and loading to
-this design, and this document then becomes the format's specification.
+The specification of format version 1, the format LCAD reads and writes. The design was decided
+on 2026-10-12 and implemented in Phase 1; `src/document/src/File.cpp` is the implementation.
 
 ## Decision
 
@@ -17,15 +17,92 @@ bracket.lcad
 └── thumbnail.png        preview for file managers and the open dialog
 ```
 
+The archive is an ordinary zip file: `unzip -l part.lcad` lists it, and the two JSON files are
+indented text.
+
+### manifest.json
+
+```json
+{
+  "format": "lcad",
+  "formatVersion": 1,
+  "writtenBy": {
+    "application": "LCAD",
+    "version": "0.0.2",
+    "kernel": "OCCT 7.6.3"
+  },
+  "units": {
+    "length": "mm"
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `format` | Always `"lcad"`. A zip file without it is not an LCAD document. |
+| `formatVersion` | The version of this specification the file follows. |
+| `writtenBy` | The program that wrote the file, and the geometry kernel it was built with. For diagnosis only; nothing is decided from it. |
+| `units.length` | The unit lengths are shown in. Version 1 knows only `"mm"`, and a reader refuses any other value. Geometry is stored in millimeters whatever this says. |
+
+### document.json
+
+```json
+{
+  "nextId": 3,
+  "bodies": [
+    {
+      "id": 1,
+      "name": "Box",
+      "visible": true,
+      "geometry": {
+        "file": "geometry/1.brep",
+        "role": "source"
+      }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `nextId` | The id the next new object gets. Larger than every id in the file. Ids are never reused, so this can be larger than the number of objects. |
+| `bodies` | The bodies, in the order they were created. |
+| `id` | A whole number greater than zero, unique in the document. |
+| `name` | Text, not empty. Names need not be unique. |
+| `visible` | Whether the body is shown. |
+| `geometry.file` | The archive entry that holds the body's shape. |
+| `geometry.role` | What that entry is to the document; see below. Version 1 knows only `"source"`. |
+
+A reader ignores fields and archive entries it does not know, so that a later LCAD can add
+optional ones without changing the version. Everything listed above is required, and a file
+with a missing or wrong value is refused as a whole. LCAD never opens a document partially.
+
+### Geometry
+
+Each file in `geometry/` is one shape in OCCT's binary B-rep format, without display meshes.
+Display meshes are regenerated when a document is opened.
+
 ### What is authoritative
 
-`document.json` is the model. A file in `geometry/` is one of two things:
+`document.json` is the model. A file in `geometry/` is one of two things, and its `role` says
+which:
 
-- **A cached result.** The shape a feature produced when the document was last recomputed. It
-  lets a document open without recomputing, and lets it still show its geometry in a version of
-  LCAD whose kernel would recompute it differently. It can always be regenerated from the history.
-- **Imported geometry.** A shape that came from a STEP or IGES file has no history to regenerate
-  it from, so this file is the only copy. `document.json` records which kind each file is.
+- **`source`: the only copy.** In version 1 every body is one of these: a solid made directly,
+  with no history that could rebuild it. Imported geometry will be the same.
+- **A cached result** (not in version 1). When features arrive, the shape a feature produced
+  will be stored so that a document opens without recomputing, and can still show its geometry
+  in a version of LCAD whose kernel would recompute it differently. That changes what a reader
+  must do with the file, so it comes with a new format version.
+
+### Preview
+
+`thumbnail.png` is optional: a picture of the 3D view, at most 256 pixels on a side, taken when
+the document was saved.
+
+### Limits
+
+A reader refuses an archive holding more than 4 GiB of uncompressed data, so that a damaged or
+hostile file cannot exhaust memory. Every entry is checked against its zip checksum.
 
 ## Versioning
 
@@ -44,29 +121,37 @@ bracket.lcad
 
 The same LCAD release is built against OCCT 7.6 on one distribution and 7.9 on another, and a
 file saved on either must open on the other. OCCT's binary B-rep format has numbered versions of
-its own, and its writer takes the version as an argument. LCAD therefore always writes one pinned
-B-rep format version that the oldest supported OCCT can read, and never "whatever is current".
-Phase 1 has to prove this with a file written under each OCCT version and read under the other.
+its own, and its writer takes the version as an argument. LCAD always writes B-rep format
+version 4, which OCCT 7.6 reads and writes and newer versions still read, and never "whatever is
+current".
+
+This is tested, not assumed. `tests/models/format-1/` holds the same document as written by
+LCAD built against each OCCT series, every build reads all of them, and CI builds against both
+7.6 and 7.9.
 
 ## Saving
 
 - A save never modifies the existing file in place. LCAD writes the complete new archive to a
   temporary file in the same directory, flushes it to disk, and renames it over the target.
   A rename within one directory is atomic, so after a crash or power loss the file is either the
-  whole old version or the whole new one.
-- Autosave and crash recovery do not write to the user's file at all. They keep a journal under
-  `$XDG_STATE_HOME/lcad/recovery/` (by default `~/.local/state/lcad/recovery/`). After a crash,
-  LCAD offers to restore from it.
+  whole old version or the whole new one. The directory entry is flushed too.
+- The new file keeps the permissions of the one it replaces. Saving through a symbolic link
+  updates the file the link points to.
+- If a save fails, the existing file is untouched and no temporary file is left behind.
+- No backup copy of the previous version is kept beside the document. The atomic replacement
+  covers a failed save, and keeping old versions is the job of autosave and of version control.
+- Autosave and crash recovery (Phase 5) will not write to the user's file at all. They will keep
+  a journal under `$XDG_STATE_HOME/lcad/recovery/` (by default `~/.local/state/lcad/recovery/`),
+  and after a crash LCAD will offer to restore from it.
 - Saving a document, saving a copy, exporting geometry, and packaging a project are four separate
-  commands, as the brief requires. Only the first two write `.lcad` files.
+  commands, as the brief requires. Only the first two write `.lcad` files. Phase 1 has the first.
 
 ## Linked components
 
-A component inserted from another file is stored as a reference: the path relative to the
+Planned for Phase 5, and not part of version 1. A component inserted from another file is stored as a reference: the path relative to the
 referring document, plus an identifier that lets LCAD tell when the path now leads to a different
-file. A missing link is reported; the last known geometry stays visible from the cache. Phase 5
-adds the dependency report and the command that gathers every linked file into one portable
-folder.
+file. A missing link is reported; the last known geometry stays visible from the cache. A dependency
+report and a command that gathers every linked file into one portable folder come with it.
 
 ## Why this and not something else
 
@@ -85,9 +170,9 @@ built, FreeCAD's `.FCStd` and 3MF among them.
 libzip for the archive, nlohmann/json for JSON, and OCCT's `BinTools` for B-rep. Versions and
 licenses are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-## Left for Phase 1
+## Not done yet
 
-- The schema of `document.json`.
-- Whether saving keeps the previous version as a backup file beside the document.
-- Whether to cache display meshes in the file so large documents open faster. The default is no:
-  meshes are regenerated.
+- **The notice before converting.** When the first migration exists, LCAD has to say so before
+  a save converts an older file to the newer format. There is no older format yet.
+- **Inches.** `units.length` will accept `"in"` when LCAD can show lengths in inches.
+- **Cached display meshes.** Not stored. To be reconsidered if large documents open slowly.

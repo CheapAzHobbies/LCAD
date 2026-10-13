@@ -23,4 +23,6 @@ cmake --build --preset dev --target lcad_write_reference_model
 build/dev/bin/lcad_write_reference_model tests/models/format-1/primitives-occt-X.Y.Z.lcad
 ```
 
-CI attaches the file its own build wrote to each run, as the artifact `reference-model-<job>`.
+CI attaches the file each of its jobs wrote to every run, as the artifact
+`reference-model-<job>`. That is where `primitives-occt-7.9.3.lcad` came from (the Arch Linux
+job); `primitives-occt-7.6.3.lcad` was written on Ubuntu 24.04.

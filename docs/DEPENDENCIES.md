@@ -12,6 +12,8 @@ This is an engineering summary, not legal advice.
 |---|---|---|---|---|
 | [Open CASCADE Technology](https://github.com/Open-Cascade-SAS/OCCT) (OCCT) | Geometry kernel and 3D viewer | LGPL-2.1 with the Open CASCADE exception 1.0 | 8.0.1 (2026-07-30) | 7.6 |
 | [Qt 6](https://www.qt.io) (Core, Gui, Widgets, OpenGL, OpenGLWidgets) | Desktop interface | LGPL-3.0, GPL-2.0, GPL-3.0, or commercial | 6.12.0 | 6.4 |
+| [libzip](https://github.com/nih-at/libzip) | The `.lcad` container | BSD-3-Clause | 1.12 (2026-10-07) | 1.7.3 (oldest tested) |
+| [nlohmann/json](https://github.com/nlohmann/json) | JSON inside `.lcad` files | MIT | 3.12.0 | 3.11.3 (oldest tested) |
 | [Catch2](https://github.com/catchorg/Catch2) | Unit tests | BSL-1.0 | 3.16.1 (2026-10-08) | 3.4 (oldest tested) |
 | Qt Test | GUI tests | Same as Qt | Same as Qt | 6.4 |
 | CMake, Ninja, GCC or Clang | Build | Build tools only | | CMake 3.28, C++20 |
@@ -24,6 +26,8 @@ Catch2 and Qt Test are used only to build the tests. They are not part of what L
 |---|---|---|---|---|
 | OCCT | 7.6.3 | 7.9.2 | 7.9.3 | 7.9.3 |
 | Qt | 6.4.2 | 6.10.2 | 6.11.2 | 6.12.0 |
+| libzip | 1.7.3 | 1.11.4 | 1.11.4 | 1.11.4 |
+| nlohmann/json | 3.11.3 | 3.11.3 | 3.12.0 | 3.12.0 |
 | Catch2 | 3.4.0 | 3.7.1 | 3.13.0 | 3.16.1 |
 
 Linux Mint 22 is built on Ubuntu 24.04 and has the same versions. Ubuntu 24.04 is the floor: it
@@ -84,17 +88,30 @@ at the start of Phase 2 that checks conflict reporting and dragging of undercons
 Eigen differs by a major version between distributions (3.4.0 on Ubuntu, 5.0.1 on Arch and
 Fedora 44), which matters to whichever solver is vendored.
 
-## Native file format (Phase 1)
+## Native file format
 
-See [FILE_FORMAT.md](FILE_FORMAT.md) for the decision. It needs:
+In use since Phase 1; see [FILE_FORMAT.md](FILE_FORMAT.md). libzip holds the container,
+nlohmann/json reads and writes the JSON in it, and OCCT's `BinTools` the geometry. LCAD links
+libzip dynamically; nlohmann/json is header only.
 
-| Dependency | Used for | License | Latest upstream | Ubuntu 24.04 | Ubuntu 26.04 | Fedora 44 | Arch |
-|---|---|---|---|---|---|---|---|
-| [libzip](https://github.com/nih-at/libzip) | The `.lcad` container | BSD-3-Clause | 1.12 (2026-10-07) | 1.7.3 | 1.11.4 | 1.11.4 | 1.11.4 |
-| [nlohmann/json](https://github.com/nlohmann/json) | Document and manifest | MIT | 3.12.0 | 3.11.3 | 3.11.3 | 3.12.0 | 3.12.0 |
-| OCCT `BinTools` | B-rep geometry | Part of OCCT | | | | | |
+Like OCCT, libzip is located from its header and library and not through the CMake package it
+installs. Ubuntu's copy of that package refers to command-line tools from other packages and
+fails to load when they are not installed.
 
-Neither library is linked yet. They are added to the build when Phase 1 implements saving.
+## Packaging tools
+
+Used only to build the AppImage, by `scripts/build-appimage.sh`, which downloads them at pinned
+versions and verifies their checksums. They are not part of LCAD.
+
+| Tool | Version | License |
+|---|---|---|
+| [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy) | 1-alpha-20251107-1 | MIT |
+| [linuxdeploy-plugin-qt](https://github.com/linuxdeploy/linuxdeploy-plugin-qt) | 1-alpha-20250213-1 | MIT |
+
+The AppImage carries Qt, OCCT, libzip, and the libraries they need, each under its own license.
+Qt and OCCT are LGPL: they are bundled as separate shared libraries that a user can replace,
+which is what the LGPL asks for. The license texts still have to be added to the bundle before
+an AppImage is published; that is on the list for the first release.
 
 ## Later phases
 

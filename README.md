@@ -8,12 +8,15 @@ Linux comes first. Windows and macOS ports are planned once the core modeling wo
 
 ## Status
 
-Early groundwork. LCAD cannot model anything yet.
+Early. LCAD cannot sketch or extrude yet.
 
-What exists is the foundation from Phase 0: a window with a 3D viewport (orbit, pan, zoom, hover
-highlighting), a small geometry kernel layer over Open CASCADE with exact measurement, a test suite, and
-CI that builds and tests on Ubuntu 24.04, Ubuntu 26.04, Fedora 44, and Arch. Phase 1 adds documents,
-saving, selection, and undo. See the [roadmap](ROADMAP.md).
+What works today, from Phases 0 and 1: creating box, cylinder, sphere, cone, and torus solids by
+their sizes with a live preview; a 3D view with a view cube, standard views, and Fusion's mouse
+controls; selecting bodies, faces, edges, and vertices, with their measurements in the status
+bar; a browser tree to rename, hide, and delete bodies; undo and redo; and saving and opening
+`.lcad` documents. [docs/USING.md](docs/USING.md) shows how.
+
+Next is Phase 2, the sketcher. See the [roadmap](ROADMAP.md).
 
 ## Building
 
@@ -24,10 +27,12 @@ cmake --build --preset release
 build/release/bin/lcad
 ```
 
-Details, supported distributions, and how to run the tests are in [docs/BUILDING.md](docs/BUILDING.md).
+Details, supported distributions, how to run the tests, and how to build the AppImage are in
+[docs/BUILDING.md](docs/BUILDING.md).
 
 ## Documents
 
+- [Using LCAD](docs/USING.md): what it can do today, and the mouse and keyboard controls.
 - [Roadmap](ROADMAP.md): phases, target dates, and open decisions.
 - [Project brief](docs/PROJECT_BRIEF.md): the full product requirements.
 - [Architecture](docs/ARCHITECTURE.md): modules, the rules between them, and the decisions made so far.

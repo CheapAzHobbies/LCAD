@@ -44,6 +44,8 @@ TEST_CASE("Reference documents written with each OCCT version open and measure c
         writers.insert(kernel.substr(0, kernel.rfind('.')));
     }
 
-    // The oldest and the newest OCCT series that LCAD supports.
+    // The oldest and the newest OCCT series that LCAD supports. Whichever of them this build
+    // uses, it has just read a file written by the other.
     CHECK(writers.contains("OCCT 7.6"));
+    CHECK(writers.contains("OCCT 7.9"));
 }
