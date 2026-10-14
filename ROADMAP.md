@@ -178,8 +178,9 @@ Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
       feature and the sketch curve they come from, edges by the faces they lie between. See
       [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#11-stable-references). Tested by the bracket:
       widen the plate, and the fillets stay on the same four edges.
-- [ ] Pull (join, cut, intersect, new body; symmetric, two-sided) and revolve are done. To-object
-      and taper are not.
+- [x] Pull (join, cut, intersect, new body; one side, symmetric, two-sided; up to a flat face,
+      which it follows; taper on a pull to one side) and revolve. Up to a curved face is not
+      there yet.
 - [x] Fillet, chamfer, shell, hole (simple, counterbore, countersink; to a depth with a drill
       point, or through all; at the points of a sketch), mirror, rectangular and circular
       pattern.

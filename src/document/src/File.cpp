@@ -468,6 +468,14 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["reference"] = feature.reference;
         out["visible"] = feature.visible;
     }
+    // A taper and a pull up to a face: written only when there is one.
+    if (feature.taper != 0.0) {
+        out["taper"] = feature.taper;
+    }
+    if (!feature.extentFace.empty()) {
+        out["extentBody"] = feature.extentBody.value;
+        out["extentFace"] = feature.extentFace;
+    }
     if (feature.kind == FeatureKind::Hole) {
         out["holeKind"] = toString(feature.holeKind);
         out["throughAll"] = feature.throughAll;
@@ -545,6 +553,13 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     if (feature.kind == FeatureKind::Plane) {
         feature.reference = stringMember(entry, "reference", where, path);
         feature.visible = boolMember(entry, "visible", where, path);
+    }
+    if (entry.contains("taper")) {
+        feature.taper = numberMember(entry, "taper", where, path);
+    }
+    if (entry.contains("extentFace")) {
+        feature.extentBody = ObjectId{idMember(entry, "extentBody", where, path)};
+        feature.extentFace = stringMember(entry, "extentFace", where, path);
     }
     if (feature.kind == FeatureKind::Hole) {
         const std::string holeKind = stringMember(entry, "holeKind", where, path);

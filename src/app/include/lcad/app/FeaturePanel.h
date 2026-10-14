@@ -56,6 +56,11 @@ public:
     void setFaces(document::ObjectId body, const std::vector<std::string>& faces);
     /// Hole: the sketch whose points say where the holes go.
     void setSketch(document::ObjectId sketch);
+    /// Pull: the flat face, of a body, by name, that a pull up to a face ends in.
+    void setExtentFace(document::ObjectId body, const std::string& face,
+                       const QString& description);
+    /// Pull: whether it goes up to a face, which is then picked in the 3D view.
+    [[nodiscard]] bool goesToFace() const;
     /// Mirror and patterns: an edge or a face of a body, by name, picked to give the plane,
     /// the direction, or the axis. `description` says what it is, for the list.
     void setPickedReference(document::ObjectId body, const std::string& name,
@@ -122,6 +127,8 @@ private:
     QDoubleSpinBox* m_angle = nullptr;
     QDoubleSpinBox* m_size = nullptr;
     QPushButton* m_flip = nullptr;
+    QDoubleSpinBox* m_taper = nullptr;
+    QLabel* m_extentFace = nullptr;
     // Mirror and patterns
     QListWidget* m_sources = nullptr;
     QComboBox* m_reference = nullptr;

@@ -66,8 +66,18 @@ struct Region {
 ///
 /// Faces are named `tag`/side/<curve name>, `tag`/start/<name>, and `tag`/end/<name>, where the
 /// last part is the name of a curve of the region's outline.
+///
+/// `taper`, in radians, tilts the sides: a positive taper makes the solid narrower the farther
+/// it goes from the plane, a negative one wider. A taper needs a pull to one side: `from` or `to`
+/// must be zero. Throws kernel::Error if the taper is too steep for the outline.
 [[nodiscard]] NamedShape pull(const Plane& plane, const std::vector<Region>& regions, double from,
-                              double to, const std::string& tag);
+                              double to, const std::string& tag, double taper = 0.0);
+
+/// Pulls regions of a plane along its normal, or against it, up to `limit`: the solid ends where
+/// it meets that plane, which need not be parallel to the regions'. The end is named as by
+/// pull(). Throws kernel::Error if the limit runs along the pull or passes through the regions.
+[[nodiscard]] NamedShape pullTo(const Plane& plane, const std::vector<Region>& regions,
+                                const Plane& limit, const std::string& tag);
 
 /// Turns regions of a plane about an axis that lies in the plane, through the points (u1, v1)
 /// and (u2, v2), by `angle` radians: up to a full turn, counter-clockwise seen from the second

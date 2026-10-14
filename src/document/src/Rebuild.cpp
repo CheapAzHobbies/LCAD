@@ -118,14 +118,42 @@ const kernel::NamedShape& targetOf(const Feature& feature, const Document& docum
     return found->second;
 }
 
-// The solid a pull or a revolve makes, before it is combined with a body.
-kernel::NamedShape madeBy(const Feature& feature, const Document& document) {
+// The solid a pull or a revolve makes, before it is combined with a body. `bodies` is needed
+// for a pull up to a face.
+kernel::NamedShape madeBy(const Feature& feature, const Document& document,
+                          const BodyStates* bodies) {
     const std::string tag = std::to_string(feature.id.value);
     const SketchItem* sketch = document.findSketch(feature.sketch);
     if (sketch == nullptr) {
         throw FeatureFailure("The sketch it was made from is gone.");
     }
     const std::vector<kernel::Region> regions = regionsOf(feature, *sketch);
+    if (feature.kind == FeatureKind::Pull && !feature.extentFace.empty()) {
+        const Body* target = document.findBody(feature.extentBody);
+        const bool exists = target != nullptr && bodies != nullptr &&
+                            bodies->find(feature.extentBody) != bodies->end() &&
+                            !bodies->at(feature.extentBody).shape.isNull();
+        if (!exists) {
+            throw FeatureFailure(
+                target != nullptr ? "The body with the face it goes up to, " + target->name +
+                                        ", does not exist at this point in the timeline."
+                                  : std::string("The body with the face it goes up to is gone."));
+        }
+        const kernel::NamedShape& limitBody = bodies->at(feature.extentBody);
+        const int index = kernel::findFace(limitBody, feature.extentFace);
+        if (index < 0) {
+            throw FeatureFailure("The face it goes up to no longer exists: " +
+                                 describeName(document, feature.extentFace) + ".");
+        }
+        const auto limit = kernel::planeOfFace(
+            kernel::subShape(limitBody.shape, kernel::SubShapeKind::Face, index));
+        if (!limit.has_value()) {
+            throw FeatureFailure("The face it goes up to, " +
+                                 describeName(document, feature.extentFace) +
+                                 ", is not flat. Only flat faces can end a pull for now.");
+        }
+        return kernel::pullTo(sketch->plane, regions, *limit, tag);
+    }
     if (feature.kind == FeatureKind::Pull) {
         double from = 0.0;
         double to = feature.distance;
@@ -138,7 +166,13 @@ kernel::NamedShape madeBy(const Feature& feature, const Document& document) {
         if (!std::isfinite(from) || !std::isfinite(to) || std::abs(to - from) < 1e-7) {
             throw FeatureFailure("Its distance is zero.");
         }
-        return kernel::pull(sketch->plane, regions, from, to, tag);
+        if (feature.taper != 0.0 && from != 0.0) {
+            throw FeatureFailure("A taper needs a pull to one side.");
+        }
+        if (!std::isfinite(feature.taper) || std::abs(feature.taper) >= 89.0) {
+            throw FeatureFailure("Its taper has to be less than 89 degrees either way.");
+        }
+        return kernel::pull(sketch->plane, regions, from, to, tag, feature.taper * pi / 180.0);
     }
     const sketch::Entity* axis = sketch->geometry.find(feature.axis);
     if (axis == nullptr || axis->kind != sketch::EntityKind::Line) {
@@ -218,7 +252,7 @@ kernel::Axis axisNamed(const std::string& name, const kernel::NamedShape& body,
 // Mirror and patterns: copies of features' solids, or of the body, each doing to the body what
 // its original does.
 kernel::NamedShape copiesOf(const Feature& feature, const Document& document,
-                            const kernel::NamedShape& body) {
+                            const kernel::NamedShape& body, const BodyStates& bodies) {
     const std::string tag = std::to_string(feature.id.value);
     struct Piece {
         kernel::NamedShape shape;
@@ -245,7 +279,7 @@ kernel::NamedShape copiesOf(const Feature& feature, const Document& document,
         }
         Piece piece;
         try {
-            piece.shape = madeBy(*source, document);
+            piece.shape = madeBy(*source, document, &bodies);
         } catch (const FeatureFailure& failure) {
             throw FeatureFailure(source->name + ", which it copies, cannot be made. " +
                                  failure.what());
@@ -596,11 +630,11 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
         switch (feature.kind) {
         case FeatureKind::Pull:
         case FeatureKind::Revolve:
-            return placed(feature, document, bodies, keep(madeBy(feature, document)));
+            return placed(feature, document, bodies, keep(madeBy(feature, document, &bodies)));
         case FeatureKind::Mirror:
         case FeatureKind::RectangularPattern:
         case FeatureKind::CircularPattern:
-            return copiesOf(feature, document, targetOf(feature, document, bodies));
+            return copiesOf(feature, document, targetOf(feature, document, bodies), bodies);
         case FeatureKind::Plane:
             throw FeatureFailure("A construction plane makes no solid.");
         case FeatureKind::Hole:

@@ -273,9 +273,10 @@ public:
     /// Shows the closed regions of these sketches as patches that can be clicked, drawn over
     /// the model, hidden sketches too. Each lights up under the pointer. A click on one adds it
     /// to the picked profiles, or takes it out if it is picked, and is reported by
-    /// profilesPicked(); it selects nothing. Bodies and sketches cannot be picked meanwhile.
-    /// An empty list ends it.
-    void setProfileSketches(const std::vector<document::ObjectId>& sketches);
+    /// profilesPicked(); it selects nothing. Bodies and sketches cannot be picked meanwhile,
+    /// except, with `facesToo`, the faces of bodies, where no region is under the pointer: for a
+    /// pull up to a face. An empty list ends it.
+    void setProfileSketches(const std::vector<document::ObjectId>& sketches, bool facesToo = false);
     [[nodiscard]] bool isProfilePicking() const;
     /// Makes these the picked profiles, which are drawn in the selection color.
     void setPickedProfiles(const std::vector<Profile>& profiles);

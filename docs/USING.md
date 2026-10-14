@@ -48,8 +48,10 @@ programs call extrude).
    picked already; otherwise click the areas you want in the 3D view (they light up under the
    pointer; a second click lets one go).
 3. Type the distance on the right. A negative distance, or **Flip Direction**, pulls the other
-   way. **Direction** pulls to one side, by the same amount to both sides (**Symmetric**), or
-   by different amounts (**Two Sides**).
+   way. **Direction** pulls to one side, by the same amount to both sides (**Symmetric**), by
+   different amounts (**Two Sides**), or up to a flat face you click in the 3D view (**To
+   Face**), which it then follows. **Taper** leans the sides in as the pull goes out (negative
+   leans them out); it works on a pull to one side.
 4. **Operation**: a **New Body**, **Join** it to a body, **Cut** it out of one, or keep only
    what it shares with one (**Intersect**). Until you choose, LCAD guesses: a pull that lies
    mostly inside a body cuts it, one that touches a body joins it, one on its own is a new body.
@@ -334,7 +336,7 @@ These are the shortcuts LCAD starts with.
 | Ctrl + Q | Quit |
 
 Not there yet: autosave and crash recovery, inches as a display unit, import or export of other
-formats, construction axes, a parameter table, and pulling up to a face or with a taper.
+formats, construction axes, a parameter table, and pulling up to a curved face.
 The origin guides that are shown are not saved with the document.
 
 ## If something goes wrong

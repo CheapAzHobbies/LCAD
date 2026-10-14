@@ -1147,3 +1147,72 @@ TEST_CASE("Holes are drilled at the points of a sketch", "[document][feature]") 
     CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(body)->shape),
                WithinRel(volume, 1e-9));
 }
+
+TEST_CASE("A pull can taper, or go up to a face and follow it", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+
+    // The plate, its sides leaning in 5 degrees: a prismatoid, whose middle section is the
+    // outline shrunk by half as much.
+    Feature tapered = pullOf(made.outline, 8.0);
+    tapered.taper = 5.0;
+    made.plate = document.addFeature(tapered);
+    REQUIRE(document.featureError(made.plate).empty());
+    const double s = 8.0 * std::tan(5.0 * pi / 180.0);
+    const auto area = [](double shrink) { return (60.0 - 2.0 * shrink) * (40.0 - 2.0 * shrink); };
+    CHECK_THAT(made.volume(),
+               WithinRel(8.0 / 6.0 * (area(0.0) + 4.0 * area(s / 2.0) + area(s)), 1e-6));
+    // Both ways at once, with a taper, is refused.
+    tapered = *document.findFeature(made.plate);
+    tapered.symmetric = true;
+    document.changeFeature(made.plate, tapered);
+    CHECK_THAT(document.featureError(made.plate), ContainsSubstring("needs a pull to one side"));
+    document.undo();
+    tapered = *document.findFeature(made.plate);
+    tapered.taper = 0.0;
+    document.changeFeature(made.plate, tapered);
+    CHECK_THAT(made.volume(), WithinRel(60.0 * 40.0 * 8.0, 1e-9));
+    const ObjectId body = document.findFeature(made.plate)->body;
+
+    // A post beside the plate, pulled up to the plate's top.
+    const ObjectId post = document.addSketch("Post", lcad::kernel::planeXY());
+    lcad::sketch::Sketch round;
+    round.addCircle({100.0, 0.0}, 5.0);
+    document.setSketchGeometry(post, round, "Circle");
+    Feature upTo = pullOf(post, 1.0);
+    upTo.extentBody = body;
+    upTo.extentFace = topFace(document, body);
+    const ObjectId rise = document.addFeature(upTo);
+    REQUIRE(document.featureError(rise).empty());
+    const ObjectId postBody = document.findFeature(rise)->body;
+    CHECK_THAT(lcad::kernel::volume(document.findBody(postBody)->shape),
+               WithinRel(pi * 25.0 * 8.0, 1e-6));
+
+    // The plate gets thicker; the post follows its top.
+    Feature thicker = *document.findFeature(made.plate);
+    thicker.distance = 12.0;
+    document.changeFeature(made.plate, thicker);
+    CHECK_THAT(lcad::kernel::volume(document.findBody(postBody)->shape),
+               WithinRel(pi * 25.0 * 12.0, 1e-6));
+    // It cannot come before the pull that makes that face. (Its own sketch can.)
+    document.moveInTimeline(post, 0);
+    CHECK_THROWS_WITH(document.moveInTimeline(rise, 2),
+                      ContainsSubstring("goes up to a face of Body, which Pull 1 makes"));
+    document.undo();
+    // With the plate suppressed, there is no face to go up to.
+    document.setFeatureSuppressed(made.plate, true);
+    CHECK_THAT(document.featureError(rise), ContainsSubstring("does not exist at this point"));
+    document.undo();
+    CHECK(document.featureError(rise).empty());
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("taper.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(*loaded.document->findFeature(rise) == *document.findFeature(rise));
+    CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(postBody)->shape),
+               WithinRel(pi * 25.0 * 12.0, 1e-6));
+}

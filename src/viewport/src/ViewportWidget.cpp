@@ -342,6 +342,7 @@ public:
     std::vector<ProfilePatch> profilePatches;
     std::vector<document::ObjectId> profileSketches;
     std::vector<Profile> pickedProfiles;
+    bool profileFacesToo = false;
     int hoveredProfile = -1;
     int pressedProfile = -1;
     // What a feature would make, drawn as a body in place of the body it replaces. That body is
@@ -843,10 +844,16 @@ public:
         if (!profilePicking() || context.IsNull() || !context->HasDetected()) {
             return -1;
         }
-        const Handle(AIS_InteractiveObject) under = context->DetectedInteractive();
-        for (std::size_t i = 0; i < profilePatches.size(); ++i) {
-            if (under == profilePatches[i].object) {
-                return static_cast<int>(i);
+        // A region wins over a face that lies in front of it, or in its plane.
+        for (context->InitDetected(); context->MoreDetected(); context->NextDetected()) {
+            const Handle(SelectMgr_EntityOwner) owner = context->DetectedCurrentOwner();
+            if (owner.IsNull()) {
+                continue;
+            }
+            for (std::size_t i = 0; i < profilePatches.size(); ++i) {
+                if (owner->Selectable() == profilePatches[i].object) {
+                    return static_cast<int>(i);
+                }
             }
         }
         return -1;
@@ -910,7 +917,11 @@ public:
     void applyFilter(const Handle(AIS_Shape)& object) const {
         context->Deactivate(object);
         if (profilePicking()) {
-            // Clicks belong to the regions being chosen from.
+            // Clicks belong to the regions being chosen from, and maybe to faces.
+            if (profileFacesToo) {
+                context->SetSelectionModeActive(object, AIS_Shape::SelectionMode(TopAbs_FACE), true,
+                                                AIS_SelectionModesConcurrency_Multiple);
+            }
             return;
         }
         if (sketching()) {
@@ -1852,11 +1863,22 @@ std::optional<OriginItem> ViewportWidget::pickPlaneAt(const QPoint& position) {
     return static_cast<OriginItem>(plane);
 }
 
-void ViewportWidget::setProfileSketches(const std::vector<document::ObjectId>& sketches) {
-    if (!m_impl->canRender() || sketches == m_impl->profileSketches) {
+void ViewportWidget::setProfileSketches(const std::vector<document::ObjectId>& sketches,
+                                        bool facesToo) {
+    if (!m_impl->canRender()) {
+        return;
+    }
+    if (sketches == m_impl->profileSketches) {
+        if (facesToo != m_impl->profileFacesToo) {
+            m_impl->profileFacesToo = facesToo;
+            m_impl->applyFilters();
+            m_impl->redraw();
+        }
         return;
     }
     const bool was = m_impl->profilePicking();
+    const bool facesWere = m_impl->profileFacesToo;
+    m_impl->profileFacesToo = facesToo && !sketches.empty();
     m_impl->profileSketches = sketches;
     m_impl->context->ClearDetected(false);
     if (sketches.empty()) {
@@ -1870,7 +1892,7 @@ void ViewportWidget::setProfileSketches(const std::vector<document::ObjectId>& s
         m_impl->context->ClearSelected(false);
         m_impl->showProfiles();
     }
-    if (was != m_impl->profilePicking()) {
+    if (was != m_impl->profilePicking() || facesWere != m_impl->profileFacesToo) {
         m_impl->applyFilters();
     }
     m_impl->redraw();
@@ -2290,10 +2312,13 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
         }
     }
     if (m_impl->profilePicking() && event->button() == Qt::LeftButton) {
-        // Profiles are being chosen. A press elsewhere selects nothing either.
+        // Profiles are being chosen. A press elsewhere selects nothing either, unless faces
+        // may be picked too.
         const auto profile = profileAt(event->position().toPoint());
         m_impl->pressedProfile = profile.has_value() ? m_impl->detectedProfile() : -1;
-        return;
+        if (profile.has_value() || !m_impl->profileFacesToo) {
+            return;
+        }
     }
     if (m_impl->sketching() && event->button() == Qt::LeftButton) {
         if (m_impl->editor->tool() == SketchTool::Project) {
@@ -2366,7 +2391,8 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
             emit planePicked(*plane);
         }
         return;
-    } else if (m_impl->profilePicking() && event->button() == Qt::LeftButton) {
+    } else if (m_impl->profilePicking() && event->button() == Qt::LeftButton &&
+               (m_impl->pressedProfile >= 0 || !m_impl->profileFacesToo)) {
         // Picked, or let go, if the button comes up on the region it went down on.
         const int pressed = m_impl->pressedProfile;
         m_impl->pressedProfile = -1;
@@ -2424,7 +2450,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
         buttons.setFlag(Qt::LeftButton, false);
     }
     if (m_impl->pressedPlane >= 0 || m_impl->pressedConstruction.isValid() ||
-        m_impl->profilePicking()) {
+        m_impl->pressedProfile >= 0 || (m_impl->profilePicking() && !m_impl->profileFacesToo)) {
         // Nor of a press on a plane or a profile that is being chosen.
         buttons.setFlag(Qt::LeftButton, false);
     }

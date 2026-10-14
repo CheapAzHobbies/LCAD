@@ -29,7 +29,7 @@ using document::Operation;
 // Far beyond any part LCAD is meant for, and small enough that the input boxes stay narrow.
 constexpr double largestInput = 1.0e6;
 
-enum Extent { OneSide = 0, Symmetric = 1, TwoSides = 2 };
+enum Extent { OneSide = 0, Symmetric = 1, TwoSides = 2, ToFace = 3 };
 
 bool copies(FeatureKind kind) {
     return kind == FeatureKind::Mirror || kind == FeatureKind::RectangularPattern ||
@@ -147,9 +147,9 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
     case FeatureKind::Pull: {
         m_extent = new QComboBox(this);
         m_extent->setObjectName(QStringLiteral("extent"));
-        m_extent->addItems({tr("One Side"), tr("Symmetric"), tr("Two Sides")});
+        m_extent->addItems({tr("One Side"), tr("Symmetric"), tr("Two Sides"), tr("To Face")});
         m_extent->setToolTip(tr("Pull to one side of the sketch, by the same amount to both "
-                                "sides, or by a different amount to each."));
+                                "sides, by a different amount to each, or up to a flat face."));
         connect(m_extent, &QComboBox::activated, this, [this] { readFields(); });
         m_form->addRow(tr("Direction"), m_extent);
         m_distance = addField(QStringLiteral("distance"), tr("Distance"), -largestInput,
@@ -165,6 +165,14 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         connect(m_flip, &QPushButton::clicked, this,
                 [this] { m_distance->setValue(-m_distance->value()); });
         m_form->addRow(QString(), m_flip);
+        m_extentFace = new QLabel(this);
+        m_extentFace->setObjectName(QStringLiteral("extentFace"));
+        m_extentFace->setWordWrap(true);
+        m_form->addRow(tr("Up to"), m_extentFace);
+        m_taper = addField(QStringLiteral("taper"), tr("Taper"), -88.0, 88.0, tr("°"));
+        m_taper->setValue(0.0);
+        m_taper->setToolTip(tr("How far the sides lean in as the pull goes out. Negative leans "
+                               "them out."));
         break;
     }
     case FeatureKind::Revolve:
@@ -446,6 +454,21 @@ void FeaturePanel::fillSketches() {
     m_sketch->setCurrentIndex(index >= 0 ? index : 0);
 }
 
+bool FeaturePanel::goesToFace() const {
+    return m_extent != nullptr && m_extent->currentIndex() == ToFace;
+}
+
+void FeaturePanel::setExtentFace(document::ObjectId body, const std::string& face,
+                                 const QString& description) {
+    if (m_extent == nullptr) {
+        return;
+    }
+    m_pickedBody = body;
+    m_pickedName = face;
+    m_pickedDescription = description;
+    readFields();
+}
+
 void FeaturePanel::setSketch(document::ObjectId sketch) {
     if (m_sketch == nullptr) {
         return;
@@ -564,13 +587,18 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         }
     }
     if (m_extent != nullptr) {
-        m_extent->setCurrentIndex(feature.symmetric             ? Symmetric
+        m_extent->setCurrentIndex(!feature.extentFace.empty()   ? ToFace
+                                  : feature.symmetric           ? Symmetric
                                   : feature.distanceBack != 0.0 ? TwoSides
                                                                 : OneSide);
         m_distance->setValue(feature.distance);
         if (feature.distanceBack != 0.0) {
             m_distanceBack->setValue(feature.distanceBack);
         }
+        m_taper->setValue(feature.taper);
+        m_pickedBody = feature.extentBody;
+        m_pickedName = feature.extentFace;
+        m_pickedDescription = feature.extentFace.empty() ? QString() : tr("The face picked");
     }
     if (m_angle != nullptr) {
         m_angle->setValue(feature.angle);
@@ -652,7 +680,8 @@ void FeaturePanel::setFaces(document::ObjectId body, const std::vector<std::stri
 bool FeaturePanel::hasInput() const {
     switch (m_feature.kind) {
     case FeatureKind::Pull:
-        return m_feature.sketch.isValid() && !m_feature.regions.empty();
+        return m_feature.sketch.isValid() && !m_feature.regions.empty() &&
+               (!goesToFace() || !m_feature.extentFace.empty());
     case FeatureKind::Revolve:
         return m_feature.sketch.isValid() && !m_feature.regions.empty() && m_feature.axis != 0;
     case FeatureKind::Fillet:
@@ -736,11 +765,27 @@ void FeaturePanel::readFields() {
     }
     if (m_extent != nullptr) {
         const int extent = m_extent->currentIndex();
+        const auto show = [this](QWidget* field, bool shown) {
+            field->setVisible(shown);
+            if (QWidget* label = m_form->labelForField(field)) {
+                label->setVisible(shown);
+            }
+        };
         m_feature.symmetric = extent == Symmetric;
         m_feature.distance = m_distance->value();
         m_feature.distanceBack = extent == TwoSides ? m_distanceBack->value() : 0.0;
-        m_distanceBack->setVisible(extent == TwoSides);
-        m_form->labelForField(m_distanceBack)->setVisible(extent == TwoSides);
+        // A taper leans the sides from the sketch outward, which only works one way.
+        m_feature.taper = extent == OneSide ? m_taper->value() : 0.0;
+        m_feature.extentBody = extent == ToFace ? m_pickedBody : document::ObjectId{};
+        m_feature.extentFace = extent == ToFace ? m_pickedName : std::string();
+        show(m_distance, extent != ToFace);
+        show(m_flip, extent != ToFace);
+        show(m_distanceBack, extent == TwoSides);
+        show(m_taper, extent == OneSide);
+        show(m_extentFace, extent == ToFace);
+        m_extentFace->setText(m_pickedName.empty() || extent != ToFace
+                                  ? tr("Click a flat face in the 3D view.")
+                                  : m_pickedDescription);
         qobject_cast<QLabel*>(m_form->labelForField(m_distance))
             ->setText(extent == Symmetric ? tr("Total distance") : tr("Distance"));
     }

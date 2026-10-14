@@ -583,3 +583,66 @@ TEST_CASE("Holes: simple, counterbored, countersunk, and through", "[kernel][mod
     CHECK_THROWS_AS(holeTool(top, down, wrong, 8.0, "9", "4"), std::invalid_argument);
     CHECK_THROWS_AS(holeTool(top, {0.0, 0.0, 0.0}, simple, 0.0, "9", "4"), std::invalid_argument);
 }
+
+TEST_CASE("A pull can taper, and can go up to a face", "[kernel][modeling]") {
+    const std::vector<Region> square{Region{rectangle(planeXY(), 0.0, 0.0, 20.0, 20.0), {}}};
+
+    // Tapered 10 degrees over 10 up: the top is narrower by 2·10·tan(10°) each way. A frustum
+    // of a square pyramid.
+    const double shrink = 10.0 * std::tan(10.0 * pi / 180.0);
+    const NamedShape narrowing = pull(planeXY(), square, 0.0, 10.0, "7", 10.0 * pi / 180.0);
+    CHECK(isValid(narrowing.shape));
+    const double top = 20.0 - 2.0 * shrink;
+    CHECK_THAT(volume(narrowing.shape),
+               WithinRel(10.0 / 3.0 * (400.0 + top * top + 20.0 * top), 1e-6));
+    auto box = boundingBox(narrowing.shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->max.x, WithinAbs(20.0, 1e-6));
+    // The faces keep their names.
+    CHECK(findFace(narrowing, "7/side/1") >= 0);
+    CHECK(findFace(narrowing, "7/end/1") >= 0);
+    CHECK(findFace(narrowing, "7/start/1") >= 0);
+    // A negative taper widens, also going down.
+    const NamedShape widening = pull(planeXY(), square, -10.0, 0.0, "7", -10.0 * pi / 180.0);
+    const double bottom = 20.0 + 2.0 * shrink;
+    CHECK_THAT(volume(widening.shape),
+               WithinRel(10.0 / 3.0 * (400.0 + bottom * bottom + 20.0 * bottom), 1e-6));
+    box = boundingBox(widening.shape);
+    CHECK_THAT(box->min.z, WithinAbs(-10.0, 1e-6));
+    CHECK_THAT(box->min.x, WithinAbs(-shrink, 1e-6));
+    // Both ways at once, or too steep, is refused.
+    CHECK_THROWS_AS(pull(planeXY(), square, -5.0, 5.0, "7", 0.1), std::invalid_argument);
+    CHECK_THROWS_AS(pull(planeXY(), square, 0.0, 5.0, "7", pi / 2.0), std::invalid_argument);
+
+    // Up to a parallel plane 12 above: exactly that far.
+    Plane above = planeXY();
+    above.origin = {0.0, 0.0, 12.0};
+    NamedShape up = pullTo(planeXY(), square, above, "8");
+    CHECK_THAT(volume(up.shape), WithinRel(400.0 * 12.0, 1e-9));
+    // Up to a slanted plane, rising from 10 at x = 0 to 30 at x = 20: a wedge on a block.
+    Plane slant;
+    slant.origin = {0.0, 0.0, 10.0};
+    const double len = std::sqrt(2.0);
+    slant.normal = {-1.0 / len, 0.0, 1.0 / len};
+    slant.xDirection = {1.0 / len, 0.0, 1.0 / len};
+    up = pullTo(planeXY(), square, slant, "8");
+    CHECK(isValid(up.shape));
+    CHECK_THAT(volume(up.shape), WithinRel(20.0 * 20.0 * 20.0, 1e-6));
+    box = boundingBox(up.shape);
+    CHECK_THAT(box->max.z, WithinAbs(30.0, 1e-6));
+    CHECK(findFace(up, "8/end/1") >= 0);
+    CHECK(findFace(up, "8/side/2") >= 0);
+    // Down to a plane below works the same way.
+    Plane below = planeXY();
+    below.origin = {0.0, 0.0, -4.0};
+    up = pullTo(planeXY(), square, below, "8");
+    box = boundingBox(up.shape);
+    CHECK_THAT(box->min.z, WithinAbs(-4.0, 1e-9));
+    // A plane that runs along the pull, or through the outline, cannot end it.
+    CHECK_THROWS_AS(pullTo(planeXY(), square, planeXZ(), "8"), Error);
+    Plane through;
+    through.origin = {10.0, 0.0, 0.0};
+    through.normal = {-1.0 / len, 0.0, 1.0 / len};
+    through.xDirection = {1.0 / len, 0.0, 1.0 / len};
+    CHECK_THROWS_AS(pullTo(planeXY(), square, through, "8"), Error);
+}

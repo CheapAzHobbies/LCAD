@@ -1111,6 +1111,17 @@ std::string Document::orderProblem(const std::vector<ObjectId>& order) const {
                 return feature.name + " copies " + copied->name + ", so it cannot come before it.";
             }
         }
+        // A pull up to a face comes after what makes the face.
+        if (const Body* limit = findBody(feature.extentBody);
+            limit != nullptr && !feature.extentFace.empty()) {
+            const Feature* maker = findFeature(limit->madeBy);
+            const ObjectId first = maker != nullptr ? maker->id : limit->id;
+            if (first != feature.id && at(first) > place) {
+                return feature.name + " goes up to a face of " + limit->name +
+                       (maker != nullptr ? ", which " + maker->name + " makes" : std::string()) +
+                       ", so it cannot come before it.";
+            }
+        }
         if (makesBody(feature)) {
             continue;
         }
@@ -1243,11 +1254,14 @@ void Document::rebuild() {
             built.done = true;
             continue;
         }
-        const bool stale = m_rebuildAll || !built.done || m_touched.contains(item) ||
-                           m_touched.contains(feature.body) ||
-                           (feature.sketch.isValid() && (m_touched.contains(feature.sketch) ||
-                                                         moved.contains(feature.sketch))) ||
-                           changed.contains(feature.body);
+        const bool stale =
+            m_rebuildAll || !built.done || m_touched.contains(item) ||
+            m_touched.contains(feature.body) ||
+            (feature.sketch.isValid() &&
+             (m_touched.contains(feature.sketch) || moved.contains(feature.sketch))) ||
+            changed.contains(feature.body) ||
+            (feature.extentBody.isValid() &&
+             (changed.contains(feature.extentBody) || m_touched.contains(feature.extentBody)));
         if (!stale) {
             if (built.applied) {
                 state[feature.body] = built.result;

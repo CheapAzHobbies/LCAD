@@ -20,7 +20,9 @@
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
+#include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRep_Tool.hxx>
@@ -48,6 +50,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -463,13 +466,63 @@ Shape makeRegionFace(const Plane& plane, const Region& region) {
     return occt::guarded("make a region", [&] { return occt::wrap(faceOf(plane, region)); });
 }
 
+namespace {
+
+// Tilts the sides of a pulled solid (the faces named `tag`/side/...) about the plane it was
+// pulled from, so that it narrows along `direction` for a positive angle.
+NamedShape drafted(const NamedShape& solid, const Plane& plane, const gp_Dir& direction,
+                   double angle, const std::string& tag) {
+    const TopoDS_Shape& shape = occt::unwrap(solid.shape);
+    BRepOffsetAPI_DraftAngle draft(shape);
+    const gp_Pln neutral(toOcct(plane.origin),
+                         gp_Dir(plane.normal.x, plane.normal.y, plane.normal.z));
+    const TopTools_IndexedMapOfShape faces = mapOf(shape, TopAbs_FACE);
+    const std::string side = tag + "/side/";
+    for (int i = 1; i <= faces.Extent(); ++i) {
+        if (solid.faceNames.at(static_cast<std::size_t>(i - 1)).rfind(side, 0) != 0) {
+            continue;
+        }
+        draft.Add(TopoDS::Face(faces(i)), direction, angle, neutral);
+        if (!draft.AddDone()) {
+            throw Error("pull", "the taper is too steep for this outline");
+        }
+    }
+    draft.Build();
+    if (!draft.IsDone() || !hasSolid(draft.Shape())) {
+        throw Error("pull", "the taper is too steep for this outline");
+    }
+    requireValid(draft.Shape(), "pull");
+    // A draft says what became of each face one by one, not as a list.
+    FaceNamer namer(draft.Shape());
+    for (int i = 1; i <= faces.Extent(); ++i) {
+        namer.offer(draft.ModifiedShape(faces(i)),
+                    solid.faceNames.at(static_cast<std::size_t>(i - 1)));
+    }
+    return named(draft.Shape(), namer, tag);
+}
+
+} // namespace
+
 NamedShape pull(const Plane& plane, const std::vector<Region>& regions, double from, double to,
-                const std::string& tag) {
+                const std::string& tag, double taper) {
     if (regions.empty()) {
         throw std::invalid_argument("pull: there is nothing to pull");
     }
     if (!std::isfinite(from) || !std::isfinite(to) || std::abs(to - from) < 1e-7) {
         throw std::invalid_argument("pull: the distance must not be zero");
+    }
+    if (!std::isfinite(taper) || std::abs(taper) >= M_PI / 2.0 - 1e-6) {
+        throw std::invalid_argument("pull: the taper must be less than a right angle");
+    }
+    if (taper != 0.0 && from != 0.0 && to != 0.0) {
+        throw std::invalid_argument("pull: a taper needs a pull to one side");
+    }
+    if (taper != 0.0) {
+        NamedShape straight = pull(plane, regions, from, to, tag);
+        const double way =
+            std::abs(to) > std::abs(from) ? (to > 0.0 ? 1.0 : -1.0) : (from > 0.0 ? 1.0 : -1.0);
+        const gp_Dir along(plane.normal.x * way, plane.normal.y * way, plane.normal.z * way);
+        return occt::guarded("pull", [&] { return drafted(straight, plane, along, taper, tag); });
     }
     return occt::guarded("pull", [&] {
         const double low = std::min(from, to);
@@ -486,6 +539,62 @@ NamedShape pull(const Plane& plane, const std::vector<Region>& regions, double f
                                          }));
         }
         return joinAll(std::move(solids));
+    });
+}
+
+NamedShape pullTo(const Plane& plane, const std::vector<Region>& regions, const Plane& limit,
+                  const std::string& tag) {
+    if (regions.empty()) {
+        throw std::invalid_argument("pull: there is nothing to pull");
+    }
+    return occt::guarded("pull", [&] {
+        const gp_Vec n(plane.normal.x, plane.normal.y, plane.normal.z);
+        const gp_Vec m(limit.normal.x, limit.normal.y, limit.normal.z);
+        const double facing = n.Dot(m);
+        if (std::abs(facing) < 1e-6) {
+            throw Error("pull", "the face runs along the pull, so it cannot end it");
+        }
+        // How far along the normal each corner of the outlines is from the limit.
+        double nearest = std::numeric_limits<double>::infinity();
+        double farthest = -std::numeric_limits<double>::infinity();
+        const gp_Pnt on = toOcct(limit.origin);
+        for (const Region& region : regions) {
+            const TopoDS_Face face = faceOf(plane, region);
+            for (TopExp_Explorer it(face, TopAbs_VERTEX); it.More(); it.Next()) {
+                const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(it.Current()));
+                const double t = gp_Vec(p, on).Dot(m) / facing;
+                nearest = std::min(nearest, t);
+                farthest = std::max(farthest, t);
+            }
+        }
+        if (nearest * farthest <= 1e-9 || std::abs(nearest) < 1e-7) {
+            throw Error("pull", "the face passes through the outline, so there is nothing to pull "
+                                "up to it");
+        }
+        // A straight pull through the plane, cut back to it.
+        const double reach =
+            (farthest > 0.0 ? farthest : nearest) * 1.01 + (farthest > 0.0 ? 1.0 : -1.0);
+        if (std::abs(nearest - farthest) < 1e-9) {
+            // Parallel: exactly that far.
+            return pull(plane, regions, 0.0, nearest, tag);
+        }
+        const NamedShape straight = pull(plane, regions, 0.0, reach, tag);
+        const TopoDS_Face boundary = BRepBuilderAPI_MakeFace(gp_Pln(on, gp_Dir(m))).Face();
+        const BRepPrimAPI_MakeHalfSpace keep(boundary, toOcct(plane.origin));
+        BRepAlgoAPI_Common cut(occt::unwrap(straight.shape), keep.Solid());
+        cut.Build();
+        if (!cut.IsDone() || cut.HasErrors() || !hasSolid(cut.Shape())) {
+            throw Error("pull", "the solid could not be cut back to the face");
+        }
+        requireValid(cut.Shape(), "pull");
+        FaceNamer namer(cut.Shape());
+        namer.inherit(straight, cut);
+        // The new end is where the half space bounded it.
+        const std::string key = keyOf(regions.front());
+        for (TopExp_Explorer it(keep.Solid(), TopAbs_FACE); it.More(); it.Next()) {
+            namer.offerAll(cut.Modified(it.Current()), tag + "/end/" + key);
+        }
+        return named(cut.Shape(), namer, tag);
     });
 }
 

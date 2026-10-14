@@ -106,6 +106,7 @@ private slots:
     void measureGivesDistancesAndAngles();
     void sketchesFollowConstructionPlanesAndFaces();
     void holesAreDrilledAtSketchPoints();
+    void aPullTapersOrGoesUpToAFace();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -1112,6 +1113,55 @@ void ModelingInterfaceTest::holesAreDrilledAtSketchPoints() {
     QVERIFY(near(volumeOf(window, plate), solid - 2.0 * (pi * 25.0 * 3.0 + pi * 9.0 * 5.0)));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-holes");
+}
+
+void ModelingInterfaceTest::aPullTapersOrGoesUpToAFace() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // A post beside the plate, pulled up to the plate's top, which is clicked in the 3D view.
+    const ObjectId post = drawHole(window, 90.0, 20.0, 5.0);
+    window.viewport()->setStandardView(StandardView::Home);
+    render(window);
+    window.browser()->setSelection({}, {post});
+    QVERIFY(trigger(window, "solid.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    QCOMPARE(pull->feature().regions.size(), std::size_t{1});
+    pull->setChoice(QStringLiteral("extent"), 3);
+    QVERIFY(pull->goesToFace());
+    QVERIFY(!pull->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))->isVisible());
+    // Nothing to go up to yet.
+    QVERIFY(!okButton(pull)->isEnabled());
+    click(window, at(window, 30.0, 20.0, 8.0));
+    QVERIFY(!pull->feature().extentFace.empty());
+    QVERIFY(pull->findChild<QLabel*>(QStringLiteral("extentFace"))
+                ->text()
+                .startsWith(QStringLiteral("Face of Body")));
+    QVERIFY(pull->errorText().isEmpty());
+    QCOMPARE(pull->feature().operation, Operation::NewBody);
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId rise = window.document()->features().back().id;
+    QVERIFY(near(volumeOf(window, rise), pi * 25.0 * 8.0));
+
+    // The plate, edited from the timeline, gets a taper of 3 degrees. Its top stays at 8, and
+    // the post with it.
+    clickTimeline(window, plate, true);
+    QVERIFY(panel(window) != nullptr);
+    typeInto(panel(window), "taper", 3.0);
+    QVERIFY(panel(window)->errorText().isEmpty());
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const double s = 8.0 * std::tan(3.0 * pi / 180.0);
+    const auto area = [](double shrink) { return (60.0 - 2.0 * shrink) * (40.0 - 2.0 * shrink); };
+    QVERIFY(near(volumeOf(window, plate), 8.0 / 6.0 * (area(0.0) + 4.0 * area(s / 2.0) + area(s))));
+    QVERIFY(near(volumeOf(window, rise), pi * 25.0 * 8.0));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-taper-to-face");
 }
 
 QTEST_MAIN(ModelingInterfaceTest)

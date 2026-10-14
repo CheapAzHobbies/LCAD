@@ -2647,7 +2647,7 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         m_viewport->clearSelection();
         m_settingPicks = false;
     } else if (usesProfiles(kind)) {
-        m_viewport->setProfileSketches(profileSketches(from));
+        m_viewport->setProfileSketches(profileSketches(from), kind == document::FeatureKind::Pull);
         // A sketch with one closed area leaves no doubt about which is meant.
         std::vector<viewport::Profile> profiles;
         for (const viewport::Profile& profile : m_viewport->pickableProfiles()) {
@@ -2686,7 +2686,8 @@ bool MainWindow::editFeature(document::ObjectId id) {
     m_featurePanel->setFeature(feature);
     m_settingPicks = true;
     if (usesProfiles(feature.kind)) {
-        m_viewport->setProfileSketches(profileSketches(feature.sketch));
+        m_viewport->setProfileSketches(profileSketches(feature.sketch),
+                                       feature.kind == document::FeatureKind::Pull);
         std::vector<viewport::Profile> profiles;
         for (const viewport::Profile& profile : m_viewport->pickableProfiles()) {
             const bool used =
@@ -2790,6 +2791,24 @@ void MainWindow::takeFeaturePicks() {
     }
     const document::FeatureKind kind = m_featurePanel->kind();
     if (usesProfiles(kind)) {
+        // A face clicked is where a pull up to a face ends.
+        for (const SelectedItem& item : m_viewport->selection()) {
+            if (item.kind != SelectedItem::Kind::Face) {
+                continue;
+            }
+            const kernel::NamedShape named = document()->namedBody(item.body);
+            const auto index = static_cast<std::size_t>(item.index);
+            if (m_featurePanel->goesToFace() && index < named.faceNames.size()) {
+                m_featurePanel->setExtentFace(item.body, named.faceNames[index], describe(item));
+            } else if (!m_featurePanel->goesToFace()) {
+                statusBar()->showMessage(
+                    tr("To pull up to that face, choose To Face under Direction first."), 6000);
+                m_settingPicks = true;
+                m_viewport->clearSelection();
+                m_settingPicks = false;
+            }
+            break;
+        }
         // All from one sketch: the one clicked last.
         std::vector<viewport::Profile> picked = m_viewport->pickedProfiles();
         if (picked.empty()) {

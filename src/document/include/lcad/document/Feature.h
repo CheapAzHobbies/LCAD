@@ -95,6 +95,13 @@ struct Feature {
     double distanceBack = 0.0;
     /// Half of `distance` to each side of the sketch.
     bool symmetric = false;
+    /// How far the sides lean in, in degrees, as the pull goes out: narrower for a positive
+    /// taper, wider for a negative one. Only for a pull to one side.
+    double taper = 0.0;
+    /// A pull up to a face: the flat face, by name, of `extentBody`, whose plane the pull ends
+    /// in. Empty for a pull by `distance`.
+    ObjectId extentBody;
+    std::string extentFace;
 
     // Revolve
 
