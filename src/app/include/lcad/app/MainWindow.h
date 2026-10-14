@@ -306,9 +306,12 @@ private:
     QToolBar* m_sketchToolbar = nullptr;
     /// The sketch toolbar's buttons for single constraints, and the one that lists them all.
     QList<QAction*> m_constraintButtons;
+    QAction* m_constraintsFolded = nullptr;
     /// The names of the modeling toolbar's groups, which go when the window is narrow.
     QList<QAction*> m_modelGroupLabels;
-    QAction* m_constraintsFolded = nullptr;
+    /// The names of the sketch toolbar's groups, which go when the window is too narrow.
+    QList<QAction*> m_sketchGroupLabels;
+    QToolButton* m_finishButton = nullptr;
     QLabel* m_selectionLabel = nullptr;
     QLabel* m_commandLabel = nullptr;
     QComboBox* m_filterBox = nullptr;

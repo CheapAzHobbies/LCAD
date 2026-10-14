@@ -1583,7 +1583,7 @@ void MainWindow::createSketchToolbar() {
     const int iconSize = Theme::instance().tokens().iconSize;
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
-    toolbar->addWidget(groupLabel(tr("Draw"), toolbar));
+    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Draw"), toolbar)));
     for (const char* id :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
@@ -1591,13 +1591,13 @@ void MainWindow::createSketchToolbar() {
     }
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
-    toolbar->addWidget(groupLabel(tr("Modify"), toolbar));
+    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Modify"), toolbar)));
     for (const char* id :
          {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
-    toolbar->addWidget(groupLabel(tr("Constrain"), toolbar));
+    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Constrain"), toolbar)));
     toolbar->addAction(action("sketch.dimension"));
     // Each constraint has a button of its own while there is room. In a narrow window they
     // fold into one button that opens the list: see fitToolbar().
@@ -1627,6 +1627,7 @@ void MainWindow::createSketchToolbar() {
     finish->setObjectName(QStringLiteral("finishSketch"));
     finish->setDefaultAction(action("sketch.finish"));
     finish->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_finishButton = finish;
     toolbar->addWidget(finish);
     toolbar->hide();
 }
@@ -1687,7 +1688,9 @@ void MainWindow::fitToolbar() {
         }
     }
 
-    // The sketch toolbar gives up the constraints' own buttons for one that lists them.
+    // The sketch toolbar gives up the constraints' own buttons for one that lists them; then
+    // the names of its groups; and last, Finish Sketch its label, which the panel's button
+    // still has.
     if (m_sketchToolbar == nullptr || m_constraintsFolded == nullptr) {
         return;
     }
@@ -1698,8 +1701,20 @@ void MainWindow::fitToolbar() {
         m_constraintsFolded->setVisible(folded);
     };
     fold(false);
+    for (QAction* label : std::as_const(m_sketchGroupLabels)) {
+        label->setVisible(true);
+    }
+    m_finishButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     if (wanted(m_sketchToolbar) > width()) {
         fold(true);
+    }
+    if (wanted(m_sketchToolbar) > width()) {
+        for (QAction* label : std::as_const(m_sketchGroupLabels)) {
+            label->setVisible(false);
+        }
+    }
+    if (wanted(m_sketchToolbar) > width()) {
+        m_finishButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     }
 }
 
