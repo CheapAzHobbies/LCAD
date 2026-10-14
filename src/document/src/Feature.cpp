@@ -11,9 +11,14 @@ struct KindName {
     const char* name;
 };
 constexpr KindName kindNames[] = {
-    {FeatureKind::Pull, "Pull"},     {FeatureKind::Revolve, "Revolve"},
-    {FeatureKind::Fillet, "Fillet"}, {FeatureKind::Chamfer, "Chamfer"},
+    {FeatureKind::Pull, "Pull"},
+    {FeatureKind::Revolve, "Revolve"},
+    {FeatureKind::Fillet, "Fillet"},
+    {FeatureKind::Chamfer, "Chamfer"},
     {FeatureKind::Shell, "Shell"},
+    {FeatureKind::Mirror, "Mirror"},
+    {FeatureKind::RectangularPattern, "Rectangular Pattern"},
+    {FeatureKind::CircularPattern, "Circular Pattern"},
 };
 
 struct OperationName {

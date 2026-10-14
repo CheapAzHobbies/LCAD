@@ -575,6 +575,11 @@ void InterfaceTest::nothingEssentialIsClipped() {
         if (widget == nullptr || entry->isSeparator()) {
             continue;
         }
+        // The names of the groups give way in a narrow window; the buttons do not.
+        if (widget->objectName() == QStringLiteral("groupLabel") && !widget->isVisible()) {
+            QVERIFY(size.width() < 1280);
+            continue;
+        }
         QVERIFY2(widget->isVisible(), qPrintable(entry->objectName()));
         const QRect where = widget->geometry();
         QVERIFY2(toolbar->rect().contains(where), qPrintable(entry->objectName()));

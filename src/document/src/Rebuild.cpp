@@ -5,9 +5,11 @@
 #include <lcad/document/SketchShapes.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/Measure.h>
+#include <lcad/kernel/SubShapes.h>
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace lcad::document::detail {
 
@@ -43,6 +45,11 @@ std::string describeFace(const Document& document, const std::string& name) {
     }
     const std::string rest = slash == std::string::npos ? std::string() : name.substr(slash + 1);
     const auto begins = [&rest](const char* with) { return rest.rfind(with, 0) == 0; };
+    // A copy made by a mirror or a pattern: "12/1.3/" and the name of the face copied.
+    if (const std::size_t next = rest.find('/');
+        next != std::string::npos && next > 0 && rest.find_first_not_of("0123456789.") == next) {
+        return "a copy, by " + owner + ", of " + describeFace(document, rest.substr(next + 1));
+    }
     if (begins("side/")) {
         return "a side of " + owner;
     }
@@ -110,6 +117,240 @@ const kernel::NamedShape& targetOf(const Feature& feature, const Document& docum
     return found->second;
 }
 
+// The solid a pull or a revolve makes, before it is combined with a body.
+kernel::NamedShape madeBy(const Feature& feature, const Document& document) {
+    const std::string tag = std::to_string(feature.id.value);
+    const SketchItem* sketch = document.findSketch(feature.sketch);
+    if (sketch == nullptr) {
+        throw FeatureFailure("The sketch it was made from is gone.");
+    }
+    const std::vector<kernel::Region> regions = regionsOf(feature, *sketch);
+    if (feature.kind == FeatureKind::Pull) {
+        double from = 0.0;
+        double to = feature.distance;
+        if (feature.symmetric) {
+            from = -feature.distance / 2.0;
+            to = feature.distance / 2.0;
+        } else if (feature.distanceBack != 0.0) {
+            from = -feature.distanceBack;
+        }
+        if (!std::isfinite(from) || !std::isfinite(to) || std::abs(to - from) < 1e-7) {
+            throw FeatureFailure("Its distance is zero.");
+        }
+        return kernel::pull(sketch->plane, regions, from, to, tag);
+    }
+    const sketch::Entity* axis = sketch->geometry.find(feature.axis);
+    if (axis == nullptr || axis->kind != sketch::EntityKind::Line) {
+        throw FeatureFailure("The line it turns about is no longer in " + sketch->name + ".");
+    }
+    if (!std::isfinite(feature.angle) || std::abs(feature.angle) < 1e-9 ||
+        std::abs(feature.angle) > 360.0 + 1e-9) {
+        throw FeatureFailure("Its angle has to be more than zero and at most 360 degrees.");
+    }
+    const sketch::Point2 a = sketch->geometry.position(axis->start);
+    const sketch::Point2 b = sketch->geometry.position(axis->end);
+    return kernel::revolve(sketch->plane, regions, a.x, a.y, b.x, b.y, feature.angle * pi / 180.0,
+                           tag);
+}
+
+// The plane a mirror is in: an origin plane, or a flat face of the body.
+kernel::Plane planeNamed(const std::string& name, const kernel::NamedShape& body,
+                         const Document& document) {
+    if (name == "XY") {
+        return kernel::planeXY();
+    }
+    if (name == "XZ") {
+        return kernel::planeXZ();
+    }
+    if (name == "YZ") {
+        return kernel::planeYZ();
+    }
+    if (name.empty()) {
+        throw FeatureFailure("It has no plane to mirror in.");
+    }
+    const int face = kernel::findFace(body, name);
+    if (face < 0) {
+        throw FeatureFailure(
+            "The face it mirrors in no longer exists: " + describeName(document, name) + ".");
+    }
+    const auto plane =
+        kernel::planeOfFace(kernel::subShape(body.shape, kernel::SubShapeKind::Face, face));
+    if (!plane.has_value()) {
+        throw FeatureFailure("The face it mirrors in, " + describeName(document, name) +
+                             ", is not flat.");
+    }
+    return *plane;
+}
+
+// The line a pattern goes along or around: an origin axis, or what an edge or a face of the
+// body stands for.
+kernel::Axis axisNamed(const std::string& name, const kernel::NamedShape& body,
+                       const Document& document) {
+    if (name == "X") {
+        return {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    }
+    if (name == "Y") {
+        return {{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}};
+    }
+    if (name == "Z") {
+        return {{0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}};
+    }
+    if (name.empty()) {
+        throw FeatureFailure("It has no direction or axis.");
+    }
+    kernel::Shape part;
+    if (const int edge = kernel::findEdge(body, name); edge >= 0) {
+        part = kernel::subShape(body.shape, kernel::SubShapeKind::Edge, edge);
+    } else if (const int face = kernel::findFace(body, name); face >= 0) {
+        part = kernel::subShape(body.shape, kernel::SubShapeKind::Face, face);
+    } else {
+        throw FeatureFailure("The edge or face that gives its direction no longer exists: " +
+                             describeName(document, name) + ".");
+    }
+    const auto axis = kernel::axisOf(part);
+    if (!axis.has_value()) {
+        throw FeatureFailure(describeName(document, name) + " gives no direction or axis.");
+    }
+    return *axis;
+}
+
+// Mirror and patterns: copies of features' solids, or of the body, each doing to the body what
+// its original does.
+kernel::NamedShape copiesOf(const Feature& feature, const Document& document,
+                            const kernel::NamedShape& body) {
+    const std::string tag = std::to_string(feature.id.value);
+    struct Piece {
+        kernel::NamedShape shape;
+        kernel::Combination how = kernel::Combination::Join;
+    };
+    std::vector<Piece> pieces;
+    if (feature.sources.empty()) {
+        pieces.push_back({body, kernel::Combination::Join});
+    }
+    for (const ObjectId id : feature.sources) {
+        const Feature* source = document.findFeature(id);
+        if (source == nullptr) {
+            throw FeatureFailure("A feature it copies is gone.");
+        }
+        if (source->kind != FeatureKind::Pull && source->kind != FeatureKind::Revolve) {
+            throw FeatureFailure("It copies only pulls and revolves, and " + source->name +
+                                 " is neither.");
+        }
+        if (source->body != feature.body) {
+            throw FeatureFailure(source->name + ", which it copies, works on another body.");
+        }
+        if (source->suppressed) {
+            throw FeatureFailure(source->name + ", which it copies, is suppressed.");
+        }
+        Piece piece;
+        try {
+            piece.shape = madeBy(*source, document);
+        } catch (const FeatureFailure& failure) {
+            throw FeatureFailure(source->name + ", which it copies, cannot be made. " +
+                                 failure.what());
+        }
+        piece.how = source->operation == Operation::Cut         ? kernel::Combination::Cut
+                    : source->operation == Operation::Intersect ? kernel::Combination::Intersect
+                                                                : kernel::Combination::Join;
+        pieces.push_back(std::move(piece));
+    }
+
+    // Where the copies go, as what makes each one from its original.
+    using Copier = std::function<kernel::NamedShape(const kernel::NamedShape&, const std::string&)>;
+    std::vector<Copier> copiers;
+    switch (feature.kind) {
+    case FeatureKind::Mirror: {
+        const kernel::Plane plane = planeNamed(feature.reference, body, document);
+        copiers.emplace_back([plane](const kernel::NamedShape& shape, const std::string& prefix) {
+            return kernel::mirrored(shape, plane, prefix);
+        });
+        break;
+    }
+    case FeatureKind::RectangularPattern: {
+        const int rows = feature.reference2.empty() ? 1 : feature.count2;
+        if (feature.count < 1 || rows < 1) {
+            throw FeatureFailure("It needs at least one in each direction.");
+        }
+        if (feature.count * rows < 2) {
+            throw FeatureFailure("With one in each direction, there is nothing to repeat.");
+        }
+        if (feature.count * rows > 1000) {
+            throw FeatureFailure("It would make more than 1000 copies.");
+        }
+        if (!std::isfinite(feature.spacing) || !std::isfinite(feature.spacing2)) {
+            throw FeatureFailure("Its spacing is not a number.");
+        }
+        const kernel::Vector first = axisNamed(feature.reference, body, document).direction;
+        const kernel::Vector second = feature.reference2.empty()
+                                          ? kernel::Vector{}
+                                          : axisNamed(feature.reference2, body, document).direction;
+        for (int i = 0; i < feature.count; ++i) {
+            for (int j = 0; j < rows; ++j) {
+                if (i == 0 && j == 0) {
+                    continue;
+                }
+                const double a = feature.spacing * i;
+                const double b = feature.spacing2 * j;
+                const kernel::Vector by{first.x * a + second.x * b, first.y * a + second.y * b,
+                                        first.z * a + second.z * b};
+                copiers.emplace_back(
+                    [by](const kernel::NamedShape& shape, const std::string& prefix) {
+                        return kernel::moved(shape, by, prefix);
+                    });
+            }
+        }
+        break;
+    }
+    case FeatureKind::CircularPattern: {
+        if (feature.count < 2) {
+            throw FeatureFailure("With only one, there is nothing to repeat.");
+        }
+        if (feature.count > 1000) {
+            throw FeatureFailure("It would make more than 1000 copies.");
+        }
+        if (!std::isfinite(feature.angle) || std::abs(feature.angle) < 1e-9 ||
+            std::abs(feature.angle) > 360.0 + 1e-9) {
+            throw FeatureFailure("Its angle has to be more than zero and at most 360 degrees.");
+        }
+        const kernel::Axis axis = axisNamed(feature.reference, body, document);
+        // All the way round, the last one would land on the first.
+        const bool round = std::abs(std::abs(feature.angle) - 360.0) < 1e-9;
+        const double step =
+            feature.angle / (round ? feature.count : feature.count - 1) * pi / 180.0;
+        for (int k = 1; k < feature.count; ++k) {
+            copiers.emplace_back([axis, angle = step * k](const kernel::NamedShape& shape,
+                                                          const std::string& prefix) {
+                return kernel::turned(shape, axis, angle, prefix);
+            });
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    kernel::NamedShape result = body;
+    for (std::size_t p = 0; p < pieces.size(); ++p) {
+        for (std::size_t c = 0; c < copiers.size(); ++c) {
+            const std::string prefix =
+                tag + "/" + std::to_string(p + 1) + "." + std::to_string(c + 1);
+            const kernel::NamedShape copy = copiers[c](pieces[p].shape, prefix);
+            if (pieces[p].how == kernel::Combination::Cut) {
+                // A copy that falls beside the body takes nothing away, which is no failure:
+                // a pattern may run off the edge.
+                try {
+                    result = kernel::combine(result, copy, kernel::Combination::Cut);
+                } catch (const kernel::Error&) {
+                    throw FeatureFailure("A copy cuts away all that is left of the body.");
+                }
+            } else {
+                result = kernel::combine(result, copy, pieces[p].how);
+            }
+        }
+    }
+    return result;
+}
+
 kernel::NamedShape placed(const Feature& feature, const Document& document,
                           const BodyStates& bodies, const kernel::NamedShape& made) {
     switch (feature.operation) {
@@ -164,43 +405,12 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
     try {
         switch (feature.kind) {
         case FeatureKind::Pull:
-        case FeatureKind::Revolve: {
-            const SketchItem* sketch = document.findSketch(feature.sketch);
-            if (sketch == nullptr) {
-                throw FeatureFailure("The sketch it was made from is gone.");
-            }
-            const std::vector<kernel::Region> regions = regionsOf(feature, *sketch);
-            if (feature.kind == FeatureKind::Pull) {
-                double from = 0.0;
-                double to = feature.distance;
-                if (feature.symmetric) {
-                    from = -feature.distance / 2.0;
-                    to = feature.distance / 2.0;
-                } else if (feature.distanceBack != 0.0) {
-                    from = -feature.distanceBack;
-                }
-                if (!std::isfinite(from) || !std::isfinite(to) || std::abs(to - from) < 1e-7) {
-                    throw FeatureFailure("Its distance is zero.");
-                }
-                return placed(feature, document, bodies,
-                              keep(kernel::pull(sketch->plane, regions, from, to, tag)));
-            }
-            const sketch::Entity* axis = sketch->geometry.find(feature.axis);
-            if (axis == nullptr || axis->kind != sketch::EntityKind::Line) {
-                throw FeatureFailure("The line it turns about is no longer in " + sketch->name +
-                                     ".");
-            }
-            if (!std::isfinite(feature.angle) || std::abs(feature.angle) < 1e-9 ||
-                std::abs(feature.angle) > 360.0 + 1e-9) {
-                throw FeatureFailure("Its angle has to be more than zero and at most 360 "
-                                     "degrees.");
-            }
-            const sketch::Point2 a = sketch->geometry.position(axis->start);
-            const sketch::Point2 b = sketch->geometry.position(axis->end);
-            return placed(feature, document, bodies,
-                          keep(kernel::revolve(sketch->plane, regions, a.x, a.y, b.x, b.y,
-                                               feature.angle * pi / 180.0, tag)));
-        }
+        case FeatureKind::Revolve:
+            return placed(feature, document, bodies, keep(madeBy(feature, document)));
+        case FeatureKind::Mirror:
+        case FeatureKind::RectangularPattern:
+        case FeatureKind::CircularPattern:
+            return copiesOf(feature, document, targetOf(feature, document, bodies));
         case FeatureKind::Fillet:
         case FeatureKind::Chamfer: {
             const kernel::NamedShape& body = targetOf(feature, document, bodies);

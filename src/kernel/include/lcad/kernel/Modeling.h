@@ -5,6 +5,7 @@
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Shape.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -102,5 +103,31 @@ enum class Combination {
 /// The inside of a face is named `tag`/inner/<a number made from the face's name>.
 [[nodiscard]] NamedShape shell(const NamedShape& body, const std::vector<int>& openFaces,
                                double thickness, const std::string& tag);
+
+/// A line in space: a point on it, and its direction, of unit length.
+struct Axis {
+    Point origin;
+    Vector direction{0.0, 0.0, 1.0};
+};
+
+/// The line a part of a shape stands for: a straight edge's own line; the axis of a circular
+/// edge, or of a cylindrical, conical, spherical, or toroidal face; the normal of a flat face,
+/// through its middle. Nothing for anything else, and for a null shape.
+[[nodiscard]] std::optional<Axis> axisOf(const Shape& part);
+
+// Copies, for mirroring and patterns. Each face of a copy keeps the name of the face it was
+// copied from, with `prefix` and a slash put in front, so that copies are told apart from the
+// original and from each other.
+
+/// A copy of `shape` moved by `by`, in millimeters.
+[[nodiscard]] NamedShape moved(const NamedShape& shape, const Vector& by,
+                               const std::string& prefix);
+/// A copy of `shape` turned about `axis` by `angle` radians, counter-clockwise as seen looking
+/// against the axis's direction.
+[[nodiscard]] NamedShape turned(const NamedShape& shape, const Axis& axis, double angle,
+                                const std::string& prefix);
+/// The mirror image of `shape` in `plane`.
+[[nodiscard]] NamedShape mirrored(const NamedShape& shape, const Plane& plane,
+                                  const std::string& prefix);
 
 } // namespace lcad::kernel

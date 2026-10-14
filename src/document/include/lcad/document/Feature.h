@@ -23,6 +23,12 @@ enum class FeatureKind {
     Chamfer,
     /// Hollows a body out.
     Shell,
+    /// Adds the mirror image of features, or of the whole body, in a plane.
+    Mirror,
+    /// Repeats features, or the whole body, in rows and columns.
+    RectangularPattern,
+    /// Repeats features, or the whole body, around an axis.
+    CircularPattern,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
@@ -88,6 +94,26 @@ struct Feature {
     std::vector<std::string> faces;
     /// The radius of a fillet, the distance of a chamfer, or the wall thickness of a shell.
     double size = 1.0;
+    // Mirror and patterns
+    /// The features that are copied: pulls and revolves that make or change `body`, each copy
+    /// doing to the body what its original does. Empty means the body itself is copied and
+    /// joined to it.
+    std::vector<ObjectId> sources;
+    /// Mirror: the plane to mirror in: "XY", "XZ", "YZ", or the name of a flat face of the
+    /// body. Patterns: the direction to repeat along, or the axis to repeat around: "X", "Y",
+    /// "Z", or the name of an edge or a face of the body (see kernel::axisOf).
+    std::string reference;
+    /// Rectangular pattern: the second direction, like `reference`. Empty for none.
+    std::string reference2;
+    /// How many there are in all, the original included: along `reference`, around the axis.
+    int count = 2;
+    /// Rectangular pattern: how many along `reference2`.
+    int count2 = 1;
+    /// Rectangular pattern: the distance from one to the next, in millimeters, along each
+    /// direction. Negative goes the other way. Circular pattern: `angle` is the angle they are
+    /// spread over; 360 spreads them evenly all the way round.
+    double spacing = 10.0;
+    double spacing2 = 10.0;
 
     friend bool operator==(const Feature&, const Feature&) = default;
 };

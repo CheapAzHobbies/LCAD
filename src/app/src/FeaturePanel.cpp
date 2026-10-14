@@ -8,9 +8,11 @@
 #include <QFormLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QListWidget>
 #include <QLocale>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -28,6 +30,11 @@ constexpr double largestInput = 1.0e6;
 
 enum Extent { OneSide = 0, Symmetric = 1, TwoSides = 2 };
 
+bool copies(FeatureKind kind) {
+    return kind == FeatureKind::Mirror || kind == FeatureKind::RectangularPattern ||
+           kind == FeatureKind::CircularPattern;
+}
+
 } // namespace
 
 QString featureKindName(FeatureKind kind) {
@@ -42,6 +49,12 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Chamfer");
     case FeatureKind::Shell:
         return FeaturePanel::tr("Shell");
+    case FeatureKind::Mirror:
+        return FeaturePanel::tr("Mirror");
+    case FeatureKind::RectangularPattern:
+        return FeaturePanel::tr("Rectangular Pattern");
+    case FeatureKind::CircularPattern:
+        return FeaturePanel::tr("Circular Pattern");
     }
     return {};
 }
@@ -85,6 +98,28 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         fillBodies();
         // Without a body to work on, a new body is what it can be.
         m_operation->setCurrentIndex(m_body->count() == 0 ? 0 : 1);
+    }
+    if (copies(kind)) {
+        m_body = new QComboBox(this);
+        m_body->setObjectName(QStringLiteral("body"));
+        m_body->setToolTip(tr("The body whose features are copied, or that is copied."));
+        connect(m_body, &QComboBox::activated, this, [this] {
+            m_feature.sources.clear();
+            m_pickedName.clear();
+            readFields();
+        });
+        m_form->addRow(tr("Body"), m_body);
+        fillBodies();
+        m_sources = new QListWidget(this);
+        m_sources->setObjectName(QStringLiteral("sources"));
+        m_sources->setToolTip(tr("The features to copy. With none checked, the whole body is "
+                                 "copied."));
+        m_sources->setMaximumHeight(110);
+        connect(m_sources, &QListWidget::itemChanged, this, [this] { readFields(); });
+        m_form->addRow(tr("Copy"), m_sources);
+        m_reference = new QComboBox(this);
+        m_reference->setObjectName(QStringLiteral("reference"));
+        connect(m_reference, &QComboBox::activated, this, [this] { readFields(); });
     }
     switch (kind) {
     case FeatureKind::Pull: {
@@ -133,6 +168,43 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
             addField(QStringLiteral("size"), tr("Wall thickness"), 0.0, largestInput, tr(" mm"));
         m_size->setValue(2.0);
         break;
+    case FeatureKind::Mirror:
+        m_reference->setToolTip(tr("The plane to mirror in. Click a flat face in the 3D view to "
+                                   "mirror in that."));
+        m_form->addRow(tr("Plane"), m_reference);
+        break;
+    case FeatureKind::RectangularPattern:
+        m_reference->setToolTip(tr("The direction of the first row. Click an edge or a face in "
+                                   "the 3D view to go along that."));
+        m_form->addRow(tr("Direction"), m_reference);
+        m_count = addCount(QStringLiteral("count"), tr("Count"), 3);
+        m_spacing = addField(QStringLiteral("spacing"), tr("Spacing"), -largestInput, largestInput,
+                             tr(" mm"));
+        m_spacing->setValue(20.0);
+        m_reference2 = new QComboBox(this);
+        m_reference2->setObjectName(QStringLiteral("reference2"));
+        m_reference2->setToolTip(tr("The direction of the columns, or none for one row."));
+        connect(m_reference2, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Second direction"), m_reference2);
+        m_count2 = addCount(QStringLiteral("count2"), tr("Count"), 2);
+        m_spacing2 = addField(QStringLiteral("spacing2"), tr("Spacing"), -largestInput,
+                              largestInput, tr(" mm"));
+        m_spacing2->setValue(20.0);
+        break;
+    case FeatureKind::CircularPattern:
+        m_reference->setToolTip(tr("The axis to repeat around. Click a round edge or face, or a "
+                                   "straight edge, in the 3D view to go around that."));
+        m_form->addRow(tr("Axis"), m_reference);
+        m_count = addCount(QStringLiteral("count"), tr("Count"), 4);
+        m_angle = addField(QStringLiteral("angle"), tr("Angle"), -360.0, 360.0, tr("°"));
+        m_angle->setValue(360.0);
+        m_angle->setToolTip(tr("The angle they are spread over. At 360° they go evenly all "
+                               "the way round."));
+        break;
+    }
+    if (copies(kind)) {
+        fillReferences();
+        fillSources();
     }
 
     m_errorLabel = new QLabel(this);
@@ -169,6 +241,112 @@ QDoubleSpinBox* FeaturePanel::addField(const QString& name, const QString& label
     connect(box, &QDoubleSpinBox::valueChanged, this, [this] { readFields(); });
     m_form->addRow(label, box);
     return box;
+}
+
+QSpinBox* FeaturePanel::addCount(const QString& name, const QString& label, int value) {
+    auto* box = new QSpinBox(this);
+    box->setObjectName(name);
+    box->setRange(1, 1000);
+    box->setValue(value);
+    box->setKeyboardTracking(false);
+    connect(box, &QSpinBox::valueChanged, this, [this] { readFields(); });
+    m_form->addRow(label, box);
+    return box;
+}
+
+void FeaturePanel::fillSources() {
+    if (m_sources == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_sources);
+    m_sources->clear();
+    const document::ObjectId body{m_body->currentData().toULongLong()};
+    // The pulls and revolves that make or change the body, in the order they are applied, up
+    // to the one being edited.
+    for (const document::ObjectId id : m_document->timeline()) {
+        if (id == m_feature.id && m_feature.id.isValid()) {
+            break;
+        }
+        const document::Feature* feature = m_document->findFeature(id);
+        if (feature == nullptr || feature->body != body ||
+            (feature->kind != FeatureKind::Pull && feature->kind != FeatureKind::Revolve)) {
+            continue;
+        }
+        auto* item = new QListWidgetItem(QString::fromStdString(feature->name), m_sources);
+        item->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(feature->id.value));
+        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+        const bool checked = std::find(m_feature.sources.begin(), m_feature.sources.end(),
+                                       feature->id) != m_feature.sources.end();
+        item->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+    }
+}
+
+void FeaturePanel::fillReferences() {
+    if (m_reference == nullptr) {
+        return;
+    }
+    const QString was = m_reference->currentData().toString();
+    const QSignalBlocker blocker(m_reference);
+    m_reference->clear();
+    const bool mirror = m_feature.kind == FeatureKind::Mirror;
+    if (mirror) {
+        m_reference->addItem(tr("XY Plane"), QStringLiteral("XY"));
+        m_reference->addItem(tr("XZ Plane"), QStringLiteral("XZ"));
+        m_reference->addItem(tr("YZ Plane"), QStringLiteral("YZ"));
+    } else {
+        m_reference->addItem(tr("X Axis"), QStringLiteral("X"));
+        m_reference->addItem(tr("Y Axis"), QStringLiteral("Y"));
+        m_reference->addItem(tr("Z Axis"), QStringLiteral("Z"));
+    }
+    // What was picked in the 3D view, or what an existing feature refers to.
+    std::string picked = m_pickedName;
+    QString description = m_pickedDescription;
+    const bool named = m_feature.reference.size() > 2;
+    if (picked.empty() && named) {
+        picked = m_feature.reference;
+        description = mirror ? tr("Picked face") : tr("Picked edge or face");
+    }
+    if (!picked.empty()) {
+        m_reference->addItem(description, QString::fromStdString(picked));
+    }
+    int index = m_reference->findData(was);
+    if (!m_pickedName.empty()) {
+        index = m_reference->count() - 1;
+    } else if (index < 0) {
+        index = m_reference->findData(QString::fromStdString(m_feature.reference));
+    }
+    m_reference->setCurrentIndex(index >= 0 ? index : (mirror ? 2 : 0));
+    if (m_reference2 != nullptr) {
+        const QString second = m_reference2->count() > 0
+                                   ? m_reference2->currentData().toString()
+                                   : QString::fromStdString(m_feature.reference2);
+        const QSignalBlocker blocker2(m_reference2);
+        m_reference2->clear();
+        m_reference2->addItem(tr("None"), QString());
+        m_reference2->addItem(tr("X Axis"), QStringLiteral("X"));
+        m_reference2->addItem(tr("Y Axis"), QStringLiteral("Y"));
+        m_reference2->addItem(tr("Z Axis"), QStringLiteral("Z"));
+        const int at = m_reference2->findData(second);
+        m_reference2->setCurrentIndex(at >= 0 ? at : 0);
+    }
+}
+
+void FeaturePanel::setPickedReference(document::ObjectId body, const std::string& name,
+                                      const QString& description) {
+    if (m_reference == nullptr) {
+        return;
+    }
+    if (body.isValid() && m_body != nullptr) {
+        const int index = m_body->findData(QVariant::fromValue<qulonglong>(body.value));
+        if (index >= 0 && index != m_body->currentIndex()) {
+            m_body->setCurrentIndex(index);
+            m_feature.sources.clear();
+        }
+    }
+    m_pickedName = name;
+    m_pickedDescription = description;
+    fillReferences();
+    readFields();
 }
 
 void FeaturePanel::fillBodies() {
@@ -266,6 +444,25 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
     if (m_size != nullptr) {
         m_size->setValue(feature.size);
     }
+    if (copies(feature.kind)) {
+        const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
+        if (index >= 0) {
+            m_body->setCurrentIndex(index);
+        }
+        m_pickedName.clear();
+        fillReferences();
+        fillSources();
+        if (m_count != nullptr) {
+            m_count->setValue(feature.count);
+        }
+        if (m_count2 != nullptr) {
+            m_count2->setValue(feature.count2);
+        }
+        if (m_spacing != nullptr) {
+            m_spacing->setValue(feature.spacing);
+            m_spacing2->setValue(feature.spacing2);
+        }
+    }
     fillAxes();
     m_filling = false;
     readFields();
@@ -308,6 +505,10 @@ bool FeaturePanel::hasInput() const {
         return m_feature.body.isValid() && !m_feature.edges.empty();
     case FeatureKind::Shell:
         return m_feature.body.isValid();
+    case FeatureKind::Mirror:
+    case FeatureKind::RectangularPattern:
+    case FeatureKind::CircularPattern:
+        return m_feature.body.isValid() && !m_feature.reference.empty();
     }
     return false;
 }
@@ -384,6 +585,39 @@ void FeaturePanel::readFields() {
         qobject_cast<QLabel*>(m_form->labelForField(m_distance))
             ->setText(extent == Symmetric ? tr("Total distance") : tr("Distance"));
     }
+    if (copies(m_feature.kind)) {
+        const document::ObjectId body{m_body->currentData().toULongLong()};
+        if (body != m_feature.body) {
+            m_feature.body = body;
+            fillSources();
+        }
+        m_feature.sources.clear();
+        for (int i = 0; i < m_sources->count(); ++i) {
+            if (m_sources->item(i)->checkState() == Qt::Checked) {
+                m_feature.sources.push_back(
+                    document::ObjectId{m_sources->item(i)->data(Qt::UserRole).toULongLong()});
+            }
+        }
+        m_feature.reference = m_reference->currentData().toString().toStdString();
+        if (m_reference2 != nullptr) {
+            m_feature.reference2 = m_reference2->currentData().toString().toStdString();
+            const bool second = !m_feature.reference2.empty();
+            m_count2->setVisible(second);
+            m_form->labelForField(m_count2)->setVisible(second);
+            m_spacing2->setVisible(second);
+            m_form->labelForField(m_spacing2)->setVisible(second);
+        }
+        if (m_count != nullptr) {
+            m_feature.count = m_count->value();
+        }
+        if (m_count2 != nullptr) {
+            m_feature.count2 = m_count2->value();
+        }
+        if (m_spacing != nullptr) {
+            m_feature.spacing = m_spacing->value();
+            m_feature.spacing2 = m_spacing2->value();
+        }
+    }
     if (m_axis != nullptr) {
         m_feature.axis = m_axis->count() > 0 ? m_axis->currentData().toUInt() : 0;
     }
@@ -431,6 +665,22 @@ void FeaturePanel::updatePicked() {
                 (count == 1 ? tr("1 edge of %1 picked.") : tr("%1 edges of %2 picked.").arg(count))
                     .arg(QString::fromStdString(body->name)) +
                 QLatin1Char(' ') + tr("Shift-click picks more, or lets one go.");
+        }
+        break;
+    }
+    case FeatureKind::Mirror:
+    case FeatureKind::RectangularPattern:
+    case FeatureKind::CircularPattern: {
+        const document::Body* body = m_document->findBody(m_feature.body);
+        if (body == nullptr) {
+            text = tr("There is no body to copy from.");
+        } else if (m_feature.sources.empty()) {
+            text = tr("All of %1 is copied. Check features below to copy only them.")
+                       .arg(QString::fromStdString(body->name));
+        } else {
+            text = m_feature.sources.size() == 1
+                       ? tr("1 feature copied.")
+                       : tr("%1 features copied.").arg(m_feature.sources.size());
         }
         break;
     }

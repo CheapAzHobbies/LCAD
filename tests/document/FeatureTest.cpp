@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <lcad/document/Document.h>
+#include <lcad/document/File.h>
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Primitives.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/sketch/Edit.h>
+
+#include <TempDir.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -719,4 +722,197 @@ TEST_CASE("A feature can be tried on the model without changing it", "[document]
                WithinRel((60.0 * 40.0 * 8.0 - pi * 36.0 * 4.0), 1e-6));
     document.setEditedFeature({});
     CHECK(heard > 0);
+}
+
+TEST_CASE("Patterns and mirrors repeat features and follow them", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+    made.plate = document.addFeature(pullOf(made.outline, 8.0));
+    const ObjectId body = document.findFeature(made.plate)->body;
+    made.holes = document.addSketch("Holes", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    made.circle = s.addCircle({10.0, 10.0}, 3.0);
+    document.setSketchGeometry(made.holes, s, "Circle");
+    made.hole = document.addFeature(pullOf(made.holes, 8.0, Operation::Cut, body));
+    const double hole = pi * 9.0 * 8.0;
+    const double solid = 60.0 * 40.0 * 8.0;
+    REQUIRE_THAT(made.volume(), WithinRel(solid - hole, 1e-6));
+
+    // Four along X, 15 apart, and two along Y, 20 apart: eight holes.
+    Feature grid;
+    grid.kind = FeatureKind::RectangularPattern;
+    grid.body = body;
+    grid.sources = {made.hole};
+    grid.reference = "X";
+    grid.count = 4;
+    grid.spacing = 15.0;
+    grid.reference2 = "Y";
+    grid.count2 = 2;
+    grid.spacing2 = 20.0;
+    const ObjectId pattern = document.addFeature(grid);
+    CHECK(document.findFeature(pattern)->name == "Rectangular Pattern 1");
+    CHECK(document.featureError(pattern).empty());
+    CHECK_THAT(made.volume(), WithinRel(solid - 8.0 * hole, 1e-6));
+    CHECK(document.undoLabel() == "Rectangular Pattern");
+
+    // The copies follow the hole: a larger circle makes every hole larger.
+    lcad::sketch::Sketch larger = document.findSketch(made.holes)->geometry;
+    larger.addConstraint(ConstraintKind::Radius, made.circle, 0, 0, 4.0);
+    larger.solve();
+    document.setSketchGeometry(made.holes, larger, "Radius");
+    CHECK_THAT(made.volume(), WithinRel(solid - 8.0 * pi * 16.0 * 8.0, 1e-6));
+    document.undo();
+    CHECK_THAT(made.volume(), WithinRel(solid - 8.0 * hole, 1e-6));
+
+    // Copies that run off the plate take nothing away, and are no failure.
+    Feature longer = *document.findFeature(pattern);
+    longer.count = 6;
+    document.changeFeature(pattern, longer);
+    CHECK(document.featureError(pattern).empty());
+    CHECK_THAT(made.volume(), WithinRel(solid - 8.0 * hole, 1e-6));
+    document.undo();
+
+    // The faces of the copies are named after what they copy, by the pattern.
+    bool named = false;
+    for (const std::string& face : document.namedBody(body).faceNames) {
+        if (face.rfind(std::to_string(pattern.value) + "/1.", 0) == 0 &&
+            face.find("/" + std::to_string(made.hole.value) + "/side/") != std::string::npos) {
+            named = true;
+        }
+    }
+    CHECK(named);
+
+    // It cannot come before the hole it copies.
+    CHECK_THROWS_WITH(document.moveInTimeline(pattern, 2),
+                      ContainsSubstring("copies Pull 2, so it cannot come before it"));
+
+    // Suppressing the hole makes the pattern fail, and say why.
+    document.setFeatureSuppressed(made.hole, true);
+    CHECK_THAT(document.featureError(pattern), ContainsSubstring("is suppressed"));
+    CHECK_THAT(made.volume(), WithinRel(solid, 1e-9));
+    document.undo();
+
+    // Too few is refused.
+    Feature single = *document.findFeature(pattern);
+    single.count = 1;
+    single.reference2.clear();
+    document.changeFeature(pattern, single);
+    CHECK_THAT(document.featureError(pattern), ContainsSubstring("nothing to repeat"));
+    document.undo();
+
+    // Saved and opened again, the pattern is there and builds the same.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("pattern.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    const Feature* reread = loaded.document->findFeature(pattern);
+    REQUIRE(reread != nullptr);
+    CHECK(*reread == *document.findFeature(pattern));
+    CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(body)->shape),
+               WithinRel(solid - 8.0 * hole, 1e-6));
+}
+
+TEST_CASE("Circular patterns and mirrors", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+    made.plate = document.addFeature(pullOf(made.outline, 8.0));
+    const ObjectId body = document.findFeature(made.plate)->body;
+    made.holes = document.addSketch("Holes", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    made.circle = s.addCircle({40.0, 20.0}, 2.0);
+    document.setSketchGeometry(made.holes, s, "Circle");
+    made.hole = document.addFeature(pullOf(made.holes, 8.0, Operation::Cut, body));
+    const double hole = pi * 4.0 * 8.0;
+    const double solid = 60.0 * 40.0 * 8.0;
+
+    // Around an upright axis through the middle of the plate: the round face of a hole there.
+    lcad::sketch::Sketch middle = document.findSketch(made.holes)->geometry;
+    middle.addCircle({30.0, 20.0}, 1.0);
+    document.setSketchGeometry(made.holes, middle, "Circle");
+    REQUIRE(document.featureError(made.hole).empty());
+    std::string axisFace;
+    const lcad::kernel::NamedShape plate = document.namedBody(body);
+    for (std::size_t i = 0; i < plate.faceNames.size(); ++i) {
+        const auto axis = lcad::kernel::axisOf(lcad::kernel::subShape(
+            plate.shape, lcad::kernel::SubShapeKind::Face, static_cast<int>(i)));
+        if (axis.has_value() && std::abs(axis->origin.x - 30.0) < 1e-6 &&
+            std::abs(axis->origin.y - 20.0) < 1e-6 && std::abs(axis->direction.z) > 0.999 &&
+            plate.faceNames[i].find("/side/") != std::string::npos) {
+            axisFace = plate.faceNames[i];
+        }
+    }
+    REQUIRE_FALSE(axisFace.empty());
+    // Only the outer hole is to be repeated; the middle one is a hole of its own.
+    Feature ring;
+    ring.kind = FeatureKind::CircularPattern;
+    ring.body = body;
+    ring.sources = {made.hole};
+    ring.reference = axisFace;
+    ring.count = 4;
+    ring.angle = 360.0;
+    const ObjectId around = document.addFeature(ring);
+    CHECK(document.featureError(around).empty());
+    // Each copy of the feature copies both of its holes; the middle ones land on each other.
+    CHECK_THAT(made.volume(), WithinRel(solid - 4.0 * hole - pi * 8.0, 1e-6));
+    const auto box = lcad::kernel::boundingBox(made.body().shape);
+    REQUIRE(box.has_value());
+
+    // Half a turn, with three: at 0, 90, and 180 degrees.
+    Feature half = *document.findFeature(around);
+    half.angle = 180.0;
+    half.count = 3;
+    document.changeFeature(around, half);
+    CHECK_THAT(made.volume(), WithinRel(solid - 3.0 * hole - pi * 8.0, 1e-6));
+    document.undo();
+
+    // The face that gives the axis goes: the pattern says so.
+    lcad::sketch::Sketch without = document.findSketch(made.holes)->geometry;
+    for (const lcad::sketch::Entity& entity : without.entities()) {
+        if (entity.kind == lcad::sketch::EntityKind::Circle && entity.id != made.circle) {
+            without.remove(entity.id);
+            break;
+        }
+    }
+    document.setSketchGeometry(made.holes, without, "Delete");
+    CHECK_THAT(document.featureError(around), ContainsSubstring("no longer exists"));
+    document.undo();
+    CHECK(document.featureError(around).empty());
+
+    // A mirror of the whole body in the YZ plane doubles it.
+    Feature mirror;
+    mirror.kind = FeatureKind::Mirror;
+    mirror.body = body;
+    mirror.reference = "YZ";
+    const ObjectId image = document.addFeature(mirror);
+    CHECK(document.featureError(image).empty());
+    CHECK_THAT(made.volume(), WithinRel(2.0 * (solid - 4.0 * hole - pi * 8.0), 1e-6));
+    const auto doubled = lcad::kernel::boundingBox(made.body().shape);
+    REQUIRE(doubled.has_value());
+    CHECK_THAT(doubled->min.x, WithinAbs(-60.0, 1e-6));
+    // In a face of the body: the right end, at x = 60.
+    std::string end;
+    const lcad::kernel::NamedShape now = document.namedBody(body);
+    for (std::size_t i = 0; i < now.faceNames.size(); ++i) {
+        const auto plane = lcad::kernel::planeOfFace(lcad::kernel::subShape(
+            now.shape, lcad::kernel::SubShapeKind::Face, static_cast<int>(i)));
+        if (plane.has_value() && plane->normal.x > 0.999) {
+            end = now.faceNames[i];
+        }
+    }
+    document.undo();
+    REQUIRE_FALSE(end.empty());
+    mirror.reference = end;
+    const ObjectId other = document.addFeature(mirror);
+    CHECK(document.featureError(other).empty());
+    const auto across = lcad::kernel::boundingBox(made.body().shape);
+    REQUIRE(across.has_value());
+    CHECK_THAT(across->max.x, WithinAbs(120.0, 1e-6));
+    // A face that is not flat is no plane to mirror in.
+    Feature curved = *document.findFeature(other);
+    curved.reference = axisFace;
+    document.changeFeature(other, curved);
+    CHECK_THAT(document.featureError(other), ContainsSubstring("is not flat"));
 }

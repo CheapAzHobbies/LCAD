@@ -6,6 +6,7 @@
 #include <lcad/kernel/occt/ShapeAccess.h>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_BooleanOperation.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -38,6 +39,7 @@
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
+#include <gp_Ax2.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Trsf.hxx>
 
@@ -632,6 +634,118 @@ NamedShape shell(const NamedShape& body, const std::vector<int>& openFaces, doub
         }
         return named(result, namer, tag);
     });
+}
+
+std::optional<Axis> axisOf(const Shape& part) {
+    if (part.isNull()) {
+        return std::nullopt;
+    }
+    return occt::guarded("find the axis of a shape", [&]() -> std::optional<Axis> {
+        const TopoDS_Shape& shape = occt::unwrap(part);
+        const auto axis = [](const gp_Pnt& at, const gp_Dir& along) {
+            return Axis{{at.X(), at.Y(), at.Z()}, {along.X(), along.Y(), along.Z()}};
+        };
+        if (shape.ShapeType() == TopAbs_EDGE) {
+            const BRepAdaptor_Curve curve(TopoDS::Edge(shape));
+            switch (curve.GetType()) {
+            case GeomAbs_Line: {
+                const gp_Lin line = curve.Line();
+                // Through the edge's start, which is where the user sees the line.
+                return axis(curve.Value(curve.FirstParameter()), line.Direction());
+            }
+            case GeomAbs_Circle:
+                return axis(curve.Circle().Location(), curve.Circle().Axis().Direction());
+            default:
+                return std::nullopt;
+            }
+        }
+        if (shape.ShapeType() == TopAbs_FACE) {
+            const BRepAdaptor_Surface surface(TopoDS::Face(shape));
+            switch (surface.GetType()) {
+            case GeomAbs_Plane: {
+                std::optional<Plane> plane = planeOfFace(part);
+                if (!plane.has_value()) {
+                    return std::nullopt;
+                }
+                GProp_GProps properties;
+                BRepGProp::SurfaceProperties(shape, properties);
+                const gp_Pnt middle = properties.CentreOfMass();
+                return Axis{{middle.X(), middle.Y(), middle.Z()}, plane->normal};
+            }
+            case GeomAbs_Cylinder:
+                return axis(surface.Cylinder().Location(), surface.Cylinder().Axis().Direction());
+            case GeomAbs_Cone:
+                return axis(surface.Cone().Location(), surface.Cone().Axis().Direction());
+            case GeomAbs_Sphere:
+                return axis(surface.Sphere().Location(), surface.Sphere().Position().Direction());
+            case GeomAbs_Torus:
+                return axis(surface.Torus().Location(), surface.Torus().Axis().Direction());
+            default:
+                return std::nullopt;
+            }
+        }
+        return std::nullopt;
+    });
+}
+
+namespace {
+
+// A copy of a shape placed by `placement`, its faces named after those they were copied from.
+NamedShape copied(const NamedShape& shape, const gp_Trsf& placement, const std::string& prefix,
+                  const char* operation) {
+    if (shape.shape.isNull()) {
+        throw std::invalid_argument(std::string(operation) + ": there is nothing to copy");
+    }
+    return occt::guarded(operation, [&] {
+        const TopoDS_Shape& original = occt::unwrap(shape.shape);
+        // A copy of the geometry, not a placement of the same geometry: a mirror image cannot
+        // be a placement, and a copy behaves the same in later operations whatever made it.
+        BRepBuilderAPI_Transform maker(original, placement, Standard_True);
+        if (!maker.IsDone()) {
+            throw Error(operation, "the shape could not be copied");
+        }
+        const TopoDS_Shape result = maker.Shape();
+        requireValid(result, operation);
+        FaceNamer namer(result);
+        const TopTools_IndexedMapOfShape faces = mapOf(original, TopAbs_FACE);
+        for (int i = 1; i <= faces.Extent(); ++i) {
+            namer.offer(maker.ModifiedShape(faces(i)),
+                        prefix + "/" + shape.faceNames.at(static_cast<std::size_t>(i - 1)));
+        }
+        return named(result, namer, prefix);
+    });
+}
+
+} // namespace
+
+NamedShape moved(const NamedShape& shape, const Vector& by, const std::string& prefix) {
+    if (!std::isfinite(by.x) || !std::isfinite(by.y) || !std::isfinite(by.z)) {
+        throw std::invalid_argument("moved: the distance is not finite");
+    }
+    gp_Trsf placement;
+    placement.SetTranslation(gp_Vec(by.x, by.y, by.z));
+    return copied(shape, placement, prefix, "move");
+}
+
+NamedShape turned(const NamedShape& shape, const Axis& axis, double angle,
+                  const std::string& prefix) {
+    const Vector& d = axis.direction;
+    const double length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (!std::isfinite(angle) || !std::isfinite(length) || length < 1e-12) {
+        throw std::invalid_argument("turned: the axis or the angle is not usable");
+    }
+    gp_Trsf placement;
+    placement.SetRotation(gp_Ax1(gp_Pnt(axis.origin.x, axis.origin.y, axis.origin.z),
+                                 gp_Dir(axis.direction.x, axis.direction.y, axis.direction.z)),
+                          angle);
+    return copied(shape, placement, prefix, "turn");
+}
+
+NamedShape mirrored(const NamedShape& shape, const Plane& plane, const std::string& prefix) {
+    gp_Trsf placement;
+    placement.SetMirror(gp_Ax2(gp_Pnt(plane.origin.x, plane.origin.y, plane.origin.z),
+                               gp_Dir(plane.normal.x, plane.normal.y, plane.normal.z)));
+    return copied(shape, placement, prefix, "mirror");
 }
 
 } // namespace lcad::kernel

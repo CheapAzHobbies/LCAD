@@ -121,6 +121,11 @@ std::optional<Plane> planeOfFace(const Shape& face) {
         }
         const gp_Pln flat = surface.Plane();
         gp_Dir outward = flat.Axis().Direction();
+        // The surface's own normal is its axis, unless its frame is left-handed, as that of a
+        // mirror image is: then it is the other way.
+        if (!flat.Position().Direct()) {
+            outward.Reverse();
+        }
         // The surface's own normal points out of the solid unless the face uses it reversed.
         if (topoFace.Orientation() == TopAbs_REVERSED) {
             outward.Reverse();

@@ -242,6 +242,33 @@ const QHash<QString, Drawing>& drawings() {
                      {7.5, 16.5},
                      {7.5, 4}});
          }},
+        {QStringLiteral("pattern-rectangular"),
+         [](const Ink& i) {
+             // The original, tinted, and its copies in rows and columns.
+             i.fill({{4, 4}, {9, 4}, {9, 9}, {4, 9}});
+             for (const qreal x : {4.0, 15.0}) {
+                 for (const qreal y : {4.0, 15.0}) {
+                     i.poly({{x, y}, {x + 5, y}, {x + 5, y + 5}, {x, y + 5}});
+                 }
+             }
+         }},
+        {QStringLiteral("pattern-circular"),
+         [](const Ink& i) {
+             // The original, tinted, and its copies around a center.
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DotLine);
+             i.p.setPen(dashed);
+             i.ellipse(12, 12, 7.5, 7.5);
+             i.p.restore();
+             QPainterPath first;
+             first.addEllipse(QPointF(12, 4.5), 2.6, 2.6);
+             i.p.fillPath(first, i.accent);
+             i.ellipse(12, 4.5, 2.6, 2.6);
+             i.ellipse(19.5, 12, 2.6, 2.6);
+             i.ellipse(12, 19.5, 2.6, 2.6);
+             i.ellipse(4.5, 12, 2.6, 2.6);
+         }},
         // View
         {QStringLiteral("fit"),
          [](const Ink& i) {

@@ -579,6 +579,30 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasSketch;
         m_commands->add(std::move(c));
 
+        c = make("solid.mirror", tr("&Mirror"), create,
+                 tr("Add the mirror image of features, or of a whole body, in a plane"));
+        c.iconName = QStringLiteral("mirror");
+        c.aliases = {tr("symmetry"), tr("reflect"), tr("flip copy")};
+        c.run = [this](bool) { startFeature(FeatureKind::Mirror); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.patternRectangular", tr("&Rectangular Pattern"), create,
+                 tr("Repeat features, or a whole body, in rows and columns"));
+        c.iconName = QStringLiteral("pattern-rectangular");
+        c.aliases = {tr("pattern"), tr("array"), tr("linear pattern"), tr("grid"), tr("repeat")};
+        c.run = [this](bool) { startFeature(FeatureKind::RectangularPattern); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.patternCircular", tr("&Circular Pattern"), create,
+                 tr("Repeat features, or a whole body, around an axis"));
+        c.iconName = QStringLiteral("pattern-circular");
+        c.aliases = {tr("pattern"), tr("polar array"), tr("radial pattern"), tr("repeat")};
+        c.run = [this](bool) { startFeature(FeatureKind::CircularPattern); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
         c = make("solid.fillet", tr("&Fillet"), modify, tr("Round edges of a body"));
         c.iconName = QStringLiteral("fillet");
         c.shortcuts = {QKeySequence(Qt::Key_F)};
@@ -1239,6 +1263,10 @@ void MainWindow::createTopBar() {
 
     QMenu* create = m_menuBar->addMenu(tr("&Create"));
     create->addActions({action("solid.pull"), action("solid.revolve")});
+    QMenu* pattern = create->addMenu(tr("&Pattern"));
+    pattern->setObjectName(QStringLiteral("menu.pattern"));
+    pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
+    create->addAction(action("solid.mirror"));
     create->addSeparator();
     for (const char* id :
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
@@ -1382,20 +1410,35 @@ void MainWindow::createToolbar() {
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
     // A sketch is where most solids start, so it leads the group.
-    toolbar->addWidget(groupLabel(tr("Create"), toolbar));
-    for (const char* id : {"sketch.new", "solid.pull", "solid.revolve", "create.box",
-                           "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Create"), toolbar)));
+    for (const char* id : {"sketch.new", "solid.pull", "solid.revolve"}) {
+        toolbar->addAction(action(id));
+    }
+    auto* patterns = new QToolButton(toolbar);
+    patterns->setObjectName(QStringLiteral("patternButton"));
+    patterns->setToolTip(tr("Pattern and mirror"));
+    patterns->setPopupMode(QToolButton::InstantPopup);
+    patterns->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    auto* patternMenu = new QMenu(patterns);
+    patternMenu->addActions({action("solid.patternRectangular"), action("solid.patternCircular"),
+                             action("solid.mirror")});
+    patterns->setMenu(patternMenu);
+    patterns->setIcon(icon(QStringLiteral("pattern-rectangular")));
+    m_patternButton = patterns;
+    toolbar->addWidget(patterns);
+    for (const char* id :
+         {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
 
-    toolbar->addWidget(groupLabel(tr("Modify"), toolbar));
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Modify"), toolbar)));
     for (const char* id : {"solid.fillet", "solid.chamfer", "solid.shell"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
 
-    toolbar->addWidget(groupLabel(tr("Select"), toolbar));
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Select"), toolbar)));
     m_filterBox = new QComboBox(toolbar);
     m_filterBox->setObjectName(QStringLiteral("selectionFilter"));
     m_filterBox->setToolTip(tr("What a click in the 3D view picks"));
@@ -1408,7 +1451,7 @@ void MainWindow::createToolbar() {
     toolbar->addWidget(m_filterBox);
     toolbar->addSeparator();
 
-    toolbar->addWidget(groupLabel(tr("View"), toolbar));
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("View"), toolbar)));
     for (const char* id : {"view.fit", "view.fitSelection", "view.grid"}) {
         toolbar->addAction(action(id));
         auto* button = qobject_cast<QToolButton*>(toolbar->widgetForAction(action(id)));
@@ -1498,6 +1541,12 @@ void MainWindow::fitToolbar() {
     if (m_modelToolbar == nullptr) {
         return;
     }
+    // How wide a toolbar wants to be now. Its layout keeps the answer it last gave until told
+    // that what is in it has changed.
+    const auto wanted = [](QToolBar* toolbar) {
+        toolbar->layout()->invalidate();
+        return toolbar->sizeHint().width();
+    };
     const auto setStyle = [this](Qt::ToolButtonStyle style) {
         for (const char* id : {"solid.revolve", "create.box", "create.cylinder", "create.sphere",
                                "create.cone", "create.torus", "solid.chamfer", "solid.shell"}) {
@@ -1517,12 +1566,21 @@ void MainWindow::fitToolbar() {
         }
     };
     setLeading(Qt::ToolButtonTextBesideIcon);
-    if (m_modelToolbar->sizeHint().width() > width()) {
+    if (wanted(m_modelToolbar) > width()) {
         setStyle(Qt::ToolButtonIconOnly);
     }
     // The commands most used keep their labels longest.
-    if (m_modelToolbar->sizeHint().width() > width()) {
+    if (wanted(m_modelToolbar) > width()) {
         setLeading(Qt::ToolButtonIconOnly);
+    }
+    // Last, the names of the groups go; the separators still divide them.
+    for (QAction* label : std::as_const(m_modelGroupLabels)) {
+        label->setVisible(true);
+    }
+    if (wanted(m_modelToolbar) > width()) {
+        for (QAction* label : std::as_const(m_modelGroupLabels)) {
+            label->setVisible(false);
+        }
     }
 
     // The sketch toolbar gives up the constraints' own buttons for one that lists them.
@@ -1536,7 +1594,7 @@ void MainWindow::fitToolbar() {
         m_constraintsFolded->setVisible(folded);
     };
     fold(false);
-    if (m_sketchToolbar->sizeHint().width() > width()) {
+    if (wanted(m_sketchToolbar) > width()) {
         fold(true);
     }
 }
@@ -1636,6 +1694,9 @@ void MainWindow::applyTheme() {
         if (!command->iconName.isEmpty()) {
             m_commands->action(id)->setIcon(icon(command->iconName));
         }
+    }
+    if (m_patternButton != nullptr) {
+        m_patternButton->setIcon(icon(QStringLiteral("pattern-rectangular")));
     }
     if (m_styleButton != nullptr) {
         for (const QString& id : m_commands->ids()) {
@@ -2378,6 +2439,12 @@ bool usesProfiles(document::FeatureKind kind) {
     return kind == document::FeatureKind::Pull || kind == document::FeatureKind::Revolve;
 }
 
+bool copiesFeatures(document::FeatureKind kind) {
+    return kind == document::FeatureKind::Mirror ||
+           kind == document::FeatureKind::RectangularPattern ||
+           kind == document::FeatureKind::CircularPattern;
+}
+
 } // namespace
 
 std::vector<document::ObjectId> MainWindow::profileSketches(document::ObjectId also) const {
@@ -2408,10 +2475,45 @@ void MainWindow::startFeature(document::FeatureKind kind) {
     }
     // Edges or faces already selected are what a fillet, chamfer, or shell works on.
     const std::vector<SelectedItem> picked = m_viewport->selection();
+    // A pull or a revolve selected in the timeline is what a pattern or a mirror copies; or a
+    // body selected is what is copied whole.
+    document::Feature seed;
+    seed.kind = kind;
+    if (copiesFeatures(kind)) {
+        const document::Feature* source = document()->findFeature(m_timeline->selectedItem());
+        const std::vector<document::ObjectId> bodies = targetBodies();
+        if (source != nullptr && usesProfiles(source->kind) &&
+            document()->findBody(source->body) != nullptr) {
+            seed.body = source->body;
+            seed.sources = {source->id};
+        } else if (!bodies.empty()) {
+            seed.body = bodies.front();
+        } else {
+            for (const document::Body& body : document()->bodies()) {
+                if (!body.shape.isNull()) {
+                    seed.body = body.id;
+                    break;
+                }
+            }
+        }
+        seed.reference = kind == document::FeatureKind::Mirror            ? "YZ"
+                         : kind == document::FeatureKind::CircularPattern ? "Z"
+                                                                          : "X";
+        seed.count = kind == document::FeatureKind::CircularPattern ? 4 : 3;
+        seed.count2 = 2;
+        seed.spacing = 20.0;
+        seed.spacing2 = 20.0;
+        seed.angle = 360.0;
+    }
     cancelCommand();
     m_editedFeature = {};
     openFeaturePanel(kind);
-    if (usesProfiles(kind)) {
+    if (copiesFeatures(kind)) {
+        m_featurePanel->setFeature(seed);
+        m_settingPicks = true;
+        m_viewport->clearSelection();
+        m_settingPicks = false;
+    } else if (usesProfiles(kind)) {
         m_viewport->setProfileSketches(profileSketches(from));
         // A sketch with one closed area leaves no doubt about which is meant.
         std::vector<viewport::Profile> profiles;
@@ -2462,6 +2564,8 @@ bool MainWindow::editFeature(document::ObjectId id) {
             }
         }
         m_viewport->setPickedProfiles(profiles);
+    } else if (copiesFeatures(feature.kind)) {
+        m_viewport->clearSelection();
     } else {
         // The edges or faces it works on, as far as the body still has them.
         const kernel::NamedShape body = document()->namedBody(feature.body);
@@ -2497,10 +2601,16 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
     connect(m_featurePanel, &FeaturePanel::accepted, this, &MainWindow::acceptFeature);
     connect(m_featurePanel, &FeaturePanel::canceled, this, &MainWindow::cancelCommand);
     if (!usesProfiles(kind)) {
-        // Edges are what a fillet or a chamfer is clicked on, faces what a shell opens.
+        // Edges are what a fillet or a chamfer is clicked on, faces what a shell opens or a
+        // mirror is in; a pattern takes its direction or axis from either.
         m_filterBeforeFeature = m_viewport->selectionFilter();
-        m_viewport->setSelectionFilter(
-            kind == document::FeatureKind::Shell ? SelectionFilter::Faces : SelectionFilter::Edges);
+        SelectionFilter filter = SelectionFilter::Edges;
+        if (kind == document::FeatureKind::Shell || kind == document::FeatureKind::Mirror) {
+            filter = SelectionFilter::Faces;
+        } else if (copiesFeatures(kind)) {
+            filter = SelectionFilter::FacesEdgesVertices;
+        }
+        m_viewport->setSelectionFilter(filter);
     }
     showInspector();
     // A command needs its panel, even if the user had closed it.
@@ -2561,6 +2671,30 @@ void MainWindow::takeFeaturePicks() {
             outlines.emplace_back(profile.outline.begin(), profile.outline.end());
         }
         m_featurePanel->setProfiles(sketch, outlines);
+        return;
+    }
+    if (copiesFeatures(kind)) {
+        // The edge or face that gives the plane, the direction, or the axis.
+        for (const SelectedItem& item : m_viewport->selection()) {
+            if (item.kind != SelectedItem::Kind::Edge && item.kind != SelectedItem::Kind::Face) {
+                continue;
+            }
+            const kernel::NamedShape named = document()->namedBody(item.body);
+            const auto index = static_cast<std::size_t>(item.index);
+            std::string name;
+            if (item.kind == SelectedItem::Kind::Face && index < named.faceNames.size()) {
+                name = named.faceNames[index];
+            } else if (item.kind == SelectedItem::Kind::Edge) {
+                const std::vector<std::string> edges = kernel::edgeNames(named);
+                if (index < edges.size()) {
+                    name = edges[index];
+                }
+            }
+            if (!name.empty()) {
+                m_featurePanel->setPickedReference(item.body, name, describe(item));
+            }
+            break;
+        }
         return;
     }
     // Edges or faces, of one body: the one picked first.

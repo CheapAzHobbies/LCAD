@@ -366,3 +366,139 @@ TEST_CASE("Revolve turns an outline about an axis in its plane", "[kernel][model
                     std::invalid_argument);
     CHECK_THROWS_AS(revolve(planeXY(), {}, 0.0, 0.0, 0.0, 1.0, pi, "7"), std::invalid_argument);
 }
+
+namespace {
+
+// The middle of each face of a shape, in the order the faces are numbered.
+std::vector<Point> faceMiddles(const Shape& shape) {
+    std::vector<Point> middles;
+    for (int i = 0; i < subShapeCount(shape, SubShapeKind::Face); ++i) {
+        const auto box = boundingBox(subShape(shape, SubShapeKind::Face, i));
+        REQUIRE(box.has_value());
+        middles.push_back({(box->min.x + box->max.x) / 2.0, (box->min.y + box->max.y) / 2.0,
+                           (box->min.z + box->max.z) / 2.0});
+    }
+    return middles;
+}
+
+} // namespace
+
+TEST_CASE("Copies keep their faces' names, behind a prefix", "[kernel][modeling]") {
+    const NamedShape original = plate(60.0, 40.0, 8.0);
+    const std::vector<Point> before = faceMiddles(original.shape);
+
+    SECTION("moved") {
+        const NamedShape copy = moved(original, {100.0, 0.0, 5.0}, "9/1");
+        CHECK(isValid(copy.shape));
+        CHECK_THAT(volume(copy.shape), WithinRel(60.0 * 40.0 * 8.0, 1e-9));
+        REQUIRE(copy.faceNames.size() == original.faceNames.size());
+        const std::vector<Point> after = faceMiddles(copy.shape);
+        for (std::size_t i = 0; i < copy.faceNames.size(); ++i) {
+            // The face of that name is the copy of the face of the original's name.
+            const int j = findFace(original, copy.faceNames[i].substr(4));
+            REQUIRE(j >= 0);
+            CHECK(copy.faceNames[i].rfind("9/1/", 0) == 0);
+            CHECK_THAT(after[i].x, WithinAbs(before[static_cast<std::size_t>(j)].x + 100.0, 1e-6));
+            CHECK_THAT(after[i].z, WithinAbs(before[static_cast<std::size_t>(j)].z + 5.0, 1e-6));
+        }
+        // The original is untouched.
+        CHECK(faceMiddles(original.shape)[0].x == before[0].x);
+    }
+
+    SECTION("turned") {
+        // A quarter turn about the Z axis: X goes to Y.
+        const NamedShape copy =
+            turned(original, Axis{{0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}}, pi / 2.0, "9/1");
+        CHECK(isValid(copy.shape));
+        const auto box = boundingBox(copy.shape);
+        REQUIRE(box.has_value());
+        CHECK_THAT(box->min.x, WithinAbs(-40.0, 1e-6));
+        CHECK_THAT(box->max.y, WithinAbs(60.0, 1e-6));
+        const std::vector<Point> after = faceMiddles(copy.shape);
+        for (std::size_t i = 0; i < copy.faceNames.size(); ++i) {
+            const auto j =
+                static_cast<std::size_t>(findFace(original, copy.faceNames[i].substr(4)));
+            CHECK_THAT(after[i].x, WithinAbs(-before[j].y, 1e-6));
+            CHECK_THAT(after[i].y, WithinAbs(before[j].x, 1e-6));
+        }
+    }
+
+    SECTION("mirrored") {
+        // In the YZ plane: X changes sign. The image is a proper solid, not inside out.
+        const NamedShape copy = mirrored(original, planeYZ(), "9/1");
+        CHECK(isValid(copy.shape));
+        CHECK_THAT(volume(copy.shape), WithinRel(60.0 * 40.0 * 8.0, 1e-9));
+        const std::vector<Point> after = faceMiddles(copy.shape);
+        for (std::size_t i = 0; i < copy.faceNames.size(); ++i) {
+            const auto j =
+                static_cast<std::size_t>(findFace(original, copy.faceNames[i].substr(4)));
+            CHECK_THAT(after[i].x, WithinAbs(-before[j].x, 1e-6));
+            CHECK_THAT(after[i].y, WithinAbs(before[j].y, 1e-6));
+        }
+        // Its flat faces face out of it, as the original's do: the image of the end at x = 60
+        // faces toward -X.
+        for (int i = 0; i < subShapeCount(copy.shape, SubShapeKind::Face); ++i) {
+            const auto plane = planeOfFace(subShape(copy.shape, SubShapeKind::Face, i));
+            REQUIRE(plane.has_value());
+            const Point middle = after[static_cast<std::size_t>(i)];
+            if (std::abs(middle.x + 60.0) < 1e-6) {
+                CHECK_THAT(plane->normal.x, WithinAbs(-1.0, 1e-9));
+            }
+            if (std::abs(middle.z - 8.0) < 1e-6) {
+                CHECK_THAT(plane->normal.z, WithinAbs(1.0, 1e-9));
+            }
+        }
+        // It joins its original along the plane into one block.
+        const NamedShape both = combine(original, copy, Combination::Join);
+        CHECK_THAT(volume(both.shape), WithinRel(2.0 * 60.0 * 40.0 * 8.0, 1e-9));
+        CHECK(countTopology(both.shape).solids == 1);
+    }
+
+    CHECK_THROWS_AS(moved(NamedShape{}, {1.0, 0.0, 0.0}, "9"), std::invalid_argument);
+    CHECK_THROWS_AS(turned(original, Axis{{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}, 1.0, "9"),
+                    std::invalid_argument);
+}
+
+TEST_CASE("Edges and faces stand for axes", "[kernel][modeling]") {
+    // A cylinder of radius 5 and height 10 standing at (20, 0, 0).
+    const Shape rod = translated(makeCylinder(5.0, 10.0), 20.0, 0.0, 0.0);
+    int round = 0;
+    int straight = 0;
+    for (int i = 0; i < subShapeCount(rod, SubShapeKind::Edge); ++i) {
+        const Shape edge = subShape(rod, SubShapeKind::Edge, i);
+        const auto axis = axisOf(edge);
+        REQUIRE(axis.has_value());
+        if (std::abs(axis->direction.z) > 0.999) {
+            // The rims are circles about the rod's axis, and the seam runs along it.
+            if (std::abs(axis->origin.x - 20.0) < 1e-6 && std::abs(axis->origin.y) < 1e-6) {
+                ++round;
+            } else {
+                ++straight;
+            }
+        }
+    }
+    CHECK(round == 2);
+    CHECK(straight == 1);
+    int sides = 0;
+    int ends = 0;
+    for (int i = 0; i < subShapeCount(rod, SubShapeKind::Face); ++i) {
+        const auto axis = axisOf(subShape(rod, SubShapeKind::Face, i));
+        REQUIRE(axis.has_value());
+        CHECK_THAT(std::abs(axis->direction.z), WithinAbs(1.0, 1e-9));
+        CHECK_THAT(axis->origin.x, WithinAbs(20.0, 1e-6));
+        CHECK_THAT(axis->origin.y, WithinAbs(0.0, 1e-6));
+        // A flat end's axis goes through its middle, and points out of the rod.
+        if (std::abs(axis->origin.z - 10.0) < 1e-6) {
+            CHECK(axis->direction.z > 0.0);
+            ++ends;
+        } else if (std::abs(axis->origin.z) < 1e-6 && axis->direction.z < 0.0) {
+            ++ends;
+        } else {
+            ++sides;
+        }
+    }
+    CHECK(ends == 2);
+    CHECK(sides == 1);
+    CHECK_FALSE(axisOf(Shape()).has_value());
+    CHECK_FALSE(axisOf(rod).has_value());
+}

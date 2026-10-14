@@ -23,10 +23,12 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
@@ -95,6 +97,7 @@ private slots:
     void edgesArePickedInTheViewForAFilletOrChamfer();
     void shellAndRevolveWork();
     void featuresAreSavedAndOpenedAgain();
+    void patternsAndMirrorsRepeatFeatures();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -760,6 +763,106 @@ void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {
     for (const ObjectId id : window.document()->timeline()) {
         QVERIFY(!window.timeline()->itemRect(id).isEmpty());
     }
+}
+
+void ModelingInterfaceTest::patternsAndMirrorsRepeatFeatures() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    const ObjectId holes = drawHole(window, 10.0, 10.0, 3.0);
+    window.browser()->setSelection({}, {holes});
+    QVERIFY(trigger(window, "solid.pull"));
+    typeInto(panel(window), "distance", 8.0);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId hole = window.document()->features().back().id;
+    const double solid = 60.0 * 40.0 * 8.0;
+    const double one = pi * 9.0 * 8.0;
+    QVERIFY(near(volumeOf(window, plate), solid - one));
+
+    // The hole selected in the timeline is what a pattern repeats.
+    clickTimeline(window, hole);
+    QVERIFY(action(window, "solid.patternRectangular")->isEnabled());
+    QVERIFY(trigger(window, "solid.patternRectangular"));
+    FeaturePanel* grid = panel(window);
+    QVERIFY(grid != nullptr);
+    QCOMPARE(grid->feature().body, body);
+    QCOMPARE(grid->feature().sources, (std::vector<ObjectId>{hole}));
+    auto* sources = grid->findChild<QListWidget*>(QStringLiteral("sources"));
+    QVERIFY(sources != nullptr);
+    QCOMPARE(sources->count(), 2);
+    QCOMPARE(sources->item(1)->checkState(), Qt::Checked);
+    QCOMPARE(grid->feature().reference, std::string("X"));
+    // Four along X, 15 apart; then a second row 20 along Y.
+    auto* count = grid->findChild<QSpinBox*>(QStringLiteral("count"));
+    count->setFocus();
+    count->selectAll();
+    QTest::keyClicks(count, QStringLiteral("4"));
+    QTest::keyClick(count, Qt::Key_Tab);
+    typeInto(grid, "spacing", 15.0);
+    QVERIFY(grid->errorText().isEmpty());
+    grid->setChoice(QStringLiteral("reference2"), 2);
+    QCOMPARE(grid->feature().reference2, std::string("Y"));
+    QCOMPARE(grid->feature().count2, 2);
+    QVERIFY(okButton(grid)->isEnabled());
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-pattern-preview");
+    QTest::mouseClick(okButton(grid), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId pattern = window.document()->features().back().id;
+    QVERIFY(window.document()->featureError(pattern).empty());
+    QVERIFY(near(volumeOf(window, plate), solid - 8.0 * one));
+    QVERIFY(window.timeline()->describe(pattern).contains(QStringLiteral("Copies Pull 2")));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-pattern");
+
+    // Edited from the timeline, it has its values.
+    clickTimeline(window, pattern, true);
+    QVERIFY(panel(window) != nullptr);
+    QCOMPARE(panel(window)->findChild<QSpinBox*>(QStringLiteral("count"))->value(), 4);
+    QCOMPARE(panel(window)->value(QStringLiteral("spacing")), 15.0);
+    QVERIFY(trigger(window, "edit.cancel"));
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // A circular pattern of the hole about the round face of one of its copies: picked in the
+    // view.
+    window.viewport()->setStandardView(StandardView::Top);
+    render(window);
+    clickTimeline(window, hole);
+    QVERIFY(trigger(window, "solid.patternCircular"));
+    FeaturePanel* ring = panel(window);
+    QVERIFY(ring != nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(),
+             lcad::viewport::SelectionFilter::FacesEdgesVertices);
+    // The rim of the hole at (25, 30), seen from above, away from the corner where the circle
+    // starts: a circle about the axis wanted.
+    click(window, at(window, 25.0, 33.0, 8.0));
+    QVERIFY(ring->feature().reference.size() > 2);
+    QVERIFY(ring->errorText().isEmpty());
+    QTest::mouseClick(okButton(ring), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId around = window.document()->features().back().id;
+    QVERIFY2(window.document()->featureError(around).empty(),
+             window.document()->featureError(around).c_str());
+
+    // Mirror the whole body in the YZ plane: it doubles.
+    const double before = volumeOf(window, plate);
+    window.timeline()->setSelectedItem({});
+    window.viewport()->clearSelection();
+    QVERIFY(trigger(window, "solid.mirror"));
+    FeaturePanel* mirror = panel(window);
+    QVERIFY(mirror != nullptr);
+    QVERIFY(mirror->feature().sources.empty());
+    QCOMPARE(mirror->feature().reference, std::string("YZ"));
+    QVERIFY(mirror->findChild<QLabel*>(QStringLiteral("featureInput"))
+                ->text()
+                .contains(QStringLiteral("All of Body")));
+    QTest::mouseClick(okButton(mirror), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(near(volumeOf(window, plate), 2.0 * before));
 }
 
 QTEST_MAIN(ModelingInterfaceTest)

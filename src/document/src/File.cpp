@@ -15,6 +15,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <random>
 #include <string_view>
 #include <system_error>
@@ -451,6 +453,20 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     out["edges"] = feature.edges;
     out["faces"] = feature.faces;
     out["size"] = feature.size;
+    // Mirror and patterns. Written only for them, so that files without them read as they did.
+    if (feature.kind == FeatureKind::Mirror || feature.kind == FeatureKind::RectangularPattern ||
+        feature.kind == FeatureKind::CircularPattern) {
+        out["sources"] = ordered_json::array();
+        for (const ObjectId source : feature.sources) {
+            out["sources"].push_back(source.value);
+        }
+        out["reference"] = feature.reference;
+        out["reference2"] = feature.reference2;
+        out["count"] = feature.count;
+        out["count2"] = feature.count2;
+        out["spacing"] = feature.spacing;
+        out["spacing2"] = feature.spacing2;
+    }
     return out;
 }
 
@@ -503,6 +519,32 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     feature.edges = stringsMember(entry, "edges", where, path);
     feature.faces = stringsMember(entry, "faces", where, path);
     feature.size = numberMember(entry, "size", where, path);
+    if (entry.contains("sources")) {
+        const json& sources = entry.at("sources");
+        if (!sources.is_array()) {
+            damaged(path, "\"sources\" in " + where + " is not a list");
+        }
+        for (const json& source : sources) {
+            if (!source.is_number_unsigned() || source.get<std::uint64_t>() == 0) {
+                damaged(path, "\"sources\" in " + where + " holds something that is not an id");
+            }
+            feature.sources.push_back(ObjectId{source.get<std::uint64_t>()});
+        }
+        feature.reference = stringMember(entry, "reference", where, path);
+        feature.reference2 = stringMember(entry, "reference2", where, path);
+        const auto whole = [&](const char* key) {
+            const double value = numberMember(entry, key, where, path);
+            if (value != std::floor(value) || value < 0.0 || value > 1.0e6) {
+                damaged(path,
+                        "\"" + std::string(key) + "\" in " + where + " is not a whole number");
+            }
+            return static_cast<int>(value);
+        };
+        feature.count = whole("count");
+        feature.count2 = whole("count2");
+        feature.spacing = numberMember(entry, "spacing", where, path);
+        feature.spacing2 = numberMember(entry, "spacing2", where, path);
+    }
     return feature;
 }
 

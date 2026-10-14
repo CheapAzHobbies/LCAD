@@ -1025,6 +1025,12 @@ std::string Document::orderProblem(const std::vector<ObjectId>& order) const {
                        ", so it cannot come before it.";
             }
         }
+        for (const ObjectId source : feature.sources) {
+            const Feature* copied = findFeature(source);
+            if (copied != nullptr && at(copied->id) > place) {
+                return feature.name + " copies " + copied->name + ", so it cannot come before it.";
+            }
+        }
         if (makesBody(feature)) {
             continue;
         }

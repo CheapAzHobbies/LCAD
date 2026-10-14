@@ -15,7 +15,9 @@ class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
 class QLabel;
+class QListWidget;
 class QPushButton;
+class QSpinBox;
 
 namespace lcad::app {
 
@@ -51,6 +53,10 @@ public:
     void setEdges(document::ObjectId body, const std::vector<std::string>& edges);
     /// Shell: the faces to leave open, of one body, by name.
     void setFaces(document::ObjectId body, const std::vector<std::string>& faces);
+    /// Mirror and patterns: an edge or a face of a body, by name, picked to give the plane,
+    /// the direction, or the axis. `description` says what it is, for the list.
+    void setPickedReference(document::ObjectId body, const std::string& name,
+                            const QString& description);
 
     /// Whether what the feature needs has been picked.
     [[nodiscard]] bool hasInput() const;
@@ -60,7 +66,7 @@ public:
     [[nodiscard]] QString errorText() const { return m_error; }
 
     /// The value of a field, by the name of its input box: "distance", "distanceBack",
-    /// "angle", "size".
+    /// "angle", "size", "spacing", "spacing2", "count", "count2".
     [[nodiscard]] double value(const QString& field) const;
     void setValue(const QString& field, double value);
     /// Whether the user chose the operation of a pull or a revolve. Until then the window may
@@ -69,7 +75,7 @@ public:
     /// Shows `operation` as the operation, unless the user has chosen one.
     void suggestOperation(document::Operation operation);
     /// Picks an entry of a list, by the name of the list ("operation", "body", "extent",
-    /// "axis") and the entry's position.
+    /// "axis", "reference", "reference2") and the entry's position.
     void setChoice(const QString& list, int index);
 
 signals:
@@ -84,8 +90,11 @@ protected:
 private:
     QDoubleSpinBox* addField(const QString& name, const QString& label, double minimum,
                              double maximum, const QString& suffix);
+    QSpinBox* addCount(const QString& name, const QString& label, int value);
     void fillBodies();
     void fillAxes();
+    void fillSources();
+    void fillReferences();
     /// Reads the boxes into m_feature and shows or hides what depends on them.
     void readFields();
     void updatePicked();
@@ -107,6 +116,17 @@ private:
     QDoubleSpinBox* m_angle = nullptr;
     QDoubleSpinBox* m_size = nullptr;
     QPushButton* m_flip = nullptr;
+    // Mirror and patterns
+    QListWidget* m_sources = nullptr;
+    QComboBox* m_reference = nullptr;
+    QComboBox* m_reference2 = nullptr;
+    QSpinBox* m_count = nullptr;
+    QSpinBox* m_count2 = nullptr;
+    QDoubleSpinBox* m_spacing = nullptr;
+    QDoubleSpinBox* m_spacing2 = nullptr;
+    /// The edge or face picked in the 3D view for the plane, direction, or axis, and what it is.
+    std::string m_pickedName;
+    QString m_pickedDescription;
     QLabel* m_errorLabel = nullptr;
     QPushButton* m_okButton = nullptr;
     QFormLayout* m_form = nullptr;

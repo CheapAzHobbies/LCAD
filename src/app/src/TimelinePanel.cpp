@@ -281,6 +281,12 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("chamfer");
         case FeatureKind::Shell:
             return QStringLiteral("shell");
+        case FeatureKind::Mirror:
+            return QStringLiteral("mirror");
+        case FeatureKind::RectangularPattern:
+            return QStringLiteral("pattern-rectangular");
+        case FeatureKind::CircularPattern:
+            return QStringLiteral("pattern-circular");
         }
     }
     return QStringLiteral("box");
@@ -305,7 +311,10 @@ QString TimelineStrip::describe(document::ObjectId item) const {
             const bool makes =
                 feature.operation == document::Operation::NewBody &&
                 (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve);
-            if (feature.id != id && (feature.sketch == id || (feature.body == id && !makes))) {
+            const bool copiesIt = std::find(feature.sources.begin(), feature.sources.end(), id) !=
+                                  feature.sources.end();
+            if (feature.id != id &&
+                (feature.sketch == id || (feature.body == id && !makes) || copiesIt)) {
                 users.append(name(feature.name));
             }
         }
@@ -334,6 +343,15 @@ QString TimelineStrip::describe(document::ObjectId item) const {
         lines.append(tr("%1 · %2").arg(name(feature->name), featureKindName(feature->kind)));
         if (const document::SketchItem* sketch = m_document->findSketch(feature->sketch)) {
             lines.append(tr("Made from %1").arg(name(sketch->name)));
+        }
+        QStringList copied;
+        for (const document::ObjectId source : feature->sources) {
+            if (const document::Feature* original = m_document->findFeature(source)) {
+                copied.append(name(original->name));
+            }
+        }
+        if (!copied.isEmpty()) {
+            lines.append(tr("Copies %1").arg(copied.join(QStringLiteral(", "))));
         }
         if (const document::Body* body = m_document->findBody(feature->body)) {
             const bool makes =
