@@ -1010,9 +1010,9 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     }
     for (const char* tool :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
-          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.construction", "sketch.trim",
-          "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project", "sketch.dimension",
-          "sketch.finish"}) {
+          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline",
+          "sketch.construction", "sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror",
+          "sketch.project", "sketch.dimension", "sketch.finish"}) {
         QVERIFY2(shown.contains(QLatin1String(tool)), tool);
     }
     // The constraints have a button each where there is room, and otherwise one button that
@@ -1027,7 +1027,8 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
         QStringLiteral("sketch.midpoint"),      QStringLiteral("sketch.symmetric"),
         QStringLiteral("sketch.collinear"),     QStringLiteral("sketch.fix")};
     if (folded->isVisible()) {
-        QVERIFY(size.width() < 1280);
+        // Only in a window no wider than the common laptop's 1280.
+        QVERIFY(size.width() <= 1280);
         QVERIFY(folded->menu() != nullptr);
         for (const QString& constraint : constraintIds) {
             QVERIFY2(!shown.contains(constraint), qPrintable(constraint));

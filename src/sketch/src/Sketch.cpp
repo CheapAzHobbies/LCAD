@@ -63,7 +63,57 @@ bool isKind(const Entity* entity, EntityKind kind) {
     return entity != nullptr && entity->kind == kind;
 }
 
+// What a radius can be taken of: a circle, an arc, or an ellipse's minor axis.
+bool hasRadius(const Entity* entity) {
+    return isRound(entity) || isKind(entity, EntityKind::Ellipse);
+}
+
+constexpr double pi = 3.14159265358979323846;
+
+// A point of a clamped spline with evenly spread knots, by de Boor's algorithm.
+Point2 splinePoint(const std::vector<Point2>& poles, double t) {
+    const int n = static_cast<int>(poles.size());
+    const int p = splineDegree(poles.size());
+    // Knots: p + 1 zeros, the inner ones evenly, p + 1 ones.
+    const int spans = n - p;
+    std::vector<double> knots;
+    for (int i = 0; i <= p; ++i) {
+        knots.push_back(0.0);
+    }
+    for (int i = 1; i < spans; ++i) {
+        knots.push_back(static_cast<double>(i) / spans);
+    }
+    for (int i = 0; i <= p; ++i) {
+        knots.push_back(1.0);
+    }
+    t = std::clamp(t, 0.0, 1.0);
+    int k = p;
+    while (k < n - 1 && knots[static_cast<std::size_t>(k + 1)] <= t) {
+        ++k;
+    }
+    std::vector<Point2> d;
+    for (int j = 0; j <= p; ++j) {
+        d.push_back(poles[static_cast<std::size_t>(j + k - p)]);
+    }
+    for (int r = 1; r <= p; ++r) {
+        for (int j = p; j >= r; --j) {
+            const double left = knots[static_cast<std::size_t>(j + k - p)];
+            const double right = knots[static_cast<std::size_t>(j + 1 + k - r)];
+            const double alpha = right > left ? (t - left) / (right - left) : 0.0;
+            d[static_cast<std::size_t>(j)] = {(1.0 - alpha) * d[static_cast<std::size_t>(j - 1)].x +
+                                                  alpha * d[static_cast<std::size_t>(j)].x,
+                                              (1.0 - alpha) * d[static_cast<std::size_t>(j - 1)].y +
+                                                  alpha * d[static_cast<std::size_t>(j)].y};
+        }
+    }
+    return d[static_cast<std::size_t>(p)];
+}
+
 } // namespace
+
+int splineDegree(std::size_t controlPoints) {
+    return static_cast<int>(std::min<std::size_t>(3, controlPoints > 0 ? controlPoints - 1 : 0));
+}
 
 bool isDimension(ConstraintKind kind) {
     switch (kind) {
@@ -124,6 +174,12 @@ Sketch::Sketch(std::vector<Entity> entities, std::vector<Constraint> constraints
             : item.kind == EntityKind::Line ? isPoint(item.start) && isPoint(item.end)
             : item.kind == EntityKind::Circle
                 ? isPoint(item.center) && std::isfinite(item.radius) && item.radius > 0.0
+            : item.kind == EntityKind::Ellipse ? isPoint(item.center) && isPoint(item.start) &&
+                                                     std::isfinite(item.radius) && item.radius > 0.0
+            : item.kind == EntityKind::Spline
+                ? item.points.size() >= 3 &&
+                      std::all_of(item.points.begin(), item.points.end(), isPoint) &&
+                      item.start == item.points.front() && item.end == item.points.back()
                 : isPoint(item.center) && isPoint(item.start) && isPoint(item.end);
         if (!ok) {
             throw std::invalid_argument("Sketch: entity " + std::to_string(item.id) +
@@ -190,8 +246,70 @@ double Sketch::radiusOf(EntityId curve) const {
     if (item.kind == EntityKind::Arc) {
         return distance(position(item.center), position(item.start));
     }
+    if (item.kind == EntityKind::Ellipse) {
+        return item.radius;
+    }
     throw std::invalid_argument("radiusOf: entity " + std::to_string(curve) +
-                                " is not a circle or an arc");
+                                " is not a circle, an arc, or an ellipse");
+}
+
+Point2 Sketch::pointAt(EntityId curve, double t) const {
+    const Entity& item = entity(curve);
+    switch (item.kind) {
+    case EntityKind::Point:
+        return {item.x, item.y};
+    case EntityKind::Line: {
+        const Point2 a = position(item.start);
+        const Point2 b = position(item.end);
+        return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
+    }
+    case EntityKind::Circle: {
+        const Point2 c = position(item.center);
+        return {c.x + item.radius * std::cos(2.0 * pi * t),
+                c.y + item.radius * std::sin(2.0 * pi * t)};
+    }
+    case EntityKind::Arc: {
+        const Point2 c = position(item.center);
+        const Point2 s = position(item.start);
+        const Point2 e = position(item.end);
+        const double r = distance(c, s);
+        const double from = std::atan2(s.y - c.y, s.x - c.x);
+        double sweep = std::atan2(e.y - c.y, e.x - c.x) - from;
+        while (sweep <= 0.0) {
+            sweep += 2.0 * pi;
+        }
+        const double angle = from + sweep * t;
+        return {c.x + r * std::cos(angle), c.y + r * std::sin(angle)};
+    }
+    case EntityKind::Ellipse: {
+        const Point2 c = position(item.center);
+        const Point2 m = position(item.start);
+        const double a = distance(c, m);
+        const Point2 u{(m.x - c.x) / a, (m.y - c.y) / a};
+        const Point2 v{-u.y, u.x};
+        const double angle = 2.0 * pi * t;
+        const double along = a * std::cos(angle);
+        const double across = item.radius * std::sin(angle);
+        return {c.x + u.x * along + v.x * across, c.y + u.y * along + v.y * across};
+    }
+    case EntityKind::Spline: {
+        std::vector<Point2> poles;
+        for (const EntityId id : item.points) {
+            poles.push_back(position(id));
+        }
+        return splinePoint(poles, t);
+    }
+    }
+    return {};
+}
+
+std::vector<Point2> Sketch::samples(EntityId curve, int pieces) const {
+    std::vector<Point2> points;
+    pieces = std::max(pieces, 1);
+    for (int i = 0; i <= pieces; ++i) {
+        points.push_back(pointAt(curve, static_cast<double>(i) / pieces));
+    }
+    return points;
 }
 
 EntityId Sketch::addOwnedPoint(Point2 at, EntityId owner) {
@@ -262,6 +380,47 @@ EntityId Sketch::addArc(Point2 center, Point2 start, Point2 end) {
     arc.end = addOwnedPoint(onCircle, arc.id);
     m_entities.push_back(arc);
     return arc.id;
+}
+
+EntityId Sketch::addEllipse(Point2 center, Point2 majorEnd, double minorRadius) {
+    requireFinite(center, "addEllipse");
+    requireFinite(majorEnd, "addEllipse");
+    const double major = distance(center, majorEnd);
+    if (!std::isfinite(minorRadius) || minorRadius <= minimumLength ||
+        major <= minorRadius + minimumLength) {
+        throw std::invalid_argument(
+            "addEllipse: both radii must be greater than zero, the major one the larger");
+    }
+    Entity ellipse;
+    ellipse.id = m_nextEntity++;
+    ellipse.kind = EntityKind::Ellipse;
+    ellipse.center = addOwnedPoint(center, ellipse.id);
+    ellipse.start = addOwnedPoint(majorEnd, ellipse.id);
+    ellipse.radius = minorRadius;
+    m_entities.push_back(ellipse);
+    return ellipse.id;
+}
+
+EntityId Sketch::addSpline(const std::vector<Point2>& controlPoints) {
+    if (controlPoints.size() < 3) {
+        throw std::invalid_argument("addSpline: a spline needs three control points or more");
+    }
+    for (std::size_t i = 0; i < controlPoints.size(); ++i) {
+        requireFinite(controlPoints[i], "addSpline");
+        if (i > 0 && distance(controlPoints[i - 1], controlPoints[i]) <= minimumLength) {
+            throw std::invalid_argument("addSpline: two control points in a row are in one place");
+        }
+    }
+    Entity spline;
+    spline.id = m_nextEntity++;
+    spline.kind = EntityKind::Spline;
+    for (const Point2 at : controlPoints) {
+        spline.points.push_back(addOwnedPoint(at, spline.id));
+    }
+    spline.start = spline.points.front();
+    spline.end = spline.points.back();
+    m_entities.push_back(spline);
+    return spline.id;
 }
 
 void Sketch::remove(EntityId id) {
@@ -340,10 +499,11 @@ void Sketch::validate(const Constraint& c) const {
              (isRound(a) && isRound(b) && a != b);
         break;
     case ConstraintKind::Equal:
-        ok = a != b && ((line(a) && line(b)) || (isRound(a) && isRound(b)));
+        ok = a != b && ((line(a) && line(b)) || (isRound(a) && isRound(b)) ||
+                        (isKind(a, EntityKind::Ellipse) && isKind(b, EntityKind::Ellipse)));
         break;
     case ConstraintKind::Concentric:
-        ok = isRound(a) && isRound(b) && a != b;
+        ok = hasRadius(a) && hasRadius(b) && a != b;
         break;
     case ConstraintKind::Symmetric:
         ok = point(a) && point(b) && a != b && line(third);
@@ -353,7 +513,9 @@ void Sketch::validate(const Constraint& c) const {
         break;
     case ConstraintKind::Radius:
     case ConstraintKind::Diameter:
-        ok = isRound(a);
+        // Of an ellipse: its minor radius. The major one is the distance from its center to
+        // the end of its major axis.
+        ok = hasRadius(a);
         break;
     }
     if (!ok) {

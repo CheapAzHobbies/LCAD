@@ -2,6 +2,7 @@
 
 add_executable(lcad_document_tests
     DocumentTest.cpp
+    FeatureTest.cpp
     FileTest.cpp
     MigrationTest.cpp
     ReferenceModelTest.cpp

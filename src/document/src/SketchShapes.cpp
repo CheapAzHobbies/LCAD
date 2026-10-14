@@ -2,6 +2,7 @@
 
 #include <lcad/document/SketchShapes.h>
 
+#include <lcad/kernel/Error.h>
 #include <lcad/kernel/Plane.h>
 
 #include <algorithm>
@@ -10,6 +11,38 @@
 #include <vector>
 
 namespace lcad::document {
+
+namespace {
+
+// An arc, an ellipse, or a spline of a sketch as an edge in model space.
+kernel::Shape curveEdge(const sketch::Sketch& geometry, const kernel::Plane& plane,
+                        const sketch::Entity& entity) {
+    switch (entity.kind) {
+    case sketch::EntityKind::Arc: {
+        const sketch::Point2 c = geometry.position(entity.center);
+        const sketch::Point2 a = geometry.position(entity.start);
+        const sketch::Point2 b = geometry.position(entity.end);
+        return kernel::makeArcEdge(plane, c.x, c.y, a.x, a.y, b.x, b.y);
+    }
+    case sketch::EntityKind::Ellipse: {
+        const sketch::Point2 c = geometry.position(entity.center);
+        const sketch::Point2 m = geometry.position(entity.start);
+        return kernel::makeEllipseEdge(plane, c.x, c.y, m.x, m.y, entity.radius);
+    }
+    case sketch::EntityKind::Spline: {
+        std::vector<std::pair<double, double>> controls;
+        for (const sketch::EntityId point : entity.points) {
+            const sketch::Point2 p = geometry.position(point);
+            controls.emplace_back(p.x, p.y);
+        }
+        return kernel::makeSplineEdge(plane, controls, sketch::splineDegree(controls.size()));
+    }
+    default:
+        throw std::invalid_argument("not an arc, an ellipse, or a spline");
+    }
+}
+
+} // namespace
 
 kernel::Shape sketchShape(const SketchItem& sketch, SketchPart part) {
     const sketch::Sketch& geometry = sketch.geometry;
@@ -39,19 +72,100 @@ kernel::Shape sketchShape(const SketchItem& sketch, SketchPart part) {
                 parts.push_back(kernel::makeCircleEdge(plane, c.x, c.y, entity.radius));
                 break;
             }
-            case sketch::EntityKind::Arc: {
-                const sketch::Point2 c = geometry.position(entity.center);
-                const sketch::Point2 a = geometry.position(entity.start);
-                const sketch::Point2 b = geometry.position(entity.end);
-                parts.push_back(kernel::makeArcEdge(plane, c.x, c.y, a.x, a.y, b.x, b.y));
+            case sketch::EntityKind::Arc:
+            case sketch::EntityKind::Ellipse:
+            case sketch::EntityKind::Spline:
+                parts.push_back(curveEdge(geometry, plane, entity));
                 break;
-            }
             }
         } catch (const std::invalid_argument&) {
             // A curve that has shrunk to nothing has no shape. It is still in the sketch.
         }
     }
     return kernel::makeCompound(parts);
+}
+
+namespace {
+
+// One curve of a sketch as an edge in model space.
+kernel::Shape curveShape(const SketchItem& sketch, const sketch::Entity& entity) {
+    const sketch::Sketch& geometry = sketch.geometry;
+    const kernel::Plane& plane = sketch.plane;
+    switch (entity.kind) {
+    case sketch::EntityKind::Line: {
+        const sketch::Point2 a = geometry.position(entity.start);
+        const sketch::Point2 b = geometry.position(entity.end);
+        return kernel::makeSegment(kernel::toWorld(plane, a.x, a.y),
+                                   kernel::toWorld(plane, b.x, b.y));
+    }
+    case sketch::EntityKind::Circle: {
+        const sketch::Point2 c = geometry.position(entity.center);
+        return kernel::makeCircleEdge(plane, c.x, c.y, entity.radius);
+    }
+    case sketch::EntityKind::Arc:
+    case sketch::EntityKind::Ellipse:
+    case sketch::EntityKind::Spline:
+        return curveEdge(geometry, plane, entity);
+    case sketch::EntityKind::Point:
+        break;
+    }
+    throw std::invalid_argument("a point is not a curve");
+}
+
+} // namespace
+
+kernel::Region kernelRegion(const SketchItem& sketch, const sketch::Region& region) {
+    const auto outline = [&sketch](const std::vector<sketch::EntityId>& curves) {
+        std::vector<kernel::OutlineCurve> made;
+        for (const sketch::EntityId id : curves) {
+            const sketch::Entity* entity = sketch.geometry.find(id);
+            if (entity == nullptr) {
+                throw std::invalid_argument("the outline names a curve the sketch does not have");
+            }
+            made.push_back({curveShape(sketch, *entity), std::to_string(id)});
+        }
+        return made;
+    };
+    kernel::Region made;
+    made.outer = outline(region.outer);
+    for (const std::vector<sketch::EntityId>& hole : region.holes) {
+        made.holes.push_back(outline(hole));
+    }
+    return made;
+}
+
+std::vector<kernel::Shape> sketchRegionFaces(const SketchItem& sketch) {
+    std::vector<kernel::Shape> faces;
+    for (const sketch::Region& region : sketch.geometry.regions()) {
+        try {
+            faces.push_back(kernel::makeRegionFace(sketch.plane, kernelRegion(sketch, region)));
+        } catch (const std::exception&) {
+            faces.emplace_back();
+        }
+    }
+    return faces;
+}
+
+kernel::Shape planeShape(const PlaneState& state) {
+    const kernel::PlaneCoordinates middle = kernel::toLocal(state.plane, state.center);
+    const double half = state.size / 2.0;
+    const auto at = [&](double du, double dv) {
+        return kernel::toWorld(state.plane, middle.u + du, middle.v + dv);
+    };
+    kernel::Region square;
+    square.outer = {{kernel::makeSegment(at(-half, -half), at(half, -half)), "1"},
+                    {kernel::makeSegment(at(half, -half), at(half, half)), "2"},
+                    {kernel::makeSegment(at(half, half), at(-half, half)), "3"},
+                    {kernel::makeSegment(at(-half, half), at(-half, -half)), "4"}};
+    return kernel::makeRegionFace(state.plane, square);
+}
+
+kernel::Shape axisShape(const AxisState& state) {
+    const kernel::Point& c = state.center;
+    const kernel::Vector& d = state.axis.direction;
+    const double half = state.length / 2.0;
+    return kernel::makeSegment({c.x - d.x * half, c.y - d.y * half, c.z - d.z * half},
+                               {c.x + d.x * half, c.y + d.y * half, c.z + d.z * half});
 }
 
 std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch) {

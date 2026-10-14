@@ -5,8 +5,8 @@ the reasons for each. The product requirements are in [PROJECT_BRIEF.md](PROJECT
 
 ## What exists today
 
-Phases 0 to 2 built the desktop foundation and the sketcher, and each decision below rests on
-running code:
+Phases 0 to 2 built the desktop foundation and the sketcher, Phase 3 (in progress) the features
+and the timeline, and each decision below rests on running code:
 
 - `core` holds the log and LCAD's version.
 - `kernel` makes boxes, cylinders, spheres, cones, and tori, moves shapes, measures them (volume,
@@ -17,15 +17,19 @@ running code:
 - `sketch` holds 2D sketches: points, lines, circles, and arcs, the constraints between them,
   the solver that moves the geometry to meet the constraints, the finder of closed outlines,
   and what the sketch tools do (trim, extend, offset, mirror, and so on) as plain functions.
-- `document` holds bodies and sketches with an undo history, and saves and opens `.lcad` files.
+- `document` holds bodies, sketches, and features with an undo history, builds the bodies from
+  the features in timeline order, and saves and opens `.lcad` files.
+- `kernel` also pulls and revolves outlines into solids, combines solids, rounds and bevels
+  edges, hollows solids out, copies them for mirrors and patterns, and names every face it makes
+  (section 11).
 - `viewport` shows a document in OCCT's viewer inside a Qt widget, with camera navigation, a
   view cube, and selection of bodies, faces, edges, vertices, and sketches. Its sketch editor
   opens one sketch for editing in place.
 - `app` is the main window and everything in it: the command registry and search, the theme
-  and icons, document tabs, the toolbars, browser, properties and sketch panels, and timeline
-  strip.
+  and icons, document tabs, the toolbars, browser, the properties, sketch, feature, and measure
+  panels, and the timeline.
 
-Features, and everything after them, are the plan the later phases build to.
+Components, imports, and everything after them are the plan the later phases build to.
 
 ## Modules
 
@@ -280,17 +284,82 @@ without a window. When and where it does it (which click, what is under the poin
 snap to) is the sketch editor in `viewport`. Which tool is active, and the buttons and keys
 for it, are commands in `app`, defined once in the registry like every other command.
 
-### 11. Stable references (open)
+### 10. Features and rebuilding
 
-When an early feature changes, later features must still find "that edge" and "that face". This
-is the hardest problem in a parametric modeler and the usual reason such projects stall. OCCT
-reports which faces each operation created or modified, which is the raw material; what to
-build from it is designed at the start of Phase 3, before any feature that takes a face or edge
-as input.
+A document holds what the user made (sketches, features, and bodies put in as they are) in the
+order of its timeline, and the bodies are what applying the features in that order gives. The
+bodies are never edited directly and never saved when a feature makes them; they are built
+again. `Document::rebuild()` walks the timeline up to the history marker and applies each
+feature to the bodies as they stand when its turn comes (`detail::evaluate()`). A feature that
+throws is left out, keeps a sentence saying why (`featureError()`), and the model carries on
+from where it was before it.
 
-Phase 1 does not solve this and does not pretend to. A selected face is identified by its number
-within one shape (`kernel::subShape()`), which is enough to measure what was clicked and
-meaningless after the shape changes. Nothing stores these numbers.
+Rebuilding is incremental. Each edit notes what it touched; a feature is applied again only if
+it, its sketch, or the body it works on changed since last time, and otherwise its last result
+is reused. Listeners hear `BodyGeometryChanged` only for bodies whose shape changed, and
+`TimelineChanged` when an entry was added, moved, or now fails or works again.
+
+Every change to a feature is an undoable edit like any other. Rolling the model back to edit a
+feature (`setEditedFeature()`) and holding rebuilding back while a sketch is open
+(`suspendRebuild()`) are not edits: they change what is shown, not what is saved.
+
+`tryFeature()` applies a feature that is not in the document to the model as it is, and is how
+a command previews what it is about to do without touching the document.
+
+Parameters come first. Each rebuild works every parameter out (`computeParameters()`, in the
+order they depend on each other, refusing a parameter that is worked out from itself), then
+gives each feature the values its expressions come to (`resolved()`) before applying it, and
+gives each sketch dimension with an expression its value, solving the sketch again, when the
+sketch's turn comes. The expressions are read by `core/Expression.h`, which has no idea what a
+document is.
+
+Two kinds of timeline entry place things rather than make solids. A construction plane (a
+feature of kind `Plane`) is worked out when its turn comes, from an origin plane or from a face
+of a body as it is at that point (`planeState()`); a construction axis (kind `Axis`) likewise,
+from an origin axis or from an edge or a round face (`axisState()`). Features that use one name it
+as `plane:<id>` or `axis:<id>`, are built again when it moves, and cannot be put before it in the
+timeline. A sketch that is attached to a construction
+plane or to a face is moved there when its turn comes, and the features made from it are built
+again if it moved. Either one keeps where it last was, and says why, when what it is placed on
+is gone.
+
+### 11. Stable references
+
+When an early feature changes, later features must still find "that edge" and "that face".
+Numbers do not survive: OCCT numbers faces in the order it happens to build them. Names do.
+
+**Faces are named by where they came from.** Each operation in `kernel/Modeling.h` takes a
+`NamedShape` (a shape and one name per face) and returns one. A pull names the faces it makes
+after the feature and the sketch curve each comes from: `7/side/12` is the side that curve 12 of
+the sketch became in feature 7, `7/start/12` and `7/end/12` its two ends (named after the
+smallest curve of the outline). A sketch curve keeps its number however it is dimensioned, so
+the name survives any edit that keeps the curve. Booleans, fillets, chamfers, and shells carry
+the names of the faces they keep through OCCT's own history (`Modified()`, `Generated()`), and
+name the faces they make after what made them: `9/edge/<hash>` is the round of the edge with
+that name in fillet 9. A face that is split keeps its name on the first piece and gets `;2`,
+`;3` on the others, in an order fixed by where they are. Copies made by a mirror or a pattern
+get the pattern's id and the copy's number in front: `14/1.3/7/side/12`.
+
+**Edges are named by the faces they lie between**: `7/side/12|7/end/12`, the two names sorted,
+and a number where several edges lie between the same two faces, again in an order fixed by
+where they are. An edge has no history of its own that OCCT keeps reliably; its faces do.
+
+**Features store names, never numbers.** A fillet keeps the names of its edges, a shell those of
+its faces, a pattern the name of the edge or face that gives its direction. When the feature is
+applied again, each name is looked up in the body as it now is. A name that is no longer there
+makes the feature fail with a sentence that says, in words, what is missing ("the edge between a
+side of Pull 1 and the end of Pull 1"), and the model keeps everything before it.
+
+**Limits.** A face made from the same curve by two different features is told apart by the
+feature. Where two faces merge into one (two coplanar tops joined), the merged face takes the
+name first in the alphabet of those offered, so the choice does not depend on the order OCCT
+found them in; a later feature that named the other one fails and says so. What does not
+survive is an edit that removes the curve a face came from and draws another in its place: the
+new curve has a new number. That is the honest answer, not a bug: it is a different face.
+
+Phase 1 identified a selected face by its number within one shape (`kernel::subShape()`). That is
+still what a click in the 3D view gives, and it is turned into a name the moment a feature takes
+it.
 
 ### 13. Undo
 

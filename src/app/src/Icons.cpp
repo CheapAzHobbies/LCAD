@@ -183,6 +183,135 @@ const QHash<QString, Drawing>& drawings() {
              i.ellipse(12, 12, 9, 5.5);
              i.ellipse(12, 11.5, 3.5, 1.6);
          }},
+        // Features
+        {QStringLiteral("pull"),
+         [](const Ink& i) {
+             // A flat outline, and the arrow it is pulled along.
+             i.fill({{3.5, 18.5}, {13.5, 18.5}, {20.5, 13.5}, {10.5, 13.5}});
+             i.poly({{3.5, 18.5}, {13.5, 18.5}, {20.5, 13.5}, {10.5, 13.5}});
+             i.line(12, 16, 12, 3.5);
+             i.poly({{8.5, 7}, {12, 3.5}, {15.5, 7}}, false);
+         }},
+        {QStringLiteral("revolve"),
+         [](const Ink& i) {
+             // An outline beside an axis, and the turn about it.
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(6, 3, 6, 21);
+             i.p.restore();
+             i.fill({{9, 6}, {15, 6}, {15, 13}, {9, 13}});
+             i.poly({{9, 6}, {15, 6}, {15, 13}, {9, 13}});
+             i.arc(6, 17.5, 13, 3, 200, 290);
+             i.poly({{16.5, 14}, {19.2, 16.3}, {16, 18}}, false);
+         }},
+        {QStringLiteral("fillet"),
+         [](const Ink& i) {
+             QPainterPath body(QPointF(4, 20));
+             body.lineTo(4, 12);
+             body.arcTo(QRectF(4, 4, 16, 16), 180, -90);
+             body.lineTo(20, 4);
+             body.lineTo(20, 20);
+             body.closeSubpath();
+             i.p.fillPath(body, i.accent);
+             i.p.drawPath(body);
+         }},
+        {QStringLiteral("chamfer"),
+         [](const Ink& i) {
+             i.fill({{4, 20}, {4, 11}, {11, 4}, {20, 4}, {20, 20}});
+             i.poly({{4, 20}, {4, 11}, {11, 4}, {20, 4}, {20, 20}});
+         }},
+        {QStringLiteral("shell"),
+         [](const Ink& i) {
+             // A hollowed solid cut through: walls, and a floor.
+             i.fill({{4, 4},
+                     {4, 20},
+                     {20, 20},
+                     {20, 4},
+                     {16.5, 4},
+                     {16.5, 16.5},
+                     {7.5, 16.5},
+                     {7.5, 4}});
+             i.poly({{4, 4},
+                     {4, 20},
+                     {20, 20},
+                     {20, 4},
+                     {16.5, 4},
+                     {16.5, 16.5},
+                     {7.5, 16.5},
+                     {7.5, 4}});
+         }},
+        {QStringLiteral("hole"),
+         [](const Ink& i) {
+             // A block with a hole drilled down into it, a point at the bottom.
+             i.poly({{3, 8}, {21, 8}, {21, 20}, {3, 20}});
+             QPainterPath bore(QPointF(9, 8));
+             bore.lineTo(9, 15);
+             bore.lineTo(12, 18);
+             bore.lineTo(15, 15);
+             bore.lineTo(15, 8);
+             bore.closeSubpath();
+             i.p.fillPath(bore, i.accent);
+             i.p.drawPath(bore);
+             i.line(12, 2.5, 12, 6);
+             i.poly({{10, 4.5}, {12, 6.5}, {14, 4.5}}, false);
+         }},
+        {QStringLiteral("plane"),
+         [](const Ink& i) {
+             // A plane seen at a slant, and the line it is offset along.
+             i.fill({{3, 15}, {14, 15}, {21, 9}, {10, 9}});
+             i.poly({{3, 15}, {14, 15}, {21, 9}, {10, 9}});
+             i.line(12, 12, 12, 21);
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(12, 3, 12, 9);
+             i.p.restore();
+         }},
+        {QStringLiteral("axis"),
+         [](const Ink& i) {
+             // A cylinder, tinted, and the axis through it, dashed past its ends.
+             i.fill({{8, 7}, {16, 7}, {16, 17}, {8, 17}});
+             i.ellipse(12, 7, 4, 1.6);
+             i.line(8, 7, 8, 17);
+             i.line(16, 7, 16, 17);
+             i.arc(12, 17, 4, 1.6, 180, 180);
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(12, 2, 12, 22);
+             i.p.restore();
+         }},
+        {QStringLiteral("pattern-rectangular"),
+         [](const Ink& i) {
+             // The original, tinted, and its copies in rows and columns.
+             i.fill({{4, 4}, {9, 4}, {9, 9}, {4, 9}});
+             for (const qreal x : {4.0, 15.0}) {
+                 for (const qreal y : {4.0, 15.0}) {
+                     i.poly({{x, y}, {x + 5, y}, {x + 5, y + 5}, {x, y + 5}});
+                 }
+             }
+         }},
+        {QStringLiteral("pattern-circular"),
+         [](const Ink& i) {
+             // The original, tinted, and its copies around a center.
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DotLine);
+             i.p.setPen(dashed);
+             i.ellipse(12, 12, 7.5, 7.5);
+             i.p.restore();
+             QPainterPath first;
+             first.addEllipse(QPointF(12, 4.5), 2.6, 2.6);
+             i.p.fillPath(first, i.accent);
+             i.ellipse(12, 4.5, 2.6, 2.6);
+             i.ellipse(19.5, 12, 2.6, 2.6);
+             i.ellipse(12, 19.5, 2.6, 2.6);
+             i.ellipse(4.5, 12, 2.6, 2.6);
+         }},
         // View
         {QStringLiteral("fit"),
          [](const Ink& i) {
@@ -329,6 +458,20 @@ const QHash<QString, Drawing>& drawings() {
              QPainterPath path;
              path.addRoundedRect(QRectF(3.5, 8, 17, 8), 4, 4);
              i.p.drawPath(path);
+         }},
+        {QStringLiteral("ellipse"),
+         [](const Ink& i) {
+             i.ellipse(12, 12, 9, 5.5);
+             node(i, 12, 12);
+             node(i, 21, 12);
+         }},
+        {QStringLiteral("spline"),
+         [](const Ink& i) {
+             QPainterPath curve(QPointF(3.5, 17));
+             curve.cubicTo(7, 3, 15, 21, 20.5, 7);
+             i.p.drawPath(curve);
+             node(i, 3.5, 17);
+             node(i, 20.5, 7);
          }},
         {QStringLiteral("dimension"),
          [](const Ink& i) {

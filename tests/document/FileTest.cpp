@@ -7,10 +7,14 @@
 #include <lcad/core/Log.h>
 #include <lcad/core/Version.h>
 #include <lcad/document/File.h>
+#include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
+#include <lcad/kernel/Primitives.h>
 #include <lcad/kernel/Serialization.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
+#include <lcad/sketch/Edit.h>
 
 #include <TempDir.h>
 
@@ -22,18 +26,21 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <sstream>
 
 #include <unistd.h>
 
 using namespace lcad::document;
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::WithinRel;
 using lcad::kernel::makeBox;
 using lcad::kernel::makeSphere;
 using lcad::test::TempDir;
@@ -738,4 +745,212 @@ TEST_CASE("writeArchive does not overwrite, and cleans up after a failure", "[do
     CHECK_THROWS_AS(detail::writeArchive(directory.file("missing") / "x.zip", {{"a.txt", "x"}}),
                     FileError);
     CHECK(filesIn(directory.path()) == std::vector<std::string>{"once.zip"});
+}
+
+namespace {
+
+// A plate pulled from a dimensioned rectangle with a round hole in it, and one corner rounded.
+struct Modeled {
+    std::unique_ptr<Document> document = std::make_unique<Document>();
+    ObjectId sketch;
+    ObjectId pull;
+    ObjectId fillet;
+    ObjectId body;
+    lcad::sketch::ConstraintId width = 0;
+};
+
+Modeled buildModeledDocument() {
+    using lcad::sketch::ConstraintKind;
+    Modeled made;
+    Document& document = *made.document;
+    made.sketch = document.addSketch("Outline", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    const auto r = lcad::sketch::addRectangle(s, {0.0, 0.0}, {60.0, 40.0});
+    s.addConstraint(ConstraintKind::Coincident, s.find(r.bottom)->start, s.origin());
+    made.width = s.addConstraint(ConstraintKind::Distance, s.find(r.bottom)->start,
+                                 s.find(r.bottom)->end, 0, 60.0);
+    s.addConstraint(ConstraintKind::Distance, s.find(r.right)->start, s.find(r.right)->end, 0,
+                    40.0);
+    s.addCircle({20.0, 20.0}, 6.0);
+    s.solve();
+    document.setSketchGeometry(made.sketch, s, "Draw");
+    std::vector<lcad::sketch::EntityId> outline{r.bottom, r.right, r.top, r.left};
+    std::sort(outline.begin(), outline.end());
+
+    Feature pull;
+    pull.kind = FeatureKind::Pull;
+    pull.sketch = made.sketch;
+    // The rectangle with the round hole in it, not the disc.
+    pull.regions = {outline};
+    pull.distance = 8.0;
+    made.pull = document.addFeature(pull);
+    made.body = document.findFeature(made.pull)->body;
+
+    Feature fillet;
+    fillet.kind = FeatureKind::Fillet;
+    fillet.body = made.body;
+    fillet.size = 5.0;
+    for (const std::string& name : lcad::kernel::edgeNames(document.namedBody(made.body))) {
+        if (name.find("/side/" + std::to_string(r.bottom) + "|") != std::string::npos &&
+            name.find("/side/" + std::to_string(r.right) + "#") != std::string::npos) {
+            fillet.edges.push_back(name);
+        }
+    }
+    made.fillet = document.addFeature(fillet);
+    return made;
+}
+
+const double pi = 3.14159265358979323846;
+// The plate, less the hole, less what rounding one corner to 5 takes off.
+const double modeledVolume = (2400.0 - pi * 36.0 - (1.0 - pi / 4.0) * 25.0) * 8.0;
+
+double volumeOf(const Document& document, ObjectId body) {
+    return lcad::kernel::volume(document.findBody(body)->shape);
+}
+
+} // namespace
+
+TEST_CASE("A model reopens as its sketches and features, and is built again from them",
+          "[document][file][feature]") {
+    const TempDir directory;
+    const std::filesystem::path path = directory.file("bracket.lcad");
+    Modeled made = buildModeledDocument();
+    REQUIRE(made.document->findFeature(made.fillet)->edges.size() == 1);
+    REQUIRE(made.document->featureError(made.fillet).empty());
+    REQUIRE_THAT(volumeOf(*made.document, made.body), WithinRel(modeledVolume, 1e-9));
+    made.document->renameBody(made.body, "Plate");
+    made.document->renameFeature(made.fillet, "Corner");
+
+    saveDocument(*made.document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    Document& document = *loaded.document;
+    CHECK(loaded.warnings.empty());
+
+    // The same things, in the same order, under the same ids and names.
+    CHECK(document.timeline() == made.document->timeline());
+    REQUIRE(document.features().size() == 2);
+    CHECK(document.features() == made.document->features());
+    CHECK(document.findFeature(made.fillet)->name == "Corner");
+    CHECK(document.nextObjectId() == made.document->nextObjectId());
+    // The body was built again, not read: same name, same measurements, same face names.
+    const Body* body = document.findBody(made.body);
+    REQUIRE(body != nullptr);
+    CHECK(body->name == "Plate");
+    CHECK(body->madeBy == made.pull);
+    CHECK_THAT(volumeOf(document, made.body), WithinRel(modeledVolume, 1e-9));
+    CHECK(body->faceNames == made.document->findBody(made.body)->faceNames);
+    CHECK_FALSE(document.isModified());
+
+    SECTION("it is still a model: change the sketch and it follows") {
+        lcad::sketch::Sketch geometry = document.findSketch(made.sketch)->geometry;
+        geometry.setConstraintValue(made.width, 80.0);
+        REQUIRE(geometry.solve().status == lcad::sketch::SolveStatus::Solved);
+        document.setSketchGeometry(made.sketch, geometry, "Change Dimension");
+        CHECK(document.featureError(made.fillet).empty());
+        CHECK_THAT(volumeOf(document, made.body),
+                   WithinRel(modeledVolume + 20.0 * 40.0 * 8.0, 1e-9));
+    }
+    SECTION("in the file, features are readable and the body has no geometry of its own") {
+        const auto entries = detail::readArchive(path);
+        const json model = json::parse(entries.at("document.json"));
+        REQUIRE(model["features"].size() == 2);
+        CHECK(model["features"][0]["kind"] == "Pull");
+        CHECK(model["features"][0]["operation"] == "NewBody");
+        CHECK(model["features"][0]["distance"] == 8.0);
+        CHECK(model["features"][0]["regions"].size() == 1);
+        CHECK(model["features"][1]["kind"] == "Fillet");
+        CHECK(model["features"][1]["edges"].size() == 1);
+        CHECK(model["timeline"].size() == 3);
+        CHECK_FALSE(model.contains("marker"));
+        REQUIRE(model["bodies"].size() == 1);
+        CHECK(model["bodies"][0]["madeBy"] == made.pull.value);
+        CHECK_FALSE(model["bodies"][0].contains("geometry"));
+        for (const auto& entry : entries) {
+            CHECK(entry.first.find("geometry/") == std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("The history marker, suppression, and failures are kept with the file",
+          "[document][file][feature]") {
+    const TempDir directory;
+    const std::filesystem::path path = directory.file("state.lcad");
+    Modeled made = buildModeledDocument();
+    Document& document = *made.document;
+    // A box that was put in as it is, with a feature on it.
+    const ObjectId box = document.addBody("Box", makeBox(10.0, 10.0, 10.0));
+    Feature bevel;
+    bevel.kind = FeatureKind::Chamfer;
+    bevel.body = box;
+    bevel.size = 2.0;
+    bevel.edges = {lcad::kernel::edgeNames(document.namedBody(box)).front()};
+    const ObjectId chamfer = document.addFeature(bevel);
+    REQUIRE(document.featureError(chamfer).empty());
+
+    SECTION("a body that was put in keeps the shape it was given") {
+        saveDocument(document, path);
+        const LoadedDocument loaded = loadDocument(path);
+        const Body* reopened = loaded.document->findBody(box);
+        REQUIRE(reopened != nullptr);
+        CHECK_THAT(lcad::kernel::volume(reopened->source), WithinRel(1000.0, 1e-9));
+        // Beveled once, not twice: the feature was applied to what was stored.
+        CHECK_THAT(lcad::kernel::volume(reopened->shape), WithinRel(1000.0 - 20.0, 1e-9));
+        CHECK(loaded.warnings.empty());
+    }
+    SECTION("the marker and a suppressed feature") {
+        document.setFeatureSuppressed(made.fillet, true);
+        document.setHistoryMarker(4);
+        saveDocument(document, path);
+        const LoadedDocument loaded = loadDocument(path);
+        CHECK(loaded.document->historyMarker() == 4);
+        CHECK(loaded.document->findFeature(made.fillet)->suppressed);
+        // The chamfer lies beyond the marker, so the box is as it was given.
+        CHECK_THAT(volumeOf(*loaded.document, box), WithinRel(1000.0, 1e-9));
+        CHECK(json::parse(detail::readArchive(path).at("document.json"))["marker"] == 4);
+    }
+    SECTION("a feature that cannot be applied is opened with a warning, not refused") {
+        Feature fillet = *document.findFeature(made.fillet);
+        fillet.size = 500.0;
+        document.changeFeature(made.fillet, fillet);
+        REQUIRE_FALSE(document.featureError(made.fillet).empty());
+        saveDocument(document, path);
+        const LoadedDocument loaded = loadDocument(path);
+        REQUIRE(loaded.warnings.size() == 1);
+        CHECK_THAT(loaded.warnings[0], ContainsSubstring("Fillet 1 could not be applied"));
+        CHECK_THAT(loaded.warnings[0], ContainsSubstring("radius does not fit"));
+        CHECK_FALSE(loaded.document->featureError(made.fillet).empty());
+        // What can be built is there.
+        CHECK_FALSE(loaded.document->findBody(made.body)->shape.isNull());
+    }
+}
+
+TEST_CASE("A document with a damaged feature is refused", "[document][file][feature]") {
+    using Change = std::function<void(json&)>;
+    struct Damage {
+        const char* what;
+        Change change; // applied to the model
+    };
+    const Damage damage = GENERATE(
+        Damage{"a kind this LCAD does not know",
+               [](json& m) { m["features"][0]["kind"] = "Loft"; }},
+        Damage{"an unknown operation", [](json& m) { m["features"][0]["operation"] = "Melt"; }},
+        Damage{"a missing distance", [](json& m) { m["features"][0].erase("distance"); }},
+        Damage{"a body that is not there", [](json& m) { m["features"][1]["body"] = 999; }},
+        Damage{"edges that are not text", [](json& m) { m["features"][1]["edges"] = {1, 2}; }},
+        Damage{"a timeline that leaves a feature out", [](json& m) { m["timeline"].erase(2); }},
+        Damage{"a timeline with the pull before its sketch",
+               [](json& m) { std::swap(m["timeline"][0], m["timeline"][1]); }},
+        Damage{"a body made by a feature that makes none",
+               [](json& m) { m["bodies"][0]["madeBy"] = m["features"][1]["id"]; }},
+        Damage{"features that are not a list", [](json& m) { m["features"] = 3; }});
+    CAPTURE(damage.what);
+    const TempDir directory;
+    const std::filesystem::path good = directory.file("good.lcad");
+    const std::filesystem::path path = directory.file("damaged.lcad");
+    const Modeled made = buildModeledDocument();
+    saveDocument(*made.document, good);
+    REQUIRE_NOTHROW(loadDocument(good));
+    writeVariant(good, path,
+                 [&damage](json&, json& model, detail::Entries&) { damage.change(model); });
+    CHECK_THROWS_AS(loadDocument(path), FileError);
 }

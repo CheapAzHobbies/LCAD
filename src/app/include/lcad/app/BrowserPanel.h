@@ -51,6 +51,10 @@ public:
     [[nodiscard]] QTreeWidgetItem* originItem(viewport::OriginItem item) const;
     /// The entry for a sketch, or nullptr.
     [[nodiscard]] QTreeWidgetItem* sketchItem(document::ObjectId id) const;
+    /// The entry of a construction plane, or nullptr.
+    [[nodiscard]] QTreeWidgetItem* planeItem(document::ObjectId id) const;
+    /// The construction planes selected, in document order.
+    [[nodiscard]] std::vector<document::ObjectId> selectedPlanes() const;
     /// Opens a body's name for editing in place.
     void editBody(document::ObjectId id);
     /// Opens a sketch's name for editing in place.
@@ -73,6 +77,8 @@ signals:
     void contextMenuRequested(const QPoint& globalPosition);
     /// The user double-clicked a sketch: open it.
     void sketchActivated(lcad::document::ObjectId sketch);
+    /// The user double-clicked a construction plane.
+    void planeActivated(lcad::document::ObjectId plane);
     /// The user ticked or cleared an origin plane or axis.
     void originItemToggled(lcad::viewport::OriginItem item, bool visible);
 
@@ -83,8 +89,11 @@ private:
     void onItemChanged(QTreeWidgetItem* item);
     void showContextMenu(const QPoint& position);
     QTreeWidgetItem* makeBodyItem(const document::Body& body);
+    void markExistence(QTreeWidgetItem* item, const document::Body& body);
     QTreeWidgetItem* makeSketchItem(const document::SketchItem& sketch);
     void markEditedSketch();
+    /// Lists the construction planes again.
+    void fillPlanes();
 
     QLineEdit* m_filter;
     QTreeWidget* m_tree;
@@ -92,6 +101,7 @@ private:
     QTreeWidgetItem* m_origin = nullptr;
     QTreeWidgetItem* m_bodies = nullptr;
     QTreeWidgetItem* m_sketches = nullptr;
+    QTreeWidgetItem* m_planes = nullptr;
     document::ObjectId m_editedSketch;
     std::array<bool, 6> m_originVisible{};
     document::Document* m_document = nullptr;

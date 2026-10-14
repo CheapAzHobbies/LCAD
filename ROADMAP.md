@@ -23,7 +23,7 @@ more than writing the code, now sets the pace.
 | 1. Desktop foundation | Window, viewport, selection, documents, save/open, undo | 2026-10-12 | 2027-01-31 | 2026-10-12 | |
 | 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-12 | 2026-10-25 | 2026-10-12 | |
 | 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-12 | 2026-11-30 | 2026-10-13 | |
-| 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-12-01 | 2027-02-15 | | v0.1 alpha |
+| 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-10-13 | 2027-02-15 | 2026-10-14 | v0.1 alpha |
 | 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-16 | 2027-03-31 | | v0.2 |
 | 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-04-01 | 2027-07-15 | | v0.5 beta |
 | Port | Windows and macOS builds | 2027-07-16 | 2027-09-15 | | v0.6 |
@@ -154,31 +154,69 @@ What Phase 2 leaves for later, besides ellipse and spline:
   lines that cross in the middle do not make four regions; trim them first.
 - **A projected edge does not follow its body.** It is a copy made when it was projected. Following
   needs the feature history of Phase 3.
-- **A sketch on a face does not follow the face** either, for the same reason.
+- **A sketch on a face does not follow the face** either, for the same reason. (Fixed in
+  Phase 3: a sketch started on a face, or on a construction plane, follows it.)
 - **Offset keeps one dimension.** The copy's lines stay parallel to their originals and its corners
   stay joined, but only the first line carries the offset distance. There is no constraint yet
   that says "the same distance all round".
 - **Dimension values place themselves.** They are drawn next to what they measure and cannot be
   dragged somewhere else. That needs a place for them in the file.
-- **Values are numbers.** `40`, `40 mm`, `40,5`. Expressions and named parameters come with the
-  parameter table in Phase 3.
+- **Values are numbers.** `40`, `40 mm`, `40,5`. (Phase 3 added expressions and named
+  parameters.)
 - **A sketch being edited is drawn over the model**, not hidden by bodies in front of it.
 - **Tangent arcs in a chain of lines, fillets, patterns, and text** are not there yet.
 
-## Phase 3: Parametric solids (2026-12-01 to 2027-02-15)
+## Phase 3: Parametric solids (finished 2026-10-14)
 
-- [ ] Carried over from Phase 2: ellipse and spline in the sketcher.
-- [ ] Feature graph with dependency tracking and incremental recompute.
-- [ ] Stable references to faces and edges that survive upstream edits (topological naming).
-- [ ] Extrude (join, cut, intersect, new body; symmetric, two-sided, to-object, taper), revolve.
-- [ ] Fillet, chamfer, shell, hole, mirror, rectangular and circular pattern.
-- [ ] Timeline: edit, suppress, reorder, roll back, failure markers.
-- [ ] Failure handling that keeps the last valid state and names the broken feature and reference.
-- [ ] Global parameter table with units and expressions.
-- [ ] Measure tool, construction planes and axes.
+Started early, on the owner's word. The extrude command is called **Pull**: it pulls, and with
+Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
+
+- [x] Carried over from Phase 2: ellipse and spline in the sketcher. An ellipse is its center,
+      the end of its major axis, and a minor radius the solver can move; a spline is a clamped
+      cubic B-spline through its first and last control points, which are ordinary points, so
+      every point constraint works on them. Trim, extend, offset, and crossings leave both
+      alone; mirror, outlines with holes, Pull, and files take them.
+- [x] Feature graph with dependency tracking and incremental recompute. A feature is built again
+      only when something it depends on changed; while a sketch is open, rebuilding waits.
+- [x] Stable references to faces and edges that survive upstream edits. Faces are named by the
+      feature and the sketch curve they come from, edges by the faces they lie between. See
+      [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#11-stable-references). Tested by the bracket:
+      widen the plate, and the fillets stay on the same four edges.
+- [x] Pull (join, cut, intersect, new body; one side, symmetric, two-sided; up to a flat face,
+      which it follows; taper on a pull to one side) and revolve. Up to a curved face is not
+      there yet.
+- [x] Fillet, chamfer, shell, hole (simple, counterbore, countersink; to a depth with a drill
+      point, or through all; at the points of a sketch), mirror, rectangular and circular
+      pattern.
+- [x] Timeline: select, edit (the model rolls back to just before the feature), rename,
+      suppress, delete, reorder by dragging (refused, with the reason, where it would put a
+      feature before what it depends on), the history marker dragged to roll back, failure
+      markers with the reason, a compact size.
+- [x] Failure handling that keeps the last valid state and names the broken feature and reference:
+      a feature that cannot be applied is left out with a sentence saying why ("It does not reach
+      Body, so there is nothing to cut away.", "An edge it works on no longer exists: the edge
+      between a side of Pull 1 and the end of Pull 1."), and the rest carries on without it.
+- [x] Global parameter table with units and expressions: named parameters (Modify >
+      Parameters), expressions with units (mm, cm, m, in, ft, deg, rad), arithmetic, and
+      functions, typed into any value box of a feature or any sketch dimension. A change to a
+      parameter rebuilds what uses it; a new name is put everywhere the old one was. Units are
+      converted, not checked: adding a length to an angle is not refused.
+- [x] Measure tool, construction planes (offset from an origin plane or a flat face, and they
+      follow it), and construction axes (an origin axis, a straight edge, or the axis of a round
+      edge or face, and they follow it). Revolves turn about an origin axis or a construction
+      axis as well as a sketch line; patterns go along or around construction axes, and mirrors
+      are in construction planes.
 
 Acceptance: build a dimensioned bracket, edit the first sketch, and verify downstream features update or
-report a specific failure.
+report a specific failure. Met, at two levels: in the document (`FeatureTest`) and through the
+window with the pointer and the keyboard (`ModelingInterfaceTest`), including saving and reopening.
+
+Built on the branch `phase-3-parametric-solids` (pull request #5).
+
+What Phase 3 leaves for later: pulling up to a curved face (only flat faces so far), a taper on
+a pull to both sides, trimming and offsetting ellipses and splines, checking that the units of
+an expression go together (they are converted, not checked), and picking a construction axis by
+clicking it in the 3D view (it is chosen from a list).
 
 Stable references are the hardest problem in this phase and the usual reason parametric CAD projects stall.
 Budget time for it first, not last.
@@ -250,12 +288,13 @@ Decided in Phases 0 and 1, with the reasoning in [docs/ARCHITECTURE.md](docs/ARC
 | Mouse | Fusion's mapping. Wheel away from the user zooms in, with a setting to reverse it |
 | Sketch solver | LCAD's own, built on Eigen. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for what was weighed |
 | Sketch display | Drawn by LCAD over the 3D view while a sketch is open; as OCCT wires among the bodies otherwise |
+| Stable references | Faces named by what made them, carried through booleans by OCCT's history; edges by the faces they lie between |
+| Extrude command | Called Pull (owner's choice, 2026-10-13) |
 
 Still open:
 
 | Decision | Options | Needed by |
 |---|---|---|
-| Stable references to faces and edges | To be designed | Start of Phase 3 |
 | When to make the repository public | v0.1, v0.5, or later | Owner's call |
 
 ## Risks found so far

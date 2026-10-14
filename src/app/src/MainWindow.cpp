@@ -6,18 +6,25 @@
 #include <lcad/app/BrowserPanel.h>
 #include <lcad/app/CommandSearch.h>
 #include <lcad/app/Commands.h>
+#include <lcad/app/FeaturePanel.h>
 #include <lcad/app/Icons.h>
+#include <lcad/app/MeasurePanel.h>
+#include <lcad/app/ParametersDialog.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/ShortcutsDialog.h>
 #include <lcad/app/SketchPanel.h>
 #include <lcad/app/Theme.h>
+#include <lcad/app/TimelinePanel.h>
 #include <lcad/document/File.h>
+#include <lcad/document/SketchShapes.h>
 #include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/Version.h>
 #include <lcad/viewport/SketchEditor.h>
 
+#include <QApplication>
 #include <QBuffer>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -27,6 +34,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
@@ -84,6 +92,25 @@ QLabel* groupLabel(const QString& text, QWidget* parent) {
     return label;
 }
 
+// A label with a little room to spare. The font's measure of a short word can come out a pixel
+// or two narrower than the word is drawn, and its last letter would be cut off.
+class RoomyLabel : public QLabel {
+public:
+    using QLabel::QLabel;
+    [[nodiscard]] QSize sizeHint() const override { return roomier(QLabel::sizeHint()); }
+    [[nodiscard]] QSize minimumSizeHint() const override {
+        return roomier(QLabel::minimumSizeHint());
+    }
+
+private:
+    [[nodiscard]] QSize roomier(QSize size) const {
+        if (!text().isEmpty()) {
+            size.rwidth() += fontMetrics().averageCharWidth();
+        }
+        return size;
+    }
+};
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -103,7 +130,7 @@ MainWindow::MainWindow(QWidget* parent)
     m_selectionLabel = new QLabel(this);
     m_selectionLabel->setObjectName(QStringLiteral("selectionSummary"));
     statusBar()->addWidget(m_selectionLabel, 1);
-    m_commandLabel = new QLabel(this);
+    m_commandLabel = new RoomyLabel(this);
     m_commandLabel->setObjectName(QStringLiteral("activeCommand"));
     statusBar()->addPermanentWidget(m_commandLabel);
     auto* units = new QLabel(tr("mm"), this);
@@ -128,6 +155,12 @@ MainWindow::MainWindow(QWidget* parent)
         updateSelectionState();
     });
     connect(m_viewport, &viewport::ViewportWidget::selectionChanged, this, [this] {
+        if (m_featurePanel != nullptr && !m_settingPicks) {
+            takeFeaturePicks();
+        }
+        if (m_measurePanel != nullptr && !m_settingPicks) {
+            takeMeasurePick();
+        }
         if (m_planePanel != nullptr) {
             // A new sketch is waiting for its plane: a flat face that is clicked is it.
             const std::vector<SelectedItem> picked = m_viewport->selection();
@@ -217,6 +250,20 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(m_browser, &BrowserPanel::sketchActivated, this,
             [this](document::ObjectId sketch) { editSketch(sketch); });
+    connect(m_browser, &BrowserPanel::planeActivated, this,
+            [this](document::ObjectId plane) { editFeature(plane); });
+    // A new sketch on a construction plane, clicked in the 3D view. Queued, as for the origin
+    // planes.
+    connect(
+        m_viewport, &viewport::ViewportWidget::constructionPlanePicked, this,
+        [this](document::ObjectId plane) {
+            if (m_planePanel != nullptr) {
+                if (const auto state = document()->planeState(plane)) {
+                    createSketch(state->plane, plane);
+                }
+            }
+        },
+        Qt::QueuedConnection);
     connect(m_viewport->sketchEditor(), &viewport::SketchEditor::changed, this,
             [this] { updateSelectionState(); });
     connect(m_viewport->sketchEditor(), &viewport::SketchEditor::message, this,
@@ -240,6 +287,20 @@ MainWindow::MainWindow(QWidget* parent)
         menu->addAction(m_commands->action(QStringLiteral("edit.delete")));
         menu->popup(where);
     });
+    // A feature takes what is picked in the 3D view.
+    connect(m_viewport, &viewport::ViewportWidget::profilesPicked, this,
+            &MainWindow::takeFeaturePicks);
+    connect(m_timeline, &TimelinePanel::itemSelected, this, &MainWindow::onTimelineSelection);
+    connect(m_timeline, &TimelinePanel::itemActivated, this, [this](document::ObjectId item) {
+        if (document()->findFeature(item) != nullptr) {
+            editFeature(item);
+        } else if (document()->findSketch(item) != nullptr) {
+            editSketch(item);
+        }
+    });
+    connect(m_timeline, &TimelinePanel::contextMenuRequested, this, &MainWindow::showTimelineMenu);
+    connect(m_timeline, &TimelinePanel::message, this,
+            [this](const QString& text) { statusBar()->showMessage(text, 9000); });
     connect(m_viewport, &QWidget::customContextMenuRequested, this, &MainWindow::showViewportMenu);
     // Queued: the viewport reports failure while painting, which is no place to open a dialog.
     connect(m_viewport, &viewport::ViewportWidget::initializationFailed, this,
@@ -255,11 +316,27 @@ MainWindow::MainWindow(QWidget* parent)
 }
 
 MainWindow::~MainWindow() {
+    // A command's panel would report to a window that is half gone.
+    closeFeaturePanel();
     // The viewport and the panels are destroyed after the documents, as child widgets. Detach
     // them first.
     m_viewport->setDocument(nullptr);
     m_browser->setDocument(nullptr, {});
+    m_timeline->setDocument(nullptr);
+    if (m_parametersDialog != nullptr) {
+        m_parametersDialog->setDocument(nullptr);
+    }
     m_properties->refresh(nullptr, {}, {});
+}
+
+void MainWindow::showParameters() {
+    if (m_parametersDialog == nullptr) {
+        m_parametersDialog = new ParametersDialog(this);
+    }
+    m_parametersDialog->setDocument(document());
+    m_parametersDialog->show();
+    m_parametersDialog->raise();
+    m_parametersDialog->activateWindow();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -364,6 +441,12 @@ void MainWindow::defineCommands() {
         c.run = [this](bool) {
             if (isSketching()) {
                 m_viewport->sketchEditor()->deleteSelection();
+            } else if (m_timeline->selectedItem().isValid() &&
+                       (m_timeline->isAncestorOf(QApplication::focusWidget()) ||
+                        (selectedBodies().empty() && selectedSketches().empty()))) {
+                // What is selected in the timeline, when that is where the user is working or
+                // nothing else is selected.
+                deleteTimelineItem(m_timeline->selectedItem());
             } else {
                 deleteSelectedBodies();
             }
@@ -374,7 +457,8 @@ void MainWindow::defineCommands() {
                 return !editor->selectedEntities().empty() ||
                        !editor->selectedConstraints().empty();
             }
-            return !selectedBodies().empty() || !selectedSketches().empty();
+            return !selectedBodies().empty() || !selectedSketches().empty() ||
+                   m_timeline->selectedItem().isValid();
         };
         m_commands->add(std::move(c));
 
@@ -383,14 +467,16 @@ void MainWindow::defineCommands() {
         c.shortcuts = {QKeySequence(Qt::Key_Escape)};
         c.aliases = {tr("escape"), tr("abort")};
         c.run = [this](bool) {
-            if (m_panel != nullptr || m_planePanel != nullptr) {
+            if (m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
+                m_measurePanel != nullptr) {
                 cancelCommand();
             } else if (isSketching()) {
                 m_viewport->sketchEditor()->cancel();
             }
         };
         c.isEnabled = [this] {
-            return m_panel != nullptr || m_planePanel != nullptr ||
+            return m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
+                   m_measurePanel != nullptr ||
                    (isSketching() && m_viewport->sketchEditor()->canCancel());
         };
         m_commands->add(std::move(c));
@@ -499,6 +585,208 @@ void MainWindow::defineCommands() {
         c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
     }
+
+    // Features
+    const auto hasSketch = [this] { return !document()->sketches().empty(); };
+    const auto hasBody = [this] {
+        const auto& bodies = document()->bodies();
+        return std::any_of(bodies.begin(), bodies.end(),
+                           [](const document::Body& body) { return !body.shape.isNull(); });
+    };
+    const QString modify = tr("Modify");
+    {
+        using document::FeatureKind;
+        Command c = make("solid.pull", tr("&Pull"), create,
+                         tr("Pull closed areas of a sketch into a solid, or cut them out of one"));
+        c.iconName = QStringLiteral("pull");
+        c.shortcuts = {QKeySequence(Qt::Key_E)};
+        c.aliases = {tr("extrude"), tr("cut"),  tr("push"),       tr("pad"),
+                     tr("pocket"),  tr("boss"), tr("extrude cut")};
+        c.run = [this](bool) { startFeature(FeatureKind::Pull); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
+        c = make("solid.revolve", tr("Re&volve"), create,
+                 tr("Turn closed areas of a sketch about a line of it into a solid"));
+        c.iconName = QStringLiteral("revolve");
+        c.aliases = {tr("lathe"), tr("turn"), tr("spin"), tr("rotate profile")};
+        c.run = [this](bool) { startFeature(FeatureKind::Revolve); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
+        c = make("solid.mirror", tr("&Mirror"), create,
+                 tr("Add the mirror image of features, or of a whole body, in a plane"));
+        c.iconName = QStringLiteral("mirror");
+        c.aliases = {tr("symmetry"), tr("reflect"), tr("flip copy")};
+        c.run = [this](bool) { startFeature(FeatureKind::Mirror); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.patternRectangular", tr("&Rectangular Pattern"), create,
+                 tr("Repeat features, or a whole body, in rows and columns"));
+        c.iconName = QStringLiteral("pattern-rectangular");
+        c.aliases = {tr("pattern"), tr("array"), tr("linear pattern"), tr("grid"), tr("repeat")};
+        c.run = [this](bool) { startFeature(FeatureKind::RectangularPattern); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.patternCircular", tr("&Circular Pattern"), create,
+                 tr("Repeat features, or a whole body, around an axis"));
+        c.iconName = QStringLiteral("pattern-circular");
+        c.aliases = {tr("pattern"), tr("polar array"), tr("radial pattern"), tr("repeat")};
+        c.run = [this](bool) { startFeature(FeatureKind::CircularPattern); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.hole", tr("&Hole"), create,
+                 tr("Drill holes into a body at the points of a sketch: simple, counterbored, or "
+                    "countersunk"));
+        c.iconName = QStringLiteral("hole");
+        c.shortcuts = {QKeySequence(Qt::Key_H)};
+        c.aliases = {tr("drill"), tr("bore"), tr("counterbore"), tr("countersink"),
+                     tr("screw hole")};
+        c.run = [this](bool) { startFeature(FeatureKind::Hole); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("construct.offsetPlane", tr("&Offset Plane"), create,
+                 tr("Add a construction plane to sketch on: an origin plane or a flat face, "
+                    "moved along its normal"));
+        c.iconName = QStringLiteral("plane");
+        c.aliases = {tr("construction plane"), tr("work plane"), tr("datum plane"),
+                     tr("reference plane"), tr("plane")};
+        c.run = [this](bool) { startFeature(FeatureKind::Plane); };
+        c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
+        c = make("construct.axis", tr("&Axis"), create,
+                 tr("Add a construction axis to revolve about or pattern around: an origin axis, "
+                    "a straight edge, or the axis of a round edge or face"));
+        c.iconName = QStringLiteral("axis");
+        c.aliases = {tr("construction axis"), tr("work axis"), tr("datum axis"),
+                     tr("reference axis"), tr("axis through cylinder")};
+        c.run = [this](bool) { startFeature(FeatureKind::Axis); };
+        c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
+        c = make("model.parameters", tr("&Parameters…"), modify,
+                 tr("Name values, and work other values out from them"));
+        c.aliases = {tr("variables"), tr("user parameters"), tr("equations"), tr("expressions"),
+                     tr("change parameters")};
+        c.run = [this](bool) { showParameters(); };
+        m_commands->add(std::move(c));
+
+        c = make("solid.fillet", tr("&Fillet"), modify, tr("Round edges of a body"));
+        c.iconName = QStringLiteral("fillet");
+        c.shortcuts = {QKeySequence(Qt::Key_F)};
+        c.aliases = {tr("round"), tr("radius"), tr("blend")};
+        c.run = [this](bool) { startFeature(FeatureKind::Fillet); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.chamfer", tr("C&hamfer"), modify, tr("Bevel edges of a body"));
+        c.iconName = QStringLiteral("chamfer");
+        c.aliases = {tr("bevel")};
+        c.run = [this](bool) { startFeature(FeatureKind::Chamfer); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.shell", tr("&Shell"), modify,
+                 tr("Hollow a body out, leaving walls of a thickness"));
+        c.iconName = QStringLiteral("shell");
+        c.aliases = {tr("hollow")};
+        c.run = [this](bool) { startFeature(FeatureKind::Shell); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+    }
+
+    // The timeline
+    {
+        const QString timelineGroup = tr("Timeline");
+        const auto selectedFeature = [this]() -> const document::Feature* {
+            return document()->findFeature(m_timeline->selectedItem());
+        };
+        Command c = make("timeline.edit", tr("&Edit Feature"), timelineGroup,
+                         tr("Open the feature selected in the timeline for editing"));
+        c.aliases = {tr("edit feature"), tr("change feature")};
+        c.run = [this](bool) {
+            const document::ObjectId item = m_timeline->selectedItem();
+            if (document()->findFeature(item) != nullptr) {
+                editFeature(item);
+            } else if (document()->findSketch(item) != nullptr) {
+                editSketch(item);
+            }
+        };
+        c.isEnabled = [this] {
+            const document::ObjectId item = m_timeline->selectedItem();
+            return document()->findFeature(item) != nullptr ||
+                   document()->findSketch(item) != nullptr;
+        };
+        m_commands->add(std::move(c));
+
+        c = make("timeline.suppress", tr("&Suppress Feature"), timelineGroup,
+                 tr("Leave the selected feature out of the model, or put it back"));
+        c.aliases = {tr("disable feature"), tr("unsuppress"), tr("restore feature")};
+        c.run = [this, selectedFeature](bool) {
+            if (const document::Feature* feature = selectedFeature()) {
+                document()->setFeatureSuppressed(feature->id, !feature->suppressed);
+            }
+        };
+        c.isEnabled = [selectedFeature] { return selectedFeature() != nullptr; };
+        c.currentText = [this, selectedFeature] {
+            const document::Feature* feature = selectedFeature();
+            return feature != nullptr && feature->suppressed ? tr("Re&store Feature")
+                                                             : tr("&Suppress Feature");
+        };
+        m_commands->add(std::move(c));
+
+        c = make("timeline.rename", tr("Re&name Feature…"), timelineGroup,
+                 tr("Give the feature selected in the timeline another name"));
+        c.run = [this, selectedFeature](bool) {
+            const document::Feature* feature = selectedFeature();
+            if (feature == nullptr) {
+                return;
+            }
+            const document::ObjectId id = feature->id;
+            bool ok = false;
+            const QString name =
+                QInputDialog::getText(this, tr("Rename Feature"), tr("Name:"), QLineEdit::Normal,
+                                      QString::fromStdString(feature->name), &ok);
+            if (ok && !name.trimmed().isEmpty()) {
+                document()->renameFeature(id, name.trimmed().toStdString());
+            }
+        };
+        c.isEnabled = [selectedFeature] { return selectedFeature() != nullptr; };
+        m_commands->add(std::move(c));
+
+        c = make("timeline.rollBack", tr("Roll &Back to Here"), timelineGroup,
+                 tr("Move the history marker to just before the selected entry"));
+        c.aliases = {tr("history marker"), tr("rollback")};
+        c.run = [this](bool) {
+            const auto& timeline = document()->timeline();
+            const auto found =
+                std::find(timeline.begin(), timeline.end(), m_timeline->selectedItem());
+            if (found != timeline.end()) {
+                document()->setHistoryMarker(static_cast<std::size_t>(found - timeline.begin()));
+            }
+        };
+        c.isEnabled = [this] {
+            const auto& timeline = document()->timeline();
+            return std::find(timeline.begin(), timeline.end(), m_timeline->selectedItem()) !=
+                   timeline.end();
+        };
+        m_commands->add(std::move(c));
+
+        c = make("timeline.rollToEnd", tr("Roll &Forward to the End"), timelineGroup,
+                 tr("Move the history marker after the last entry, so that everything is "
+                    "applied"));
+        c.aliases = {tr("history marker"), tr("roll forward")};
+        c.run = [this](bool) { document()->setHistoryMarker(document()->timeline().size()); };
+        c.isEnabled = [this] {
+            return document()->historyMarker() < document()->timeline().size();
+        };
+        m_commands->add(std::move(c));
+    }
     defineSketchCommands();
 
     // Select
@@ -539,6 +827,16 @@ void MainWindow::defineCommands() {
         c.aliases = {tr("frame selection"), tr("zoom selected")};
         c.run = [this](bool) { m_viewport->fitSelection(); };
         c.isEnabled = [this] { return !isSketching() && !m_viewport->selection().empty(); };
+        m_commands->add(std::move(c));
+    }
+    {
+        Command c = make("inspect.measure", tr("&Measure"), tr("Inspect"),
+                         tr("Measure distances and angles between things picked in the 3D view"));
+        c.iconName = QStringLiteral("dimension");
+        c.shortcuts = {QKeySequence(Qt::Key_M)};
+        c.aliases = {tr("distance"), tr("ruler"), tr("angle"), tr("inspect"), tr("radius")};
+        c.run = [this](bool) { startMeasure(); };
+        c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
     }
     const std::tuple<StandardView, QString, const char*> views[] = {
@@ -879,6 +1177,20 @@ void MainWindow::defineSketchCommands() {
          "slot",
          {},
          {tr("oblong")}},
+        {SketchTool::Ellipse,
+         "sketch.ellipse",
+         tr("&Ellipse"),
+         tr("Draw an ellipse by its center, the end of its major axis, and its minor radius"),
+         "ellipse",
+         {},
+         {tr("oval")}},
+        {SketchTool::Spline,
+         "sketch.spline",
+         tr("Spli&ne"),
+         tr("Draw a smooth curve through its first and last points, toward the others"),
+         "spline",
+         {},
+         {tr("curve"), tr("freeform"), tr("bezier")}},
         {SketchTool::Trim,
          "sketch.trim",
          tr("&Trim"),
@@ -1047,10 +1359,29 @@ void MainWindow::createTopBar() {
     edit->addActions({action("edit.delete"), action("edit.cancel")});
 
     QMenu* create = m_menuBar->addMenu(tr("&Create"));
+    create->addActions({action("solid.pull"), action("solid.revolve"), action("solid.hole")});
+    QMenu* pattern = create->addMenu(tr("&Pattern"));
+    pattern->setObjectName(QStringLiteral("menu.pattern"));
+    pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
+    create->addAction(action("solid.mirror"));
+    create->addSeparator();
+    create->addActions({action("construct.offsetPlane"), action("construct.axis")});
+    create->addSeparator();
     for (const char* id :
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
         create->addAction(action(id));
     }
+
+    QMenu* modifyMenu = m_menuBar->addMenu(tr("&Modify"));
+    modifyMenu->addActions(
+        {action("solid.fillet"), action("solid.chamfer"), action("solid.shell")});
+    modifyMenu->addSeparator();
+    modifyMenu->addAction(action("model.parameters"));
+    QMenu* timelineMenu = modifyMenu->addMenu(tr("&Timeline"));
+    timelineMenu->addActions(
+        {action("timeline.edit"), action("timeline.rename"), action("timeline.suppress")});
+    timelineMenu->addSeparator();
+    timelineMenu->addActions({action("timeline.rollBack"), action("timeline.rollToEnd")});
 
     QMenu* sketchMenu = m_menuBar->addMenu(tr("S&ketch"));
     sketchMenu->addAction(action("sketch.new"));
@@ -1059,8 +1390,9 @@ void MainWindow::createTopBar() {
         {action("sketch.new.xy"), action("sketch.new.xz"), action("sketch.new.yz")});
     sketchMenu->addActions({action("sketch.edit"), action("sketch.finish")});
     sketchMenu->addSeparator();
-    for (const char* id : {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle",
-                           "sketch.arc", "sketch.point", "sketch.polygon", "sketch.slot"}) {
+    for (const char* id :
+         {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
+          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
@@ -1089,6 +1421,7 @@ void MainWindow::createTopBar() {
 
     QMenu* view = m_menuBar->addMenu(tr("&View"));
     view->addActions({action("view.fit"), action("view.fitSelection")});
+    view->addAction(action("inspect.measure"));
     view->addSeparator();
     for (const char* id : {"view.home", "view.front", "view.back", "view.left", "view.right",
                            "view.top", "view.bottom"}) {
@@ -1179,15 +1512,35 @@ void MainWindow::createToolbar() {
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
     // A sketch is where most solids start, so it leads the group.
-    toolbar->addWidget(groupLabel(tr("Create"), toolbar));
-    toolbar->addAction(action("sketch.new"));
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Create"), toolbar)));
+    for (const char* id : {"sketch.new", "solid.pull", "solid.revolve"}) {
+        toolbar->addAction(action(id));
+    }
+    auto* patterns = new QToolButton(toolbar);
+    patterns->setObjectName(QStringLiteral("patternButton"));
+    patterns->setToolTip(tr("Pattern and mirror"));
+    patterns->setPopupMode(QToolButton::InstantPopup);
+    patterns->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    auto* patternMenu = new QMenu(patterns);
+    patternMenu->addActions({action("solid.patternRectangular"), action("solid.patternCircular"),
+                             action("solid.mirror")});
+    patterns->setMenu(patternMenu);
+    patterns->setIcon(icon(QStringLiteral("pattern-rectangular")));
+    m_patternButton = patterns;
+    toolbar->addWidget(patterns);
     for (const char* id :
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
 
-    toolbar->addWidget(groupLabel(tr("Select"), toolbar));
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Modify"), toolbar)));
+    for (const char* id : {"solid.hole", "solid.fillet", "solid.chamfer", "solid.shell"}) {
+        toolbar->addAction(action(id));
+    }
+    toolbar->addSeparator();
+
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Select"), toolbar)));
     m_filterBox = new QComboBox(toolbar);
     m_filterBox->setObjectName(QStringLiteral("selectionFilter"));
     m_filterBox->setToolTip(tr("What a click in the 3D view picks"));
@@ -1200,8 +1553,8 @@ void MainWindow::createToolbar() {
     toolbar->addWidget(m_filterBox);
     toolbar->addSeparator();
 
-    toolbar->addWidget(groupLabel(tr("View"), toolbar));
-    for (const char* id : {"view.fit", "view.fitSelection", "view.grid"}) {
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("View"), toolbar)));
+    for (const char* id : {"inspect.measure", "view.fit", "view.fitSelection", "view.grid"}) {
         toolbar->addAction(action(id));
         auto* button = qobject_cast<QToolButton*>(toolbar->widgetForAction(action(id)));
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -1230,20 +1583,21 @@ void MainWindow::createSketchToolbar() {
     const int iconSize = Theme::instance().tokens().iconSize;
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
-    toolbar->addWidget(groupLabel(tr("Draw"), toolbar));
-    for (const char* id : {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle",
-                           "sketch.arc", "sketch.point", "sketch.polygon", "sketch.slot"}) {
+    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Draw"), toolbar)));
+    for (const char* id :
+         {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
+          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
-    toolbar->addWidget(groupLabel(tr("Modify"), toolbar));
+    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Modify"), toolbar)));
     for (const char* id :
          {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
-    toolbar->addWidget(groupLabel(tr("Constrain"), toolbar));
+    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Constrain"), toolbar)));
     toolbar->addAction(action("sketch.dimension"));
     // Each constraint has a button of its own while there is room. In a narrow window they
     // fold into one button that opens the list: see fitToolbar().
@@ -1273,6 +1627,7 @@ void MainWindow::createSketchToolbar() {
     finish->setObjectName(QStringLiteral("finishSketch"));
     finish->setDefaultAction(action("sketch.finish"));
     finish->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_finishButton = finish;
     toolbar->addWidget(finish);
     toolbar->hide();
 }
@@ -1290,9 +1645,16 @@ void MainWindow::fitToolbar() {
     if (m_modelToolbar == nullptr) {
         return;
     }
+    // How wide a toolbar wants to be now. Its layout keeps the answer it last gave until told
+    // that what is in it has changed.
+    const auto wanted = [](QToolBar* toolbar) {
+        toolbar->layout()->invalidate();
+        return toolbar->sizeHint().width();
+    };
     const auto setStyle = [this](Qt::ToolButtonStyle style) {
         for (const char* id :
-             {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
+             {"solid.revolve", "create.box", "create.cylinder", "create.sphere", "create.cone",
+              "create.torus", "solid.hole", "solid.chamfer", "solid.shell"}) {
             if (auto* button = qobject_cast<QToolButton*>(
                     m_modelToolbar->widgetForAction(m_commands->action(QLatin1String(id))))) {
                 button->setToolButtonStyle(style);
@@ -1300,11 +1662,35 @@ void MainWindow::fitToolbar() {
         }
     };
     setStyle(Qt::ToolButtonTextBesideIcon);
-    if (m_modelToolbar->sizeHint().width() > width()) {
+    const auto setLeading = [this](Qt::ToolButtonStyle style) {
+        for (const char* id : {"sketch.new", "solid.pull", "solid.fillet"}) {
+            if (auto* button = qobject_cast<QToolButton*>(
+                    m_modelToolbar->widgetForAction(m_commands->action(QLatin1String(id))))) {
+                button->setToolButtonStyle(style);
+            }
+        }
+    };
+    setLeading(Qt::ToolButtonTextBesideIcon);
+    if (wanted(m_modelToolbar) > width()) {
         setStyle(Qt::ToolButtonIconOnly);
     }
+    // The commands most used keep their labels longest.
+    if (wanted(m_modelToolbar) > width()) {
+        setLeading(Qt::ToolButtonIconOnly);
+    }
+    // Last, the names of the groups go; the separators still divide them.
+    for (QAction* label : std::as_const(m_modelGroupLabels)) {
+        label->setVisible(true);
+    }
+    if (wanted(m_modelToolbar) > width()) {
+        for (QAction* label : std::as_const(m_modelGroupLabels)) {
+            label->setVisible(false);
+        }
+    }
 
-    // The sketch toolbar gives up the constraints' own buttons for one that lists them.
+    // The sketch toolbar gives up the constraints' own buttons for one that lists them; then
+    // the names of its groups; and last, Finish Sketch its label, which the panel's button
+    // still has.
     if (m_sketchToolbar == nullptr || m_constraintsFolded == nullptr) {
         return;
     }
@@ -1315,14 +1701,33 @@ void MainWindow::fitToolbar() {
         m_constraintsFolded->setVisible(folded);
     };
     fold(false);
-    if (m_sketchToolbar->sizeHint().width() > width()) {
+    for (QAction* label : std::as_const(m_sketchGroupLabels)) {
+        label->setVisible(true);
+    }
+    m_finishButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    if (wanted(m_sketchToolbar) > width()) {
         fold(true);
+    }
+    if (wanted(m_sketchToolbar) > width()) {
+        for (QAction* label : std::as_const(m_sketchGroupLabels)) {
+            label->setVisible(false);
+        }
+    }
+    if (wanted(m_sketchToolbar) > width()) {
+        m_finishButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     }
 }
 
 void MainWindow::resizeEvent(QResizeEvent* event) {
     QMainWindow::resizeEvent(event);
     fitToolbar();
+}
+
+void MainWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    // The toolbar's buttons know their sizes only once the style sheet has been applied to
+    // them, which happens as they are shown.
+    QMetaObject::invokeMethod(this, &MainWindow::fitToolbar, Qt::QueuedConnection);
 }
 
 void MainWindow::createDocks() {
@@ -1334,20 +1739,12 @@ void MainWindow::createDocks() {
 
     // A strip, not a panel with a title bar of its own: it has to leave the height to the 3D
     // view.
-    auto* timeline = new QWidget(this);
-    auto* strip = new QHBoxLayout(timeline);
-    strip->setContentsMargins(0, 4, 8, 4);
-    strip->addWidget(groupLabel(tr("Timeline"), timeline));
-    auto* empty = new QLabel(tr("No features yet"), timeline);
-    empty->setObjectName(QStringLiteral("timeline"));
-    empty->setAlignment(Qt::AlignCenter);
-    empty->setToolTip(tr("Sketches and features will be listed here in the order they were made."));
-    strip->addWidget(empty, 1);
-    timeline->setMinimumHeight(34);
+    m_timeline = new TimelinePanel(this);
+    m_timeline->setMinimumHeight(34);
     m_timelineDock = new QDockWidget(tr("Timeline"), this);
     m_timelineDock->setObjectName(QStringLiteral("timelineDock"));
     m_timelineDock->setTitleBarWidget(new QWidget(m_timelineDock));
-    m_timelineDock->setWidget(timeline);
+    m_timelineDock->setWidget(m_timeline);
     addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
 
     // The right-hand panel holds the command in progress, or else what is selected.
@@ -1416,6 +1813,9 @@ void MainWindow::applyTheme() {
         if (!command->iconName.isEmpty()) {
             m_commands->action(id)->setIcon(icon(command->iconName));
         }
+    }
+    if (m_patternButton != nullptr) {
+        m_patternButton->setIcon(icon(QStringLiteral("pattern-rectangular")));
     }
     if (m_styleButton != nullptr) {
         for (const QString& id : m_commands->ids()) {
@@ -1549,6 +1949,10 @@ void MainWindow::activate(int index) {
     }
     m_browser->setOriginVisibility(session.origin);
     m_browser->setDocument(session.document.get(), documentName());
+    m_timeline->setDocument(session.document.get());
+    if (m_parametersDialog != nullptr) {
+        m_parametersDialog->setDocument(session.document.get());
+    }
     {
         const QSignalBlocker blocker(m_tabs);
         m_tabs->setCurrentIndex(index);
@@ -1632,6 +2036,10 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     if (replaced >= 0) {
         m_viewport->setDocument(nullptr);
         m_browser->setDocument(nullptr, {});
+        m_timeline->setDocument(nullptr);
+        if (m_parametersDialog != nullptr) {
+            m_parametersDialog->setDocument(nullptr);
+        }
         m_sessions.erase(m_sessions.begin() + replaced);
         {
             const QSignalBlocker blocker(m_tabs);
@@ -1673,6 +2081,10 @@ void MainWindow::closeDocument(int index) {
         cancelCommand();
         m_viewport->setDocument(nullptr);
         m_browser->setDocument(nullptr, {});
+        m_timeline->setDocument(nullptr);
+        if (m_parametersDialog != nullptr) {
+            m_parametersDialog->setDocument(nullptr);
+        }
         m_properties->refresh(nullptr, {}, {});
     } else {
         storeViewOf(m_current);
@@ -1790,6 +2202,36 @@ std::optional<kernel::Plane> MainWindow::selectedFacePlane() const {
     }
 }
 
+std::optional<std::pair<document::ObjectId, std::string>> MainWindow::selectedFaceName() const {
+    const std::vector<SelectedItem> picked = m_viewport->selection();
+    if (picked.size() != 1 || picked.front().kind != SelectedItem::Kind::Face ||
+        !selectedFacePlane().has_value()) {
+        return std::nullopt;
+    }
+    const kernel::NamedShape named = document()->namedBody(picked.front().body);
+    const auto index = static_cast<std::size_t>(picked.front().index);
+    if (index >= named.faceNames.size()) {
+        return std::nullopt;
+    }
+    return std::pair{picked.front().body, named.faceNames[index]};
+}
+
+document::ObjectId MainWindow::selectedConstructionPlane() const {
+    // The Construction group lists axes too.
+    for (const document::ObjectId id : m_browser->selectedPlanes()) {
+        const document::Feature* plane = document()->findFeature(id);
+        if (plane != nullptr && plane->kind == document::FeatureKind::Plane) {
+            return id;
+        }
+    }
+    const document::Feature* feature = document()->findFeature(m_timeline->selectedItem());
+    if (feature != nullptr && feature->kind == document::FeatureKind::Plane &&
+        m_timeline->isAncestorOf(QApplication::focusWidget())) {
+        return feature->id;
+    }
+    return {};
+}
+
 // Shows or hides bodies, and the sketches that are selected with them, as one undo step.
 void MainWindow::setBodiesVisible(const std::vector<document::ObjectId>& bodies, bool visible,
                                   const QString& label) {
@@ -1827,7 +2269,8 @@ void MainWindow::updateSelectionState() {
         if (m_panel == nullptr && m_planePanel == nullptr) {
             m_commandLabel->setText(m_viewport->sketchEditor()->hint());
         }
-    } else if (m_panel == nullptr && m_planePanel == nullptr) {
+    } else if (m_panel == nullptr && m_planePanel == nullptr && m_featurePanel == nullptr &&
+               m_measurePanel == nullptr) {
         // A sketch selected in the browser while it is hidden is not in the viewport's
         // selection, and is what is selected all the same.
         std::vector<SelectedItem> parts = m_viewport->selection();
@@ -1839,6 +2282,21 @@ void MainWindow::updateSelectionState() {
         }
         m_properties->refresh(document(), selectedBodies(), parts);
     }
+}
+
+std::string MainWindow::nameOf(const SelectedItem& item) const {
+    const kernel::NamedShape named = document()->namedBody(item.body);
+    const auto index = static_cast<std::size_t>(item.index);
+    if (item.kind == SelectedItem::Kind::Face && index < named.faceNames.size()) {
+        return named.faceNames[index];
+    }
+    if (item.kind == SelectedItem::Kind::Edge && !named.shape.isNull()) {
+        const std::vector<std::string> edges = kernel::edgeNames(named);
+        if (index < edges.size()) {
+            return edges[index];
+        }
+    }
+    return {};
 }
 
 QString MainWindow::describe(const SelectedItem& item) const {
@@ -2038,6 +2496,18 @@ void MainWindow::showInspector() {
         const QString title = tr("Create %1").arg(primitiveName(m_panel->kind()));
         m_inspectorDock->setWindowTitle(title);
         m_commandLabel->setText(title);
+    } else if (m_featurePanel != nullptr) {
+        stack->setCurrentWidget(m_featurePanel);
+        const QString name = featureKindName(m_featurePanel->kind());
+        const document::Feature* edited = document()->findFeature(m_editedFeature);
+        const QString title =
+            edited != nullptr ? tr("Edit %1").arg(QString::fromStdString(edited->name)) : name;
+        m_inspectorDock->setWindowTitle(title);
+        m_commandLabel->setText(title);
+    } else if (m_measurePanel != nullptr) {
+        stack->setCurrentWidget(m_measurePanel);
+        m_inspectorDock->setWindowTitle(tr("Measure"));
+        m_commandLabel->setText(tr("Measure"));
     } else if (m_planePanel != nullptr) {
         stack->setCurrentWidget(m_planePanel);
         m_inspectorDock->setWindowTitle(tr("New Sketch"));
@@ -2089,6 +2559,12 @@ void MainWindow::acceptCommand() {
 }
 
 void MainWindow::cancelCommand() {
+    if (m_featurePanel != nullptr) {
+        closeFeaturePanel();
+    }
+    if (m_measurePanel != nullptr) {
+        closeMeasure();
+    }
     if (m_panel == nullptr && m_planePanel == nullptr) {
         return;
     }
@@ -2137,6 +2613,754 @@ void MainWindow::deleteSelectedBodies() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Features
+
+namespace {
+
+bool usesProfiles(document::FeatureKind kind) {
+    return kind == document::FeatureKind::Pull || kind == document::FeatureKind::Revolve;
+}
+
+bool copiesFeatures(document::FeatureKind kind) {
+    return kind == document::FeatureKind::Mirror ||
+           kind == document::FeatureKind::RectangularPattern ||
+           kind == document::FeatureKind::CircularPattern;
+}
+
+} // namespace
+
+std::vector<document::ObjectId> MainWindow::profileSketches(document::ObjectId also) const {
+    std::vector<document::ObjectId> sketches;
+    for (const document::SketchItem& sketch : document()->sketches()) {
+        if (sketch.visible || sketch.id == also) {
+            sketches.push_back(sketch.id);
+        }
+    }
+    // Hidden ones that are selected count as well: picking them in the browser is how to say
+    // which sketch is meant.
+    for (const document::ObjectId id : selectedSketches()) {
+        if (std::find(sketches.begin(), sketches.end(), id) == sketches.end()) {
+            sketches.push_back(id);
+        }
+    }
+    return sketches;
+}
+
+void MainWindow::startFeature(document::FeatureKind kind) {
+    // The sketch that was open, or else the one selected, is where a pull starts from.
+    document::ObjectId from;
+    if (isSketching()) {
+        from = m_viewport->editedSketch();
+        finishSketch();
+    } else if (const auto sketches = selectedSketches(); sketches.size() == 1) {
+        from = sketches.front();
+    }
+    // Edges or faces already selected are what a fillet, chamfer, or shell works on.
+    const std::vector<SelectedItem> picked = m_viewport->selection();
+    // A pull or a revolve selected in the timeline is what a pattern or a mirror copies; or a
+    // body selected is what is copied whole.
+    document::Feature seed;
+    seed.kind = kind;
+    if (copiesFeatures(kind)) {
+        const document::Feature* source = document()->findFeature(m_timeline->selectedItem());
+        const std::vector<document::ObjectId> bodies = targetBodies();
+        if (source != nullptr && usesProfiles(source->kind) &&
+            document()->findBody(source->body) != nullptr) {
+            seed.body = source->body;
+            seed.sources = {source->id};
+        } else if (!bodies.empty()) {
+            seed.body = bodies.front();
+        } else {
+            for (const document::Body& body : document()->bodies()) {
+                if (!body.shape.isNull()) {
+                    seed.body = body.id;
+                    break;
+                }
+            }
+        }
+        seed.reference = kind == document::FeatureKind::Mirror            ? "YZ"
+                         : kind == document::FeatureKind::CircularPattern ? "Z"
+                                                                          : "X";
+        seed.count = kind == document::FeatureKind::CircularPattern ? 4 : 3;
+        seed.count2 = 2;
+        seed.spacing = 20.0;
+        seed.spacing2 = 20.0;
+        seed.angle = 360.0;
+    }
+    if (kind == document::FeatureKind::Hole) {
+        // The points of the sketch that was open or is selected, or else of the last sketch
+        // that has any; into the face it is on, or the first body.
+        seed.size = 5.0;
+        seed.distance = 10.0;
+        seed.sketch = from;
+        if (!seed.sketch.isValid()) {
+            for (const document::SketchItem& sketch : document()->sketches()) {
+                for (const sketch::Entity& entity : sketch.geometry.entities()) {
+                    if (entity.kind == sketch::EntityKind::Point && entity.owner == 0 &&
+                        !entity.construction && entity.id != sketch.geometry.origin()) {
+                        seed.sketch = sketch.id;
+                    }
+                }
+            }
+        }
+        const document::SketchItem* points = document()->findSketch(seed.sketch);
+        if (points != nullptr && document()->findBody(points->attachedTo) != nullptr) {
+            seed.body = points->attachedTo;
+        } else {
+            for (const document::Body& body : document()->bodies()) {
+                if (!body.shape.isNull()) {
+                    seed.body = body.id;
+                    break;
+                }
+            }
+        }
+    }
+    if (kind == document::FeatureKind::Plane) {
+        // Against the flat face that is selected, or else the XY plane.
+        seed.reference = "XY";
+        seed.distance = 20.0;
+        if (const auto face = selectedFaceName()) {
+            seed.body = face->first;
+            seed.reference = face->second;
+        }
+    }
+    if (kind == document::FeatureKind::Axis) {
+        // Along the edge or face that is selected, or else the Z axis.
+        seed.reference = "Z";
+        if (picked.size() == 1 && (picked.front().kind == SelectedItem::Kind::Edge ||
+                                   picked.front().kind == SelectedItem::Kind::Face)) {
+            if (const std::string name = nameOf(picked.front()); !name.empty()) {
+                seed.body = picked.front().body;
+                seed.reference = name;
+            }
+        }
+    }
+    cancelCommand();
+    m_editedFeature = {};
+    openFeaturePanel(kind);
+    if (kind == document::FeatureKind::Axis) {
+        m_featurePanel->setFeature(seed);
+        if (seed.body.isValid()) {
+            // What it is placed along stays picked, and is named in the panel.
+            m_settingPicks = true;
+            m_viewport->setSelection(picked);
+            m_settingPicks = false;
+        }
+    } else if (kind == document::FeatureKind::Plane || kind == document::FeatureKind::Hole) {
+        m_featurePanel->setFeature(seed);
+        m_settingPicks = true;
+        m_viewport->clearSelection();
+        m_settingPicks = false;
+    } else if (copiesFeatures(kind)) {
+        m_featurePanel->setFeature(seed);
+        m_settingPicks = true;
+        m_viewport->clearSelection();
+        m_settingPicks = false;
+    } else if (usesProfiles(kind)) {
+        m_viewport->setProfileSketches(profileSketches(from), kind == document::FeatureKind::Pull);
+        // A sketch with one closed area leaves no doubt about which is meant.
+        std::vector<viewport::Profile> profiles;
+        for (const viewport::Profile& profile : m_viewport->pickableProfiles()) {
+            if (profile.sketch == from) {
+                profiles.push_back(profile);
+            }
+        }
+        if (profiles.size() == 1) {
+            m_viewport->setPickedProfiles(profiles);
+        }
+    } else {
+        m_settingPicks = true;
+        m_viewport->setSelection(picked);
+        m_settingPicks = false;
+    }
+    takeFeaturePicks();
+    statusBar()->showMessage(
+        m_featurePanel->findChild<QLabel*>(QStringLiteral("featureInput"))->text(), 9000);
+}
+
+bool MainWindow::editFeature(document::ObjectId id) {
+    const document::Feature* found = document()->findFeature(id);
+    if (found == nullptr) {
+        return false;
+    }
+    if (isSketching()) {
+        finishSketch();
+    }
+    cancelCommand();
+    const document::Feature feature = *found;
+    // The model as it was just before the feature: what it works on can be seen and picked.
+    document()->setEditedFeature(id);
+    m_editedFeature = id;
+    m_timeline->setActiveItem(id);
+    openFeaturePanel(feature.kind);
+    m_featurePanel->setFeature(feature);
+    m_settingPicks = true;
+    if (usesProfiles(feature.kind)) {
+        m_viewport->setProfileSketches(profileSketches(feature.sketch),
+                                       feature.kind == document::FeatureKind::Pull);
+        std::vector<viewport::Profile> profiles;
+        for (const viewport::Profile& profile : m_viewport->pickableProfiles()) {
+            const bool used =
+                feature.regions.empty() || std::find(feature.regions.begin(), feature.regions.end(),
+                                                     profile.outline) != feature.regions.end();
+            if (profile.sketch == feature.sketch && used) {
+                profiles.push_back(profile);
+            }
+        }
+        m_viewport->setPickedProfiles(profiles);
+    } else if (copiesFeatures(feature.kind) || feature.kind == document::FeatureKind::Plane ||
+               feature.kind == document::FeatureKind::Axis ||
+               feature.kind == document::FeatureKind::Hole) {
+        m_viewport->clearSelection();
+    } else {
+        // The edges or faces it works on, as far as the body still has them.
+        const kernel::NamedShape body = document()->namedBody(feature.body);
+        std::vector<SelectedItem> items;
+        if (feature.kind == document::FeatureKind::Shell) {
+            for (const std::string& name : feature.faces) {
+                if (const int index = kernel::findFace(body, name); index >= 0) {
+                    items.push_back({feature.body, SelectedItem::Kind::Face, index});
+                }
+            }
+            if (feature.faces.empty()) {
+                items.push_back({feature.body, SelectedItem::Kind::Body, -1});
+            }
+        } else {
+            for (const std::string& name : feature.edges) {
+                if (const int index = kernel::findEdge(body, name); index >= 0) {
+                    items.push_back({feature.body, SelectedItem::Kind::Edge, index});
+                }
+            }
+        }
+        m_viewport->setSelection(items);
+    }
+    m_settingPicks = false;
+    updateFeaturePreview();
+    return true;
+}
+
+void MainWindow::openFeaturePanel(document::FeatureKind kind) {
+    m_featurePanel = new FeaturePanel(kind, document(), m_inspectorStack);
+    m_featurePanel->setObjectName(QStringLiteral("featurePanel"));
+    m_inspectorStack->addWidget(m_featurePanel);
+    connect(m_featurePanel, &FeaturePanel::changed, this, &MainWindow::updateFeaturePreview);
+    connect(m_featurePanel, &FeaturePanel::accepted, this, &MainWindow::acceptFeature);
+    connect(m_featurePanel, &FeaturePanel::canceled, this, &MainWindow::cancelCommand);
+    if (!usesProfiles(kind)) {
+        // Edges are what a fillet or a chamfer is clicked on, faces what a shell opens or a
+        // mirror is in; a pattern takes its direction or axis from either.
+        m_filterBeforeFeature = m_viewport->selectionFilter();
+        SelectionFilter filter = SelectionFilter::Edges;
+        if (kind == document::FeatureKind::Shell || kind == document::FeatureKind::Mirror ||
+            kind == document::FeatureKind::Plane) {
+            filter = SelectionFilter::Faces;
+        } else if (copiesFeatures(kind) || kind == document::FeatureKind::Hole ||
+                   kind == document::FeatureKind::Axis) {
+            // A hole's sketch is picked by clicking it, which needs edges to be pickable; an
+            // axis runs along an edge or a round face.
+            filter = SelectionFilter::FacesEdgesVertices;
+        }
+        m_viewport->setSelectionFilter(filter);
+    }
+    showInspector();
+    // A command needs its panel, even if the user had closed it.
+    m_inspectorDock->show();
+    m_commands->refresh();
+}
+
+void MainWindow::closeFeaturePanel() {
+    if (m_featurePanel == nullptr) {
+        return;
+    }
+    m_viewport->setProfileSketches({});
+    m_viewport->setFeaturePreview({}, kernel::Shape());
+    m_viewport->setPreview(kernel::Shape());
+    if (m_filterBeforeFeature.has_value()) {
+        m_viewport->setSelectionFilter(*m_filterBeforeFeature);
+        m_filterBeforeFeature.reset();
+    }
+    m_inspectorStack->removeWidget(m_featurePanel);
+    // Nothing it says from now on is news: a box that loses the focus as the panel goes still
+    // reports its value.
+    m_featurePanel->disconnect(this);
+    // Later: this may be running inside one of the panel's own signals.
+    m_featurePanel->deleteLater();
+    m_featurePanel = nullptr;
+    if (m_editedFeature.isValid()) {
+        m_editedFeature = {};
+        m_timeline->setActiveItem({});
+        // The whole model again.
+        document()->setEditedFeature({});
+    }
+    statusBar()->clearMessage();
+    showInspector();
+    m_viewport->setFocus();
+    updateSelectionState();
+}
+
+void MainWindow::takeFeaturePicks() {
+    if (m_featurePanel == nullptr) {
+        return;
+    }
+    const document::FeatureKind kind = m_featurePanel->kind();
+    if (usesProfiles(kind)) {
+        // A face clicked is where a pull up to a face ends.
+        for (const SelectedItem& item : m_viewport->selection()) {
+            if (item.kind != SelectedItem::Kind::Face) {
+                continue;
+            }
+            const kernel::NamedShape named = document()->namedBody(item.body);
+            const auto index = static_cast<std::size_t>(item.index);
+            if (m_featurePanel->goesToFace() && index < named.faceNames.size()) {
+                m_featurePanel->setExtentFace(item.body, named.faceNames[index], describe(item));
+            } else if (!m_featurePanel->goesToFace()) {
+                statusBar()->showMessage(
+                    tr("To pull up to that face, choose To Face under Direction first."), 6000);
+                m_settingPicks = true;
+                m_viewport->clearSelection();
+                m_settingPicks = false;
+            }
+            break;
+        }
+        // All from one sketch: the one clicked last.
+        std::vector<viewport::Profile> picked = m_viewport->pickedProfiles();
+        if (picked.empty()) {
+            m_featurePanel->setProfiles({}, {});
+            return;
+        }
+        const document::ObjectId sketch = picked.back().sketch;
+        const auto others = std::erase_if(
+            picked, [sketch](const viewport::Profile& p) { return p.sketch != sketch; });
+        if (others > 0) {
+            m_viewport->setPickedProfiles(picked);
+        }
+        std::vector<std::vector<sketch::EntityId>> outlines;
+        for (const viewport::Profile& profile : picked) {
+            outlines.emplace_back(profile.outline.begin(), profile.outline.end());
+        }
+        m_featurePanel->setProfiles(sketch, outlines);
+        return;
+    }
+    if (kind == document::FeatureKind::Hole) {
+        // A sketch clicked is where the holes go.
+        for (const SelectedItem& item : m_viewport->selection()) {
+            if (item.kind == SelectedItem::Kind::Sketch) {
+                m_featurePanel->setSketch(item.body);
+                break;
+            }
+        }
+        return;
+    }
+    if (copiesFeatures(kind) || kind == document::FeatureKind::Plane ||
+        kind == document::FeatureKind::Axis) {
+        // The edge or face that gives the plane, the direction, or the axis.
+        for (const SelectedItem& item : m_viewport->selection()) {
+            if (item.kind != SelectedItem::Kind::Face &&
+                (item.kind != SelectedItem::Kind::Edge || kind == document::FeatureKind::Plane)) {
+                continue;
+            }
+            if (const std::string name = nameOf(item); !name.empty()) {
+                m_featurePanel->setPickedReference(item.body, name, describe(item));
+            }
+            break;
+        }
+        return;
+    }
+    // Edges or faces, of one body: the one picked first.
+    const std::vector<SelectedItem> selection = m_viewport->selection();
+    document::ObjectId body;
+    std::vector<int> indices;
+    for (const SelectedItem& item : selection) {
+        if (!body.isValid()) {
+            body = item.body;
+        }
+        if (item.body == body && item.index >= 0) {
+            indices.push_back(item.index);
+        }
+    }
+    const kernel::NamedShape named = document()->namedBody(body);
+    std::vector<std::string> names;
+    if (kind == document::FeatureKind::Shell) {
+        for (const int index : indices) {
+            if (index < static_cast<int>(named.faceNames.size())) {
+                names.push_back(named.faceNames[static_cast<std::size_t>(index)]);
+            }
+        }
+        m_featurePanel->setFaces(body, names);
+    } else {
+        const std::vector<std::string> edges =
+            named.shape.isNull() ? std::vector<std::string>() : kernel::edgeNames(named);
+        for (const int index : indices) {
+            if (index < static_cast<int>(edges.size())) {
+                names.push_back(edges[static_cast<std::size_t>(index)]);
+            }
+        }
+        m_featurePanel->setEdges(names.empty() ? document::ObjectId{} : body, names);
+    }
+}
+
+void MainWindow::updateFeaturePreview() {
+    if (m_featurePanel == nullptr) {
+        return;
+    }
+    const auto clear = [this] {
+        m_viewport->setFeaturePreview({}, kernel::Shape());
+        m_viewport->setPreview(kernel::Shape());
+    };
+    if (!m_featurePanel->hasInput()) {
+        m_featurePanel->setError({});
+        clear();
+        return;
+    }
+    document::Feature feature = m_featurePanel->feature();
+    if (feature.kind == document::FeatureKind::Axis) {
+        const document::FeatureTrial trial = document()->tryFeature(feature);
+        m_featurePanel->setError(QString::fromStdString(trial.error));
+        m_viewport->setFeaturePreview({}, kernel::Shape());
+        kernel::Shape line;
+        if (trial.axis.has_value()) {
+            try {
+                line = document::axisShape(*trial.axis);
+            } catch (const std::exception&) {
+                // Nothing to show; the panel says what is wrong, if anything.
+            }
+        }
+        m_viewport->setPreview(line);
+        return;
+    }
+    if (feature.kind == document::FeatureKind::Plane) {
+        const document::FeatureTrial trial = document()->tryFeature(feature);
+        m_featurePanel->setError(QString::fromStdString(trial.error));
+        m_viewport->setFeaturePreview({}, kernel::Shape());
+        kernel::Shape square;
+        if (trial.plane.has_value()) {
+            try {
+                square = document::planeShape(*trial.plane);
+            } catch (const std::exception&) {
+                // Nothing to show; the panel says what is wrong, if anything.
+            }
+        }
+        m_viewport->setPreview(square);
+        return;
+    }
+    if (usesProfiles(feature.kind) && !m_featurePanel->operationChosen() &&
+        feature.body.isValid()) {
+        // Until the user chooses, LCAD guesses: a solid that lies mostly inside the body is
+        // meant to cut it, one that meets it to join it, and one apart from it to be a body of
+        // its own.
+        document::Feature join = feature;
+        join.operation = document::Operation::Join;
+        const document::FeatureTrial trial = document()->tryFeature(join);
+        if (trial.error.empty()) {
+            const kernel::NamedShape target = document()->namedBody(feature.body);
+            const double tool = kernel::volume(trial.tool.shape);
+            const double shared =
+                kernel::volume(target.shape) + tool - kernel::volume(trial.result.shape);
+            const bool apart = kernel::countTopology(trial.result.shape).solids >
+                               kernel::countTopology(target.shape).solids;
+            const document::Operation guess = shared > 0.5 * tool ? document::Operation::Cut
+                                              : apart             ? document::Operation::NewBody
+                                                                  : document::Operation::Join;
+            if (guess != feature.operation) {
+                // The panel reports the change, which brings this back with the guess in place.
+                m_featurePanel->suggestOperation(guess);
+                return;
+            }
+        }
+    }
+    const document::FeatureTrial trial = document()->tryFeature(feature);
+    m_featurePanel->setError(QString::fromStdString(trial.error));
+    if (usesProfiles(feature.kind)) {
+        // The body as the feature leaves it, in place of the body; and the solid itself, seen
+        // through, where it takes something away or does not work.
+        const bool showTool = !trial.error.empty() ||
+                              feature.operation == document::Operation::Cut ||
+                              feature.operation == document::Operation::Intersect;
+        m_viewport->setFeaturePreview(feature.body, trial.result.shape);
+        m_viewport->setPreview(showTool ? trial.tool.shape : kernel::Shape());
+    } else {
+        // In place of the body, which stays there unseen, so that its edges and faces can still
+        // be picked. Where the feature fails, the body as it is.
+        m_viewport->setPreview(kernel::Shape());
+        m_viewport->setFeaturePreview(feature.body, trial.result.shape, true);
+    }
+}
+
+void MainWindow::acceptFeature() {
+    if (m_featurePanel == nullptr || !m_featurePanel->hasInput() ||
+        !m_featurePanel->errorText().isEmpty()) {
+        return;
+    }
+    const document::Feature feature = m_featurePanel->feature();
+    const document::ObjectId editing = m_editedFeature;
+    try {
+        if (editing.isValid()) {
+            m_editedFeature = {};
+            m_timeline->setActiveItem({});
+            document()->setEditedFeature({});
+            document()->changeFeature(editing, feature);
+        } else {
+            document::Transaction transaction(*document(),
+                                              featureKindName(feature.kind).toStdString());
+            const document::ObjectId id = document()->addFeature(feature);
+            // The sketch has done its work, and its lines would only clutter the solid.
+            if (usesProfiles(feature.kind) || feature.kind == document::FeatureKind::Hole) {
+                document()->setSketchVisible(feature.sketch, false);
+            }
+            transaction.commit();
+            m_timeline->setSelectedItem(id);
+        }
+    } catch (const std::invalid_argument& failure) {
+        QMessageBox::warning(this, tr("Could not apply the %1").arg(featureKindName(feature.kind)),
+                             QString::fromUtf8(failure.what()));
+        return;
+    }
+    closeFeaturePanel();
+    // What was picked for the feature has done its work.
+    m_viewport->clearSelection();
+    m_browser->setSelection({}, {});
+    updateSelectionState();
+}
+
+void MainWindow::deleteTimelineItem(document::ObjectId item) {
+    if (document()->findFeature(item) != nullptr) {
+        document()->removeFeature(item);
+    } else if (document()->findSketch(item) != nullptr) {
+        document::Transaction transaction(*document(), tr("Delete Sketch").toStdString());
+        document()->removeSketch(item);
+        transaction.commit();
+    } else if (document()->findBody(item) != nullptr) {
+        document::Transaction transaction(*document(), tr("Delete Body").toStdString());
+        document()->removeBody(item);
+        transaction.commit();
+    }
+    updateSelectionState();
+}
+
+void MainWindow::onTimelineSelection(document::ObjectId item) {
+    // What an entry stands for is selected in the 3D view and the browser too: a sketch, a
+    // body, or the body a feature makes or changes.
+    if (m_featurePanel != nullptr || isSketching() || m_planePanel != nullptr ||
+        m_panel != nullptr) {
+        updateSelectionState();
+        return;
+    }
+    std::vector<document::ObjectId> bodies;
+    std::vector<document::ObjectId> sketches;
+    if (const document::Feature* feature = document()->findFeature(item)) {
+        const document::Body* body = document()->findBody(feature->body);
+        if (body != nullptr && !body->shape.isNull()) {
+            bodies.push_back(body->id);
+        }
+    } else if (document()->findSketch(item) != nullptr) {
+        sketches.push_back(item);
+    } else if (document()->findBody(item) != nullptr) {
+        bodies.push_back(item);
+    }
+    m_browser->setSelection(bodies, sketches);
+    std::vector<SelectedItem> items;
+    for (const document::ObjectId id : bodies) {
+        items.push_back({id, SelectedItem::Kind::Body, -1});
+    }
+    for (const document::ObjectId id : sketches) {
+        items.push_back({id, SelectedItem::Kind::Sketch, -1});
+    }
+    m_selectionComesFromBrowser = true;
+    m_viewport->setSelection(items);
+    m_selectionComesFromBrowser = false;
+    updateSelectionState();
+    if (const document::Feature* feature = document()->findFeature(item)) {
+        if (const std::string error = document()->featureError(item); !error.empty()) {
+            statusBar()->showMessage(
+                tr("%1 fails: %2")
+                    .arg(QString::fromStdString(feature->name), QString::fromStdString(error)),
+                12000);
+        }
+    }
+}
+
+void MainWindow::showTimelineMenu(document::ObjectId item, const QPoint& where) {
+    m_commands->refresh();
+    auto* menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    const auto action = [this](const char* id) { return m_commands->action(QLatin1String(id)); };
+    if (document()->findFeature(item) != nullptr) {
+        menu->addActions(
+            {action("timeline.edit"), action("timeline.rename"), action("timeline.suppress")});
+    } else if (document()->findSketch(item) != nullptr) {
+        menu->addAction(action("timeline.edit"));
+    }
+    menu->addSeparator();
+    menu->addActions({action("timeline.rollBack"), action("timeline.rollToEnd")});
+    menu->addSeparator();
+    menu->addAction(tr("&Delete"), this, [this, item] { deleteTimelineItem(item); });
+    menu->popup(where);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Measuring
+
+void MainWindow::startMeasure() {
+    if (isSketching()) {
+        return;
+    }
+    // What is selected already is the first thing measured, and the second if there are two.
+    std::vector<SelectedItem> picked = m_viewport->selection();
+    cancelCommand();
+    m_measurePanel = new MeasurePanel(m_inspectorStack);
+    m_measurePanel->setObjectName(QStringLiteral("measurePanel"));
+    m_inspectorStack->addWidget(m_measurePanel);
+    connect(m_measurePanel, &MeasurePanel::closed, this, &MainWindow::cancelCommand);
+    m_filterBeforeMeasure = m_viewport->selectionFilter();
+    m_viewport->setSelectionFilter(SelectionFilter::FacesEdgesVertices);
+    if (picked.size() > 2) {
+        picked.erase(picked.begin(), picked.end() - 2);
+    }
+    m_measured = picked;
+    showInspector();
+    m_inspectorDock->show();
+    m_settingPicks = true;
+    m_viewport->setSelection(m_measured);
+    m_settingPicks = false;
+    showMeasurement();
+    m_commands->refresh();
+}
+
+void MainWindow::closeMeasure() {
+    if (m_measurePanel == nullptr) {
+        return;
+    }
+    m_viewport->setPreview(kernel::Shape());
+    if (m_filterBeforeMeasure.has_value()) {
+        m_viewport->setSelectionFilter(*m_filterBeforeMeasure);
+        m_filterBeforeMeasure.reset();
+    }
+    m_measured.clear();
+    m_inspectorStack->removeWidget(m_measurePanel);
+    m_measurePanel->disconnect(this);
+    m_measurePanel->deleteLater();
+    m_measurePanel = nullptr;
+    showInspector();
+    updateSelectionState();
+}
+
+void MainWindow::takeMeasurePick() {
+    const std::vector<SelectedItem> now = m_viewport->selection();
+    if (now.size() >= 2) {
+        // Picked together, with Shift: the last two.
+        m_measured.assign(now.end() - 2, now.end());
+    } else if (now.size() == 1) {
+        // A click picks the next thing: the second, or after two, the first again.
+        if (m_measured.size() == 1 && !(m_measured.front() == now.front())) {
+            m_measured.push_back(now.front());
+        } else {
+            m_measured = now;
+        }
+    } else {
+        m_measured.clear();
+    }
+    m_settingPicks = true;
+    m_viewport->setSelection(m_measured);
+    m_settingPicks = false;
+    showMeasurement();
+}
+
+kernel::Shape MainWindow::shapeOf(const SelectedItem& item) const {
+    if (item.kind == SelectedItem::Kind::Sketch) {
+        const document::SketchItem* sketch = document()->findSketch(item.body);
+        return sketch != nullptr ? document::sketchShape(*sketch, document::SketchPart::Ordinary)
+                                 : kernel::Shape();
+    }
+    const document::Body* body = document()->findBody(item.body);
+    if (body == nullptr || body->shape.isNull()) {
+        return {};
+    }
+    try {
+        switch (item.kind) {
+        case SelectedItem::Kind::Face:
+            return kernel::subShape(body->shape, kernel::SubShapeKind::Face, item.index);
+        case SelectedItem::Kind::Edge:
+            return kernel::subShape(body->shape, kernel::SubShapeKind::Edge, item.index);
+        case SelectedItem::Kind::Vertex:
+            return kernel::subShape(body->shape, kernel::SubShapeKind::Vertex, item.index);
+        case SelectedItem::Kind::Body:
+        case SelectedItem::Kind::Sketch:
+            break;
+        }
+    } catch (const std::out_of_range&) {
+        return {};
+    }
+    return body->shape;
+}
+
+void MainWindow::showMeasurement() {
+    if (m_measurePanel == nullptr) {
+        return;
+    }
+    m_viewport->setPreview(kernel::Shape());
+    const auto millimeters = [](double value) { return tr("%1 mm").arg(formatNumber(value)); };
+    QList<QPair<QString, QString>> rows;
+    if (m_measured.empty()) {
+        m_measurePanel->show(tr("Nothing picked yet"), rows);
+        return;
+    }
+    const kernel::Shape first = shapeOf(m_measured.front());
+    if (m_measured.size() == 1 || first.isNull()) {
+        // One thing: what it is, and its own measures.
+        if (const auto radius = kernel::radiusOf(first)) {
+            rows.append({tr("Radius"), millimeters(*radius)});
+            rows.append({tr("Diameter"), millimeters(2.0 * *radius)});
+        }
+        switch (m_measured.front().kind) {
+        case SelectedItem::Kind::Edge:
+            rows.append({tr("Length"), millimeters(kernel::length(first))});
+            break;
+        case SelectedItem::Kind::Face:
+            rows.append({tr("Area"), tr("%1 mm²").arg(formatNumber(kernel::surfaceArea(first)))});
+            break;
+        case SelectedItem::Kind::Vertex:
+            if (const auto box = kernel::boundingBox(first)) {
+                rows.append(
+                    {tr("Position"), tr("%1, %2, %3 mm")
+                                         .arg(formatNumber(box->min.x), formatNumber(box->min.y),
+                                              formatNumber(box->min.z))});
+            }
+            break;
+        case SelectedItem::Kind::Body:
+            rows.append({tr("Volume"), tr("%1 mm³").arg(formatNumber(kernel::volume(first)))});
+            break;
+        case SelectedItem::Kind::Sketch:
+            rows.append({tr("Length"), millimeters(kernel::length(first))});
+            break;
+        }
+        m_measurePanel->show(describe(m_measured.front()).section(QStringLiteral(" · "), 0, 0),
+                             rows);
+        return;
+    }
+    const kernel::Shape second = shapeOf(m_measured.back());
+    if (second.isNull()) {
+        m_measurePanel->show(tr("That cannot be measured"), rows);
+        return;
+    }
+    const kernel::Measurement between = kernel::measureBetween(first, second);
+    rows.append({tr("Distance"), millimeters(between.distance)});
+    rows.append({tr("Along X"), millimeters(between.to.x - between.from.x)});
+    rows.append({tr("Along Y"), millimeters(between.to.y - between.from.y)});
+    rows.append({tr("Along Z"), millimeters(between.to.z - between.from.z)});
+    if (between.angle.has_value()) {
+        rows.append({tr("Angle"), tr("%1°").arg(formatNumber(*between.angle))});
+    }
+    m_measurePanel->show(tr("%1 to %2")
+                             .arg(describe(m_measured.front()).section(QStringLiteral(" · "), 0, 0),
+                                  describe(m_measured.back()).section(QStringLiteral(" · "), 0, 0)),
+                         rows);
+    // The shortest distance, drawn between where it is.
+    if (between.distance > 1e-9) {
+        m_viewport->setPreview(kernel::makeSegment(between.from, between.to));
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Sketching
 
 bool MainWindow::isSketching() const {
@@ -2151,11 +3375,22 @@ void MainWindow::startSketch() {
     if (isSketching()) {
         return;
     }
-    // A flat face that is selected is where the sketch goes.
+    // A construction plane that is selected, or else a flat face that is, is where the sketch
+    // goes, and what it follows.
+    const document::ObjectId construction = selectedConstructionPlane();
     const std::optional<kernel::Plane> face = selectedFacePlane();
+    const auto faceName = selectedFaceName();
     cancelCommand();
+    if (const auto state = document()->planeState(construction)) {
+        createSketch(state->plane, construction);
+        return;
+    }
     if (face.has_value()) {
-        createSketch(*face);
+        if (faceName.has_value()) {
+            createSketch(*face, faceName->first, faceName->second);
+        } else {
+            createSketch(*face);
+        }
         return;
     }
     m_planePanel = new SketchPlanePanel(m_inspectorStack);
@@ -2176,13 +3411,15 @@ void MainWindow::startSketch() {
         tr("Click a plane in the 3D view, or a flat face of a body, to sketch on it."), 9000);
 }
 
-document::ObjectId MainWindow::createSketch(const kernel::Plane& plane) {
+document::ObjectId MainWindow::createSketch(const kernel::Plane& plane,
+                                            document::ObjectId attachedTo,
+                                            const std::string& attachedFace) {
     if (isSketching()) {
         finishSketch();
     }
     cancelCommand();
-    const document::ObjectId id =
-        document()->addSketch(document()->uniqueSketchName("Sketch"), plane);
+    const document::ObjectId id = document()->addSketch(document()->uniqueSketchName("Sketch"),
+                                                        plane, attachedTo, attachedFace);
     editSketch(id);
     return id;
 }
@@ -2202,6 +3439,16 @@ void MainWindow::finishSketch() {
 
 void MainWindow::onSketchEditingChanged() {
     const bool sketching = isSketching();
+    // While a sketch is drawn, the features that depend on it wait: its outlines may be open
+    // halfway through. They are built again once, when the sketch is finished.
+    if (sketching && m_suspendedDocument == nullptr) {
+        m_suspendedDocument = document();
+        m_suspendedDocument->suspendRebuild();
+    } else if (!sketching && m_suspendedDocument != nullptr) {
+        document::Document* held = m_suspendedDocument;
+        m_suspendedDocument = nullptr;
+        held->resumeRebuild();
+    }
     m_browser->setEditedSketch(m_viewport->editedSketch());
     if (sketching) {
         m_browser->setSelection({}, {m_viewport->editedSketch()});

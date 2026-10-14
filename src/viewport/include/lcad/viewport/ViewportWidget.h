@@ -12,6 +12,7 @@
 #include <QVector3D>
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -129,6 +130,15 @@ struct SelectedItem {
     friend bool operator==(const SelectedItem&, const SelectedItem&) = default;
 };
 
+/// A closed region of a sketch, which a pull or a revolve is made from: the sketch, and the
+/// curves of the outline around the region (sketch::EntityId), in increasing order.
+struct Profile {
+    document::ObjectId sketch;
+    std::vector<std::uint32_t> outline;
+
+    friend bool operator==(const Profile&, const Profile&) = default;
+};
+
 /// The 3D view of a document.
 ///
 /// The viewport shows the visible bodies of the document it is given and follows every change
@@ -164,6 +174,14 @@ public:
     /// Shows `shape` see-through on top of the document, as a preview of what a command is
     /// about to create. It cannot be picked. A null shape removes the preview.
     void setPreview(const kernel::Shape& shape);
+    /// Shows what a feature would make while its values are being chosen: `result` drawn as a
+    /// body, in place of the body `replaces`, which is hidden meanwhile (an invalid id hides
+    /// none). The preview cannot be picked. If `pickable`, the body it replaces is not hidden
+    /// but left unseen under it, where its edges and faces can still be picked: for a fillet,
+    /// whose edges are picked on the body as it was. A null shape ends it and shows the body
+    /// again.
+    void setFeaturePreview(document::ObjectId replaces, const kernel::Shape& result,
+                           bool pickable = false);
 
     // The camera
 
@@ -245,6 +263,28 @@ public:
     [[nodiscard]] bool isPlanePicking() const;
     /// The plane whose patch is at a position in the widget, while plane picking is on.
     [[nodiscard]] std::optional<OriginItem> pickPlaneAt(const QPoint& position);
+    /// The construction plane at a position in the widget, while plane picking is on, or an
+    /// invalid id. Construction planes are drawn as see-through squares whenever they are
+    /// visible, and can be clicked only while a plane is being chosen.
+    [[nodiscard]] document::ObjectId constructionPlaneAt(const QPoint& position);
+
+    // Choosing profiles
+
+    /// Shows the closed regions of these sketches as patches that can be clicked, drawn over
+    /// the model, hidden sketches too. Each lights up under the pointer. A click on one adds it
+    /// to the picked profiles, or takes it out if it is picked, and is reported by
+    /// profilesPicked(); it selects nothing. Bodies and sketches cannot be picked meanwhile,
+    /// except, with `facesToo`, the faces of bodies, where no region is under the pointer: for a
+    /// pull up to a face. An empty list ends it.
+    void setProfileSketches(const std::vector<document::ObjectId>& sketches, bool facesToo = false);
+    [[nodiscard]] bool isProfilePicking() const;
+    /// Makes these the picked profiles, which are drawn in the selection color.
+    void setPickedProfiles(const std::vector<Profile>& profiles);
+    [[nodiscard]] std::vector<Profile> pickedProfiles() const;
+    /// Every profile of the sketches given to setProfileSketches(), which can be picked.
+    [[nodiscard]] std::vector<Profile> pickableProfiles() const;
+    /// The profile whose patch is at a position in the widget, while profiles are being chosen.
+    [[nodiscard]] std::optional<Profile> profileAt(const QPoint& position);
 
     // The selection
 
@@ -280,9 +320,14 @@ signals:
     void itemActivated(const lcad::viewport::SelectedItem& item);
     /// While plane picking is on: the user clicked a plane's patch.
     void planePicked(lcad::viewport::OriginItem plane);
+    /// While plane picking is on: the user clicked a construction plane (a feature of the
+    /// document).
+    void constructionPlanePicked(lcad::document::ObjectId plane);
     /// While plane picking is on: the pointer came onto a plane's patch (0 for XY, 1 for XZ, 2
     /// for YZ) or left the patches (-1).
     void planeHovered(int plane);
+    /// While profiles are being chosen: the user clicked one, and the picked ones changed.
+    void profilesPicked();
     /// Emitted once if the viewport cannot start rendering.
     void initializationFailed(const QString& reason);
 

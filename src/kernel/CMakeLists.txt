@@ -5,6 +5,7 @@ add_library(lcad_kernel STATIC
     src/Error.cpp
     src/Measure.cpp
     src/Messages.cpp
+    src/Modeling.cpp
     src/Plane.cpp
     src/Primitives.cpp
     src/Serialization.cpp

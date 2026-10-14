@@ -101,7 +101,7 @@ has no such field, and a file written before sketches existed opens as it always
 |---|---|
 | `id`, `name`, `visible` | As for a body. Sketches and bodies share one range of ids. |
 | `plane` | Where the sketch sits in space: a point of the plane, its normal (the side the sketch is looked at from), and the direction of the sketch's own X. The directions are of unit length and square to each other. |
-| `entities` | The geometry. Every position is a `point`; a `line` names its `start` and `end`, a `circle` its `center` and has a `radius`, an `arc` names its `center`, `start`, and `end` (it runs counter-clockwise from start to end). `owner` is the curve a point belongs to, or 0. The first entity is the sketch's origin: a fixed point at (0, 0) that belongs to nothing. |
+| `entities` | The geometry. Every position is a `point`; a `line` names its `start` and `end`, a `circle` its `center` and has a `radius`, an `arc` names its `center`, `start`, and `end` (it runs counter-clockwise from start to end), an `ellipse` names its `center` and `major` (the end of its major axis) and has a `minorRadius`, and a `spline` lists its `controlPoints` (a clamped B-spline of degree 3, or less with fewer points, with its knots spread evenly). `owner` is the curve a point belongs to, or 0. The first entity is the sketch's origin: a fixed point at (0, 0) that belongs to nothing. |
 | `construction` | Geometry that guides the sketch and is left out of its outlines. |
 | `fixed` | Reference geometry, which the solver leaves where it is. |
 | `constraints` | `kind` is one of `Coincident`, `PointOnLine`, `PointOnCircle`, `Horizontal`, `Vertical`, `Parallel`, `Perpendicular`, `Tangent`, `Equal`, `Concentric`, `Midpoint`, `Symmetric`, `Collinear`, `Fix`, `Distance`, `DistanceX`, `DistanceY`, `PointLineDistance`, `Radius`, `Diameter`, `Angle`. `entities` are the up to three entities it is about, 0 for none. `value` is a dimension's value in millimeters or radians. |
@@ -111,6 +111,53 @@ Numbers are written with every digit, so a sketch comes back exactly as it was s
 constrained on reopening as it was on saving. A sketch that does not fit together (a line whose
 end is not a point, a constraint on entities it does not take, no origin) makes the file
 damaged, and the file is refused as a whole like any other.
+
+`document.json` may also hold `features`, `timeline`, and `marker`. Like `sketches` they are
+optional, and a file without them opens as it always did.
+
+```json
+{
+  "id": 7, "name": "Pull 1", "kind": "Pull", "suppressed": false,
+  "body": 8, "sketch": 2, "regions": [[3, 6, 9, 12]],
+  "operation": "NewBody", "distance": 8, "distanceBack": 0, "symmetric": false,
+  "axis": 0, "angle": 360, "edges": [], "faces": [], "size": 1
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, or `Axis` (a construction axis). |
+| `suppressed` | Left out of the model, and kept. |
+| `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
+| `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
+| `operation` | `NewBody`, `Join`, `Cut`, or `Intersect`. |
+| `distance`, `distanceBack`, `symmetric` | How far a pull goes along the sketch's normal, how far the other way (0 for one side), and whether `distance` is split evenly to both sides. |
+| `axis`, `angle` | The sketch line a revolve turns about, and how far, in degrees. A circular pattern's `angle` too. |
+| `reference` (revolve) | Written only when a revolve turns about an axis of the model rather than a sketch line: `X`, `Y`, `Z`, or `axis:` and the id of a construction axis. Its `axis` is then 0. |
+| `edges`, `faces` | A fillet's or chamfer's edges, a shell's open faces, by name (see ARCHITECTURE.md, section 11). |
+| `size` | A fillet's radius, a chamfer's distance, a shell's wall thickness, a hole's diameter. |
+| `taper` | A pull only, and only when not zero: how far its sides lean in, in degrees. |
+| `extentBody`, `extentFace` | A pull up to a face only: the body, and the name of its flat face, that the pull ends in. |
+| `sources`, `reference`, `reference2`, `count`, `count2`, `spacing`, `spacing2` | Mirror and patterns only: the features copied (empty: the whole body), the plane, direction, or axis (`XY`, `XZ`, `YZ`, `X`, `Y`, `Z`, a face or edge name, `plane:` and the id of a construction plane, or `axis:` and the id of a construction axis), how many, and how far apart. |
+| `holeKind`, `throughAll`, `tipAngle`, `headDiameter`, `headDepth`, `countersinkAngle`, `flipped` | A hole only: `Simple`, `Counterbore`, or `Countersink`; right through or to `distance` with a point of `tipAngle` degrees; the width and depth of a counterbore or the angle of a countersink; and whether it is drilled toward the side the sketch is seen from. Its `size` is the diameter, and the holes go at the free-standing points of its `sketch`. |
+| `reference`, `visible` | A construction plane only: what it is placed against (`XY`, `XZ`, `YZ`, or the name of a flat face of `body`), and whether it is shown. Its `distance` is how far it is from that, along its normal. It makes no body; `body` is 0 for one placed against an origin plane. |
+| `reference`, `visible` (axis) | A construction axis only: what it runs along (`X`, `Y`, `Z`, or the name of an edge or a face of `body`: a straight edge, or a round edge or face, whose axis it is), and whether it is shown. It makes no body; `body` is 0 for an origin axis. |
+
+`document.json` may also hold `parameters`, a list of `{"id", "name", "expression", "comment"}`.
+A feature may have `expressions`, an object from the name of a value (`distance`, `size`,
+`count`, and so on) to the expression it is worked out from, and a sketch `expressions`, from
+the id of a dimension to its expression. The values stored next to them are what the
+expressions came to when the file was saved; on opening they are worked out again.
+
+A sketch that follows something has `attachedTo`, the id of a construction plane or of a body,
+and `attachedFace`, the name of the body's face (empty for a plane). Its `plane` is then where it
+was when the file was saved, and it is placed again from what it follows on opening.
+
+A body that a feature makes is written as `{"id", "name", "visible", "madeBy"}`, without
+geometry: it is built again from its feature on opening. `timeline` lists the ids of the bodies
+put in as they are, the sketches, and the features in the order they are applied; `marker`, if
+present, is how many of them are applied. A feature that cannot be applied on opening does not
+stop the file from opening: it is reported, with its reason, as a warning.
 
 A reader ignores fields and archive entries it does not know, so that a later LCAD can add
 optional ones without changing the version. Everything listed above is required, and a file
@@ -214,8 +261,8 @@ licenses are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ## Not done yet
 
-- **Where a sketch came from.** A sketch started on a face keeps the plane, not the face. A
-  projected edge keeps the geometry, not the edge. Both need the stable references of Phase 3.
+- **Where a projected edge came from.** A projected edge keeps the geometry, not the edge. (A
+  sketch on a face now follows the face; see `attachedTo` above.)
 - **Where a dimension's value is drawn.** Not stored: values place themselves.
 
 - **The notice before converting.** When the first migration exists, LCAD has to say so before

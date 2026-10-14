@@ -32,6 +32,8 @@ struct Edge {
     Point2 start;
     Point2 end;
     Point2 center; // arcs
+    // Splines: points along it from its start to its end, close together.
+    std::vector<Point2> path;
     bool alive = true;
 };
 
@@ -53,6 +55,11 @@ double counterClockwiseSweep(const Edge& arc) {
 
 // The direction in which a walk leaves a node along one direction of an edge.
 double leavingAngle(const Edge& edge, bool forward) {
+    if (!edge.path.empty()) {
+        const Point2 a = forward ? edge.path[0] : edge.path[edge.path.size() - 1];
+        const Point2 b = forward ? edge.path[1] : edge.path[edge.path.size() - 2];
+        return std::atan2(b.y - a.y, b.x - a.x);
+    }
     if (!edge.isArc) {
         const Point2 a = forward ? edge.start : edge.end;
         const Point2 b = forward ? edge.end : edge.start;
@@ -67,6 +74,15 @@ double leavingAngle(const Edge& edge, bool forward) {
 
 // What one direction along an edge adds to the area enclosed by a walk.
 double areaTerm(const Edge& edge, bool forward) {
+    if (!edge.path.empty()) {
+        double term = 0.0;
+        for (std::size_t i = 1; i < edge.path.size(); ++i) {
+            const Point2 a = edge.path[i - 1];
+            const Point2 b = edge.path[i];
+            term += (a.x * b.y - b.x * a.y) / 2.0;
+        }
+        return forward ? term : -term;
+    }
     const Point2 a = forward ? edge.start : edge.end;
     const Point2 b = forward ? edge.end : edge.start;
     double term = (a.x * b.y - b.x * a.y) / 2.0;
@@ -105,6 +121,12 @@ std::vector<Profile> Sketch::profiles() const {
             found.push_back({{item.id}, pi * item.radius * item.radius});
             continue;
         }
+        if (item.kind == EntityKind::Ellipse) {
+            const Point2 c = position(item.center);
+            const Point2 m = position(item.start);
+            found.push_back({{item.id}, pi * std::hypot(m.x - c.x, m.y - c.y) * item.radius});
+            continue;
+        }
         Edge edge;
         edge.curve = item.id;
         edge.isArc = item.kind == EntityKind::Arc;
@@ -112,6 +134,9 @@ std::vector<Profile> Sketch::profiles() const {
         edge.end = position(item.end);
         if (edge.isArc) {
             edge.center = position(item.center);
+        }
+        if (item.kind == EntityKind::Spline) {
+            edge.path = samples(item.id, 120);
         }
         edge.from = nodeAt(edge.start);
         edge.to = nodeAt(edge.end);
@@ -200,6 +225,153 @@ std::vector<Profile> Sketch::profiles() const {
         return *std::min_element(a.curves.begin(), a.curves.end()) <
                *std::min_element(b.curves.begin(), b.curves.end());
     });
+    return found;
+}
+
+std::vector<Point2> Sketch::outlinePolygon(const std::vector<EntityId>& curves) const {
+    // Each curve as points from its start to its end.
+    const auto pointsOf = [this](const Entity& item) {
+        std::vector<Point2> points;
+        if (item.kind == EntityKind::Line) {
+            points = {position(item.start), position(item.end)};
+            return points;
+        }
+        if (item.kind == EntityKind::Ellipse || item.kind == EntityKind::Spline) {
+            return samples(item.id, 120);
+        }
+        const Point2 center = position(item.center);
+        const double radius = radiusOf(item.id);
+        double from = 0.0;
+        double sweep = 2.0 * pi;
+        if (item.kind == EntityKind::Arc) {
+            const Point2 start = position(item.start);
+            const Point2 end = position(item.end);
+            from = std::atan2(start.y - center.y, start.x - center.x);
+            sweep = std::atan2(end.y - center.y, end.x - center.x) - from;
+            while (sweep <= 0.0) {
+                sweep += 2.0 * pi;
+            }
+        }
+        // A chord every three degrees.
+        const int pieces = std::max(2, static_cast<int>(std::ceil(sweep / (pi / 60.0))));
+        for (int i = 0; i <= pieces; ++i) {
+            const double angle = from + sweep * i / pieces;
+            points.push_back(
+                {center.x + radius * std::cos(angle), center.y + radius * std::sin(angle)});
+        }
+        return points;
+    };
+    const auto apart = [](Point2 a, Point2 b) { return std::hypot(b.x - a.x, b.y - a.y); };
+
+    std::vector<std::vector<Point2>> pieces;
+    for (const EntityId id : curves) {
+        const Entity* item = find(id);
+        if (item != nullptr && item->kind != EntityKind::Point) {
+            pieces.push_back(pointsOf(*item));
+        }
+    }
+    std::vector<Point2> polygon;
+    for (std::size_t i = 0; i < pieces.size(); ++i) {
+        std::vector<Point2>& piece = pieces[i];
+        bool reversed = false;
+        if (polygon.empty() && pieces.size() > 1) {
+            // Start the first curve at the end the second does not share.
+            const std::vector<Point2>& next = pieces[1];
+            const auto meets = [&](Point2 p) {
+                return apart(p, next.front()) <= joinTolerance ||
+                       apart(p, next.back()) <= joinTolerance;
+            };
+            reversed = meets(piece.front()) && !meets(piece.back());
+        } else if (!polygon.empty()) {
+            reversed = apart(polygon.back(), piece.back()) < apart(polygon.back(), piece.front());
+        }
+        if (reversed) {
+            std::reverse(piece.begin(), piece.end());
+        }
+        // The first point of a piece is the last point of the one before.
+        polygon.insert(polygon.end(), piece.begin() + (polygon.empty() ? 0 : 1), piece.end());
+    }
+    if (polygon.size() > 1 && apart(polygon.front(), polygon.back()) <= joinTolerance) {
+        polygon.pop_back();
+    }
+    return polygon;
+}
+
+namespace {
+
+// How a point lies to a polygon: inside, outside, or on its edge to within the tolerance.
+enum class Side { Inside, Outside, OnEdge };
+
+Side sideOf(const std::vector<Point2>& polygon, Point2 p) {
+    bool inside = false;
+    for (std::size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+        const Point2 a = polygon[j];
+        const Point2 b = polygon[i];
+        // The distance from the point to this side.
+        const double dx = b.x - a.x;
+        const double dy = b.y - a.y;
+        const double lengthSquared = dx * dx + dy * dy;
+        const double along =
+            lengthSquared > 0.0
+                ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared, 0.0, 1.0)
+                : 0.0;
+        if (std::hypot(p.x - (a.x + along * dx), p.y - (a.y + along * dy)) <= 1e-5) {
+            return Side::OnEdge;
+        }
+        if ((a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * dx) {
+            inside = !inside;
+        }
+    }
+    return inside ? Side::Inside : Side::Outside;
+}
+
+} // namespace
+
+std::vector<Region> Sketch::regions() const {
+    const std::vector<Profile> outlines = profiles();
+    std::vector<std::vector<Point2>> polygons;
+    polygons.reserve(outlines.size());
+    for (const Profile& outline : outlines) {
+        polygons.push_back(outlinePolygon(outline.curves));
+    }
+    // Whether outline `inner` lies within outline `outer`: smaller, with no point outside it
+    // and at least one point properly inside. Outlines that only share a side are neighbors.
+    const auto within = [&](std::size_t inner, std::size_t outer) {
+        if (inner == outer || outlines[inner].area >= outlines[outer].area) {
+            return false;
+        }
+        bool properlyInside = false;
+        for (const Point2 point : polygons[inner]) {
+            const Side side = sideOf(polygons[outer], point);
+            if (side == Side::Outside) {
+                return false;
+            }
+            properlyInside = properlyInside || side == Side::Inside;
+        }
+        return properlyInside;
+    };
+
+    std::vector<Region> found;
+    for (std::size_t i = 0; i < outlines.size(); ++i) {
+        Region region;
+        region.outer = outlines[i].curves;
+        region.area = outlines[i].area;
+        for (std::size_t j = 0; j < outlines.size(); ++j) {
+            if (!within(j, i)) {
+                continue;
+            }
+            // A hole of this region, unless it lies within another outline that does.
+            bool direct = true;
+            for (std::size_t k = 0; direct && k < outlines.size(); ++k) {
+                direct = !(k != i && k != j && within(j, k) && within(k, i));
+            }
+            if (direct) {
+                region.holes.push_back(outlines[j].curves);
+                region.area -= outlines[j].area;
+            }
+        }
+        found.push_back(std::move(region));
+    }
     return found;
 }
 

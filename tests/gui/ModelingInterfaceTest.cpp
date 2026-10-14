@@ -1,0 +1,1414 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <lcad/app/BrowserPanel.h>
+#include <lcad/app/Commands.h>
+#include <lcad/app/FeaturePanel.h>
+#include <lcad/app/MainWindow.h>
+#include <lcad/app/MeasurePanel.h>
+#include <lcad/app/ParametersDialog.h>
+#include <lcad/app/Theme.h>
+#include <lcad/app/TimelinePanel.h>
+#include <lcad/document/File.h>
+#include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Modeling.h>
+#include <lcad/kernel/Plane.h>
+#include <lcad/kernel/Primitives.h>
+#include <lcad/kernel/SubShapes.h>
+#include <lcad/kernel/Transform.h>
+#include <lcad/sketch/Edit.h>
+#include <lcad/viewport/SketchEditor.h>
+#include <lcad/viewport/ViewportWidget.h>
+
+#include <FrameChecks.h>
+#include <GraphicsMessages.h>
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDockWidget>
+#include <QDoubleSpinBox>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QPushButton>
+#include <QRegularExpression>
+#include <QScrollArea>
+#include <QSettings>
+#include <QSpinBox>
+#include <QStatusBar>
+#include <QTableWidget>
+#include <QTemporaryDir>
+#include <QTest>
+#include <QToolButton>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
+
+#include <cmath>
+
+using lcad::app::FeaturePanel;
+using lcad::app::MainWindow;
+using lcad::app::Theme;
+using lcad::app::ThemeChoice;
+using lcad::app::TimelinePanel;
+using lcad::document::Feature;
+using lcad::document::FeatureKind;
+using lcad::document::ObjectId;
+using lcad::document::Operation;
+using lcad::sketch::ConstraintId;
+using lcad::sketch::ConstraintKind;
+using lcad::test::keepFrame;
+using lcad::viewport::SelectedItem;
+using lcad::viewport::StandardView;
+
+namespace {
+
+const double pi = 3.14159265358979323846;
+
+bool near(double a, double b, double tolerance = 1e-6) {
+    return std::abs(a - b) <= tolerance * std::max(1.0, std::abs(b));
+}
+
+// What the bracket's volume should be: a plate `w` by `h`, 8 thick, with its four upright
+// corners rounded to 5 and a hole of radius 6 through it.
+double bracketVolume(double w, double h) {
+    return (w * h - (4.0 - pi) * 25.0 - pi * 36.0) * 8.0;
+}
+
+} // namespace
+
+// Making solids as the whole window offers it: Pull, Fillet, and the others started from their
+// commands, with what they work on picked in the 3D view and their values typed in their
+// panel; the timeline that lists them; and the model following a change to the sketch it was
+// built on. The model is checked in the document, the window for showing it.
+class ModelingInterfaceTest : public QObject {
+    Q_OBJECT
+
+public:
+    static void initMain() {
+        lcad::viewport::prepareApplication();
+        qunsetenv("XDG_CURRENT_DESKTOP");
+        static QTemporaryDir settingsDirectory;
+        QCoreApplication::setOrganizationName(QStringLiteral("LCAD"));
+        QCoreApplication::setApplicationName(QStringLiteral("LCAD"));
+        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, settingsDirectory.path());
+    }
+
+private slots:
+    void init();
+    void cleanup();
+
+    void pullMakesASolidFromTheSketchJustDrawn();
+    void profilesArePickedByClickingThem();
+    void aBracketFollowsTheSketchItWasBuiltOn();
+    void theTimelineEditsSuppressesRollsBackAndReorders();
+    void aFailingFeatureSaysWhy();
+    void edgesArePickedInTheViewForAFilletOrChamfer();
+    void shellAndRevolveWork();
+    void featuresAreSavedAndOpenedAgain();
+    void patternsAndMirrorsRepeatFeatures();
+    void measureGivesDistancesAndAngles();
+    void sketchesFollowConstructionPlanesAndFaces();
+    void holesAreDrilledAtSketchPoints();
+    void aPullTapersOrGoesUpToAFace();
+    void parametersDriveTheModel();
+    void constructionAxesGuideRevolvesAndPatterns();
+
+private:
+    static QAction* action(const MainWindow& window, const char* id) {
+        return window.commands()->action(QString::fromLatin1(id));
+    }
+    static bool trigger(const MainWindow& window, const char* id) {
+        return window.commands()->trigger(QString::fromLatin1(id));
+    }
+    static void show(MainWindow& window) {
+        window.resize(1400, 900);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        // Typing goes where the focus is, which needs the window to be the active one.
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+    }
+    static void render(const MainWindow& window) { window.viewport()->grabFramebuffer(); }
+    static void click(const MainWindow& window, const QPoint& point,
+                      Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+        QTest::mouseMove(window.viewport(), point);
+        render(window);
+        QTest::mouseClick(window.viewport(), Qt::LeftButton, modifiers, point);
+        render(window);
+    }
+    static QPoint at(const MainWindow& window, double x, double y, double z) {
+        return window.viewport()->project(x, y, z).toPoint();
+    }
+    // A sketch on the XY plane with a rectangle `w` by `h` from the origin, fully dimensioned,
+    // drawn while the sketch is open in the window. Returns the sketch and its width dimension.
+    static std::pair<ObjectId, ConstraintId> drawPlate(MainWindow& window, double w, double h) {
+        const ObjectId id = window.createSketch(lcad::kernel::planeXY());
+        lcad::sketch::Sketch s = window.document()->findSketch(id)->geometry;
+        const lcad::sketch::RectangleParts r = lcad::sketch::addRectangle(s, {0.0, 0.0}, {w, h});
+        s.addConstraint(ConstraintKind::Coincident, s.find(r.bottom)->start, s.origin());
+        const ConstraintId width = s.addConstraint(
+            ConstraintKind::Distance, s.find(r.bottom)->start, s.find(r.bottom)->end, 0, w);
+        s.addConstraint(ConstraintKind::Distance, s.find(r.right)->start, s.find(r.right)->end, 0,
+                        h);
+        s.solve();
+        window.document()->setSketchGeometry(id, s, "Rectangle");
+        render(window);
+        return {id, width};
+    }
+    // A sketch on the XY plane with one circle, made without opening it.
+    static ObjectId drawHole(MainWindow& window, double x, double y, double radius) {
+        const ObjectId id = window.document()->addSketch("Holes", lcad::kernel::planeXY());
+        lcad::sketch::Sketch s = window.document()->findSketch(id)->geometry;
+        s.addCircle({x, y}, radius);
+        window.document()->setSketchGeometry(id, s, "Circle");
+        return id;
+    }
+    static FeaturePanel* panel(const MainWindow& window) { return window.featurePanel(); }
+    static void typeInto(FeaturePanel* panel, const char* field, double value) {
+        auto* box = panel->findChild<QDoubleSpinBox*>(QString::fromLatin1(field));
+        QVERIFY2(box != nullptr, field);
+        QVERIFY2(box->isVisible(), field);
+        // Tab takes the value and moves on. Enter would take it and accept the command.
+        box->setFocus();
+        box->selectAll();
+        QTest::keyClicks(box, QLocale().toString(value));
+        QTest::keyClick(box, Qt::Key_Tab);
+        QCOMPARE(box->value(), value);
+    }
+    static QPushButton* okButton(FeaturePanel* panel) {
+        for (QPushButton* button : panel->findChildren<QPushButton*>()) {
+            if (button->text().remove(QLatin1Char('&')) == QStringLiteral("OK")) {
+                return button;
+            }
+        }
+        return nullptr;
+    }
+    static const lcad::document::Body& bodyOf(const MainWindow& window, ObjectId feature) {
+        return *window.document()->findBody(window.document()->findFeature(feature)->body);
+    }
+    static double volumeOf(const MainWindow& window, ObjectId feature) {
+        return lcad::kernel::volume(bodyOf(window, feature).shape);
+    }
+    // The four upright edges of a pulled plate, as the 3D view would select them.
+    static std::vector<SelectedItem> uprightEdges(const MainWindow& window, ObjectId body) {
+        std::vector<SelectedItem> items;
+        const std::vector<std::string> names =
+            lcad::kernel::edgeNames(window.document()->namedBody(body));
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            const std::string& name = names[i];
+            const std::size_t bar = name.find('|');
+            if (bar != std::string::npos && name.find("/side/") < bar &&
+                name.find("/side/", bar) != std::string::npos) {
+                items.push_back({body, SelectedItem::Kind::Edge, static_cast<int>(i)});
+            }
+        }
+        return items;
+    }
+    // Pulls the plate's sketch 8 up through the window, and returns the feature.
+    static ObjectId pullPlate(MainWindow& window) {
+        if (!trigger(window, "solid.pull")) {
+            return {};
+        }
+        FeaturePanel* pull = panel(window);
+        if (pull == nullptr) {
+            return {};
+        }
+        typeInto(pull, "distance", 8.0);
+        QTest::mouseClick(okButton(pull), Qt::LeftButton);
+        return window.document()->features().empty() ? ObjectId{}
+                                                     : window.document()->features().back().id;
+    }
+    static void clickTimeline(const MainWindow& window, ObjectId item, bool twice = false) {
+        TimelinePanel* timeline = window.timeline();
+        const QRect rect = timeline->itemRect(item);
+        QVERIFY(!rect.isEmpty());
+        QWidget* target = timeline->childAt(rect.center());
+        QVERIFY(target != nullptr);
+        const QPoint where = target->mapFrom(timeline, rect.center());
+        QTest::mouseClick(target, Qt::LeftButton, Qt::NoModifier, where);
+        if (twice) {
+            QTest::mouseDClick(target, Qt::LeftButton, Qt::NoModifier, where);
+        }
+    }
+
+    QTemporaryDir m_directory;
+    lcad::test::GraphicsMessages m_graphicsMessages;
+};
+
+void ModelingInterfaceTest::init() {
+    QTest::failOnWarning(QRegularExpression(QStringLiteral("OpenGL|QRhi|context|surface"),
+                                            QRegularExpression::CaseInsensitiveOption));
+    QSettings().clear();
+    Theme::instance().load();
+    QVERIFY(m_directory.isValid());
+}
+
+void ModelingInterfaceTest::cleanup() {
+    const QStringList complaints = m_graphicsMessages.take();
+    QVERIFY2(complaints.isEmpty(), qPrintable(complaints.join(QStringLiteral(" | "))));
+}
+
+void ModelingInterfaceTest::pullMakesASolidFromTheSketchJustDrawn() {
+    MainWindow window;
+    show(window);
+    auto* dock = window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"));
+    // Without a sketch there is nothing to pull, and without a body nothing to round.
+    QVERIFY(!action(window, "solid.pull")->isEnabled());
+    QVERIFY(!action(window, "solid.fillet")->isEnabled());
+    QCOMPARE(action(window, "solid.pull")->shortcut(), QKeySequence(Qt::Key_E));
+    QCOMPARE(action(window, "solid.pull")->text().remove(QLatin1Char('&')), QStringLiteral("Pull"));
+
+    const auto [sketch, width] = drawPlate(window, 60.0, 40.0);
+    QVERIFY(window.isSketching());
+    // 8. Pull, straight from the sketch: the sketch is finished, and its one closed area is
+    // picked already.
+    QVERIFY(action(window, "solid.pull")->isEnabled());
+    QVERIFY(trigger(window, "solid.pull"));
+    QVERIFY(!window.isSketching());
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    QVERIFY(pull->isVisible());
+    QCOMPARE(dock->windowTitle(), QStringLiteral("Pull"));
+    QCOMPARE(window.commandText(), QStringLiteral("Pull"));
+    // Shown whole in the status bar.
+    const auto* command = window.findChild<QLabel*>(QStringLiteral("activeCommand"));
+    QTRY_VERIFY(command->width() >= command->sizeHint().width());
+    QVERIFY(window.viewport()->isProfilePicking());
+    QCOMPARE(window.viewport()->pickedProfiles().size(), std::size_t{1});
+    QCOMPARE(pull->feature().sketch, sketch);
+    QCOMPARE(pull->feature().regions.size(), std::size_t{1});
+    QVERIFY(pull->findChild<QLabel*>(QStringLiteral("featureInput"))
+                ->text()
+                .contains(QStringLiteral("1 area")));
+    // With no body to join, it makes one.
+    QCOMPARE(pull->feature().operation, Operation::NewBody);
+    QVERIFY(okButton(pull)->isEnabled());
+    // Nothing has changed yet: what is shown is a preview.
+    QVERIFY(window.document()->features().empty());
+    QVERIFY(window.document()->bodies().empty());
+    render(window);
+
+    // An exact distance, typed. A distance of zero is refused with the reason.
+    typeInto(pull, "distance", 0.0);
+    QVERIFY(!okButton(pull)->isEnabled());
+    QVERIFY(pull->errorText().contains(QStringLiteral("zero")));
+    typeInto(pull, "distance", 8.0);
+    QVERIFY(pull->errorText().isEmpty());
+    QVERIFY(okButton(pull)->isEnabled());
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-pull-preview");
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(!window.viewport()->isProfilePicking());
+    QCOMPARE(dock->windowTitle(), QStringLiteral("Properties"));
+    QCOMPARE(window.document()->features().size(), std::size_t{1});
+    const Feature& made = window.document()->features().front();
+    QCOMPARE(QString::fromStdString(made.name), QStringLiteral("Pull 1"));
+    QVERIFY(window.document()->featureError(made.id).empty());
+    QVERIFY(near(volumeOf(window, made.id), 60.0 * 40.0 * 8.0));
+    // The body is listed, and the sketch has done its work and is hidden.
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+    QVERIFY(window.browser()->bodyItem(made.body) != nullptr);
+    QVERIFY(!window.document()->findSketch(sketch)->visible);
+    // One step to undo.
+    QCOMPARE(QString::fromStdString(window.document()->undoLabel()), QStringLiteral("Pull"));
+    // The timeline lists the sketch and the pull, in that order, and selects the new one.
+    QCOMPARE(window.document()->timeline(), (std::vector<ObjectId>{sketch, made.id}));
+    QCOMPARE(window.timeline()->selectedItem(), made.id);
+    QVERIFY(window.timeline()->itemRect(sketch).right() <
+            window.timeline()->itemRect(made.id).left());
+    QVERIFY(window.timeline()->describe(made.id).contains(QStringLiteral("Made from Sketch 1")));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-pulled");
+
+    QVERIFY(trigger(window, "edit.undo"));
+    QVERIFY(window.document()->features().empty());
+    QVERIFY(window.document()->bodies().empty());
+    QVERIFY(window.document()->findSketch(sketch)->visible);
+    QVERIFY(trigger(window, "edit.redo"));
+    QVERIFY(near(volumeOf(window, made.id), 60.0 * 40.0 * 8.0));
+
+    // Esc gives up a pull without a trace.
+    QVERIFY(trigger(window, "solid.pull"));
+    QVERIFY(panel(window) != nullptr);
+    QVERIFY(trigger(window, "edit.cancel"));
+    QTRY_VERIFY(panel(window) == nullptr);
+    QCOMPARE(window.document()->features().size(), std::size_t{1});
+    QCOMPARE(QString::fromStdString(window.document()->undoLabel()), QStringLiteral("Pull"));
+}
+
+void ModelingInterfaceTest::profilesArePickedByClickingThem() {
+    MainWindow window;
+    show(window);
+    // A plate outline with a circle inside it: two closed areas, the plate with a hole, and the
+    // disc in the hole.
+    const auto [sketch, width] = drawPlate(window, 60.0, 40.0);
+    lcad::sketch::Sketch s = window.document()->findSketch(sketch)->geometry;
+    s.addCircle({20.0, 20.0}, 6.0);
+    window.document()->setSketchGeometry(sketch, s, "Circle");
+    window.finishSketch();
+    window.viewport()->setStandardView(StandardView::Top);
+    render(window);
+
+    // Not open, and not selected: nothing is picked to start with, as there is a choice.
+    QVERIFY(trigger(window, "solid.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    QCOMPARE(window.viewport()->pickableProfiles().size(), std::size_t{2});
+    QVERIFY(window.viewport()->pickedProfiles().empty());
+    QVERIFY(!okButton(pull)->isEnabled());
+    QVERIFY(pull->findChild<QLabel*>(QStringLiteral("featureInput"))
+                ->text()
+                .contains(QStringLiteral("Click")));
+
+    // A click on the plate picks the plate, and one on the disc adds the disc.
+    const QPoint onPlate = at(window, 45.0, 30.0, 0.0);
+    const QPoint onDisc = at(window, 20.0, 20.0, 0.0);
+    QVERIFY(window.viewport()->profileAt(onPlate).has_value());
+    QVERIFY(window.viewport()->profileAt(onPlate)->outline.size() == 4);
+    QVERIFY(window.viewport()->profileAt(onDisc)->outline.size() == 1);
+    click(window, onPlate);
+    QCOMPARE(window.viewport()->pickedProfiles().size(), std::size_t{1});
+    QCOMPARE(pull->feature().regions.size(), std::size_t{1});
+    QCOMPARE(pull->feature().regions.front().size(), std::size_t{4});
+    QVERIFY(okButton(pull)->isEnabled());
+    // Clicking picks; it does not select.
+    QVERIFY(window.viewport()->selection().empty());
+    click(window, onDisc);
+    QCOMPARE(pull->feature().regions.size(), std::size_t{2});
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-profiles-picked");
+    // And a second click lets it go again.
+    click(window, onDisc);
+    QCOMPARE(pull->feature().regions.size(), std::size_t{1});
+    // A click beside the sketch does nothing.
+    click(window, at(window, 90.0, 20.0, 0.0));
+    QCOMPARE(pull->feature().regions.size(), std::size_t{1});
+
+    typeInto(pull, "distance", 5.0);
+    QTest::keyClick(pull, Qt::Key_Return);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const Feature& plate = window.document()->features().back();
+    QVERIFY(near(volumeOf(window, plate.id), (60.0 * 40.0 - pi * 36.0) * 5.0));
+}
+
+void ModelingInterfaceTest::aBracketFollowsTheSketchItWasBuiltOn() {
+    MainWindow window;
+    show(window);
+    const auto [outline, width] = drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QVERIFY(plate.isValid());
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+
+    // A hole: a circle in a sketch of its own, pulled through the plate. Starting inside the
+    // body, the pull is taken to be a cut.
+    const ObjectId holes = drawHole(window, 20.0, 20.0, 6.0);
+    window.browser()->setSelection({}, {holes});
+    QVERIFY(trigger(window, "solid.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    QCOMPARE(pull->feature().regions.size(), std::size_t{1});
+    typeInto(pull, "distance", 8.0);
+    QCOMPARE(pull->feature().operation, Operation::Cut);
+    QCOMPARE(pull->feature().body, body);
+    QVERIFY(okButton(pull)->isEnabled());
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId hole = window.document()->features().back().id;
+    QVERIFY(window.document()->featureError(hole).empty());
+    QVERIFY(near(volumeOf(window, plate), (60.0 * 40.0 - pi * 36.0) * 8.0));
+
+    // 9. Fillet the four upright edges, picked before the command.
+    QVERIFY(action(window, "solid.fillet")->isEnabled());
+    window.viewport()->setSelectionFilter(lcad::viewport::SelectionFilter::Edges);
+    window.viewport()->setSelection(uprightEdges(window, body));
+    QCOMPARE(window.viewport()->selection().size(), std::size_t{4});
+    QVERIFY(trigger(window, "solid.fillet"));
+    FeaturePanel* fillet = panel(window);
+    QVERIFY(fillet != nullptr);
+    QCOMPARE(fillet->feature().edges.size(), std::size_t{4});
+    QCOMPARE(fillet->feature().body, body);
+    typeInto(fillet, "size", 5.0);
+    QVERIFY(fillet->errorText().isEmpty());
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-fillet-preview");
+    // A radius larger than the plate allows is refused with the kernel's reason.
+    typeInto(fillet, "size", 30.0);
+    QVERIFY(!fillet->errorText().isEmpty());
+    QVERIFY(!okButton(fillet)->isEnabled());
+    typeInto(fillet, "size", 5.0);
+    QTest::mouseClick(okButton(fillet), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId rounds = window.document()->features().back().id;
+    QVERIFY(near(volumeOf(window, plate), bracketVolume(60.0, 40.0)));
+    // The selection filter is what it was before the fillet.
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Edges);
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-bracket");
+
+    // 10.-11. Edit the original sketch, from the browser, though it is hidden; change the
+    // width; finish. The hole and the rounds follow.
+    QTreeWidget* tree = window.browser()->tree();
+    QTreeWidgetItem* entry = window.browser()->sketchItem(outline);
+    QVERIFY(entry != nullptr);
+    tree->scrollToItem(entry);
+    const QPoint onEntry = tree->visualItemRect(entry).center();
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QTest::mouseDClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QVERIFY(window.isSketching());
+    render(window);
+    auto* editor = window.viewport()->sketchEditor();
+    const QPoint onValue = editor->dimensionRect(width).center().toPoint();
+    QTest::mouseMove(window.viewport(), onValue);
+    QTest::mouseDClick(window.viewport(), Qt::LeftButton, Qt::NoModifier, onValue);
+    render(window);
+    QLineEdit* field = editor->valueField();
+    QVERIFY(field != nullptr);
+    QTest::keyClicks(field, QStringLiteral("85"));
+    QTest::keyClick(field, Qt::Key_Return);
+    // While the sketch is open, the model waits for it.
+    QVERIFY(near(volumeOf(window, plate), bracketVolume(60.0, 40.0)));
+    QVERIFY(trigger(window, "sketch.finish"));
+    QVERIFY(!window.isSketching());
+    // 12. The model has followed.
+    QVERIFY(near(volumeOf(window, plate), bracketVolume(85.0, 40.0)));
+    for (const ObjectId id : {plate, hole, rounds}) {
+        QVERIFY(window.document()->featureError(id).empty());
+    }
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-bracket-wider");
+
+    // 13. Select a feature in the history: its body is selected, and the timeline says what it
+    // is about.
+    clickTimeline(window, rounds);
+    QCOMPARE(window.timeline()->selectedItem(), rounds);
+    QCOMPARE(window.viewport()->selection(),
+             (std::vector<SelectedItem>{{body, SelectedItem::Kind::Body, -1}}));
+    QVERIFY(window.timeline()->describe(rounds).contains(QStringLiteral("Works on Body")));
+
+    // Double-click the first pull to edit it: the model goes back to before it, and its panel
+    // has its values.
+    clickTimeline(window, plate, true);
+    FeaturePanel* edit = panel(window);
+    QVERIFY(edit != nullptr);
+    QCOMPARE(window.editedFeature(), plate);
+    QCOMPARE(edit->value(QStringLiteral("distance")), 8.0);
+    QCOMPARE(window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"))->windowTitle(),
+             QStringLiteral("Edit Pull 1"));
+    QVERIFY(window.document()->findBody(body)->shape.isNull());
+    QCOMPARE(window.viewport()->pickedProfiles().size(), std::size_t{1});
+    typeInto(edit, "distance", 10.0);
+    QTest::mouseClick(okButton(edit), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(!window.editedFeature().isValid());
+    // The hole was pulled 8 deep, which no longer reaches through a plate 10 thick.
+    const double thicker = (85.0 * 40.0 - (4.0 - pi) * 25.0) * 10.0 - pi * 36.0 * 8.0;
+    QVERIFY(near(volumeOf(window, plate), thicker));
+    QCOMPARE(QString::fromStdString(window.document()->undoLabel()), QStringLiteral("Edit Pull 1"));
+    QVERIFY(trigger(window, "edit.undo"));
+    QVERIFY(near(volumeOf(window, plate), bracketVolume(85.0, 40.0)));
+}
+
+void ModelingInterfaceTest::theTimelineEditsSuppressesRollsBackAndReorders() {
+    MainWindow window;
+    show(window);
+    const auto [outline, width] = drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    window.viewport()->setSelectionFilter(lcad::viewport::SelectionFilter::Edges);
+    window.viewport()->setSelection(uprightEdges(window, body));
+    QVERIFY(trigger(window, "solid.fillet"));
+    typeInto(panel(window), "size", 5.0);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId rounds = window.document()->features().back().id;
+    const double rounded = (60.0 * 40.0 - (4.0 - pi) * 25.0) * 8.0;
+    QVERIFY(near(volumeOf(window, plate), rounded));
+
+    // Suppress the fillet from the timeline: the corners are square again, and the entry says
+    // so.
+    clickTimeline(window, rounds);
+    QVERIFY(action(window, "timeline.suppress")->isEnabled());
+    QCOMPARE(action(window, "timeline.suppress")->text().remove(QLatin1Char('&')),
+             QStringLiteral("Suppress Feature"));
+    QVERIFY(trigger(window, "timeline.suppress"));
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
+    QVERIFY(window.timeline()->describe(rounds).contains(QStringLiteral("Suppressed")));
+
+    QCOMPARE(action(window, "timeline.suppress")->text().remove(QLatin1Char('&')),
+             QStringLiteral("Restore Feature"));
+    QVERIFY(trigger(window, "timeline.suppress"));
+    QVERIFY(near(volumeOf(window, plate), rounded));
+
+    // Drag the history marker back past the fillet: the model is as it was before it.
+    TimelinePanel* timeline = window.timeline();
+    QCOMPARE(window.document()->historyMarker(), std::size_t{3});
+    auto* strip = timeline->findChild<QWidget*>(QStringLiteral("timeline"));
+    QVERIFY(strip != nullptr);
+    const QPoint from = strip->mapFrom(timeline, timeline->markerRect().center());
+    const QPoint to = strip->mapFrom(timeline, QPoint(timeline->itemRect(rounds).left() - 2,
+                                                      timeline->itemRect(rounds).center().y()));
+    QTest::mousePress(strip, Qt::LeftButton, Qt::NoModifier, from);
+    QTest::mouseMove(strip, (from + to) / 2);
+    QTest::mouseMove(strip, to);
+    QTest::mouseRelease(strip, Qt::LeftButton, Qt::NoModifier, to);
+    QCOMPARE(window.document()->historyMarker(), std::size_t{2});
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
+    QVERIFY(timeline->describe(rounds).contains(QStringLiteral("After the history marker")));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-rolled-back");
+    QVERIFY(action(window, "timeline.rollToEnd")->isEnabled());
+    QVERIFY(trigger(window, "timeline.rollToEnd"));
+    QCOMPARE(window.document()->historyMarker(), std::size_t{3});
+    QVERIFY(near(volumeOf(window, plate), rounded));
+    // Roll Back to Here does it from a menu.
+    clickTimeline(window, plate);
+    QVERIFY(trigger(window, "timeline.rollBack"));
+    QCOMPARE(window.document()->historyMarker(), std::size_t{1});
+    QVERIFY(window.document()->findBody(body)->shape.isNull());
+    QVERIFY(trigger(window, "edit.undo"));
+    QCOMPARE(window.document()->historyMarker(), std::size_t{3});
+
+    // Dragging the fillet in front of the pull that makes its body is refused, with the reason.
+    const QPoint grab = strip->mapFrom(timeline, timeline->itemRect(rounds).center());
+    const QPoint drop = strip->mapFrom(timeline, QPoint(timeline->itemRect(plate).left() - 2,
+                                                        timeline->itemRect(plate).center().y()));
+    QTest::mousePress(strip, Qt::LeftButton, Qt::NoModifier, grab);
+    QTest::mouseMove(strip, (grab + drop) / 2);
+    QTest::mouseMove(strip, drop);
+    QTest::mouseRelease(strip, Qt::LeftButton, Qt::NoModifier, drop);
+    QCOMPARE(window.document()->timeline(), (std::vector<ObjectId>{outline, plate, rounds}));
+    QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("cannot come before")));
+
+    // A sketch that nothing depends on can be moved, by dragging it.
+    const ObjectId spare = window.document()->addSketch("Spare", lcad::kernel::planeXZ());
+    QCOMPARE(window.document()->timeline().back(), spare);
+    const QPoint spareAt = strip->mapFrom(timeline, timeline->itemRect(spare).center());
+    const QPoint first = strip->mapFrom(timeline, QPoint(timeline->itemRect(outline).left() - 2,
+                                                         timeline->itemRect(outline).center().y()));
+    QTest::mousePress(strip, Qt::LeftButton, Qt::NoModifier, spareAt);
+    QTest::mouseMove(strip, (spareAt + first) / 2);
+    QTest::mouseMove(strip, first);
+    QTest::mouseRelease(strip, Qt::LeftButton, Qt::NoModifier, first);
+    QCOMPARE(window.document()->timeline().front(), spare);
+    QVERIFY(near(volumeOf(window, plate), rounded));
+
+    // Rename and delete, from the timeline.
+    window.document()->renameFeature(rounds, "Corner rounds");
+    QVERIFY(timeline->describe(rounds).startsWith(QStringLiteral("Corner rounds · Fillet")));
+    clickTimeline(window, rounds);
+    window.timeline()->findChild<QWidget*>(QStringLiteral("timeline"))->setFocus();
+    QVERIFY(trigger(window, "edit.delete"));
+    QVERIFY(window.document()->findFeature(rounds) == nullptr);
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
+    QVERIFY(timeline->itemRect(rounds).isEmpty());
+    QVERIFY(!timeline->selectedItem().isValid());
+
+    // Compact makes the entries smaller.
+    const int normal = timeline->itemRect(plate).height();
+    timeline->findChild<QToolButton*>(QStringLiteral("timelineCompact"))->click();
+    QVERIFY(timeline->isCompact());
+    QVERIFY(timeline->itemRect(plate).height() < normal);
+}
+
+void ModelingInterfaceTest::aFailingFeatureSaysWhy() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    const ObjectId holes = drawHole(window, 20.0, 20.0, 6.0);
+    window.browser()->setSelection({}, {holes});
+    QVERIFY(trigger(window, "solid.pull"));
+    typeInto(panel(window), "distance", 8.0);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId hole = window.document()->features().back().id;
+
+    // Move the circle off the plate: the cut no longer reaches it. The model keeps what it can,
+    // and the cut says why it fails, in the timeline and when it is selected.
+    lcad::sketch::Sketch s = window.document()->findSketch(holes)->geometry;
+    for (const lcad::sketch::Entity& entity : s.entities()) {
+        if (entity.kind == lcad::sketch::EntityKind::Circle) {
+            s.dragBy(entity.id, 180.0, 180.0);
+        }
+    }
+    window.document()->setSketchGeometry(holes, s, "Move Circle");
+    QVERIFY(!window.document()->featureError(hole).empty());
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
+    QVERIFY(window.timeline()->describe(hole).contains(QStringLiteral("Fails: It does not reach")));
+    clickTimeline(window, hole);
+    QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Pull 2 fails")));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-failing-feature");
+
+    // Editing it shows the same reason in its panel, and OK waits until it works.
+    QVERIFY(trigger(window, "timeline.edit"));
+    QVERIFY(panel(window) != nullptr);
+    QVERIFY(panel(window)->errorText().contains(QStringLiteral("does not reach")));
+    QVERIFY(!okButton(panel(window))->isEnabled());
+    QVERIFY(trigger(window, "edit.cancel"));
+    QTRY_VERIFY(panel(window) == nullptr);
+    // Put right, it works again.
+    QVERIFY(trigger(window, "edit.undo"));
+    QVERIFY(window.document()->featureError(hole).empty());
+    QVERIFY(near(volumeOf(window, plate), (60.0 * 40.0 - pi * 36.0) * 8.0));
+    Q_UNUSED(body);
+}
+
+void ModelingInterfaceTest::edgesArePickedInTheViewForAFilletOrChamfer() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    window.viewport()->setStandardView(StandardView::Home);
+    render(window);
+
+    // Chamfer, with nothing selected: the panel asks for edges, and the 3D view picks edges.
+    QVERIFY(trigger(window, "solid.chamfer"));
+    FeaturePanel* chamfer = panel(window);
+    QVERIFY(chamfer != nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Edges);
+    QVERIFY(!okButton(chamfer)->isEnabled());
+    // The upright edge at the front right corner, (60, 0), halfway up.
+    click(window, at(window, 60.0, 0.0, 4.0));
+    QCOMPARE(chamfer->feature().edges.size(), std::size_t{1});
+    QCOMPARE(chamfer->feature().body, body);
+    // Shift-click adds the one at the front left.
+    click(window, at(window, 0.0, 0.0, 4.0), Qt::ShiftModifier);
+    QCOMPARE(chamfer->feature().edges.size(), std::size_t{2});
+    typeInto(chamfer, "size", 2.0);
+    QVERIFY(okButton(chamfer)->isEnabled());
+    QTest::mouseClick(okButton(chamfer), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    // Two corners lose a right triangle with legs of 2, all the way up.
+    QVERIFY(near(volumeOf(window, plate), (60.0 * 40.0 - 2.0 * 2.0) * 8.0));
+    // The filter is back to what it was.
+    QCOMPARE(window.viewport()->selectionFilter(),
+             lcad::viewport::SelectionFilter::FacesEdgesVertices);
+}
+
+void ModelingInterfaceTest::shellAndRevolveWork() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+
+    // Shell, open at the top face: picked in the view.
+    window.viewport()->setStandardView(StandardView::Home);
+    render(window);
+    QVERIFY(trigger(window, "solid.shell"));
+    FeaturePanel* shell = panel(window);
+    QVERIFY(shell != nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Faces);
+    click(window, at(window, 30.0, 20.0, 8.0));
+    QCOMPARE(shell->feature().faces.size(), std::size_t{1});
+    QVERIFY(shell->feature().faces.front().find("/end/") != std::string::npos);
+    typeInto(shell, "size", 2.0);
+    QVERIFY(shell->errorText().isEmpty());
+    QTest::mouseClick(okButton(shell), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0 - 56.0 * 36.0 * 6.0));
+
+    // Revolve: a rectangle beside a construction line, turned all the way round.
+    const ObjectId id = window.createSketch(lcad::kernel::planeXZ());
+    lcad::sketch::Sketch s = window.document()->findSketch(id)->geometry;
+    lcad::sketch::addRectangle(s, {100.0, 0.0}, {110.0, 20.0});
+    const lcad::sketch::EntityId axis = s.addLine({90.0, 0.0}, {90.0, 30.0});
+    s.setConstruction(axis, true);
+    window.document()->setSketchGeometry(id, s, "Profile");
+    QVERIFY(trigger(window, "solid.revolve"));
+    FeaturePanel* revolve = panel(window);
+    QVERIFY(revolve != nullptr);
+    // The construction line is offered first as the axis; after the sketch's lines come the
+    // origin axes.
+    auto* axes = revolve->findChild<QComboBox*>(QStringLiteral("axis"));
+    QVERIFY(axes != nullptr);
+    QCOMPARE(axes->count(), 8);
+    QCOMPARE(axes->itemText(7), QStringLiteral("Z Axis"));
+    QVERIFY(axes->currentText().contains(QStringLiteral("construction")));
+    QCOMPARE(revolve->feature().axis, axis);
+    // Apart from the shelled plate, so a body of its own.
+    QCOMPARE(revolve->feature().operation, Operation::NewBody);
+    QVERIFY(revolve->errorText().isEmpty());
+    QTest::mouseClick(okButton(revolve), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId ring = window.document()->features().back().id;
+    // A ring from radius 10 to 20, 20 high.
+    QVERIFY(near(volumeOf(window, ring), pi * (400.0 - 100.0) * 20.0, 1e-5));
+    QCOMPARE(window.document()->bodies().size(), std::size_t{2});
+    Q_UNUSED(body);
+}
+
+void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {
+    const QString path = m_directory.filePath(QStringLiteral("bracket.lcad"));
+    double volume = 0.0;
+    {
+        MainWindow window;
+        show(window);
+        drawPlate(window, 60.0, 40.0);
+        const ObjectId plate = pullPlate(window);
+        QTRY_VERIFY(panel(window) == nullptr);
+        const ObjectId body = bodyOf(window, plate).id;
+        window.viewport()->setSelectionFilter(lcad::viewport::SelectionFilter::Edges);
+        window.viewport()->setSelection(uprightEdges(window, body));
+        QVERIFY(trigger(window, "solid.fillet"));
+        typeInto(panel(window), "size", 5.0);
+        QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+        QTRY_VERIFY(panel(window) == nullptr);
+        volume = volumeOf(window, plate);
+        QString error;
+        QVERIFY2(window.saveTo(path, &error), qPrintable(error));
+    }
+    MainWindow window;
+    show(window);
+    QString error;
+    QVERIFY2(window.loadFrom(path, &error), qPrintable(error));
+    QVERIFY(window.loadWarnings().isEmpty());
+    QCOMPARE(window.document()->features().size(), std::size_t{2});
+    QVERIFY(near(volumeOf(window, window.document()->features().front().id), volume));
+    // The timeline shows what was saved.
+    for (const ObjectId id : window.document()->timeline()) {
+        QVERIFY(!window.timeline()->itemRect(id).isEmpty());
+    }
+}
+
+void ModelingInterfaceTest::patternsAndMirrorsRepeatFeatures() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    const ObjectId holes = drawHole(window, 10.0, 10.0, 3.0);
+    window.browser()->setSelection({}, {holes});
+    QVERIFY(trigger(window, "solid.pull"));
+    typeInto(panel(window), "distance", 8.0);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId hole = window.document()->features().back().id;
+    const double solid = 60.0 * 40.0 * 8.0;
+    const double one = pi * 9.0 * 8.0;
+    QVERIFY(near(volumeOf(window, plate), solid - one));
+
+    // The hole selected in the timeline is what a pattern repeats.
+    clickTimeline(window, hole);
+    QVERIFY(action(window, "solid.patternRectangular")->isEnabled());
+    QVERIFY(trigger(window, "solid.patternRectangular"));
+    FeaturePanel* grid = panel(window);
+    QVERIFY(grid != nullptr);
+    QCOMPARE(grid->feature().body, body);
+    QCOMPARE(grid->feature().sources, (std::vector<ObjectId>{hole}));
+    auto* sources = grid->findChild<QListWidget*>(QStringLiteral("sources"));
+    QVERIFY(sources != nullptr);
+    QCOMPARE(sources->count(), 2);
+    QCOMPARE(sources->item(1)->checkState(), Qt::Checked);
+    QCOMPARE(grid->feature().reference, std::string("X"));
+    // Four along X, 15 apart; then a second row 20 along Y.
+    auto* count = grid->findChild<QSpinBox*>(QStringLiteral("count"));
+    count->setFocus();
+    count->selectAll();
+    QTest::keyClicks(count, QStringLiteral("4"));
+    QTest::keyClick(count, Qt::Key_Tab);
+    typeInto(grid, "spacing", 15.0);
+    QVERIFY(grid->errorText().isEmpty());
+    grid->setChoice(QStringLiteral("reference2"), 2);
+    QCOMPARE(grid->feature().reference2, std::string("Y"));
+    QCOMPARE(grid->feature().count2, 2);
+    QVERIFY(okButton(grid)->isEnabled());
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-pattern-preview");
+    QTest::mouseClick(okButton(grid), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId pattern = window.document()->features().back().id;
+    QVERIFY(window.document()->featureError(pattern).empty());
+    QVERIFY(near(volumeOf(window, plate), solid - 8.0 * one));
+    QVERIFY(window.timeline()->describe(pattern).contains(QStringLiteral("Copies Pull 2")));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-pattern");
+
+    // Edited from the timeline, it has its values.
+    clickTimeline(window, pattern, true);
+    QVERIFY(panel(window) != nullptr);
+    QCOMPARE(panel(window)->findChild<QSpinBox*>(QStringLiteral("count"))->value(), 4);
+    QCOMPARE(panel(window)->value(QStringLiteral("spacing")), 15.0);
+    QCOMPARE(panel(window)->feature().reference2, std::string("Y"));
+    QCOMPARE(panel(window)->findChild<QSpinBox*>(QStringLiteral("count2"))->value(), 2);
+    QVERIFY(trigger(window, "edit.cancel"));
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // A circular pattern of the hole about the round face of one of its copies: picked in the
+    // view.
+    window.viewport()->setStandardView(StandardView::Top);
+    render(window);
+    clickTimeline(window, hole);
+    QVERIFY(trigger(window, "solid.patternCircular"));
+    FeaturePanel* ring = panel(window);
+    QVERIFY(ring != nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(),
+             lcad::viewport::SelectionFilter::FacesEdgesVertices);
+    // The rim of the hole at (25, 30), seen from above, away from the corner where the circle
+    // starts: a circle about the axis wanted.
+    click(window, at(window, 25.0, 33.0, 8.0));
+    QVERIFY(ring->feature().reference.size() > 2);
+    QVERIFY(ring->errorText().isEmpty());
+    QTest::mouseClick(okButton(ring), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId around = window.document()->features().back().id;
+    QVERIFY2(window.document()->featureError(around).empty(),
+             window.document()->featureError(around).c_str());
+
+    // Mirror the whole body in the YZ plane: it doubles.
+    const double before = volumeOf(window, plate);
+    window.timeline()->setSelectedItem({});
+    window.viewport()->clearSelection();
+    QVERIFY(trigger(window, "solid.mirror"));
+    FeaturePanel* mirror = panel(window);
+    QVERIFY(mirror != nullptr);
+    QVERIFY(mirror->feature().sources.empty());
+    QCOMPARE(mirror->feature().reference, std::string("YZ"));
+    QVERIFY(mirror->findChild<QLabel*>(QStringLiteral("featureInput"))
+                ->text()
+                .contains(QStringLiteral("All of Body")));
+    QTest::mouseClick(okButton(mirror), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(near(volumeOf(window, plate), 2.0 * before));
+}
+
+void ModelingInterfaceTest::measureGivesDistancesAndAngles() {
+    MainWindow window;
+    show(window);
+    // A box 50 by 30 by 20, and a rod of radius 5 standing 30 beyond it in X.
+    const ObjectId box = window.document()->addBody("Box", lcad::kernel::makeBox(50.0, 30.0, 20.0));
+    const ObjectId rod = window.document()->addBody(
+        "Rod", lcad::kernel::translated(lcad::kernel::makeCylinder(5.0, 20.0), 85.0, 15.0, 0.0));
+    render(window);
+    const auto faceWhere = [&window](ObjectId body, auto test) {
+        const lcad::kernel::Shape& shape = window.document()->findBody(body)->shape;
+        for (int i = 0; i < lcad::kernel::subShapeCount(shape, lcad::kernel::SubShapeKind::Face);
+             ++i) {
+            const auto bounds = lcad::kernel::boundingBox(
+                lcad::kernel::subShape(shape, lcad::kernel::SubShapeKind::Face, i));
+            if (test(*bounds)) {
+                return SelectedItem{body, SelectedItem::Kind::Face, i};
+            }
+        }
+        return SelectedItem{};
+    };
+    const SelectedItem left = faceWhere(box, [](const auto& b) { return b.max.x < 1e-9; });
+    const SelectedItem right = faceWhere(box, [](const auto& b) { return b.min.x > 50.0 - 1e-9; });
+    const SelectedItem bottom = faceWhere(box, [](const auto& b) { return b.max.z < 1e-9; });
+    const SelectedItem round =
+        faceWhere(rod, [](const auto& b) { return b.max.z - b.min.z > 19.0; });
+
+    QCOMPARE(action(window, "inspect.measure")->shortcut(), QKeySequence(Qt::Key_M));
+    QVERIFY(trigger(window, "inspect.measure"));
+    lcad::app::MeasurePanel* measure = window.measurePanel();
+    QVERIFY(measure != nullptr);
+    QVERIFY(measure->isVisible());
+    QCOMPARE(window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"))->windowTitle(),
+             QStringLiteral("Measure"));
+
+    // One face: its area. Then the other: 50 apart, parallel.
+    window.viewport()->setSelection({left});
+    QVERIFY(measure->rows().contains(QStringLiteral("Area: 600 mm²")));
+    window.viewport()->setSelection({right});
+    QCOMPARE(window.viewport()->selection().size(), std::size_t{2});
+    QVERIFY2(measure->rows().contains(QStringLiteral("Distance: 50 mm")),
+             qPrintable(measure->rows().join(QStringLiteral(" | "))));
+    QVERIFY(measure->rows().contains(QStringLiteral("Along X: 50 mm")));
+    QVERIFY(measure->rows().contains(QStringLiteral("Angle: 0°")));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-measure");
+
+    // A third pick starts again; the bottom then meets the side square.
+    window.viewport()->setSelection({bottom});
+    QCOMPARE(window.viewport()->selection().size(), std::size_t{1});
+    window.viewport()->setSelection({left});
+    QVERIFY(measure->rows().contains(QStringLiteral("Distance: 0 mm")));
+    QVERIFY(measure->rows().contains(QStringLiteral("Angle: 90°")));
+
+    // The rod's round face: its radius, and how far it is from the box's side.
+    window.viewport()->setSelection({round});
+    QVERIFY(measure->rows().contains(QStringLiteral("Radius: 5 mm")));
+    QVERIFY(measure->rows().contains(QStringLiteral("Diameter: 10 mm")));
+    window.viewport()->setSelection({right});
+    QVERIFY(measure->rows().contains(QStringLiteral("Distance: 30 mm")));
+
+    // Esc closes it, and the selection filter is what it was.
+    QVERIFY(trigger(window, "edit.cancel"));
+    QTRY_VERIFY(window.measurePanel() == nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(),
+             lcad::viewport::SelectionFilter::FacesEdgesVertices);
+}
+
+void ModelingInterfaceTest::sketchesFollowConstructionPlanesAndFaces() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+
+    // An offset plane, 20 above the XY plane.
+    QVERIFY(action(window, "construct.offsetPlane")->isEnabled());
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* offset = panel(window);
+    QVERIFY(offset != nullptr);
+    QCOMPARE(offset->feature().kind, FeatureKind::Plane);
+    QCOMPARE(offset->feature().reference, std::string("XY"));
+    typeInto(offset, "distance", 20.0);
+    QVERIFY(offset->errorText().isEmpty());
+    QVERIFY(okButton(offset)->isEnabled());
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-plane-preview");
+    QTest::mouseClick(okButton(offset), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId plane = window.document()->features().back().id;
+    QCOMPARE(QString::fromStdString(window.document()->findFeature(plane)->name),
+             QStringLiteral("Plane 1"));
+    QVERIFY(window.document()->planeState(plane).has_value());
+    QCOMPARE(window.document()->planeState(plane)->plane.origin.z, 20.0);
+    // It is listed under Construction, and makes no body.
+    QVERIFY(window.browser()->planeItem(plane) != nullptr);
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+
+    // New Sketch, and click the plane in the 3D view: the sketch is on it, and follows it.
+    window.viewport()->setStandardView(StandardView::Home);
+    render(window);
+    QVERIFY(trigger(window, "sketch.new"));
+    render(window);
+    const lcad::kernel::Point middle = window.document()->planeState(plane)->center;
+    // A little off its middle, where the plate below is not in the way.
+    const QPoint onPlane = at(window, middle.x + 20.0, middle.y + 15.0, middle.z);
+    QCOMPARE(window.viewport()->constructionPlaneAt(onPlane), plane);
+    click(window, onPlane);
+    QTRY_VERIFY(window.isSketching());
+    const ObjectId raised = window.viewport()->editedSketch();
+    QCOMPARE(window.document()->findSketch(raised)->attachedTo, plane);
+    QCOMPARE(window.document()->findSketch(raised)->plane.origin.z, 20.0);
+    lcad::sketch::Sketch disc = window.document()->findSketch(raised)->geometry;
+    disc.addCircle({30.0, 20.0}, 5.0);
+    window.document()->setSketchGeometry(raised, disc, "Circle");
+    QVERIFY(trigger(window, "solid.pull"));
+    typeInto(panel(window), "distance", 4.0);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId cap = window.document()->features().back().id;
+    QCOMPARE(window.document()->findFeature(cap)->operation, Operation::NewBody);
+    QVERIFY(near(lcad::kernel::boundingBox(bodyOf(window, cap).shape)->min.z, 20.0));
+
+    // Double-click the plane in the browser, and move it to 30: the disc goes with it.
+    QTreeWidget* tree = window.browser()->tree();
+    QTreeWidgetItem* entry = window.browser()->planeItem(plane);
+    tree->scrollToItem(entry);
+    const QPoint onEntry = tree->visualItemRect(entry).center();
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QTest::mouseDClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QVERIFY(panel(window) != nullptr);
+    QCOMPARE(window.editedFeature(), plane);
+    typeInto(panel(window), "distance", 30.0);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QCOMPARE(window.document()->findSketch(raised)->plane.origin.z, 30.0);
+    QVERIFY(near(lcad::kernel::boundingBox(bodyOf(window, cap).shape)->min.z, 30.0));
+
+    // A sketch started on the plate's top face is attached to it.
+    std::string topName;
+    int topIndex = -1;
+    const lcad::kernel::NamedShape named = window.document()->namedBody(body);
+    for (std::size_t i = 0; i < named.faceNames.size(); ++i) {
+        const auto facing = lcad::kernel::planeOfFace(lcad::kernel::subShape(
+            named.shape, lcad::kernel::SubShapeKind::Face, static_cast<int>(i)));
+        if (facing.has_value() && facing->normal.z > 0.999) {
+            topName = named.faceNames[i];
+            topIndex = static_cast<int>(i);
+        }
+    }
+    QVERIFY(topIndex >= 0);
+    window.viewport()->setSelectionFilter(lcad::viewport::SelectionFilter::Faces);
+    window.viewport()->setSelection({{body, SelectedItem::Kind::Face, topIndex}});
+    QVERIFY(trigger(window, "sketch.new"));
+    QVERIFY(window.isSketching());
+    const ObjectId onTop = window.viewport()->editedSketch();
+    QCOMPARE(window.document()->findSketch(onTop)->attachedTo, body);
+    QCOMPARE(window.document()->findSketch(onTop)->attachedFace, topName);
+    QVERIFY(window.timeline()->describe(onTop).contains(QStringLiteral("Drawn on a face of Body")));
+    window.finishSketch();
+
+    // The plate gets thicker: the sketch on its top rises with it.
+    Feature thicker = *window.document()->findFeature(plate);
+    thicker.distance = 12.0;
+    window.document()->changeFeature(plate, thicker);
+    QCOMPARE(window.document()->findSketch(onTop)->plane.origin.z, 12.0);
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-planes");
+}
+
+void ModelingInterfaceTest::holesAreDrilledAtSketchPoints() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    const double solid = 60.0 * 40.0 * 8.0;
+
+    // A sketch on the top face, with two points where the holes go.
+    int topIndex = -1;
+    const lcad::kernel::NamedShape named = window.document()->namedBody(body);
+    for (std::size_t i = 0; i < named.faceNames.size(); ++i) {
+        const auto facing = lcad::kernel::planeOfFace(lcad::kernel::subShape(
+            named.shape, lcad::kernel::SubShapeKind::Face, static_cast<int>(i)));
+        if (facing.has_value() && facing->normal.z > 0.999) {
+            topIndex = static_cast<int>(i);
+        }
+    }
+    window.viewport()->setSelectionFilter(lcad::viewport::SelectionFilter::Faces);
+    window.viewport()->setSelection({{body, SelectedItem::Kind::Face, topIndex}});
+    QVERIFY(trigger(window, "sketch.new"));
+    QVERIFY(window.isSketching());
+    const ObjectId marks = window.viewport()->editedSketch();
+    lcad::sketch::Sketch s = window.document()->findSketch(marks)->geometry;
+    s.addPoint({15.0, 10.0});
+    s.addPoint({45.0, 30.0});
+    window.document()->setSketchGeometry(marks, s, "Points");
+
+    // H, straight from the sketch: it is finished, and its points are where the holes go.
+    QCOMPARE(action(window, "solid.hole")->shortcut(), QKeySequence(Qt::Key_H));
+    QVERIFY(trigger(window, "solid.hole"));
+    QVERIFY(!window.isSketching());
+    FeaturePanel* hole = panel(window);
+    QVERIFY(hole != nullptr);
+    QCOMPARE(hole->feature().sketch, marks);
+    QCOMPARE(hole->feature().body, body);
+    QVERIFY(hole->findChild<QLabel*>(QStringLiteral("featureInput"))
+                ->text()
+                .startsWith(QStringLiteral("2 holes")));
+    typeInto(hole, "size", 6.0);
+    hole->findChild<QCheckBox*>(QStringLiteral("throughAll"))->setChecked(true);
+    QVERIFY(!hole->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))->isVisible());
+    QVERIFY(hole->errorText().isEmpty());
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-hole-preview");
+    QTest::mouseClick(okButton(hole), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId holes = window.document()->features().back().id;
+    QVERIFY(window.document()->featureError(holes).empty());
+    QVERIFY(near(volumeOf(window, plate), solid - 2.0 * pi * 9.0 * 8.0));
+    // Its sketch is hidden, as after a pull.
+    QVERIFY(!window.document()->findSketch(marks)->visible);
+
+    // Edited from the timeline into counterbores.
+    clickTimeline(window, holes, true);
+    hole = panel(window);
+    QVERIFY(hole != nullptr);
+    QVERIFY(hole->findChild<QCheckBox*>(QStringLiteral("throughAll"))->isChecked());
+    hole->setChoice(QStringLiteral("holeKind"), 1);
+    QVERIFY(hole->findChild<QDoubleSpinBox*>(QStringLiteral("headDepth"))->isVisible());
+    typeInto(hole, "headDiameter", 10.0);
+    typeInto(hole, "headDepth", 3.0);
+    QVERIFY(hole->errorText().isEmpty());
+    QTest::mouseClick(okButton(hole), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(near(volumeOf(window, plate), solid - 2.0 * (pi * 25.0 * 3.0 + pi * 9.0 * 5.0)));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-holes");
+}
+
+void ModelingInterfaceTest::aPullTapersOrGoesUpToAFace() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // A post beside the plate, pulled up to the plate's top, which is clicked in the 3D view.
+    const ObjectId post = drawHole(window, 90.0, 20.0, 5.0);
+    window.viewport()->setStandardView(StandardView::Home);
+    render(window);
+    window.browser()->setSelection({}, {post});
+    QVERIFY(trigger(window, "solid.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    QCOMPARE(pull->feature().regions.size(), std::size_t{1});
+    pull->setChoice(QStringLiteral("extent"), 3);
+    QVERIFY(pull->goesToFace());
+    QVERIFY(!pull->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))->isVisible());
+    // Nothing to go up to yet.
+    QVERIFY(!okButton(pull)->isEnabled());
+    click(window, at(window, 30.0, 20.0, 8.0));
+    QVERIFY(!pull->feature().extentFace.empty());
+    QVERIFY(pull->findChild<QLabel*>(QStringLiteral("extentFace"))
+                ->text()
+                .startsWith(QStringLiteral("Face of Body")));
+    QVERIFY(pull->errorText().isEmpty());
+    QCOMPARE(pull->feature().operation, Operation::NewBody);
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId rise = window.document()->features().back().id;
+    QVERIFY(near(volumeOf(window, rise), pi * 25.0 * 8.0));
+
+    // The plate, edited from the timeline, gets a taper of 3 degrees. Its top stays at 8, and
+    // the post with it.
+    clickTimeline(window, plate, true);
+    QVERIFY(panel(window) != nullptr);
+    typeInto(panel(window), "taper", 3.0);
+    QVERIFY(panel(window)->errorText().isEmpty());
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const double s = 8.0 * std::tan(3.0 * pi / 180.0);
+    const auto area = [](double shrink) { return (60.0 - 2.0 * shrink) * (40.0 - 2.0 * shrink); };
+    QVERIFY(near(volumeOf(window, plate), 8.0 / 6.0 * (area(0.0) + 4.0 * area(s / 2.0) + area(s))));
+    QVERIFY(near(volumeOf(window, rise), pi * 25.0 * 8.0));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-taper-to-face");
+}
+
+void ModelingInterfaceTest::parametersDriveTheModel() {
+    MainWindow window;
+    show(window);
+
+    // The table, from the Modify menu's command: two parameters, one worked out from the other.
+    QVERIFY(trigger(window, "model.parameters"));
+    lcad::app::ParametersDialog* parameters = window.parametersDialog();
+    QVERIFY(parameters != nullptr);
+    QVERIFY(parameters->isVisible());
+    QTableWidget* table = parameters->table();
+    QCOMPARE(table->rowCount(), 0);
+    parameters->findChild<QPushButton*>(QStringLiteral("addParameter"))->click();
+    QTRY_COMPARE(table->rowCount(), 1);
+    QCOMPARE(table->item(0, 0)->text(), QStringLiteral("param1"));
+    table->item(0, 0)->setText(QStringLiteral("width"));
+    QTRY_COMPARE(QString::fromStdString(window.document()->parameters().front().name),
+                 QStringLiteral("width"));
+    table->item(0, 1)->setText(QStringLiteral("60 mm"));
+    QTRY_COMPARE(table->item(0, 2)->text(), QStringLiteral("60"));
+    parameters->findChild<QPushButton*>(QStringLiteral("addParameter"))->click();
+    QTRY_COMPARE(table->rowCount(), 2);
+    table->item(1, 0)->setText(QStringLiteral("thick"));
+    QTRY_COMPARE(QString::fromStdString(window.document()->parameters().back().name),
+                 QStringLiteral("thick"));
+    table->item(1, 1)->setText(QStringLiteral("width / 10"));
+    QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("6"));
+    // A name that cannot be is refused, and the table says why.
+    table->item(1, 0)->setText(QStringLiteral("2thick"));
+    QTRY_VERIFY(parameters->message().contains(QStringLiteral("cannot be a parameter's name")));
+    QTRY_COMPARE(table->item(1, 0)->text(), QStringLiteral("thick"));
+    // One that cannot be worked out says so in its value.
+    table->item(1, 1)->setText(QStringLiteral("depth * 2"));
+    QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("cannot be worked out"));
+    QVERIFY(table->item(1, 2)->toolTip().contains(QStringLiteral("no parameter called depth")));
+    keepFrame(parameters->grab().toImage(), "modeling-parameters-table");
+    table->item(1, 1)->setText(QStringLiteral("width / 10"));
+    QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("6"));
+    parameters->close();
+    // Typing goes to the main window again.
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+
+    // A plate whose width dimension is typed as "width" in the 3D view.
+    const auto [sketch, dimension] = drawPlate(window, 50.0, 40.0);
+    render(window);
+    auto* editor = window.viewport()->sketchEditor();
+    editor->editDimension(dimension);
+    QLineEdit* field = editor->valueField();
+    QVERIFY(field != nullptr);
+    field->selectAll();
+    QTest::keyClicks(field, QStringLiteral("width"));
+    QTest::keyClick(field, Qt::Key_Return);
+    QCOMPARE(window.document()->findSketch(sketch)->expressions.at(dimension),
+             std::string("width"));
+    QCOMPARE(window.document()->findSketch(sketch)->geometry.findConstraint(dimension)->value,
+             60.0);
+    QCOMPARE(QString::fromStdString(window.document()->undoLabel()),
+             QStringLiteral("Change Dimension"));
+    // Opened again, the field shows the expression.
+    editor->editDimension(dimension);
+    QCOMPARE(editor->valueField()->text(), QStringLiteral("width"));
+    QTest::keyClick(editor->valueField(), Qt::Key_Escape);
+
+    // Pull by "thick".
+    QVERIFY(trigger(window, "solid.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    auto* distance = pull->findChild<QDoubleSpinBox*>(QStringLiteral("distance"));
+    distance->setFocus();
+    distance->selectAll();
+    QTest::keyClicks(distance, QStringLiteral("thick"));
+    QTest::keyClick(distance, Qt::Key_Tab);
+    QCOMPARE(distance->value(), 6.0);
+    QCOMPARE(pull->feature().expressions.at("distance"), std::string("thick"));
+    QVERIFY(distance->text().startsWith(QStringLiteral("thick")));
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId plate = window.document()->features().back().id;
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 6.0));
+
+    // One change in the table: the sketch and the thickness follow.
+    window.showParameters();
+    table->item(0, 1)->setText(QStringLiteral("80 mm"));
+    QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("8"));
+    QVERIFY(near(volumeOf(window, plate), 80.0 * 40.0 * 8.0));
+    // Undone from the window, as any edit.
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    QVERIFY(trigger(window, "edit.undo"));
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 6.0));
+    QTRY_COMPARE(table->item(0, 1)->text(), QStringLiteral("60 mm"));
+
+    // Edited again, the pull's box shows its expression.
+    clickTimeline(window, plate, true);
+    QVERIFY(panel(window) != nullptr);
+    QVERIFY(panel(window)
+                ->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))
+                ->text()
+                .startsWith(QStringLiteral("thick")));
+    QVERIFY(trigger(window, "edit.cancel"));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-parameters");
+}
+
+QTEST_MAIN(ModelingInterfaceTest)
+#include "ModelingInterfaceTest.moc"
+
+void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    // A hole through the middle of the plate.
+    const ObjectId holes = drawHole(window, 30.0, 20.0, 5.0);
+    window.browser()->setSelection({}, {holes});
+    QVERIFY(trigger(window, "solid.pull"));
+    typeInto(panel(window), "distance", 8.0);
+    QCOMPARE(panel(window)->feature().operation, Operation::Cut);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // Create > Axis starts on the Z axis.
+    QVERIFY(action(window, "construct.axis")->isEnabled());
+    QVERIFY(trigger(window, "construct.axis"));
+    FeaturePanel* axisPanel = panel(window);
+    QVERIFY(axisPanel != nullptr);
+    QCOMPARE(axisPanel->feature().kind, FeatureKind::Axis);
+    QCOMPARE(QString::fromStdString(axisPanel->feature().reference), QStringLiteral("Z"));
+    QVERIFY(axisPanel->errorText().isEmpty());
+    QVERIFY(okButton(axisPanel)->isEnabled());
+    // Clicking the rim of the hole puts it through the hole's middle.
+    window.viewport()->setStandardView(StandardView::Top);
+    render(window);
+    click(window, at(window, 30.0, 25.0, 8.0));
+    QVERIFY(axisPanel->feature().reference.size() > 1);
+    QCOMPARE(axisPanel->feature().body, body);
+    QVERIFY2(axisPanel->errorText().isEmpty(), qPrintable(axisPanel->errorText()));
+    window.viewport()->setStandardView(StandardView::Home);
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-axis-preview");
+    QTest::mouseClick(okButton(axisPanel), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId axis = window.document()->features().back().id;
+    QCOMPARE(QString::fromStdString(window.document()->findFeature(axis)->name),
+             QStringLiteral("Axis 1"));
+    const auto state = window.document()->axisState(axis);
+    QVERIFY(state.has_value());
+    QVERIFY(near(state->axis.origin.x, 30.0));
+    QVERIFY(near(state->axis.origin.y, 20.0));
+    QVERIFY(near(std::abs(state->axis.direction.z), 1.0));
+    // It is listed under Construction, and makes no body.
+    QVERIFY(window.browser()->planeItem(axis) != nullptr);
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+
+    // A revolve about the origin's Z axis, chosen from the list: a ring from radius 100 to 110.
+    const ObjectId id = window.createSketch(lcad::kernel::planeXZ());
+    lcad::sketch::Sketch s = window.document()->findSketch(id)->geometry;
+    lcad::sketch::addRectangle(s, {100.0, 0.0}, {110.0, 20.0});
+    window.document()->setSketchGeometry(id, s, "Profile");
+    QVERIFY(trigger(window, "solid.revolve"));
+    FeaturePanel* revolve = panel(window);
+    QVERIFY(revolve != nullptr);
+    auto* axes = revolve->findChild<QComboBox*>(QStringLiteral("axis"));
+    QVERIFY(axes != nullptr);
+    // The rectangle's four lines, the origin's three axes, and Axis 1.
+    QCOMPARE(axes->count(), 8);
+    QCOMPARE(axes->itemText(7), QStringLiteral("Axis 1"));
+    revolve->setChoice(QStringLiteral("axis"), axes->findText(QStringLiteral("Z Axis")));
+    QCOMPARE(revolve->feature().reference, std::string("Z"));
+    QCOMPARE(revolve->feature().axis, lcad::sketch::EntityId{0});
+    QCOMPARE(revolve->feature().operation, Operation::NewBody);
+    QVERIFY2(revolve->errorText().isEmpty(), qPrintable(revolve->errorText()));
+    QTest::mouseClick(okButton(revolve), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId ring = window.document()->features().back().id;
+    QVERIFY(near(volumeOf(window, ring), pi * (110.0 * 110.0 - 100.0 * 100.0) * 20.0, 1e-5));
+    const ObjectId ringBody = bodyOf(window, ring).id;
+
+    // Two of the ring around Axis 1: the copy, half a turn about (30, 20), is centered on
+    // (60, 40).
+    window.timeline()->setSelectedItem({});
+    window.viewport()->clearSelection();
+    window.browser()->setSelection({ringBody}, {});
+    QVERIFY(trigger(window, "solid.patternCircular"));
+    FeaturePanel* around = panel(window);
+    QVERIFY(around != nullptr);
+    QCOMPARE(around->feature().body, ringBody);
+    auto* references = around->findChild<QComboBox*>(QStringLiteral("reference"));
+    const int onAxis = references->findText(QStringLiteral("Axis 1"));
+    QVERIFY(onAxis >= 0);
+    around->setChoice(QStringLiteral("reference"), onAxis);
+    QCOMPARE(around->feature().reference, "axis:" + std::to_string(axis.value));
+    auto* count = around->findChild<QSpinBox*>(QStringLiteral("count"));
+    count->setFocus();
+    count->selectAll();
+    QTest::keyClicks(count, QStringLiteral("2"));
+    QTest::keyClick(count, Qt::Key_Tab);
+    QVERIFY2(around->errorText().isEmpty(), qPrintable(around->errorText()));
+    QTest::mouseClick(okButton(around), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const auto box = lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
+    QVERIFY(box.has_value());
+    QVERIFY(near(box->max.x, 170.0, 1e-6));
+    QVERIFY(near(box->max.y, 150.0, 1e-6));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-axes");
+
+    // Double-click the axis in the browser to edit it: it can go back to the Z axis, and the
+    // copy follows.
+    QTreeWidget* tree = window.browser()->tree();
+    QTreeWidgetItem* entry = window.browser()->planeItem(axis);
+    tree->scrollToItem(entry);
+    const QPoint onEntry = tree->visualItemRect(entry).center();
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QTest::mouseDClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QVERIFY(panel(window) != nullptr);
+    QCOMPARE(window.editedFeature(), axis);
+    QCOMPARE(panel(window)->kind(), FeatureKind::Axis);
+    auto* along = panel(window)->findChild<QComboBox*>(QStringLiteral("reference"));
+    // The origin's three axes, and the rim it is on.
+    QCOMPARE(along->count(), 4);
+    QCOMPARE(along->currentIndex(), 3);
+    panel(window)->setChoice(QStringLiteral("reference"), 2);
+    QCOMPARE(panel(window)->feature().reference, std::string("Z"));
+    QCOMPARE(panel(window)->feature().body, ObjectId{});
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    // About the ring's own axis now, the copy lands on the ring.
+    const auto same = lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
+    QVERIFY(near(same->max.x, 110.0, 1e-6));
+    QVERIFY(window.document()->featureError(window.document()->features().back().id).empty());
+
+    // Hidden from the browser, it stays in the model.
+    entry = window.browser()->planeItem(axis);
+    entry->setCheckState(0, Qt::Unchecked);
+    QTRY_VERIFY(!window.document()->findFeature(axis)->visible);
+    QVERIFY(window.document()->axisState(axis).has_value());
+}

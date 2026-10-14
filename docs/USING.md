@@ -38,6 +38,103 @@ Every command is also in a menu. Commands that cannot be used at the moment are 
 
 Each solid you create is one undo step. You can turn and zoom the view while the panel is open.
 
+## Making a solid from a sketch
+
+This is how most parts start: sketch an outline, then **Pull** it into a solid (what other
+programs call extrude).
+
+1. Draw a closed outline in a sketch. You do not have to finish the sketch first.
+2. Press **E**, or click **Pull** under **Create**. If the sketch has one closed area, it is
+   picked already; otherwise click the areas you want in the 3D view (they light up under the
+   pointer; a second click lets one go).
+3. Type the distance on the right. A negative distance, or **Flip Direction**, pulls the other
+   way. **Direction** pulls to one side, by the same amount to both sides (**Symmetric**), by
+   different amounts (**Two Sides**), or up to a flat face you click in the 3D view (**To
+   Face**), which it then follows. **Taper** leans the sides in as the pull goes out (negative
+   leans them out); it works on a pull to one side.
+4. **Operation**: a **New Body**, **Join** it to a body, **Cut** it out of one, or keep only
+   what it shares with one (**Intersect**). Until you choose, LCAD guesses: a pull that lies
+   mostly inside a body cuts it, one that touches a body joins it, one on its own is a new body.
+5. Press Enter or click **OK**. The sketch is hidden; show it again from the browser.
+
+The 3D view shows the result as you type. If it cannot be made, the panel says why and OK waits.
+
+**Revolve** turns closed areas about a line of the same sketch (draw that line as construction
+geometry if it is not part of the outline), an origin axis, or a construction axis: choose it
+under **Axis** in the panel. **Mirror**, **Rectangular Pattern**, and **Circular
+Pattern** (under **Create**, and the pattern button in the toolbar) copy pulls and revolves, or
+a whole body: select the feature in the timeline first, or check it in the panel. The plane,
+direction, or axis is one through the origin, a construction plane or axis, or an edge or face
+you click in the 3D view.
+
+## Holes
+
+Draw points where the holes go, in a sketch on the face to drill into. Then press **H**, or click
+**Hole**: the panel takes the points of the sketch that was open, or click another sketch in the
+3D view. Choose **Simple**, **Counterbore**, or **Countersink**, the diameter, and a depth (with
+the point a drill leaves) or **Through all**. **Flip Direction** drills the other way, for a
+sketch that is not on the face itself.
+
+## Changing a solid
+
+Under **Modify**: **Fillet** (F) rounds edges, **Chamfer** bevels them, **Shell** hollows a body
+out, open at the faces you click. Click the edges or faces in the 3D view, before or after
+starting the command; Shift-click picks more.
+
+## Parameters
+
+**Modify > Parameters…** opens a table of named values. **Add** a row, name it (`width`), and type
+what it is (`60 mm`), or work it out from others (`width / 10`). Then type the name, or an
+expression with it, in place of a number in any value box of a feature (`thick`, `width / 2 + 3`)
+or in a sketch dimension. A dimension worked out from parameters is marked **ƒ**. Change a
+parameter and everything that uses it follows; rename it and the new name goes everywhere the old
+one was. Expressions take units (mm, cm, m, in, ft for lengths; deg, rad for angles), + - * /
+and ^, parentheses, and sqrt, abs, sin, cos, tan, asin, acos, atan, min, max, round, floor, ceil,
+and pi.
+
+## Construction planes
+
+**Offset Plane** (under **Create**) adds a plane to sketch on: pick an origin plane in the panel,
+or click a flat face in the 3D view, and type how far from it. Planes are listed under
+**Construction** in the browser (uncheck to hide, double-click to move), and drawn in amber.
+To sketch on one, select it in the browser and click **New Sketch**, or click **New Sketch** and
+then the plane in the 3D view.
+
+A sketch drawn on a construction plane, or started on a flat face of a body, follows it: move
+the plane or change the body, and the sketch and what was made from it move too.
+
+**Axis** (under **Create**) adds a construction axis: pick an origin axis in the panel, or click
+a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
+listed under **Construction** too and drawn as dashed amber lines. A revolve can turn about one,
+and a pattern go along or around one; when the edge or face it runs along moves, the axis and
+what uses it follow.
+
+## The timeline
+
+The strip under the 3D view lists the sketches and features in the order they are applied.
+
+- **Click** an entry to select what it made. **Double-click** it, or press Enter, to edit it:
+  the model goes back to how it was just before that feature, so that what it works on can be
+  picked again, and comes forward again when you click OK or Cancel.
+- **Right-click** for **Edit**, **Rename**, **Suppress** (leave it out, and keep it),
+  **Roll Back to Here**, **Roll Forward to the End**, and **Delete**.
+- **Drag an entry** to move it. LCAD refuses, and says why in the status bar, if that would put
+  a feature before something it depends on.
+- **Drag the marker** (the dark line with the handle) to the left to see, or work on, an
+  earlier state of the model. New features go where the marker is.
+- An entry with a **red outline and dot** fails: hover over it, or select it, to read why. The
+  rest of the model is built without it.
+- **Compact**, on the right, makes the entries smaller.
+
+When you change a sketch, the features made from it follow when you finish the sketch.
+
+## Measuring
+
+Press **M**, or click the measure button under **View**. Click one thing in the 3D view to see
+its length, area, radius, or position; click a second to see the distance between them (also
+along X, Y, and Z) and, for flat faces and straight edges, the angle between them. A third click
+starts again. Esc closes it.
+
 ## Sketching
 
 A sketch is flat geometry on a plane: lines, circles, and arcs, held in shape by constraints
@@ -68,6 +165,8 @@ in the 3D view.
 | Point | | Click where it goes. |
 | Polygon | | Click the center, then a corner. The number of sides is set in the panel on the right. |
 | Slot | | Click the two centers, then move away from the line between them and click to set the width. |
+| Ellipse | | Click the center, then the end of the major axis, then how far out it reaches across (its minor radius). The dimension tool gives it its minor radius; its major radius is the distance from the center to the end of the major axis. |
+| Spline | | Click the points it goes through first and last, and the ones it is drawn toward in between. Enter, a double-click, or Esc ends it. Drag its points to reshape it. |
 
 While drawing, the pointer catches on what is already there: ends, middles of lines, and curves.
 What it catches on, the new geometry stays attached to. A line that is nearly level or upright
@@ -159,8 +258,9 @@ coincident with it), then add dimensions until nothing is blue.
 | Mirror | | Select what to mirror, choose Mirror, and click the line to mirror in. |
 | Project | P | Click an edge or a corner of a body. It comes into the sketch as reference geometry, in its own color, and does not move. |
 
-Not there yet: ellipses and splines; tangent arcs in a chain of lines; patterns; moving a
-dimension's value somewhere else; expressions as values. Curves that cross are not split where
+Not there yet: tangent arcs in a chain of lines; patterns in a sketch; moving a dimension's
+value somewhere else; trimming, extending, or offsetting an ellipse or a spline, and
+constraining a point onto one. Curves that cross are not split where
 they cross, so an outline is closed only where curves meet at their ends: trim first. A
 projected edge is a copy, and does not follow its body if the body changes.
 
@@ -249,12 +349,18 @@ These are the shortcuts LCAD starts with.
 | Ctrl + Enter | Finish the sketch |
 | L, R, C, A | In a sketch: line, rectangle, circle, arc |
 | D, T, O, P, X | In a sketch: dimension, trim, offset, project, construction |
+| E | Pull (also from inside a sketch, which it finishes) |
+| F | Fillet |
+| H | Hole |
+| M | Measure |
 | F6, Shift + F6, Home | Fit the view, zoom to the selection, go to the home view |
 | F11 | Give the window to the 3D view, and back |
 | Ctrl + Q | Quit |
 
-Not there yet: autosave and crash recovery, inches as a display unit, and import or export of
-other formats. The origin guides that are shown are not saved with the document.
+Not there yet: autosave and crash recovery, inches as a display unit, import or export of other
+formats, and pulling up to a curved face. Construction axes are not picked by clicking them in the
+3D view: choose them from the list in the panel.
+The origin guides that are shown are not saved with the document.
 
 ## If something goes wrong
 

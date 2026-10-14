@@ -202,10 +202,11 @@ void ApplicationTest::windowHasItsFiveRegions() {
     for (const QAction* menu : window.mainMenu()->actions()) {
         menus << menu->text().remove(QLatin1Char('&'));
     }
-    QCOMPARE(menus, (QStringList{QStringLiteral("File"), QStringLiteral("Edit"),
-                                 QStringLiteral("Create"), QStringLiteral("Sketch"),
-                                 QStringLiteral("Select"), QStringLiteral("View"),
-                                 QStringLiteral("Window"), QStringLiteral("Help")}));
+    QCOMPARE(
+        menus,
+        (QStringList{QStringLiteral("File"), QStringLiteral("Edit"), QStringLiteral("Create"),
+                     QStringLiteral("Modify"), QStringLiteral("Sketch"), QStringLiteral("Select"),
+                     QStringLiteral("View"), QStringLiteral("Window"), QStringLiteral("Help")}));
     QList<QAction*> quickActions;
     for (const QToolButton* button :
          topBar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
@@ -574,8 +575,11 @@ void ApplicationTest::browserListsBodiesAndEditsThem() {
     QCOMPARE(tree->topLevelItemCount(), 1);
     QTreeWidgetItem* root = tree->topLevelItem(0);
     QCOMPARE(root->text(0), QStringLiteral("Untitled"));
-    QCOMPARE(root->childCount(), 3);
+    QCOMPARE(root->childCount(), 4);
     QCOMPARE(root->child(0)->text(0), QStringLiteral("Origin"));
+    // Construction planes have a group of their own, hidden while there are none.
+    QCOMPARE(root->child(3)->text(0), QStringLiteral("Construction"));
+    QVERIFY(root->child(3)->isHidden());
     // The entry for sketches is not shown while the document has none.
     QCOMPARE(root->child(2)->text(0), QStringLiteral("Sketches"));
     QVERIFY(root->child(2)->isHidden());

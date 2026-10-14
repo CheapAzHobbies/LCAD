@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 add_executable(lcad_sketch_tests
+    CurvesTest.cpp
     EditTest.cpp
     ProfilesTest.cpp
     SketchTest.cpp

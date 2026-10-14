@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <lcad/sketch/Edit.h>
 #include <lcad/sketch/Sketch.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <stdexcept>
 #include <vector>
 
 using namespace lcad::sketch;
+using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 
 namespace {
@@ -175,4 +179,103 @@ TEST_CASE("Separate figures each give their outline", "[sketch][profiles]") {
     CHECK_THAT(profiles[0].area, WithinRel(100.0, 1e-12));
     CHECK_THAT(profiles[1].area, WithinRel(20.0, 1e-12));
     CHECK_THAT(profiles[2].area, WithinRel(pi, 1e-12));
+}
+
+TEST_CASE("Outlines inside outlines make regions with holes", "[sketch][profiles]") {
+    Sketch sketch;
+    // A plate 100 by 60 with two round holes, and a square inside one more circle.
+    const auto plate = addRectangle(sketch, {0.0, 0.0}, {100.0, 60.0});
+    const EntityId first = sketch.addCircle({20.0, 30.0}, 8.0);
+    const EntityId second = sketch.addCircle({45.0, 30.0}, 5.0);
+    const EntityId ring = sketch.addCircle({78.0, 30.0}, 18.0);
+    const auto square = addRectangle(sketch, {70.0, 22.0}, {86.0, 38.0});
+
+    const std::vector<Region> regions = sketch.regions();
+    REQUIRE(regions.size() == 5);
+    // In the order of profiles(): by the lowest curve of each outline.
+    const Region& plateRegion = regions[0];
+    CHECK(plateRegion.outer.size() == 4);
+    CHECK(std::find(plateRegion.outer.begin(), plateRegion.outer.end(), plate.bottom) !=
+          plateRegion.outer.end());
+    // Its holes are the three circles. The square is a hole of the ring, not of the plate.
+    REQUIRE(plateRegion.holes.size() == 3);
+    CHECK_THAT(plateRegion.area, WithinAbs(6000.0 - pi * (64.0 + 25.0 + 324.0), 1e-6));
+
+    const auto regionOf = [&regions](EntityId curve) -> const Region& {
+        for (const Region& region : regions) {
+            if (std::find(region.outer.begin(), region.outer.end(), curve) != region.outer.end()) {
+                return region;
+            }
+        }
+        throw std::logic_error("no region has that curve as its outline");
+    };
+    CHECK(regionOf(first).holes.empty());
+    CHECK_THAT(regionOf(first).area, WithinAbs(pi * 64.0, 1e-6));
+    CHECK(regionOf(second).holes.empty());
+    const Region& ringRegion = regionOf(ring);
+    REQUIRE(ringRegion.holes.size() == 1);
+    CHECK(ringRegion.holes[0].size() == 4);
+    CHECK_THAT(ringRegion.area, WithinAbs(pi * 324.0 - 256.0, 1e-6));
+    CHECK(regionOf(square.bottom).holes.empty());
+    CHECK_THAT(regionOf(square.bottom).area, WithinAbs(256.0, 1e-6));
+}
+
+TEST_CASE("Outlines that share a side are neighbors, not one inside the other",
+          "[sketch][profiles]") {
+    Sketch sketch;
+    // Two rooms with a wall between them: a 60 by 40 rectangle and a line down its middle.
+    addRectangle(sketch, {0.0, 0.0}, {60.0, 40.0});
+    Sketch divided = sketch;
+    // Split the top and bottom at x = 20 by drawing them again as two lines each.
+    Sketch rooms;
+    rooms.addLine({0.0, 0.0}, {20.0, 0.0});
+    rooms.addLine({20.0, 0.0}, {60.0, 0.0});
+    rooms.addLine({60.0, 0.0}, {60.0, 40.0});
+    rooms.addLine({60.0, 40.0}, {20.0, 40.0});
+    rooms.addLine({20.0, 40.0}, {0.0, 40.0});
+    rooms.addLine({0.0, 40.0}, {0.0, 0.0});
+    rooms.addLine({20.0, 0.0}, {20.0, 40.0});
+    const std::vector<Region> regions = rooms.regions();
+    REQUIRE(regions.size() == 2);
+    CHECK(regions[0].holes.empty());
+    CHECK(regions[1].holes.empty());
+    CHECK_THAT(regions[0].area + regions[1].area, WithinAbs(2400.0, 1e-6));
+    CHECK_THAT(std::min(regions[0].area, regions[1].area), WithinAbs(800.0, 1e-6));
+    CHECK(divided.regions().size() == 1);
+
+    // Nor is an outline that lies partly inside another and partly outside it: a circle
+    // centered on the rectangle's side is half in, half out, and is a hole of nothing.
+    divided.addCircle({60.0, 20.0}, 5.0);
+    const std::vector<Region> crossing = divided.regions();
+    REQUIRE(crossing.size() == 2);
+    CHECK(crossing[0].holes.empty());
+    CHECK(crossing[1].holes.empty());
+    CHECK_THAT(crossing[0].area, WithinAbs(2400.0, 1e-6));
+}
+
+TEST_CASE("An outline is given as the points around it", "[sketch][profiles]") {
+    Sketch sketch;
+    const SlotParts slot = addSlot(sketch, {0.0, 0.0}, {30.0, 0.0}, 6.0);
+    const std::vector<Profile> outlines = sketch.profiles();
+    REQUIRE(outlines.size() == 1);
+    const std::vector<Point2> polygon = sketch.outlinePolygon(outlines[0].curves);
+    REQUIRE(polygon.size() > 60);
+    // The polygon encloses nearly the slot's area (chords cut the arcs a little short), and
+    // every point of it is on the slot's outline.
+    double twice = 0.0;
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+        const Point2 a = polygon[i];
+        const Point2 b = polygon[(i + 1) % polygon.size()];
+        twice += a.x * b.y - b.x * a.y;
+    }
+    CHECK_THAT(std::abs(twice) / 2.0, WithinAbs(30.0 * 12.0 + pi * 36.0, 0.2));
+    for (const Point2 point : polygon) {
+        double nearest = 1e9;
+        for (const EntityId curve :
+             {slot.firstArc, slot.firstLine, slot.secondArc, slot.secondLine}) {
+            nearest = std::min(nearest, distanceTo(sketch, curve, point));
+        }
+        CHECK(nearest < 1e-9);
+    }
+    CHECK(sketch.outlinePolygon({}).empty());
 }

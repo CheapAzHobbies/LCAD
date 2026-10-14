@@ -192,7 +192,7 @@ public:
                 m_values.push_back(entity.x);
                 m_index[key(entity.id, 1)] = static_cast<int>(m_values.size());
                 m_values.push_back(entity.y);
-            } else if (entity.kind == EntityKind::Circle) {
+            } else if (entity.kind == EntityKind::Circle || entity.kind == EntityKind::Ellipse) {
                 m_index[key(entity.id, 2)] = static_cast<int>(m_values.size());
                 m_values.push_back(entity.radius);
             }
@@ -558,7 +558,7 @@ public:
                     entity.x = x[ix];
                     entity.y = x[ix + 1];
                 }
-            } else if (entity.kind == EntityKind::Circle) {
+            } else if (entity.kind == EntityKind::Circle || entity.kind == EntityKind::Ellipse) {
                 const int ir = indexOf(entity.id, 2);
                 if (ir >= 0) {
                     entity.radius = x[ir];
@@ -853,9 +853,11 @@ SolveResult solveSketch(Sketch& sketch, const System& system, Eigen::VectorXd st
             const int index = system.indexOf(id, component);
             return index >= 0 && isFree[static_cast<std::size_t>(index)];
         };
-        const bool moves = entity.kind == EntityKind::Point
-                               ? canMove(entity.id, 0) || canMove(entity.id, 1)
-                               : entity.kind == EntityKind::Circle && canMove(entity.id, 2);
+        const bool moves =
+            entity.kind == EntityKind::Point
+                ? canMove(entity.id, 0) || canMove(entity.id, 1)
+                : (entity.kind == EntityKind::Circle || entity.kind == EntityKind::Ellipse) &&
+                      canMove(entity.id, 2);
         if (moves) {
             // A curve's point speaks for the curve.
             free.insert(entity.owner != 0 ? entity.owner : entity.id);
@@ -917,16 +919,25 @@ SolveResult Sketch::dragBy(EntityId id, double dx, double dy) {
 
 SolveResult Sketch::dragRadius(EntityId circle, Point2 toward) {
     const Entity* dragged = find(circle);
-    if (dragged == nullptr || dragged->kind != EntityKind::Circle) {
+    if (dragged == nullptr ||
+        (dragged->kind != EntityKind::Circle && dragged->kind != EntityKind::Ellipse)) {
         throw std::invalid_argument("dragRadius: entity " + std::to_string(circle) +
-                                    " is not a circle");
+                                    " is not a circle or an ellipse");
     }
     const System system(*this);
     Eigen::VectorXd start = system.values();
     Eigen::VectorXd reluctance = Eigen::VectorXd::Ones(system.unknowns());
     const int index = system.indexOf(circle, 2);
     const Point2 center = position(dragged->center);
-    const double wanted = std::hypot(toward.x - center.x, toward.y - center.y);
+    double wanted = std::hypot(toward.x - center.x, toward.y - center.y);
+    if (dragged->kind == EntityKind::Ellipse) {
+        // The minor radius: how far from the major axis the pointer is.
+        const Point2 major = position(dragged->start);
+        const double a = std::hypot(major.x - center.x, major.y - center.y);
+        wanted = std::abs((major.x - center.x) * (toward.y - center.y) -
+                          (major.y - center.y) * (toward.x - center.x)) /
+                 a;
+    }
     if (index >= 0 && wanted > 1e-7) {
         start[index] = wanted;
         reluctance[index] = 1e6;

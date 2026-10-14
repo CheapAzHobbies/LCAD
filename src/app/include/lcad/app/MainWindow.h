@@ -32,6 +32,10 @@ namespace lcad::app {
 
 class BrowserPanel;
 class CommandRegistry;
+class FeaturePanel;
+class MeasurePanel;
+class ParametersDialog;
+class TimelinePanel;
 class CommandSearch;
 class PropertiesPanel;
 class SketchPanel;
@@ -46,7 +50,7 @@ class SketchPlanePanel;
 ///   viewport      the 3D view (center)
 ///   properties    the command in progress, or the sketch being edited, or else what is
 ///                 selected (right)
-///   timeline      the feature history (bottom; empty until parametric features exist)
+///   timeline      the sketches and features in the order they are applied (bottom)
 ///   status bar    what is selected and its measurement, the active command, the units
 ///
 /// Every command is defined once, in a CommandRegistry, and reached from the toolbar, the
@@ -61,6 +65,7 @@ public:
     [[nodiscard]] viewport::ViewportWidget* viewport() const { return m_viewport; }
     [[nodiscard]] BrowserPanel* browser() const { return m_browser; }
     [[nodiscard]] PropertiesPanel* properties() const { return m_properties; }
+    [[nodiscard]] TimelinePanel* timeline() const { return m_timeline; }
     [[nodiscard]] QMenuBar* mainMenu() const { return m_menuBar; }
     [[nodiscard]] CommandRegistry* commands() const { return m_commands; }
     [[nodiscard]] CommandSearch* commandSearch() const { return m_search; }
@@ -116,6 +121,35 @@ public:
     /// step.
     void deleteSelectedBodies();
 
+    // Features
+
+    /// Starts adding a feature: opens its panel, and lets what it works on be picked in the 3D
+    /// view. While a sketch is open, it is finished first, and a pull or a revolve starts from
+    /// it. Cancels a command in progress.
+    void startFeature(document::FeatureKind kind);
+    /// Opens a feature for editing: the model goes back to just before it, its panel opens with
+    /// its values, and what it works on is shown picked. Returns false if there is no such
+    /// feature.
+    bool editFeature(document::ObjectId feature);
+    /// The panel of the feature being added or edited, or nullptr.
+    [[nodiscard]] FeaturePanel* featurePanel() const { return m_featurePanel; }
+    /// The feature being edited, or an invalid id when a new one is being added or none.
+    [[nodiscard]] document::ObjectId editedFeature() const { return m_editedFeature; }
+    /// Deletes an entry of the timeline: a feature, a sketch, or a body put in as it is.
+    void deleteTimelineItem(document::ObjectId item);
+
+    // Measuring
+
+    /// Opens the Measure panel. Each click in the 3D view picks the next thing to measure;
+    /// with two, the panel shows the distance between them and, where it makes sense, the
+    /// angle, and the 3D view draws the distance. Cancels a command in progress.
+    void startMeasure();
+    [[nodiscard]] MeasurePanel* measurePanel() const { return m_measurePanel; }
+    /// Opens the parameter table of the current document.
+    void showParameters();
+    /// The parameter table, once it has been opened, or nullptr.
+    [[nodiscard]] ParametersDialog* parametersDialog() const { return m_parametersDialog; }
+
     // Sketching
 
     /// Starts a new sketch: on the flat face that is selected, or else by asking for a plane in
@@ -123,8 +157,10 @@ public:
     void startSketch();
     /// The panel that asks where a new sketch goes, or nullptr.
     [[nodiscard]] SketchPlanePanel* planePanel() const { return m_planePanel; }
-    /// Adds a sketch on a plane, as one undo step, and opens it for editing.
-    document::ObjectId createSketch(const kernel::Plane& plane);
+    /// Adds a sketch on a plane, as one undo step, and opens it for editing. A sketch on a
+    /// construction plane, or on a flat face of a body, is attached to it and follows it.
+    document::ObjectId createSketch(const kernel::Plane& plane, document::ObjectId attachedTo = {},
+                                    const std::string& attachedFace = {});
     /// Opens a sketch for editing: the camera turns to face it and the toolbar shows the sketch
     /// tools. Returns false if there is no such sketch.
     bool editSketch(document::ObjectId sketch);
@@ -157,6 +193,7 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     struct Session {
@@ -194,11 +231,35 @@ private:
     void updateRecentMenu();
     void rememberFile(const QString& path);
     void showInspector();
+    /// Opens the panel for a feature and sets up picking for it.
+    void openFeaturePanel(document::FeatureKind kind);
+    void closeFeaturePanel();
+    void acceptFeature();
+    /// Tries the panel's feature on the model and shows the outcome.
+    void updateFeaturePreview();
+    /// Hands what is picked in the 3D view to the feature panel.
+    void takeFeaturePicks();
+    /// The sketches whose profiles a pull or a revolve can be picked from.
+    [[nodiscard]] std::vector<document::ObjectId> profileSketches(document::ObjectId also) const;
+    void onTimelineSelection(document::ObjectId item);
+    void closeMeasure();
+    void takeMeasurePick();
+    void showMeasurement();
+    /// The shape a selection entry stands for, or a null shape.
+    [[nodiscard]] kernel::Shape shapeOf(const viewport::SelectedItem& item) const;
+    void showTimelineMenu(document::ObjectId item, const QPoint& where);
 
     [[nodiscard]] std::vector<document::ObjectId> selectedBodies() const;
     [[nodiscard]] std::vector<document::ObjectId> selectedSketches() const;
     /// The plane of the one flat face that is selected, if that is what is selected.
     [[nodiscard]] std::optional<kernel::Plane> selectedFacePlane() const;
+    /// The body and the name of the one flat face that is selected, if that is what is selected.
+    [[nodiscard]] std::optional<std::pair<document::ObjectId, std::string>>
+    selectedFaceName() const;
+    /// The stable name of a face or an edge in the 3D view, or an empty string.
+    [[nodiscard]] std::string nameOf(const viewport::SelectedItem& item) const;
+    /// The construction plane selected in the browser or the timeline, if there is one.
+    [[nodiscard]] document::ObjectId selectedConstructionPlane() const;
     /// The bodies a command about bodies acts on: those selected, and those whose faces,
     /// edges, or vertices are.
     [[nodiscard]] std::vector<document::ObjectId> targetBodies() const;
@@ -227,15 +288,35 @@ private:
     PrimitivePanel* m_panel = nullptr;
     SketchPanel* m_sketchPanel = nullptr;
     SketchPlanePanel* m_planePanel = nullptr;
+    FeaturePanel* m_featurePanel = nullptr;
+    MeasurePanel* m_measurePanel = nullptr;
+    ParametersDialog* m_parametersDialog = nullptr;
+    /// What is being measured: the first and the second thing picked.
+    std::vector<viewport::SelectedItem> m_measured;
+    std::optional<viewport::SelectionFilter> m_filterBeforeMeasure;
+    TimelinePanel* m_timeline = nullptr;
+    document::ObjectId m_editedFeature;
+    /// The selection filter to go back to when a fillet, chamfer, or shell is done.
+    std::optional<viewport::SelectionFilter> m_filterBeforeFeature;
+    /// The document whose rebuilding is held back while one of its sketches is open.
+    document::Document* m_suspendedDocument = nullptr;
+    /// Set while the window itself changes what the 3D view has picked.
+    bool m_settingPicks = false;
     QToolBar* m_modelToolbar = nullptr;
     QToolBar* m_sketchToolbar = nullptr;
     /// The sketch toolbar's buttons for single constraints, and the one that lists them all.
     QList<QAction*> m_constraintButtons;
     QAction* m_constraintsFolded = nullptr;
+    /// The names of the modeling toolbar's groups, which go when the window is narrow.
+    QList<QAction*> m_modelGroupLabels;
+    /// The names of the sketch toolbar's groups, which go when the window is too narrow.
+    QList<QAction*> m_sketchGroupLabels;
+    QToolButton* m_finishButton = nullptr;
     QLabel* m_selectionLabel = nullptr;
     QLabel* m_commandLabel = nullptr;
     QComboBox* m_filterBox = nullptr;
     QToolButton* m_styleButton = nullptr;
+    QToolButton* m_patternButton = nullptr;
 
     std::vector<std::unique_ptr<Session>> m_sessions;
     int m_current = -1;
