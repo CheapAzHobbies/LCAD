@@ -1,0 +1,368 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <lcad/kernel/Error.h>
+#include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Modeling.h>
+#include <lcad/kernel/Plane.h>
+#include <lcad/kernel/Primitives.h>
+#include <lcad/kernel/SubShapes.h>
+#include <lcad/kernel/Transform.h>
+
+#include <Tolerances.h>
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+using namespace lcad::kernel;
+using Catch::Matchers::WithinAbs;
+using Catch::Matchers::WithinRel;
+
+namespace {
+
+const double pi = 3.14159265358979323846;
+
+// The outline of a rectangle from (x, y) to (x + w, y + h) on a plane, with its four sides
+// named "1" to "4": bottom, right, top, left.
+std::vector<OutlineCurve> rectangle(const Plane& plane, double x, double y, double w, double h,
+                                    int firstName = 1) {
+    const auto at = [&plane](double u, double v) { return toWorld(plane, u, v); };
+    return {{makeSegment(at(x, y), at(x + w, y)), std::to_string(firstName)},
+            {makeSegment(at(x + w, y), at(x + w, y + h)), std::to_string(firstName + 1)},
+            {makeSegment(at(x + w, y + h), at(x, y + h)), std::to_string(firstName + 2)},
+            {makeSegment(at(x, y + h), at(x, y)), std::to_string(firstName + 3)}};
+}
+
+std::vector<OutlineCurve> circle(const Plane& plane, double u, double v, double radius,
+                                 const std::string& name) {
+    return {{makeCircleEdge(plane, u, v, radius), name}};
+}
+
+// A plate of w by h, pulled `thickness` up from the XY plane, as feature "7".
+NamedShape plate(double w, double h, double thickness) {
+    return pull(planeXY(), {Region{rectangle(planeXY(), 0.0, 0.0, w, h), {}}}, 0.0, thickness, "7");
+}
+
+std::set<std::string> asSet(const std::vector<std::string>& names) {
+    return {names.begin(), names.end()};
+}
+
+// The edges that lie between two side faces of feature "7": the upright ones of a plate.
+std::vector<int> uprightEdges(const NamedShape& shape) {
+    std::vector<int> found;
+    const std::vector<std::string> names = edgeNames(shape);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        const std::size_t bar = names[i].find('|');
+        if (bar != std::string::npos && names[i].compare(0, 7, "7/side/") == 0 &&
+            names[i].compare(bar + 1, 7, "7/side/") == 0) {
+            found.push_back(static_cast<int>(i));
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("Pull makes a solid of an outline, and names its faces", "[kernel][modeling]") {
+    const NamedShape solid = plate(40.0, 25.0, 10.0);
+    CHECK_THAT(volume(solid.shape), WithinRel(10000.0, 1e-9));
+    CHECK(countTopology(solid.shape).solids == 1);
+    REQUIRE(solid.faceNames.size() == 6);
+    REQUIRE(subShapeCount(solid.shape, SubShapeKind::Face) == 6);
+    CHECK(asSet(solid.faceNames) == std::set<std::string>{"7/side/1", "7/side/2", "7/side/3",
+                                                          "7/side/4", "7/start/1", "7/end/1"});
+
+    // Each name is on the face it describes: the end is the top, at z = 10, with the area of
+    // the outline; the side made from the bottom line of the rectangle lies at y = 0.
+    const int top = findFace(solid, "7/end/1");
+    REQUIRE(top >= 0);
+    const Shape topFace = subShape(solid.shape, SubShapeKind::Face, top);
+    CHECK_THAT(surfaceArea(topFace), WithinRel(1000.0, 1e-9));
+    CHECK_THAT(boundingBox(topFace)->min.z, WithinAbs(10.0, 1e-9));
+    const Shape bottomSide = subShape(solid.shape, SubShapeKind::Face, findFace(solid, "7/side/1"));
+    CHECK_THAT(surfaceArea(bottomSide), WithinRel(400.0, 1e-9));
+    CHECK_THAT(boundingBox(bottomSide)->max.y, WithinAbs(0.0, 1e-9));
+    CHECK_THAT(
+        boundingBox(subShape(solid.shape, SubShapeKind::Face, findFace(solid, "7/start/1")))->max.z,
+        WithinAbs(0.0, 1e-9));
+    CHECK(findFace(solid, "7/side/9") == -1);
+
+    // Every edge has a name of its own, made of the two faces it lies between.
+    const std::vector<std::string> edges = edgeNames(solid);
+    REQUIRE(edges.size() == 12);
+    CHECK(asSet(edges).size() == 12);
+    const int topFront = findEdge(solid, "7/end/1|7/side/1#0");
+    REQUIRE(topFront >= 0);
+    const Shape edge = subShape(solid.shape, SubShapeKind::Edge, topFront);
+    CHECK_THAT(length(edge), WithinRel(40.0, 1e-9));
+    CHECK_THAT(boundingBox(edge)->min.z, WithinAbs(10.0, 1e-9));
+    CHECK_THAT(boundingBox(edge)->max.y, WithinAbs(0.0, 1e-9));
+    CHECK(findEdge(solid, "7/end/1|7/side/9#0") == -1);
+    CHECK(uprightEdges(solid).size() == 4);
+}
+
+TEST_CASE("The names do not change when the outline is given another size", "[kernel][modeling]") {
+    const NamedShape small = plate(40.0, 25.0, 10.0);
+    const NamedShape large = plate(95.5, 31.0, 4.0);
+    CHECK(asSet(small.faceNames) == asSet(large.faceNames));
+    CHECK(asSet(edgeNames(small)) == asSet(edgeNames(large)));
+    // And a name still means the same face: the side made from the rectangle's right side.
+    const Shape right = subShape(large.shape, SubShapeKind::Face, findFace(large, "7/side/2"));
+    CHECK_THAT(boundingBox(right)->min.x, WithinAbs(95.5, 1e-9));
+    CHECK_THAT(surfaceArea(right), WithinRel(31.0 * 4.0, 1e-9));
+}
+
+TEST_CASE("Pull goes where it is told, on any plane, around holes", "[kernel][modeling]") {
+    SECTION("downward, and to both sides") {
+        const Region region{rectangle(planeXY(), 0.0, 0.0, 40.0, 25.0), {}};
+        const NamedShape down = pull(planeXY(), {region}, 0.0, -10.0, "7");
+        CHECK_THAT(volume(down.shape), WithinRel(10000.0, 1e-9));
+        CHECK_THAT(boundingBox(down.shape)->min.z, WithinAbs(-10.0, 1e-9));
+        CHECK_THAT(boundingBox(down.shape)->max.z, WithinAbs(0.0, 1e-9));
+        // The start is the lower end, whichever way it was asked for.
+        CHECK_THAT(
+            boundingBox(subShape(down.shape, SubShapeKind::Face, findFace(down, "7/start/1")))
+                ->max.z,
+            WithinAbs(-10.0, 1e-9));
+
+        const NamedShape both = pull(planeXY(), {region}, -3.0, 7.0, "7");
+        CHECK_THAT(volume(both.shape), WithinRel(10000.0, 1e-9));
+        CHECK_THAT(boundingBox(both.shape)->min.z, WithinAbs(-3.0, 1e-9));
+        CHECK_THAT(boundingBox(both.shape)->max.z, WithinAbs(7.0, 1e-9));
+    }
+    SECTION("on the front plane, along its normal") {
+        // The XZ plane is looked at from -Y, so pulling it forward goes toward -Y.
+        const NamedShape solid = pull(
+            planeXZ(), {Region{rectangle(planeXZ(), 0.0, 0.0, 40.0, 25.0), {}}}, 0.0, 10.0, "7");
+        CHECK_THAT(volume(solid.shape), WithinRel(10000.0, 1e-9));
+        CHECK_THAT(boundingBox(solid.shape)->min.y, WithinAbs(-10.0, 1e-9));
+        CHECK_THAT(boundingBox(solid.shape)->max.z, WithinAbs(25.0, 1e-9));
+    }
+    SECTION("a region with a hole leaves the hole") {
+        const Region region{rectangle(planeXY(), 0.0, 0.0, 40.0, 25.0),
+                            {circle(planeXY(), 20.0, 12.5, 5.0, "5")}};
+        CHECK_THAT(surfaceArea(makeRegionFace(planeXY(), region)),
+                   WithinRel(1000.0 - pi * 25.0, 1e-9));
+        const NamedShape solid = pull(planeXY(), {region}, 0.0, 10.0, "7");
+        CHECK_THAT(volume(solid.shape), WithinRel((1000.0 - pi * 25.0) * 10.0, 1e-9));
+        REQUIRE(solid.faceNames.size() == 7);
+        // The wall of the hole is named after the circle.
+        const int wall = findFace(solid, "7/side/5");
+        REQUIRE(wall >= 0);
+        CHECK_THAT(surfaceArea(subShape(solid.shape, SubShapeKind::Face, wall)),
+                   WithinRel(2.0 * pi * 5.0 * 10.0, 1e-9));
+    }
+    SECTION("regions that share a side become one solid") {
+        const Region left{rectangle(planeXY(), 0.0, 0.0, 20.0, 25.0, 1), {}};
+        const Region right{rectangle(planeXY(), 20.0, 0.0, 20.0, 25.0, 11), {}};
+        const NamedShape solid = pull(planeXY(), {left, right}, 0.0, 10.0, "7");
+        CHECK_THAT(volume(solid.shape), WithinRel(10000.0, 1e-9));
+        CHECK(countTopology(solid.shape).solids == 1);
+        // No wall between them, and the tops and bottoms have become one face each.
+        CHECK(solid.faceNames.size() == 6);
+        CHECK(findFace(solid, "7/end/1") >= 0);
+        CHECK(asSet(solid.faceNames).size() == solid.faceNames.size());
+    }
+    SECTION("what cannot be pulled is refused") {
+        const Region region{rectangle(planeXY(), 0.0, 0.0, 40.0, 25.0), {}};
+        CHECK_THROWS_AS(pull(planeXY(), {region}, 0.0, 0.0, "7"), std::invalid_argument);
+        CHECK_THROWS_AS(pull(planeXY(), {}, 0.0, 5.0, "7"), std::invalid_argument);
+        // Three sides of a rectangle are no outline.
+        Region open = region;
+        open.outer.pop_back();
+        CHECK_THROWS_AS(pull(planeXY(), {open}, 0.0, 5.0, "7"), Error);
+        CHECK_THROWS_AS(makeRegionFace(planeXY(), open), Error);
+    }
+}
+
+TEST_CASE("Combining solids keeps the names of the faces that survive", "[kernel][modeling]") {
+    const NamedShape body = plate(40.0, 25.0, 10.0);
+    // A round post standing on the plate, and reaching 5 into it: feature "9".
+    const Plane top = makePlane({0.0, 0.0, 10.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0});
+    const NamedShape post =
+        pull(top, {Region{circle(top, 20.0, 12.5, 5.0, "3"), {}}}, -5.0, 8.0, "9");
+
+    SECTION("join") {
+        const NamedShape joined = combine(body, post, Combination::Join);
+        CHECK_THAT(volume(joined.shape), WithinRel(10000.0 + pi * 25.0 * 8.0, 1e-9));
+        CHECK(countTopology(joined.shape).solids == 1);
+        // The plate's six faces, the post's wall, and the post's top. What was inside is gone.
+        CHECK(asSet(joined.faceNames) == std::set<std::string>{"7/side/1", "7/side/2", "7/side/3",
+                                                               "7/side/4", "7/start/1", "7/end/1",
+                                                               "9/side/3", "9/end/3"});
+        // The plate's top keeps its name with a hole cut into it by the post.
+        CHECK_THAT(
+            surfaceArea(subShape(joined.shape, SubShapeKind::Face, findFace(joined, "7/end/1"))),
+            WithinRel(1000.0 - pi * 25.0, 1e-9));
+        // The edge where the post meets the plate is the one between those two faces.
+        const int foot = findEdge(joined, "7/end/1|9/side/3#0");
+        REQUIRE(foot >= 0);
+        CHECK_THAT(length(subShape(joined.shape, SubShapeKind::Edge, foot)),
+                   WithinRel(2.0 * pi * 5.0, 1e-9));
+    }
+    SECTION("cut") {
+        const NamedShape cut = combine(body, post, Combination::Cut);
+        CHECK_THAT(volume(cut.shape), WithinRel(10000.0 - pi * 25.0 * 5.0, 1e-9));
+        // A blind hole: its wall is the tool's side, its floor the tool's start.
+        CHECK(asSet(cut.faceNames) == std::set<std::string>{"7/side/1", "7/side/2", "7/side/3",
+                                                            "7/side/4", "7/start/1", "7/end/1",
+                                                            "9/side/3", "9/start/3"});
+        CHECK_THAT(surfaceArea(subShape(cut.shape, SubShapeKind::Face, findFace(cut, "9/start/3"))),
+                   WithinRel(pi * 25.0, 1e-9));
+    }
+    SECTION("intersect") {
+        const NamedShape common = combine(body, post, Combination::Intersect);
+        CHECK_THAT(volume(common.shape), WithinRel(pi * 25.0 * 5.0, 1e-9));
+        CHECK(findFace(common, "9/side/3") >= 0);
+        CHECK(findFace(common, "7/end/1") >= 0);
+        CHECK(findFace(common, "7/side/1") == -1);
+    }
+    SECTION("a cut that leaves nothing, and solids that do not meet, say so") {
+        const NamedShape cover = pull(
+            planeXY(), {Region{rectangle(planeXY(), -5.0, -5.0, 50.0, 35.0), {}}}, -1.0, 11.0, "9");
+        try {
+            (void)combine(body, cover, Combination::Cut);
+            FAIL("the cut should have been refused");
+        } catch (const Error& failure) {
+            CHECK(failure.reason() == "the cut leaves nothing of the body");
+        }
+        const NamedShape far = pull(
+            planeXY(), {Region{rectangle(planeXY(), 100.0, 0.0, 5.0, 5.0), {}}}, 0.0, 5.0, "9");
+        try {
+            (void)combine(body, far, Combination::Intersect);
+            FAIL("the intersection should have been refused");
+        } catch (const Error& failure) {
+            CHECK(failure.reason() == "the two do not overlap");
+        }
+        // Joined, they are two solids in one body.
+        const NamedShape both = combine(body, far, Combination::Join);
+        CHECK(countTopology(both.shape).solids == 2);
+        CHECK_THAT(volume(both.shape), WithinRel(10125.0, 1e-9));
+    }
+    SECTION("faces without a history get numbers") {
+        const NamedShape box = nameFaces(makeBox(10.0, 10.0, 10.0), "2/f");
+        REQUIRE(box.faceNames.size() == 6);
+        CHECK(box.faceNames[0] == "2/f0");
+        CHECK(box.faceNames[5] == "2/f5");
+        CHECK(asSet(edgeNames(box)).size() == 12);
+        CHECK(edgeNames(NamedShape{}).empty());
+    }
+}
+
+TEST_CASE("Fillet and chamfer find their edges by name after the body has changed",
+          "[kernel][modeling]") {
+    const NamedShape body = plate(40.0, 25.0, 10.0);
+    const std::vector<int> corners = uprightEdges(body);
+    REQUIRE(corners.size() == 4);
+
+    SECTION("rounding the four upright edges") {
+        const NamedShape rounded = fillet(body, corners, 5.0, "8");
+        // Each corner loses a square of side r less a quarter disc of radius r.
+        CHECK_THAT(volume(rounded.shape), WithinRel((1000.0 - (4.0 - pi) * 25.0) * 10.0, 1e-9));
+        // The six faces it had, and four new ones named after the edges they replace.
+        REQUIRE(rounded.faceNames.size() == 10);
+        int made = 0;
+        for (const std::string& name : rounded.faceNames) {
+            made += name.compare(0, 7, "8/edge/") == 0 ? 1 : 0;
+        }
+        CHECK(made == 4);
+        for (const char* kept :
+             {"7/side/1", "7/side/2", "7/side/3", "7/side/4", "7/start/1", "7/end/1"}) {
+            CHECK(findFace(rounded, kept) >= 0);
+        }
+        CHECK(asSet(rounded.faceNames).size() == 10);
+    }
+    SECTION("the same edges, by the same names, on a plate of another size") {
+        std::vector<std::string> names;
+        const std::vector<std::string> all = edgeNames(body);
+        for (const int edge : corners) {
+            names.push_back(all[static_cast<std::size_t>(edge)]);
+        }
+        const NamedShape larger = plate(90.0, 60.0, 4.0);
+        std::vector<int> found;
+        for (const std::string& name : names) {
+            const int edge = findEdge(larger, name);
+            REQUIRE(edge >= 0);
+            // An upright edge, as long as the plate is thick.
+            CHECK_THAT(length(subShape(larger.shape, SubShapeKind::Edge, edge)),
+                       WithinRel(4.0, 1e-9));
+            found.push_back(edge);
+        }
+        const NamedShape rounded = fillet(larger, found, 5.0, "8");
+        CHECK_THAT(volume(rounded.shape), WithinRel((5400.0 - (4.0 - pi) * 25.0) * 4.0, 1e-9));
+        // The new faces have the names they had on the smaller plate.
+        CHECK(asSet(rounded.faceNames) == asSet(fillet(body, corners, 5.0, "8").faceNames));
+    }
+    SECTION("beveling one edge") {
+        const NamedShape beveled = chamfer(body, {corners.front()}, 3.0, "8");
+        CHECK_THAT(volume(beveled.shape), WithinRel(10000.0 - 4.5 * 10.0, 1e-9));
+        CHECK(beveled.faceNames.size() == 7);
+    }
+    SECTION("what does not fit is refused, with the reason") {
+        try {
+            (void)fillet(body, corners, 13.0, "8");
+            FAIL("a radius of more than half the plate's width should not fit");
+        } catch (const Error& failure) {
+            CHECK(failure.reason() == "the radius does not fit these edges");
+        }
+        CHECK_THROWS_AS(chamfer(body, corners, 30.0, "8"), Error);
+        CHECK_THROWS_AS(fillet(body, {}, 2.0, "8"), std::invalid_argument);
+        CHECK_THROWS_AS(fillet(body, corners, 0.0, "8"), std::invalid_argument);
+        CHECK_THROWS_AS(fillet(body, {99}, 2.0, "8"), std::out_of_range);
+    }
+}
+
+TEST_CASE("Shell hollows a body out", "[kernel][modeling]") {
+    const NamedShape body = plate(40.0, 25.0, 10.0);
+    const NamedShape hollow = shell(body, {findFace(body, "7/end/1")}, 2.0, "8");
+    // A tray: the outside as it was, less the inside, 36 by 21 and 8 deep.
+    CHECK_THAT(volume(hollow.shape), WithinRel(10000.0 - 36.0 * 21.0 * 8.0, 1e-9));
+    // The outside keeps its names. What is left of the top that was opened, the rim of the
+    // tray, still goes by the top's name.
+    CHECK(findFace(hollow, "7/side/1") >= 0);
+    CHECK(findFace(hollow, "7/start/1") >= 0);
+    const int rim = findFace(hollow, "7/end/1");
+    REQUIRE(rim >= 0);
+    CHECK_THAT(surfaceArea(subShape(hollow.shape, SubShapeKind::Face, rim)),
+               WithinRel(1000.0 - 36.0 * 21.0, 1e-9));
+    CHECK(asSet(hollow.faceNames).size() == hollow.faceNames.size());
+    int inner = 0;
+    for (const std::string& name : hollow.faceNames) {
+        inner += name.compare(0, 8, "8/inner/") == 0 ? 1 : 0;
+    }
+    CHECK(inner == 5);
+    CHECK_THROWS_AS(shell(body, {findFace(body, "7/end/1")}, 20.0, "8"), Error);
+    CHECK_THROWS_AS(shell(body, {99}, 2.0, "8"), std::out_of_range);
+    CHECK_THROWS_AS(shell(body, {}, 0.0, "8"), std::invalid_argument);
+}
+
+TEST_CASE("Revolve turns an outline about an axis in its plane", "[kernel][modeling]") {
+    // A 10 by 6 rectangle whose middle is 25 from the Y axis of the XY plane.
+    const Region region{rectangle(planeXY(), 20.0, 0.0, 10.0, 6.0), {}};
+
+    const NamedShape ring = revolve(planeXY(), {region}, 0.0, 0.0, 0.0, 1.0, 2.0 * pi, "7");
+    // Pappus: the area times the distance its middle travels.
+    CHECK_THAT(volume(ring.shape), WithinRel(60.0 * 2.0 * pi * 25.0, 1e-9));
+    CHECK(countTopology(ring.shape).solids == 1);
+    // Four faces, one from each side of the rectangle, and no ends.
+    CHECK(asSet(ring.faceNames) ==
+          std::set<std::string>{"7/side/1", "7/side/2", "7/side/3", "7/side/4"});
+
+    const NamedShape quarter = revolve(planeXY(), {region}, 0.0, 0.0, 0.0, 1.0, pi / 2.0, "7");
+    CHECK_THAT(volume(quarter.shape), WithinRel(60.0 * 2.0 * pi * 25.0 / 4.0, 1e-9));
+    CHECK(findFace(quarter, "7/start/1") >= 0);
+    CHECK(findFace(quarter, "7/end/1") >= 0);
+    CHECK(quarter.faceNames.size() == 6);
+
+    CHECK_THROWS_AS(revolve(planeXY(), {region}, 0.0, 0.0, 0.0, 0.0, pi, "7"),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(revolve(planeXY(), {region}, 0.0, 0.0, 0.0, 1.0, 0.0, "7"),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(revolve(planeXY(), {}, 0.0, 0.0, 0.0, 1.0, pi, "7"), std::invalid_argument);
+}

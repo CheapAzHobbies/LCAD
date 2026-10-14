@@ -132,6 +132,17 @@ struct Profile {
     double area = 0.0;
 };
 
+/// A part of the plane to make a solid from: the inside of one closed outline, less the insides
+/// of the outlines that lie directly within it.
+struct Region {
+    /// The outline around the region, as Profile::curves.
+    std::vector<EntityId> outer;
+    /// The outlines of the holes in it.
+    std::vector<std::vector<EntityId>> holes;
+    /// The area of the region itself: what the outer outline encloses, less its holes.
+    double area = 0.0;
+};
+
 /// A sketch. It is a value: copying one copies its geometry and constraints, which is how an
 /// edit is tried and taken back.
 class Sketch {
@@ -201,6 +212,13 @@ public:
 
     /// The closed outlines among the sketch's ordinary (not construction) curves.
     [[nodiscard]] std::vector<Profile> profiles() const;
+    /// The regions the closed outlines divide the plane into, one per outline, in the order of
+    /// profiles(). A circle inside a rectangle gives two: the rectangle with a round hole, and
+    /// the disc.
+    [[nodiscard]] std::vector<Region> regions() const;
+    /// The points of a closed outline, in order around it, with arcs and circles cut into
+    /// short chords. For telling what lies inside it, and for drawing it filled.
+    [[nodiscard]] std::vector<Point2> outlinePolygon(const std::vector<EntityId>& curves) const;
 
     // For reading a sketch back from a file.
 
