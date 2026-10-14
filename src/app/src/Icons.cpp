@@ -242,6 +242,21 @@ const QHash<QString, Drawing>& drawings() {
                      {7.5, 16.5},
                      {7.5, 4}});
          }},
+        {QStringLiteral("hole"),
+         [](const Ink& i) {
+             // A block with a hole drilled down into it, a point at the bottom.
+             i.poly({{3, 8}, {21, 8}, {21, 20}, {3, 20}});
+             QPainterPath bore(QPointF(9, 8));
+             bore.lineTo(9, 15);
+             bore.lineTo(12, 18);
+             bore.lineTo(15, 15);
+             bore.lineTo(15, 8);
+             bore.closeSubpath();
+             i.p.fillPath(bore, i.accent);
+             i.p.drawPath(bore);
+             i.line(12, 2.5, 12, 6);
+             i.poly({{10, 4.5}, {12, 6.5}, {14, 4.5}}, false);
+         }},
         {QStringLiteral("plane"),
          [](const Ink& i) {
              // A plane seen at a slant, and the line it is offset along.

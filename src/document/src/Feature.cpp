@@ -20,6 +20,17 @@ constexpr KindName kindNames[] = {
     {FeatureKind::RectangularPattern, "Rectangular Pattern"},
     {FeatureKind::CircularPattern, "Circular Pattern"},
     {FeatureKind::Plane, "Plane"},
+    {FeatureKind::Hole, "Hole"},
+};
+
+struct HoleKindName {
+    HoleKind kind;
+    const char* name;
+};
+constexpr HoleKindName holeKindNames[] = {
+    {HoleKind::Simple, "Simple"},
+    {HoleKind::Counterbore, "Counterbore"},
+    {HoleKind::Countersink, "Countersink"},
 };
 
 struct OperationName {
@@ -60,6 +71,24 @@ const char* toString(Operation operation) {
         }
     }
     return "Unknown";
+}
+
+const char* toString(HoleKind kind) {
+    for (const HoleKindName& entry : holeKindNames) {
+        if (entry.kind == kind) {
+            return entry.name;
+        }
+    }
+    return "Unknown";
+}
+
+std::optional<HoleKind> holeKindFromString(const std::string& name) {
+    for (const HoleKindName& entry : holeKindNames) {
+        if (name == entry.name) {
+            return entry.kind;
+        }
+    }
+    return std::nullopt;
 }
 
 std::optional<Operation> operationFromString(const std::string& name) {

@@ -511,3 +511,75 @@ TEST_CASE("Edges and faces stand for axes", "[kernel][modeling]") {
     CHECK_FALSE(axisOf(Shape()).has_value());
     CHECK_FALSE(axisOf(rod).has_value());
 }
+
+TEST_CASE("Holes: simple, counterbored, countersunk, and through", "[kernel][modeling]") {
+    const Point top{10.0, 10.0, 8.0};
+    const Vector down{0.0, 0.0, -1.0};
+    const double r = 3.0;
+    HoleShape simple;
+    simple.diameter = 2.0 * r;
+    simple.depth = 5.0;
+    simple.tipAngle = 118.0;
+    const double tip = r / std::tan(59.0 * pi / 180.0);
+
+    // Drilled to 5 with a drill's point: a cylinder and a cone.
+    const NamedShape drilled = holeTool(top, down, simple, 0.0, "9", "4");
+    CHECK(isValid(drilled.shape));
+    CHECK_THAT(volume(drilled.shape), WithinRel(pi * r * r * 5.0 + pi * r * r * tip / 3.0, 1e-6));
+    auto box = boundingBox(drilled.shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->max.z, WithinAbs(8.0, 1e-6));
+    CHECK_THAT(box->min.z, WithinAbs(3.0 - tip, 1e-6));
+    CHECK_THAT(box->min.x, WithinAbs(7.0, 1e-6));
+    for (const char* part : {"9/side/bore@4", "9/side/tip@4", "9/side/top@4"}) {
+        CHECK(findFace(drilled, part) >= 0);
+    }
+
+    // Through, 8 deep: a plain cylinder, flat at the bottom.
+    const NamedShape through = holeTool(top, down, simple, 8.0, "9", "4");
+    CHECK_THAT(volume(through.shape), WithinRel(pi * r * r * 8.0, 1e-6));
+    CHECK(findFace(through, "9/side/floor@4") >= 0);
+
+    // Counterbored: 10 wide for the first 2.
+    HoleShape counterbore = simple;
+    counterbore.kind = HoleKind::Counterbore;
+    counterbore.headDiameter = 10.0;
+    counterbore.headDepth = 2.0;
+    const NamedShape bored = holeTool(top, down, counterbore, 8.0, "9", "4");
+    CHECK_THAT(volume(bored.shape), WithinRel(pi * 25.0 * 2.0 + pi * r * r * 6.0, 1e-6));
+    CHECK(findFace(bored, "9/side/counterbore@4") >= 0);
+    CHECK(findFace(bored, "9/side/shoulder@4") >= 0);
+
+    // Countersunk at 90 degrees from 10 wide: a cone 2 deep down to the hole's width.
+    HoleShape countersink = simple;
+    countersink.kind = HoleKind::Countersink;
+    countersink.headDiameter = 10.0;
+    countersink.countersinkAngle = 90.0;
+    const NamedShape sunk = holeTool(top, down, countersink, 8.0, "9", "4");
+    const double frustum = pi * 2.0 / 3.0 * (25.0 + 5.0 * r + r * r);
+    CHECK_THAT(volume(sunk.shape), WithinRel(frustum + pi * r * r * 6.0, 1e-6));
+    CHECK(findFace(sunk, "9/side/countersink@4") >= 0);
+
+    // Through a plate, it takes away exactly that.
+    const NamedShape body = plate(40.0, 25.0, 8.0);
+    const NamedShape holed = combine(body, through, Combination::Cut);
+    CHECK_THAT(volume(holed.shape), WithinRel(40.0 * 25.0 * 8.0 - pi * r * r * 8.0, 1e-9));
+
+    // Sideways works too: along X into the side of the plate.
+    const NamedShape side = holeTool({40.0, 12.5, 4.0}, {-1.0, 0.0, 0.0}, simple, 0.0, "9", "5");
+    box = boundingBox(side.shape);
+    CHECK_THAT(box->max.x, WithinAbs(40.0, 1e-6));
+    CHECK_THAT(box->min.x, WithinAbs(35.0 - tip, 1e-6));
+
+    // Sizes that describe no hole are refused.
+    HoleShape wrong = simple;
+    wrong.diameter = 0.0;
+    CHECK_THROWS_AS(holeTool(top, down, wrong, 0.0, "9", "4"), std::invalid_argument);
+    wrong = counterbore;
+    wrong.headDiameter = 4.0;
+    CHECK_THROWS_AS(holeTool(top, down, wrong, 8.0, "9", "4"), std::invalid_argument);
+    wrong = counterbore;
+    wrong.headDepth = 9.0;
+    CHECK_THROWS_AS(holeTool(top, down, wrong, 8.0, "9", "4"), std::invalid_argument);
+    CHECK_THROWS_AS(holeTool(top, {0.0, 0.0, 0.0}, simple, 0.0, "9", "4"), std::invalid_argument);
+}

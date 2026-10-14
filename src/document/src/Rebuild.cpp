@@ -352,6 +352,83 @@ kernel::NamedShape copiesOf(const Feature& feature, const Document& document,
     return result;
 }
 
+// Holes drilled into the body at the free-standing points of the feature's sketch.
+kernel::NamedShape drilled(const Feature& feature, const Document& document,
+                           const kernel::NamedShape& body) {
+    const std::string tag = std::to_string(feature.id.value);
+    const SketchItem* sketch = document.findSketch(feature.sketch);
+    if (sketch == nullptr) {
+        throw FeatureFailure("The sketch that says where the holes go is gone.");
+    }
+    std::vector<const sketch::Entity*> points;
+    for (const sketch::Entity& entity : sketch->geometry.entities()) {
+        if (entity.kind == sketch::EntityKind::Point && entity.owner == 0 &&
+            entity.id != sketch->geometry.origin() && !entity.construction) {
+            points.push_back(&entity);
+        }
+    }
+    if (points.empty()) {
+        throw FeatureFailure("Its sketch, " + sketch->name +
+                             ", has no points to drill at. Draw a point where each hole goes.");
+    }
+    kernel::HoleShape shape;
+    shape.kind = feature.holeKind == HoleKind::Counterbore   ? kernel::HoleKind::Counterbore
+                 : feature.holeKind == HoleKind::Countersink ? kernel::HoleKind::Countersink
+                                                             : kernel::HoleKind::Simple;
+    shape.diameter = feature.size;
+    shape.depth = feature.distance;
+    shape.tipAngle = feature.tipAngle;
+    shape.headDiameter = feature.headDiameter;
+    shape.headDepth = feature.headDepth;
+    shape.countersinkAngle = feature.countersinkAngle;
+    const kernel::Vector& n = sketch->plane.normal;
+    const double way = feature.flipped ? 1.0 : -1.0;
+    const kernel::Vector direction{n.x * way, n.y * way, n.z * way};
+    double through = 0.0;
+    if (feature.throughAll) {
+        // Far enough to leave the body wherever it starts: across the box around the body and
+        // the sketch's plane.
+        const auto box = kernel::boundingBox(body.shape);
+        if (box.has_value()) {
+            double reach = 0.0;
+            for (const sketch::Entity* point : points) {
+                const kernel::Point at = kernel::toWorld(sketch->plane, point->x, point->y);
+                for (const double x : {box->min.x, box->max.x}) {
+                    for (const double y : {box->min.y, box->max.y}) {
+                        for (const double z : {box->min.z, box->max.z}) {
+                            reach = std::max(reach, std::hypot(x - at.x, y - at.y, z - at.z));
+                        }
+                    }
+                }
+            }
+            through = reach + 1.0;
+        }
+    }
+    kernel::NamedShape result = body;
+    const double before = kernel::volume(body.shape);
+    for (const sketch::Entity* point : points) {
+        kernel::NamedShape tool;
+        try {
+            tool = kernel::holeTool(kernel::toWorld(sketch->plane, point->x, point->y), direction,
+                                    shape, through, tag, std::to_string(point->id));
+        } catch (const std::invalid_argument& error) {
+            throw FeatureFailure(capitalized(error.what()) + ".");
+        }
+        try {
+            result = kernel::combine(result, tool, kernel::Combination::Cut);
+        } catch (const kernel::Error&) {
+            throw FeatureFailure("The holes take away all that is left of the body.");
+        }
+    }
+    if (std::abs(before - kernel::volume(result.shape)) <= 1e-9 * std::max(before, 1.0)) {
+        const Body* target = document.findBody(feature.body);
+        throw FeatureFailure("The holes do not reach " +
+                             (target != nullptr ? target->name : std::string("the body")) +
+                             ". Flip them if they go the wrong way.");
+    }
+    return result;
+}
+
 kernel::NamedShape placed(const Feature& feature, const Document& document,
                           const BodyStates& bodies, const kernel::NamedShape& made) {
     switch (feature.operation) {
@@ -526,6 +603,8 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             return copiesOf(feature, document, targetOf(feature, document, bodies));
         case FeatureKind::Plane:
             throw FeatureFailure("A construction plane makes no solid.");
+        case FeatureKind::Hole:
+            return drilled(feature, document, targetOf(feature, document, bodies));
         case FeatureKind::Fillet:
         case FeatureKind::Chamfer: {
             const kernel::NamedShape& body = targetOf(feature, document, bodies);

@@ -468,6 +468,15 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["reference"] = feature.reference;
         out["visible"] = feature.visible;
     }
+    if (feature.kind == FeatureKind::Hole) {
+        out["holeKind"] = toString(feature.holeKind);
+        out["throughAll"] = feature.throughAll;
+        out["tipAngle"] = feature.tipAngle;
+        out["headDiameter"] = feature.headDiameter;
+        out["headDepth"] = feature.headDepth;
+        out["countersinkAngle"] = feature.countersinkAngle;
+        out["flipped"] = feature.flipped;
+    }
     if (feature.kind == FeatureKind::Mirror || feature.kind == FeatureKind::RectangularPattern ||
         feature.kind == FeatureKind::CircularPattern) {
         out["sources"] = ordered_json::array();
@@ -536,6 +545,20 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     if (feature.kind == FeatureKind::Plane) {
         feature.reference = stringMember(entry, "reference", where, path);
         feature.visible = boolMember(entry, "visible", where, path);
+    }
+    if (feature.kind == FeatureKind::Hole) {
+        const std::string holeKind = stringMember(entry, "holeKind", where, path);
+        const auto knownHole = holeKindFromString(holeKind);
+        if (!knownHole.has_value()) {
+            damaged(path, where + " is a hole of the unknown kind \"" + holeKind + "\"");
+        }
+        feature.holeKind = *knownHole;
+        feature.throughAll = boolMember(entry, "throughAll", where, path);
+        feature.tipAngle = numberMember(entry, "tipAngle", where, path);
+        feature.headDiameter = numberMember(entry, "headDiameter", where, path);
+        feature.headDepth = numberMember(entry, "headDepth", where, path);
+        feature.countersinkAngle = numberMember(entry, "countersinkAngle", where, path);
+        feature.flipped = boolMember(entry, "flipped", where, path);
     }
     if (entry.contains("sources")) {
         const json& sources = entry.at("sources");

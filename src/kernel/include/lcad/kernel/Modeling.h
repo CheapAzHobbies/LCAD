@@ -104,6 +104,41 @@ enum class Combination {
 [[nodiscard]] NamedShape shell(const NamedShape& body, const std::vector<int>& openFaces,
                                double thickness, const std::string& tag);
 
+/// The kinds of hole.
+enum class HoleKind {
+    Simple,
+    /// Wider at the top, with a flat step: for the head of a cap screw.
+    Counterbore,
+    /// Wider at the top, in a cone: for the head of a flat screw.
+    Countersink,
+};
+
+/// What a hole looks like. Lengths in millimeters, angles in degrees.
+struct HoleShape {
+    HoleKind kind = HoleKind::Simple;
+    double diameter = 5.0;
+    /// How deep the full diameter goes. A hole through is as deep as it needs to be instead.
+    double depth = 10.0;
+    /// The angle of the point a drill leaves at the bottom of a hole that is not through. 180
+    /// for a flat bottom.
+    double tipAngle = 118.0;
+    /// Counterbore and countersink: the diameter at the top.
+    double headDiameter = 10.0;
+    /// Counterbore: how deep the wider part goes.
+    double headDepth = 3.0;
+    /// Countersink: the angle of its cone.
+    double countersinkAngle = 90.0;
+};
+
+/// The solid a hole takes away, starting at `start` and going along `direction`, which must
+/// not be zero. `through`, if more than zero, makes it that deep with a flat bottom instead of
+/// `shape.depth` and its point. The faces are named `tag`/side/<part>@`name`, where part is
+/// top, bore, tip, floor, counterbore, shoulder, or countersink. Throws std::invalid_argument
+/// for sizes that describe no hole.
+[[nodiscard]] NamedShape holeTool(const Point& start, const Vector& direction,
+                                  const HoleShape& shape, double through, const std::string& tag,
+                                  const std::string& name);
+
 /// A line in space: a point on it, and its direction, of unit length.
 struct Axis {
     Point origin;

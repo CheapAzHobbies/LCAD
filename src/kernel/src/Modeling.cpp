@@ -656,6 +656,87 @@ NamedShape shell(const NamedShape& body, const std::vector<int>& openFaces, doub
     });
 }
 
+NamedShape holeTool(const Point& start, const Vector& direction, const HoleShape& shape,
+                    double through, const std::string& tag, const std::string& name) {
+    const double length = std::sqrt(direction.x * direction.x + direction.y * direction.y +
+                                    direction.z * direction.z);
+    if (!std::isfinite(length) || length < 1e-12) {
+        throw std::invalid_argument("hole: it needs a direction");
+    }
+    const double r = shape.diameter / 2.0;
+    if (!std::isfinite(r) || r <= 1e-7) {
+        throw std::invalid_argument("the diameter has to be more than zero");
+    }
+    const bool isThrough = through > 0.0;
+    const double depth = isThrough ? through : shape.depth;
+    if (!std::isfinite(depth) || depth <= 1e-7) {
+        throw std::invalid_argument("the depth has to be more than zero");
+    }
+    const gp_Dir down(direction.x / length, direction.y / length, direction.z / length);
+    // A plane that holds the hole's axis: u across it, v up it, out of the hole.
+    gp_Dir across = std::abs(down.X()) < 0.9 ? gp_Dir(1.0, 0.0, 0.0) : gp_Dir(0.0, 1.0, 0.0);
+    across = gp_Dir(gp_Vec(across) - gp_Vec(down) * gp_Vec(across).Dot(gp_Vec(down)));
+    const gp_Dir up = down.Reversed();
+    const gp_Dir normal = across.Crossed(up);
+    Plane section;
+    section.origin = start;
+    section.normal = {normal.X(), normal.Y(), normal.Z()};
+    section.xDirection = {across.X(), across.Y(), across.Z()};
+
+    // The outline of half the hole, from its middle at the top round to its middle at the
+    // bottom, as (u, v) and the name of the curve that ends there.
+    std::vector<std::pair<std::pair<double, double>, std::string>> outline;
+    outline.push_back({{0.0, 0.0}, ""});
+    const double head = shape.headDiameter / 2.0;
+    if (shape.kind == HoleKind::Counterbore) {
+        if (!std::isfinite(head) || head <= r + 1e-7) {
+            throw std::invalid_argument("the counterbore has to be wider than the hole");
+        }
+        if (!std::isfinite(shape.headDepth) || shape.headDepth <= 1e-7 ||
+            shape.headDepth >= depth - 1e-7) {
+            throw std::invalid_argument(
+                "the counterbore has to be deeper than zero and less deep than the hole");
+        }
+        outline.push_back({{head, 0.0}, "top"});
+        outline.push_back({{head, -shape.headDepth}, "counterbore"});
+        outline.push_back({{r, -shape.headDepth}, "shoulder"});
+    } else if (shape.kind == HoleKind::Countersink) {
+        const double half = shape.countersinkAngle / 2.0 * M_PI / 180.0;
+        if (!std::isfinite(head) || head <= r + 1e-7) {
+            throw std::invalid_argument("the countersink has to be wider than the hole");
+        }
+        if (!std::isfinite(half) || half <= 1e-3 || half >= M_PI / 2.0 - 1e-3) {
+            throw std::invalid_argument("the countersink angle has to be between 0 and 180");
+        }
+        const double sinkDepth = (head - r) / std::tan(half);
+        if (sinkDepth >= depth - 1e-7) {
+            throw std::invalid_argument("the countersink has to be less deep than the hole");
+        }
+        outline.push_back({{head, 0.0}, "top"});
+        outline.push_back({{r, -sinkDepth}, "countersink"});
+    } else {
+        outline.push_back({{r, 0.0}, "top"});
+    }
+    outline.push_back({{r, -depth}, "bore"});
+    const double tip = shape.tipAngle / 2.0 * M_PI / 180.0;
+    if (!isThrough && std::isfinite(tip) && tip > 1e-3 && tip < M_PI / 2.0 - 1e-3) {
+        outline.push_back({{0.0, -depth - r / std::tan(tip)}, "tip"});
+    } else {
+        outline.push_back({{0.0, -depth}, "floor"});
+    }
+
+    Region region;
+    for (std::size_t i = 1; i <= outline.size(); ++i) {
+        const auto& from = outline[i - 1].first;
+        const auto& to = outline[i % outline.size()].first;
+        const std::string part = i < outline.size() ? outline[i].second : std::string("axis");
+        region.outer.push_back({makeSegment(toWorld(section, from.first, from.second),
+                                            toWorld(section, to.first, to.second)),
+                                part + "@" + name});
+    }
+    return revolve(section, {region}, 0.0, 0.0, 0.0, 1.0, 2.0 * M_PI, tag);
+}
+
 std::optional<Axis> axisOf(const Shape& part) {
     if (part.isNull()) {
         return std::nullopt;

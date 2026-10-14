@@ -32,6 +32,8 @@ enum class FeatureKind {
     /// A construction plane, which sketches can be drawn on: an origin plane or a flat face of a
     /// body, moved along its normal. It makes no solid.
     Plane,
+    /// Holes drilled into a body at the points of a sketch.
+    Hole,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
@@ -47,6 +49,18 @@ enum class Operation {
 
 [[nodiscard]] const char* toString(Operation operation);
 [[nodiscard]] std::optional<Operation> operationFromString(const std::string& name);
+
+/// What a hole looks like at the top.
+enum class HoleKind {
+    Simple,
+    /// Wider for a depth, with a flat step: for the head of a cap screw.
+    Counterbore,
+    /// Wider in a cone: for the head of a flat screw.
+    Countersink,
+};
+
+[[nodiscard]] const char* toString(HoleKind kind);
+[[nodiscard]] std::optional<HoleKind> holeKindFromString(const std::string& name);
 
 /// One step in the making of the model: what to do, to what, and by how much. The document
 /// keeps features in the order they are applied, and builds the bodies from them.
@@ -121,6 +135,21 @@ struct Feature {
     double spacing2 = 10.0;
     /// Plane: whether it is shown.
     bool visible = true;
+    // Hole. Its sketch's free-standing points are where the holes go, its `size` is their
+    // diameter and its `distance` their depth.
+    HoleKind holeKind = HoleKind::Simple;
+    /// Through the whole body, whatever its size, with a flat bottom.
+    bool throughAll = false;
+    /// The angle of the point a drill leaves at the bottom, in degrees; 180 for a flat bottom.
+    double tipAngle = 118.0;
+    /// Counterbore and countersink: the diameter at the top, and the depth of a counterbore.
+    double headDiameter = 10.0;
+    double headDepth = 3.0;
+    /// Countersink: the angle of its cone, in degrees.
+    double countersinkAngle = 90.0;
+    /// Drilled along the sketch's normal rather than against it: from the sketch's front, the
+    /// side it is looked at from, toward its back is the usual way.
+    bool flipped = false;
 
     friend bool operator==(const Feature&, const Feature&) = default;
 };

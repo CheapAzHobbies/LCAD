@@ -21,6 +21,7 @@
 #include <FrameChecks.h>
 #include <GraphicsMessages.h>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
@@ -104,6 +105,7 @@ private slots:
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
     void sketchesFollowConstructionPlanesAndFaces();
+    void holesAreDrilledAtSketchPoints();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -1039,6 +1041,77 @@ void ModelingInterfaceTest::sketchesFollowConstructionPlanesAndFaces() {
     QCOMPARE(window.document()->findSketch(onTop)->plane.origin.z, 12.0);
     render(window);
     keepFrame(window.grab().toImage(), "modeling-planes");
+}
+
+void ModelingInterfaceTest::holesAreDrilledAtSketchPoints() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    const double solid = 60.0 * 40.0 * 8.0;
+
+    // A sketch on the top face, with two points where the holes go.
+    int topIndex = -1;
+    const lcad::kernel::NamedShape named = window.document()->namedBody(body);
+    for (std::size_t i = 0; i < named.faceNames.size(); ++i) {
+        const auto facing = lcad::kernel::planeOfFace(lcad::kernel::subShape(
+            named.shape, lcad::kernel::SubShapeKind::Face, static_cast<int>(i)));
+        if (facing.has_value() && facing->normal.z > 0.999) {
+            topIndex = static_cast<int>(i);
+        }
+    }
+    window.viewport()->setSelectionFilter(lcad::viewport::SelectionFilter::Faces);
+    window.viewport()->setSelection({{body, SelectedItem::Kind::Face, topIndex}});
+    QVERIFY(trigger(window, "sketch.new"));
+    QVERIFY(window.isSketching());
+    const ObjectId marks = window.viewport()->editedSketch();
+    lcad::sketch::Sketch s = window.document()->findSketch(marks)->geometry;
+    s.addPoint({15.0, 10.0});
+    s.addPoint({45.0, 30.0});
+    window.document()->setSketchGeometry(marks, s, "Points");
+
+    // H, straight from the sketch: it is finished, and its points are where the holes go.
+    QCOMPARE(action(window, "solid.hole")->shortcut(), QKeySequence(Qt::Key_H));
+    QVERIFY(trigger(window, "solid.hole"));
+    QVERIFY(!window.isSketching());
+    FeaturePanel* hole = panel(window);
+    QVERIFY(hole != nullptr);
+    QCOMPARE(hole->feature().sketch, marks);
+    QCOMPARE(hole->feature().body, body);
+    QVERIFY(hole->findChild<QLabel*>(QStringLiteral("featureInput"))
+                ->text()
+                .startsWith(QStringLiteral("2 holes")));
+    typeInto(hole, "size", 6.0);
+    hole->findChild<QCheckBox*>(QStringLiteral("throughAll"))->setChecked(true);
+    QVERIFY(!hole->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))->isVisible());
+    QVERIFY(hole->errorText().isEmpty());
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-hole-preview");
+    QTest::mouseClick(okButton(hole), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId holes = window.document()->features().back().id;
+    QVERIFY(window.document()->featureError(holes).empty());
+    QVERIFY(near(volumeOf(window, plate), solid - 2.0 * pi * 9.0 * 8.0));
+    // Its sketch is hidden, as after a pull.
+    QVERIFY(!window.document()->findSketch(marks)->visible);
+
+    // Edited from the timeline into counterbores.
+    clickTimeline(window, holes, true);
+    hole = panel(window);
+    QVERIFY(hole != nullptr);
+    QVERIFY(hole->findChild<QCheckBox*>(QStringLiteral("throughAll"))->isChecked());
+    hole->setChoice(QStringLiteral("holeKind"), 1);
+    QVERIFY(hole->findChild<QDoubleSpinBox*>(QStringLiteral("headDepth"))->isVisible());
+    typeInto(hole, "headDiameter", 10.0);
+    typeInto(hole, "headDepth", 3.0);
+    QVERIFY(hole->errorText().isEmpty());
+    QTest::mouseClick(okButton(hole), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(near(volumeOf(window, plate), solid - 2.0 * (pi * 25.0 * 3.0 + pi * 9.0 * 5.0)));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-holes");
 }
 
 QTEST_MAIN(ModelingInterfaceTest)

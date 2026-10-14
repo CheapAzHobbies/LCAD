@@ -20,7 +20,8 @@ What works today:
   body into the sketch.
 - **Solids from sketches.** Pull (extrude) closed areas of a sketch into a new body, or join,
   cut, or intersect with one, to one side, both sides, or symmetrically; revolve them about a
-  line; fillet, chamfer, and shell; mirror and rectangular and circular patterns of features.
+  line; holes (simple, counterbored, countersunk); fillet, chamfer, and shell; mirror and
+  rectangular and circular patterns of features.
   Each with a live preview, and editable later.
 - **A feature timeline.** Edit, rename, suppress, reorder, and roll back. Change a sketch and the
   solid follows; a feature that no longer fits says why, and the rest of the model carries on.
@@ -37,8 +38,8 @@ What works today:
 
 [docs/USING.md](docs/USING.md) shows how.
 
-Still to come in Phase 3: holes, construction axes, a parameter table, pulling up to a face or
-with a taper, and ellipses and splines in sketches. See the [roadmap](ROADMAP.md).
+Still to come in Phase 3: construction axes, a parameter table, pulling up to a face or with a
+taper, and ellipses and splines in sketches. See the [roadmap](ROADMAP.md).
 
 ## Building
 

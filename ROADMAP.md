@@ -180,8 +180,9 @@ Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
       widen the plate, and the fillets stay on the same four edges.
 - [ ] Pull (join, cut, intersect, new body; symmetric, two-sided) and revolve are done. To-object
       and taper are not.
-- [ ] Fillet, chamfer, shell, mirror, rectangular and circular pattern are done. Hole is not; a
-      circle pulled as a cut does the job of a plain one meanwhile.
+- [x] Fillet, chamfer, shell, hole (simple, counterbore, countersink; to a depth with a drill
+      point, or through all; at the points of a sketch), mirror, rectangular and circular
+      pattern.
 - [x] Timeline: select, edit (the model rolls back to just before the feature), rename,
       suppress, delete, reorder by dragging (refused, with the reason, where it would put a
       feature before what it depends on), the history marker dragged to roll back, failure

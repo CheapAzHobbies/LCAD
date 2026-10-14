@@ -63,6 +63,14 @@ Pattern** (under **Create**, and the pattern button in the toolbar) copy pulls a
 a whole body: select the feature in the timeline first, or check it in the panel. The plane,
 direction, or axis is one through the origin, or an edge or face you click in the 3D view.
 
+## Holes
+
+Draw points where the holes go, in a sketch on the face to drill into. Then press **H**, or click
+**Hole**: the panel takes the points of the sketch that was open, or click another sketch in the
+3D view. Choose **Simple**, **Counterbore**, or **Countersink**, the diameter, and a depth (with
+the point a drill leaves) or **Through all**. **Flip Direction** drills the other way, for a
+sketch that is not on the face itself.
+
 ## Changing a solid
 
 Under **Modify**: **Fillet** (F) rounds edges, **Chamfer** bevels them, **Shell** hollows a body
@@ -319,13 +327,14 @@ These are the shortcuts LCAD starts with.
 | D, T, O, P, X | In a sketch: dimension, trim, offset, project, construction |
 | E | Pull (also from inside a sketch, which it finishes) |
 | F | Fillet |
+| H | Hole |
 | M | Measure |
 | F6, Shift + F6, Home | Fit the view, zoom to the selection, go to the home view |
 | F11 | Give the window to the 3D view, and back |
 | Ctrl + Q | Quit |
 
 Not there yet: autosave and crash recovery, inches as a display unit, import or export of other
-formats, holes, construction axes, a parameter table, and pulling up to a face or with a taper.
+formats, construction axes, a parameter table, and pulling up to a face or with a taper.
 The origin guides that are shown are not saved with the document.
 
 ## If something goes wrong

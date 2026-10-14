@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
@@ -53,6 +54,8 @@ public:
     void setEdges(document::ObjectId body, const std::vector<std::string>& edges);
     /// Shell: the faces to leave open, of one body, by name.
     void setFaces(document::ObjectId body, const std::vector<std::string>& faces);
+    /// Hole: the sketch whose points say where the holes go.
+    void setSketch(document::ObjectId sketch);
     /// Mirror and patterns: an edge or a face of a body, by name, picked to give the plane,
     /// the direction, or the axis. `description` says what it is, for the list.
     void setPickedReference(document::ObjectId body, const std::string& name,
@@ -95,6 +98,9 @@ private:
     void fillAxes();
     void fillSources();
     void fillReferences();
+    void fillSketches();
+    /// Shows the boxes that go with the kind of hole.
+    void showHoleFields();
     /// Reads the boxes into m_feature and shows or hides what depends on them.
     void readFields();
     void updatePicked();
@@ -128,6 +134,14 @@ private:
     std::string m_pickedName;
     QString m_pickedDescription;
     document::ObjectId m_pickedBody;
+    // Hole
+    QComboBox* m_sketch = nullptr;
+    QComboBox* m_holeKind = nullptr;
+    QCheckBox* m_throughAll = nullptr;
+    QDoubleSpinBox* m_tipAngle = nullptr;
+    QDoubleSpinBox* m_headDiameter = nullptr;
+    QDoubleSpinBox* m_headDepth = nullptr;
+    QDoubleSpinBox* m_countersinkAngle = nullptr;
     QLabel* m_errorLabel = nullptr;
     QPushButton* m_okButton = nullptr;
     QFormLayout* m_form = nullptr;

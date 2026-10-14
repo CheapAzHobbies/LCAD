@@ -289,6 +289,8 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("pattern-circular");
         case FeatureKind::Plane:
             return QStringLiteral("plane");
+        case FeatureKind::Hole:
+            return QStringLiteral("hole");
         }
     }
     return QStringLiteral("box");

@@ -624,6 +624,17 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasBody;
         m_commands->add(std::move(c));
 
+        c = make("solid.hole", tr("&Hole"), create,
+                 tr("Drill holes into a body at the points of a sketch: simple, counterbored, or "
+                    "countersunk"));
+        c.iconName = QStringLiteral("hole");
+        c.shortcuts = {QKeySequence(Qt::Key_H)};
+        c.aliases = {tr("drill"), tr("bore"), tr("counterbore"), tr("countersink"),
+                     tr("screw hole")};
+        c.run = [this](bool) { startFeature(FeatureKind::Hole); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
         c = make("construct.offsetPlane", tr("&Offset Plane"), create,
                  tr("Add a construction plane to sketch on: an origin plane or a flat face, "
                     "moved along its normal"));
@@ -1303,7 +1314,7 @@ void MainWindow::createTopBar() {
     edit->addActions({action("edit.delete"), action("edit.cancel")});
 
     QMenu* create = m_menuBar->addMenu(tr("&Create"));
-    create->addActions({action("solid.pull"), action("solid.revolve")});
+    create->addActions({action("solid.pull"), action("solid.revolve"), action("solid.hole")});
     QMenu* pattern = create->addMenu(tr("&Pattern"));
     pattern->setObjectName(QStringLiteral("menu.pattern"));
     pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
@@ -1477,7 +1488,7 @@ void MainWindow::createToolbar() {
     toolbar->addSeparator();
 
     m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Modify"), toolbar)));
-    for (const char* id : {"solid.fillet", "solid.chamfer", "solid.shell"}) {
+    for (const char* id : {"solid.hole", "solid.fillet", "solid.chamfer", "solid.shell"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
@@ -1592,8 +1603,9 @@ void MainWindow::fitToolbar() {
         return toolbar->sizeHint().width();
     };
     const auto setStyle = [this](Qt::ToolButtonStyle style) {
-        for (const char* id : {"solid.revolve", "create.box", "create.cylinder", "create.sphere",
-                               "create.cone", "create.torus", "solid.chamfer", "solid.shell"}) {
+        for (const char* id :
+             {"solid.revolve", "create.box", "create.cylinder", "create.sphere", "create.cone",
+              "create.torus", "solid.hole", "solid.chamfer", "solid.shell"}) {
             if (auto* button = qobject_cast<QToolButton*>(
                     m_modelToolbar->widgetForAction(m_commands->action(QLatin1String(id))))) {
                 button->setToolButtonStyle(style);
@@ -2584,6 +2596,34 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         seed.spacing2 = 20.0;
         seed.angle = 360.0;
     }
+    if (kind == document::FeatureKind::Hole) {
+        // The points of the sketch that was open or is selected, or else of the last sketch
+        // that has any; into the face it is on, or the first body.
+        seed.size = 5.0;
+        seed.distance = 10.0;
+        seed.sketch = from;
+        if (!seed.sketch.isValid()) {
+            for (const document::SketchItem& sketch : document()->sketches()) {
+                for (const sketch::Entity& entity : sketch.geometry.entities()) {
+                    if (entity.kind == sketch::EntityKind::Point && entity.owner == 0 &&
+                        !entity.construction && entity.id != sketch.geometry.origin()) {
+                        seed.sketch = sketch.id;
+                    }
+                }
+            }
+        }
+        const document::SketchItem* points = document()->findSketch(seed.sketch);
+        if (points != nullptr && document()->findBody(points->attachedTo) != nullptr) {
+            seed.body = points->attachedTo;
+        } else {
+            for (const document::Body& body : document()->bodies()) {
+                if (!body.shape.isNull()) {
+                    seed.body = body.id;
+                    break;
+                }
+            }
+        }
+    }
     if (kind == document::FeatureKind::Plane) {
         // Against the flat face that is selected, or else the XY plane.
         seed.reference = "XY";
@@ -2596,7 +2636,7 @@ void MainWindow::startFeature(document::FeatureKind kind) {
     cancelCommand();
     m_editedFeature = {};
     openFeaturePanel(kind);
-    if (kind == document::FeatureKind::Plane) {
+    if (kind == document::FeatureKind::Plane || kind == document::FeatureKind::Hole) {
         m_featurePanel->setFeature(seed);
         m_settingPicks = true;
         m_viewport->clearSelection();
@@ -2657,7 +2697,8 @@ bool MainWindow::editFeature(document::ObjectId id) {
             }
         }
         m_viewport->setPickedProfiles(profiles);
-    } else if (copiesFeatures(feature.kind) || feature.kind == document::FeatureKind::Plane) {
+    } else if (copiesFeatures(feature.kind) || feature.kind == document::FeatureKind::Plane ||
+               feature.kind == document::FeatureKind::Hole) {
         m_viewport->clearSelection();
     } else {
         // The edges or faces it works on, as far as the body still has them.
@@ -2701,7 +2742,8 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         if (kind == document::FeatureKind::Shell || kind == document::FeatureKind::Mirror ||
             kind == document::FeatureKind::Plane) {
             filter = SelectionFilter::Faces;
-        } else if (copiesFeatures(kind)) {
+        } else if (copiesFeatures(kind) || kind == document::FeatureKind::Hole) {
+            // A hole's sketch is picked by clicking it, which needs edges to be pickable.
             filter = SelectionFilter::FacesEdgesVertices;
         }
         m_viewport->setSelectionFilter(filter);
@@ -2765,6 +2807,16 @@ void MainWindow::takeFeaturePicks() {
             outlines.emplace_back(profile.outline.begin(), profile.outline.end());
         }
         m_featurePanel->setProfiles(sketch, outlines);
+        return;
+    }
+    if (kind == document::FeatureKind::Hole) {
+        // A sketch clicked is where the holes go.
+        for (const SelectedItem& item : m_viewport->selection()) {
+            if (item.kind == SelectedItem::Kind::Sketch) {
+                m_featurePanel->setSketch(item.body);
+                break;
+            }
+        }
         return;
     }
     if (copiesFeatures(kind) || kind == document::FeatureKind::Plane) {
@@ -2915,7 +2967,7 @@ void MainWindow::acceptFeature() {
                                               featureKindName(feature.kind).toStdString());
             const document::ObjectId id = document()->addFeature(feature);
             // The sketch has done its work, and its lines would only clutter the solid.
-            if (usesProfiles(feature.kind)) {
+            if (usesProfiles(feature.kind) || feature.kind == document::FeatureKind::Hole) {
                 document()->setSketchVisible(feature.sketch, false);
             }
             transaction.commit();

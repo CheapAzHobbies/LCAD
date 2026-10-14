@@ -36,7 +36,8 @@ bool makesBody(const Feature& feature) {
 }
 
 bool usesSketch(const Feature& feature) {
-    return feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve;
+    return feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
+           feature.kind == FeatureKind::Hole;
 }
 
 // A construction plane placed against an origin plane needs no body.

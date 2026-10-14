@@ -2,6 +2,7 @@
 
 #include <lcad/app/FeaturePanel.h>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -57,6 +58,8 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Circular Pattern");
     case FeatureKind::Plane:
         return FeaturePanel::tr("Plane");
+    case FeatureKind::Hole:
+        return FeaturePanel::tr("Hole");
     }
     return {};
 }
@@ -119,6 +122,21 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_sources->setMaximumHeight(110);
         connect(m_sources, &QListWidget::itemChanged, this, [this] { readFields(); });
         m_form->addRow(tr("Copy"), m_sources);
+    }
+    if (kind == FeatureKind::Hole) {
+        m_sketch = new QComboBox(this);
+        m_sketch->setObjectName(QStringLiteral("sketch"));
+        m_sketch->setToolTip(tr("The sketch whose points say where the holes go. Click a sketch "
+                                "in the 3D view to pick it."));
+        connect(m_sketch, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Points of"), m_sketch);
+        m_body = new QComboBox(this);
+        m_body->setObjectName(QStringLiteral("body"));
+        m_body->setToolTip(tr("The body to drill into."));
+        connect(m_body, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Body"), m_body);
+        fillBodies();
+        fillSketches();
     }
     if (copies(kind) || kind == FeatureKind::Plane) {
         m_reference = new QComboBox(this);
@@ -204,6 +222,45 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_angle->setValue(360.0);
         m_angle->setToolTip(tr("The angle they are spread over. At 360° they go evenly all "
                                "the way round."));
+        break;
+    case FeatureKind::Hole:
+        m_holeKind = new QComboBox(this);
+        m_holeKind->setObjectName(QStringLiteral("holeKind"));
+        m_holeKind->addItem(tr("Simple"), static_cast<int>(document::HoleKind::Simple));
+        m_holeKind->addItem(tr("Counterbore"), static_cast<int>(document::HoleKind::Counterbore));
+        m_holeKind->addItem(tr("Countersink"), static_cast<int>(document::HoleKind::Countersink));
+        connect(m_holeKind, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Type"), m_holeKind);
+        m_size = addField(QStringLiteral("size"), tr("Diameter"), 0.0, largestInput, tr(" mm"));
+        m_size->setValue(5.0);
+        m_throughAll = new QCheckBox(tr("Through all"), this);
+        m_throughAll->setObjectName(QStringLiteral("throughAll"));
+        m_throughAll->setToolTip(tr("Right through the body, with a flat end."));
+        connect(m_throughAll, &QCheckBox::toggled, this, [this] { readFields(); });
+        m_form->addRow(QString(), m_throughAll);
+        m_distance =
+            addField(QStringLiteral("distance"), tr("Depth"), 0.0, largestInput, tr(" mm"));
+        m_distance->setValue(10.0);
+        m_tipAngle = addField(QStringLiteral("tipAngle"), tr("Tip angle"), 1.0, 180.0, tr("°"));
+        m_tipAngle->setValue(118.0);
+        m_tipAngle->setToolTip(tr("The point a drill leaves at the bottom. 180° is flat."));
+        m_headDiameter = addField(QStringLiteral("headDiameter"), tr("Head diameter"), 0.0,
+                                  largestInput, tr(" mm"));
+        m_headDiameter->setValue(10.0);
+        m_headDepth =
+            addField(QStringLiteral("headDepth"), tr("Head depth"), 0.0, largestInput, tr(" mm"));
+        m_headDepth->setValue(3.0);
+        m_countersinkAngle = addField(QStringLiteral("countersinkAngle"), tr("Countersink angle"),
+                                      1.0, 179.0, tr("°"));
+        m_countersinkAngle->setValue(90.0);
+        m_flip = new QPushButton(tr("Flip Direction"), this);
+        m_flip->setObjectName(QStringLiteral("flip"));
+        m_flip->setToolTip(tr("Drill the other way: toward the side the sketch is seen from."));
+        connect(m_flip, &QPushButton::clicked, this, [this] {
+            m_feature.flipped = !m_feature.flipped;
+            readFields();
+        });
+        m_form->addRow(QString(), m_flip);
         break;
     case FeatureKind::Plane:
         m_reference->setToolTip(tr("What the plane is placed against. Click a flat face in the "
@@ -366,6 +423,65 @@ void FeaturePanel::setPickedReference(document::ObjectId body, const std::string
     readFields();
 }
 
+void FeaturePanel::fillSketches() {
+    if (m_sketch == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_sketch);
+    m_sketch->clear();
+    // Sketches with points to drill at.
+    for (const document::SketchItem& sketch : m_document->sketches()) {
+        const auto& entities = sketch.geometry.entities();
+        const bool hasPoints =
+            std::any_of(entities.begin(), entities.end(), [&sketch](const sketch::Entity& e) {
+                return e.kind == sketch::EntityKind::Point && e.owner == 0 && !e.construction &&
+                       e.id != sketch.geometry.origin();
+            });
+        if (hasPoints || sketch.id == m_feature.sketch) {
+            m_sketch->addItem(QString::fromStdString(sketch.name),
+                              QVariant::fromValue<qulonglong>(sketch.id.value));
+        }
+    }
+    const int index = m_sketch->findData(QVariant::fromValue<qulonglong>(m_feature.sketch.value));
+    m_sketch->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+void FeaturePanel::setSketch(document::ObjectId sketch) {
+    if (m_sketch == nullptr) {
+        return;
+    }
+    m_feature.sketch = sketch;
+    fillSketches();
+    // A sketch on a face is drilled into that face's body.
+    if (const document::SketchItem* item = m_document->findSketch(sketch);
+        item != nullptr && m_document->findBody(item->attachedTo) != nullptr) {
+        const int index = m_body->findData(QVariant::fromValue<qulonglong>(item->attachedTo.value));
+        if (index >= 0) {
+            m_body->setCurrentIndex(index);
+        }
+    }
+    readFields();
+}
+
+void FeaturePanel::showHoleFields() {
+    if (m_holeKind == nullptr) {
+        return;
+    }
+    const auto show = [this](QWidget* field, bool shown) {
+        field->setVisible(shown);
+        if (QWidget* label = m_form->labelForField(field)) {
+            label->setVisible(shown);
+        }
+    };
+    const auto kind = static_cast<document::HoleKind>(m_holeKind->currentData().toInt());
+    const bool through = m_throughAll->isChecked();
+    show(m_distance, !through);
+    show(m_tipAngle, !through);
+    show(m_headDiameter, kind != document::HoleKind::Simple);
+    show(m_headDepth, kind == document::HoleKind::Counterbore);
+    show(m_countersinkAngle, kind == document::HoleKind::Countersink);
+}
+
 void FeaturePanel::fillBodies() {
     if (m_body == nullptr) {
         return;
@@ -377,7 +493,8 @@ void FeaturePanel::fillBodies() {
         // Only a body that exists at this point in the timeline can be worked on, and not the
         // one the feature itself makes.
         if (!body.shape.isNull() &&
-            !(m_feature.operation == Operation::NewBody && body.id == m_feature.body)) {
+            !(m_operation != nullptr && m_feature.operation == Operation::NewBody &&
+              body.id == m_feature.body)) {
             m_body->addItem(QString::fromStdString(body.name),
                             QVariant::fromValue<qulonglong>(body.id.value));
         }
@@ -467,6 +584,21 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         fillReferences();
         m_distance->setValue(feature.distance);
     }
+    if (feature.kind == FeatureKind::Hole) {
+        fillSketches();
+        fillBodies();
+        const int body = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
+        if (body >= 0) {
+            m_body->setCurrentIndex(body);
+        }
+        m_holeKind->setCurrentIndex(m_holeKind->findData(static_cast<int>(feature.holeKind)));
+        m_throughAll->setChecked(feature.throughAll);
+        m_distance->setValue(feature.distance);
+        m_tipAngle->setValue(feature.tipAngle);
+        m_headDiameter->setValue(feature.headDiameter);
+        m_headDepth->setValue(feature.headDepth);
+        m_countersinkAngle->setValue(feature.countersinkAngle);
+    }
     if (copies(feature.kind)) {
         const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
         if (index >= 0) {
@@ -534,6 +666,8 @@ bool FeaturePanel::hasInput() const {
         return m_feature.body.isValid() && !m_feature.reference.empty();
     case FeatureKind::Plane:
         return !m_feature.reference.empty();
+    case FeatureKind::Hole:
+        return m_feature.sketch.isValid() && m_feature.body.isValid();
     }
     return false;
 }
@@ -643,6 +777,20 @@ void FeaturePanel::readFields() {
             m_feature.spacing2 = m_spacing2->value();
         }
     }
+    if (m_feature.kind == FeatureKind::Hole) {
+        m_feature.sketch =
+            document::ObjectId{m_sketch->count() > 0 ? m_sketch->currentData().toULongLong() : 0};
+        m_feature.body =
+            document::ObjectId{m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
+        m_feature.holeKind = static_cast<document::HoleKind>(m_holeKind->currentData().toInt());
+        m_feature.throughAll = m_throughAll->isChecked();
+        m_feature.distance = m_distance->value();
+        m_feature.tipAngle = m_tipAngle->value();
+        m_feature.headDiameter = m_headDiameter->value();
+        m_feature.headDepth = m_headDepth->value();
+        m_feature.countersinkAngle = m_countersinkAngle->value();
+        showHoleFields();
+    }
     if (m_feature.kind == FeatureKind::Plane) {
         m_feature.reference = m_reference->currentData().toString().toStdString();
         // An origin plane needs no body; a face, the body it is a face of.
@@ -719,6 +867,25 @@ void FeaturePanel::updatePicked() {
         text = tr("Choose an origin plane below, or click a flat face in the 3D view, and how far "
                   "from it the plane goes.");
         break;
+    case FeatureKind::Hole: {
+        const document::SketchItem* sketch = m_document->findSketch(m_feature.sketch);
+        if (sketch == nullptr) {
+            text = tr("Holes go at the points of a sketch. Draw a point where each hole goes, "
+                      "on the face to drill into, then pick that sketch.");
+        } else {
+            int count = 0;
+            for (const sketch::Entity& e : sketch->geometry.entities()) {
+                count += e.kind == sketch::EntityKind::Point && e.owner == 0 && !e.construction &&
+                                 e.id != sketch->geometry.origin()
+                             ? 1
+                             : 0;
+            }
+            text = (count == 1 ? tr("1 hole, at the point of %1.")
+                               : tr("%1 holes, at the points of %2.").arg(count))
+                       .arg(QString::fromStdString(sketch->name));
+        }
+        break;
+    }
     case FeatureKind::Shell: {
         const document::Body* body = m_document->findBody(m_feature.body);
         if (body == nullptr) {

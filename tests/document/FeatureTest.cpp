@@ -1046,3 +1046,104 @@ TEST_CASE("Sketches follow the face or the plane they are drawn on", "[document]
     CHECK_THROWS_AS(document.addSketch("No face", lcad::kernel::planeXY(), body),
                     std::invalid_argument);
 }
+
+TEST_CASE("Holes are drilled at the points of a sketch", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+    made.plate = document.addFeature(pullOf(made.outline, 8.0));
+    const ObjectId body = document.findFeature(made.plate)->body;
+    const double solid = 60.0 * 40.0 * 8.0;
+
+    // Two points on the plate's top face.
+    const std::string top = topFace(document, body);
+    const lcad::kernel::NamedShape named = document.namedBody(body);
+    const auto plane = lcad::kernel::planeOfFace(lcad::kernel::subShape(
+        named.shape, lcad::kernel::SubShapeKind::Face, lcad::kernel::findFace(named, top)));
+    const ObjectId marks = document.addSketch("Marks", *plane, body, top);
+    lcad::sketch::Sketch s;
+    s.addPoint({10.0, 10.0});
+    s.addPoint({50.0, 30.0});
+    document.setSketchGeometry(marks, s, "Points");
+
+    // 6 across and 5 deep, with a drill's point.
+    Feature hole;
+    hole.kind = FeatureKind::Hole;
+    hole.sketch = marks;
+    hole.body = body;
+    hole.size = 6.0;
+    hole.distance = 5.0;
+    const ObjectId holes = document.addFeature(hole);
+    CHECK(document.findFeature(holes)->name == "Hole 1");
+    REQUIRE(document.featureError(holes).empty());
+    const double cone = pi * 9.0 * (3.0 / std::tan(59.0 * pi / 180.0)) / 3.0;
+    CHECK_THAT(made.volume(), WithinRel(solid - 2.0 * (pi * 9.0 * 5.0 + cone), 1e-6));
+
+    // Through all.
+    hole = *document.findFeature(holes);
+    hole.throughAll = true;
+    document.changeFeature(holes, hole);
+    CHECK_THAT(made.volume(), WithinRel(solid - 2.0 * pi * 9.0 * 8.0, 1e-6));
+
+    // Counterbored, 10 across for the first 3.
+    hole.holeKind = HoleKind::Counterbore;
+    hole.headDiameter = 10.0;
+    hole.headDepth = 3.0;
+    document.changeFeature(holes, hole);
+    CHECK_THAT(made.volume(), WithinRel(solid - 2.0 * (pi * 25.0 * 3.0 + pi * 9.0 * 5.0), 1e-6));
+    // A counterbore narrower than the hole is no counterbore.
+    hole.headDiameter = 4.0;
+    document.changeFeature(holes, hole);
+    CHECK_THAT(document.featureError(holes), ContainsSubstring("wider than the hole"));
+    document.undo();
+
+    // A thicker plate: the sketch rises with the top, and the holes still go through.
+    Feature thicker = *document.findFeature(made.plate);
+    thicker.distance = 12.0;
+    document.changeFeature(made.plate, thicker);
+    CHECK(document.featureError(holes).empty());
+    CHECK_THAT(made.volume(),
+               WithinRel(60.0 * 40.0 * 12.0 - 2.0 * (pi * 25.0 * 3.0 + pi * 9.0 * 9.0), 1e-6));
+    document.undo();
+
+    // A third point makes a third hole; with no points there is nothing to drill.
+    lcad::sketch::Sketch three = document.findSketch(marks)->geometry;
+    three.addPoint({30.0, 20.0});
+    document.setSketchGeometry(marks, three, "Point");
+    CHECK_THAT(made.volume(), WithinRel(solid - 3.0 * (pi * 25.0 * 3.0 + pi * 9.0 * 5.0), 1e-6));
+    document.setSketchGeometry(marks, lcad::sketch::Sketch(), "Clear");
+    CHECK_THAT(document.featureError(holes), ContainsSubstring("has no points to drill at"));
+    CHECK_THAT(made.volume(), WithinRel(solid, 1e-9));
+    document.undo();
+    document.undo();
+
+    // From a sketch under the plate, the holes go the wrong way until flipped.
+    const ObjectId under = document.addSketch("Under", lcad::kernel::planeXY());
+    lcad::sketch::Sketch below;
+    below.addPoint({30.0, 20.0});
+    document.setSketchGeometry(under, below, "Point");
+    Feature upward;
+    upward.kind = FeatureKind::Hole;
+    upward.sketch = under;
+    upward.body = body;
+    upward.size = 4.0;
+    upward.throughAll = true;
+    const ObjectId fromBelow = document.addFeature(upward);
+    CHECK_THAT(document.featureError(fromBelow), ContainsSubstring("Flip them"));
+    upward = *document.findFeature(fromBelow);
+    upward.flipped = true;
+    document.changeFeature(fromBelow, upward);
+    CHECK(document.featureError(fromBelow).empty());
+
+    // Saved and opened again, the holes are the same.
+    const double volume = made.volume();
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("holes.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(*loaded.document->findFeature(holes) == *document.findFeature(holes));
+    CHECK(*loaded.document->findFeature(fromBelow) == *document.findFeature(fromBelow));
+    CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(body)->shape),
+               WithinRel(volume, 1e-9));
+}
