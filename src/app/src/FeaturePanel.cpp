@@ -2,6 +2,8 @@
 
 #include <lcad/app/FeaturePanel.h>
 
+#include <lcad/app/ExpressionBox.h>
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -311,7 +313,12 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
 
 QDoubleSpinBox* FeaturePanel::addField(const QString& name, const QString& label, double minimum,
                                        double maximum, const QString& suffix) {
-    auto* box = new QDoubleSpinBox(this);
+    // Each value can be worked out from parameters.
+    auto* box = new ExpressionBox(
+        [this](const QString& expression) {
+            return m_document->evaluate(expression.toStdString());
+        },
+        this);
     box->setObjectName(name);
     box->setRange(minimum, maximum);
     box->setDecimals(3);
@@ -647,6 +654,12 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         }
     }
     fillAxes();
+    for (ExpressionBox* box : findChildren<ExpressionBox*>()) {
+        const auto expression = feature.expressions.find(box->objectName().toStdString());
+        box->setExpression(expression == feature.expressions.end()
+                               ? QString()
+                               : QString::fromStdString(expression->second));
+    }
     m_filling = false;
     readFields();
 }
@@ -850,6 +863,15 @@ void FeaturePanel::readFields() {
     }
     if (m_size != nullptr) {
         m_feature.size = m_size->value();
+    }
+    // Values worked out from parameters, of the boxes that are in use.
+    for (const ExpressionBox* box : findChildren<ExpressionBox*>()) {
+        const std::string field = box->objectName().toStdString();
+        if (box->expression().isEmpty() || box->isHidden()) {
+            m_feature.expressions.erase(field);
+        } else {
+            m_feature.expressions[field] = box->expression().toStdString();
+        }
     }
     updatePicked();
     updateOk();

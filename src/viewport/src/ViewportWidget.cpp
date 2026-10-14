@@ -1174,6 +1174,7 @@ public:
             showConstructionPlanes();
             break;
         case Kind::SketchRenamed:
+        case Kind::ParametersChanged:
         case Kind::HistoryChanged:
             return;
         }

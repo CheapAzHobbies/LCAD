@@ -1216,3 +1216,105 @@ TEST_CASE("A pull can taper, or go up to a face and follow it", "[document][feat
     CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(postBody)->shape),
                WithinRel(pi * 25.0 * 12.0, 1e-6));
 }
+
+TEST_CASE("Parameters drive sketch dimensions and feature values", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+    std::vector<Change::Kind> heard;
+    document.addListener([&heard](const Change& change) { heard.push_back(change.kind); });
+
+    const ObjectId width = document.addParameter("width", "60 mm", "across the plate");
+    const ObjectId height = document.addParameter("height", "4 cm");
+    const ObjectId thick = document.addParameter("thick", "width / 10");
+    CHECK(document.undoLabel() == "Add Parameter");
+    CHECK(document.parameterValue(width) == 60.0);
+    CHECK(document.parameterValue(height) == 40.0);
+    CHECK(document.parameterValue(thick) == 6.0);
+    CHECK(std::find(heard.begin(), heard.end(), Change::Kind::ParametersChanged) != heard.end());
+    CHECK(document.evaluate("thick * 2 + 1") == 13.0);
+    CHECK_THROWS_AS(document.evaluate("depth"), std::invalid_argument);
+    CHECK(document.uniqueParameterName("width") == "width1");
+
+    // Names that cannot be, or are taken, are refused.
+    CHECK_THROWS_AS(document.addParameter("2wide", "1"), std::invalid_argument);
+    CHECK_THROWS_AS(document.addParameter("sqrt", "1"), std::invalid_argument);
+    CHECK_THROWS_AS(document.addParameter("width", "1"), std::invalid_argument);
+
+    // The sketch's width and height follow the parameters, and the pull its thickness.
+    document.setDimensionExpression(made.outline, made.width, "width");
+    document.setDimensionExpression(made.outline, made.height, "height");
+    CHECK(document.findSketch(made.outline)->expressions.at(made.width) == "width");
+    Feature plate = pullOf(made.outline, 1.0);
+    plate.expressions["distance"] = "thick";
+    made.plate = document.addFeature(plate);
+    REQUIRE(document.featureError(made.plate).empty());
+    CHECK_THAT(made.volume(), WithinRel(60.0 * 40.0 * 6.0, 1e-9));
+    // The value it holds is what the expression last came to.
+    CHECK(document.findFeature(made.plate)->distance == 1.0);
+
+    // One change to the width moves the sketch, and the thickness with it.
+    Parameter wider = *document.findParameter(width);
+    wider.expression = "85 mm";
+    document.changeParameter(width, wider);
+    CHECK(document.undoLabel() == "Change Parameter");
+    CHECK(document.parameterValue(thick) == 8.5);
+    CHECK_THAT(made.volume(), WithinRel(85.0 * 40.0 * 8.5, 1e-9));
+    CHECK_THAT(document.findSketch(made.outline)->geometry.findConstraint(made.width)->value,
+               WithinRel(85.0, 1e-12));
+    document.undo();
+    CHECK_THAT(made.volume(), WithinRel(60.0 * 40.0 * 6.0, 1e-9));
+    document.redo();
+    CHECK_THAT(made.volume(), WithinRel(85.0 * 40.0 * 8.5, 1e-9));
+
+    // A new name goes everywhere the old one was used, in one step.
+    Parameter renamed = *document.findParameter(width);
+    renamed.name = "span";
+    document.changeParameter(width, renamed);
+    CHECK(document.findParameter("width") == nullptr);
+    CHECK(document.findParameter(thick)->expression == "span / 10");
+    CHECK(document.findSketch(made.outline)->expressions.at(made.width) == "span");
+    CHECK_THAT(made.volume(), WithinRel(85.0 * 40.0 * 8.5, 1e-9));
+    document.undo();
+    CHECK(document.findParameter(thick)->expression == "width / 10");
+    CHECK(document.findSketch(made.outline)->expressions.at(made.width) == "width");
+
+    // A parameter worked out from itself, through another, cannot be worked out, and says why.
+    const ObjectId a = document.addParameter("a", "b + 1");
+    const ObjectId b = document.addParameter("b", "a * 2");
+    CHECK_FALSE(document.parameterValue(a).has_value());
+    CHECK_THAT(document.parameterError(a) + document.parameterError(b),
+               ContainsSubstring("which is worked out from it"));
+    document.undo();
+    document.undo();
+
+    // A feature that uses a parameter that goes fails, and says which.
+    document.removeParameter(thick);
+    CHECK_THAT(document.featureError(made.plate),
+               ContainsSubstring("There is no parameter called thick"));
+    document.undo();
+    CHECK(document.featureError(made.plate).empty());
+
+    // Saved and opened again, the parameters and expressions are there and work.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("parameters.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->parameters() == document.parameters());
+    CHECK(loaded.document->findSketch(made.outline)->expressions ==
+          document.findSketch(made.outline)->expressions);
+    CHECK(loaded.document->findFeature(made.plate)->expressions ==
+          document.findFeature(made.plate)->expressions);
+    CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(made.body().id)->shape),
+               WithinRel(85.0 * 40.0 * 8.5, 1e-9));
+
+    // A parameter that cannot be worked out is reported on opening.
+    Parameter broken = *document.findParameter(height);
+    broken.expression = "nothing + 1";
+    document.changeParameter(height, broken);
+    saveDocument(document, path);
+    const LoadedDocument warned = loadDocument(path);
+    REQUIRE(!warned.warnings.empty());
+    CHECK_THAT(warned.warnings.front(), ContainsSubstring("parameter height cannot be worked out"));
+}

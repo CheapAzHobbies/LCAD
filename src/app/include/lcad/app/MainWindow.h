@@ -34,6 +34,7 @@ class BrowserPanel;
 class CommandRegistry;
 class FeaturePanel;
 class MeasurePanel;
+class ParametersDialog;
 class TimelinePanel;
 class CommandSearch;
 class PropertiesPanel;
@@ -144,6 +145,10 @@ public:
     /// angle, and the 3D view draws the distance. Cancels a command in progress.
     void startMeasure();
     [[nodiscard]] MeasurePanel* measurePanel() const { return m_measurePanel; }
+    /// Opens the parameter table of the current document.
+    void showParameters();
+    /// The parameter table, once it has been opened, or nullptr.
+    [[nodiscard]] ParametersDialog* parametersDialog() const { return m_parametersDialog; }
 
     // Sketching
 
@@ -283,6 +288,7 @@ private:
     SketchPlanePanel* m_planePanel = nullptr;
     FeaturePanel* m_featurePanel = nullptr;
     MeasurePanel* m_measurePanel = nullptr;
+    ParametersDialog* m_parametersDialog = nullptr;
     /// What is being measured: the first and the second thing picked.
     std::vector<viewport::SelectedItem> m_measured;
     std::optional<viewport::SelectionFilter> m_filterBeforeMeasure;

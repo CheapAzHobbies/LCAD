@@ -5,6 +5,7 @@
 #include <lcad/document/ObjectId.h>
 #include <lcad/sketch/Sketch.h>
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -157,6 +158,12 @@ struct Feature {
     /// Drilled along the sketch's normal rather than against it: from the sketch's front, the
     /// side it is looked at from, toward its back is the usual way.
     bool flipped = false;
+
+    /// Values worked out from parameters: the name of the value ("distance", "distanceBack",
+    /// "taper", "angle", "size", "count", "count2", "spacing", "spacing2", "tipAngle",
+    /// "headDiameter", "headDepth", "countersinkAngle") and the expression. The value itself is
+    /// what the expression last came to.
+    std::map<std::string, std::string> expressions;
 
     friend bool operator==(const Feature&, const Feature&) = default;
 };

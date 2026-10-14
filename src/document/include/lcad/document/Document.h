@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -56,6 +57,21 @@ struct SketchItem {
     /// moves, the sketch moves with it, and so does what is made from the sketch.
     ObjectId attachedTo;
     std::string attachedFace;
+    /// Dimensions whose values are worked out from parameters, and the expressions they are
+    /// worked out from. The values in `geometry` are what they last came to.
+    std::map<sketch::ConstraintId, std::string> expressions;
+};
+
+/// A value the user names, which the values of features and the dimensions of sketches can be
+/// worked out from: "width" is "60 mm", "hole" is "width / 10".
+struct Parameter {
+    ObjectId id;
+    std::string name;
+    /// As typed: a number, with a unit if wanted, or an expression of other parameters.
+    std::string expression;
+    std::string comment;
+
+    friend bool operator==(const Parameter&, const Parameter&) = default;
 };
 
 /// What a construction plane is now: where it lies, and where on it to draw it.
@@ -86,6 +102,8 @@ struct Change {
         /// The timeline changed: a feature was added, removed, changed, renamed, suppressed,
         /// or moved, the history marker moved, or a feature now fails or works again.
         TimelineChanged,
+        /// A parameter was added, removed, or changed, or what one comes to changed.
+        ParametersChanged,
         /// What undo and redo would do, or whether there are unsaved changes, may have changed.
         HistoryChanged,
     };
@@ -101,6 +119,7 @@ struct DocumentState {
     std::vector<Body> bodies;
     std::vector<SketchItem> sketches;
     std::vector<Feature> features;
+    std::vector<Parameter> parameters;
     /// The ids of bodies no feature makes, of sketches, and of features, in the order they are
     /// applied. Empty means: those bodies, then the sketches, then the features, each in the
     /// order given.
@@ -254,6 +273,34 @@ public:
     void suspendRebuild();
     void resumeRebuild();
 
+    // Parameters
+
+    [[nodiscard]] const std::vector<Parameter>& parameters() const { return m_parameters; }
+    [[nodiscard]] const Parameter* findParameter(ObjectId id) const;
+    [[nodiscard]] const Parameter* findParameter(std::string_view name) const;
+    /// `base` followed by the lowest number no parameter has yet: "width1", "width2".
+    [[nodiscard]] std::string uniqueParameterName(std::string_view base) const;
+    /// Adds a parameter. Throws std::invalid_argument if the name cannot be a parameter's (a
+    /// letter or "_", then letters, digits, and "_"; not a function or a unit) or is taken.
+    ObjectId addParameter(std::string name, std::string expression, std::string comment = {});
+    /// Changes a parameter. A new name takes the old one's place in every expression that uses
+    /// it, in the same undo step. Throws std::invalid_argument as addParameter() does.
+    void changeParameter(ObjectId id, Parameter definition);
+    void removeParameter(ObjectId id);
+    /// What a parameter comes to, in millimeters or degrees, or nothing if it cannot be worked
+    /// out, in which case parameterError() says why.
+    [[nodiscard]] std::optional<double> parameterValue(ObjectId id) const;
+    [[nodiscard]] std::string parameterError(ObjectId id) const;
+    /// Works out an expression from the parameters as they are. Throws std::invalid_argument
+    /// with a sentence that says why, if it cannot be.
+    [[nodiscard]] double evaluate(std::string_view expression) const;
+    /// Makes a dimension of a sketch follow an expression, or, given an empty one, a plain
+    /// value again. The dimension takes the expression's value now. Throws
+    /// std::invalid_argument if there is no such dimension, or the expression cannot be worked
+    /// out.
+    void setDimensionExpression(ObjectId sketch, sketch::ConstraintId dimension,
+                                std::string expression);
+
     // Undo
 
     [[nodiscard]] bool canUndo() const;
@@ -299,6 +346,10 @@ private:
             ChangeFeature,
             MoveItem,
             SetMarker,
+            AddParameter,
+            RemoveParameter,
+            ChangeParameter,
+            SetSketchExpressions,
         };
         Kind kind;
         ObjectId id;
@@ -329,6 +380,20 @@ private:
         // The history marker before and after, for the edits that move it.
         std::size_t oldMarker = 0;
         std::size_t newMarker = 0;
+        // AddParameter and RemoveParameter: the parameter. ChangeParameter: before and after,
+        // and what a new name changed in features and sketches.
+        Parameter parameter;
+        Parameter newParameter;
+        std::vector<std::pair<Feature, Feature>> renamedFeatures;
+        std::vector<std::pair<Parameter, Parameter>> renamedParameters;
+        // SetSketchExpressions, and the sketches a new name changed: the sketch, and its
+        // expressions before and after.
+        struct SketchExpressions {
+            ObjectId sketch;
+            std::map<sketch::ConstraintId, std::string> before;
+            std::map<sketch::ConstraintId, std::string> after;
+        };
+        std::vector<SketchExpressions> renamedSketches;
     };
 
     struct Step {
@@ -341,6 +406,7 @@ private:
     void record(Edit edit, const std::string& label);
     void apply(const Edit& edit);
     void revert(const Edit& edit);
+    void applyExpressions(const Edit& edit, bool forward);
     void notify(Change::Kind kind, ObjectId body = {});
     [[nodiscard]] std::size_t indexOf(ObjectId id) const;
     [[nodiscard]] std::size_t sketchIndexOf(ObjectId id) const;
@@ -361,6 +427,11 @@ private:
     // Rebuilding
     /// Notes that an item changed, so that what depends on it is built again.
     void touch(ObjectId item);
+    /// Works out every parameter, in the order they depend on each other.
+    void computeParameters();
+    /// A feature with the values its expressions come to. Throws detail::FeatureFailure.
+    [[nodiscard]] Feature resolved(const Feature& feature) const;
+    [[nodiscard]] double evaluateForModel(const std::string& expression) const;
     /// Applies the features again, as far as anything changed, and tells the listeners.
     void rebuild();
     [[nodiscard]] std::uint64_t currentSerial() const;
@@ -372,6 +443,10 @@ private:
     std::vector<Body> m_bodies;
     std::vector<SketchItem> m_sketches;
     std::vector<Feature> m_features;
+    std::vector<Parameter> m_parameters;
+    /// What each parameter comes to, or why it does not.
+    std::unordered_map<ObjectId, double> m_parameterValues;
+    std::unordered_map<ObjectId, std::string> m_parameterErrors;
     std::vector<ObjectId> m_timeline;
     /// How many timeline items are applied; larger than the timeline means all.
     std::size_t m_marker = static_cast<std::size_t>(-1);

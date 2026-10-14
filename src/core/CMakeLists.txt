@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# What every other module may use: the log and LCAD's version. No Qt, no OCCT.
+# What every other module may use: the log, LCAD's version, and arithmetic expressions. No Qt,
+# no OCCT.
 add_library(lcad_core STATIC
+    src/Expression.cpp
     src/Log.cpp
     src/Version.cpp)
 add_library(lcad::core ALIAS lcad_core)

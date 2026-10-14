@@ -306,6 +306,13 @@ feature (`setEditedFeature()`) and holding rebuilding back while a sketch is ope
 `tryFeature()` applies a feature that is not in the document to the model as it is, and is how
 a command previews what it is about to do without touching the document.
 
+Parameters come first. Each rebuild works every parameter out (`computeParameters()`, in the
+order they depend on each other, refusing a parameter that is worked out from itself), then
+gives each feature the values its expressions come to (`resolved()`) before applying it, and
+gives each sketch dimension with an expression its value, solving the sketch again, when the
+sketch's turn comes. The expressions are read by `core/Expression.h`, which has no idea what a
+document is.
+
 Two kinds of timeline entry place things rather than make solids. A construction plane (a
 feature of kind `Plane`) is worked out when its turn comes, from an origin plane or from a face
 of a body as it is at that point (`planeState()`). A sketch that is attached to a construction

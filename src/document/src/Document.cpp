@@ -4,9 +4,13 @@
 
 #include "Rebuild.h"
 
+#include <lcad/core/Expression.h>
 #include <lcad/kernel/Measure.h>
+#include <lcad/sketch/Edit.h>
 
 #include <algorithm>
+#include <cmath>
+#include <functional>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -60,8 +64,8 @@ Document::Document() = default;
 
 Document::Document(DocumentState state)
     : m_bodies(std::move(state.bodies)), m_sketches(std::move(state.sketches)),
-      m_features(std::move(state.features)), m_timeline(std::move(state.timeline)),
-      m_marker(state.marker), m_nextId(state.nextId) {
+      m_features(std::move(state.features)), m_parameters(std::move(state.parameters)),
+      m_timeline(std::move(state.timeline)), m_marker(state.marker), m_nextId(state.nextId) {
     std::unordered_set<ObjectId> seen;
     const auto claim = [this, &seen](ObjectId id, const char* what) {
         if (!id.isValid() || id.value >= m_nextId) {
@@ -81,6 +85,14 @@ Document::Document(DocumentState state)
     for (const Feature& feature : m_features) {
         claim(feature.id, "feature");
         requireName(feature.name, "Document");
+    }
+    std::unordered_set<std::string> parameterNames;
+    for (const Parameter& parameter : m_parameters) {
+        claim(parameter.id, "parameter");
+        if (!core::isValidName(parameter.name) || !parameterNames.insert(parameter.name).second) {
+            throw std::invalid_argument("Document: \"" + parameter.name +
+                                        "\" cannot be the name of a parameter, or is taken twice");
+        }
     }
     for (Body& body : m_bodies) {
         claim(body.id, "body");
@@ -310,8 +322,8 @@ ObjectId Document::addSketch(std::string name, const kernel::Plane& plane, Objec
     edit.kind = Edit::Kind::AddSketch;
     edit.id = ObjectId{m_nextId};
     edit.index = m_sketches.size();
-    edit.sketch = SketchItem{edit.id,    std::move(name),        true, plane, sketch::Sketch(),
-                             attachedTo, std::move(attachedFace)};
+    edit.sketch = SketchItem{edit.id,    std::move(name),         true, plane, sketch::Sketch(),
+                             attachedTo, std::move(attachedFace), {}};
     edit.place = placeForNew();
     markersForAdding(edit);
     const ObjectId id = edit.id;
@@ -625,6 +637,322 @@ kernel::NamedShape Document::namedBody(ObjectId body) const {
                             : kernel::NamedShape{found->shape, found->faceNames};
 }
 
+// ---------------------------------------------------------------------------------------------
+// Parameters
+
+const Parameter* Document::findParameter(ObjectId id) const {
+    const auto found = std::find_if(m_parameters.begin(), m_parameters.end(),
+                                    [id](const Parameter& p) { return p.id == id; });
+    return found == m_parameters.end() ? nullptr : &*found;
+}
+
+const Parameter* Document::findParameter(std::string_view name) const {
+    const auto found = std::find_if(m_parameters.begin(), m_parameters.end(),
+                                    [name](const Parameter& p) { return p.name == name; });
+    return found == m_parameters.end() ? nullptr : &*found;
+}
+
+std::string Document::uniqueParameterName(std::string_view base) const {
+    for (int number = 1;; ++number) {
+        const std::string candidate = std::string(base) + std::to_string(number);
+        if (findParameter(candidate) == nullptr) {
+            return candidate;
+        }
+    }
+}
+
+namespace {
+
+void requireParameterName(const std::string& name, const char* function) {
+    if (!core::isValidName(name)) {
+        throw std::invalid_argument(std::string(function) + ": \"" + name +
+                                    "\" cannot be a parameter's name. A name starts with a "
+                                    "letter, and has only letters, digits, and _ in it.");
+    }
+}
+
+} // namespace
+
+ObjectId Document::addParameter(std::string name, std::string expression, std::string comment) {
+    requireParameterName(name, "addParameter");
+    if (findParameter(name) != nullptr) {
+        throw std::invalid_argument("addParameter: there is a parameter called " + name +
+                                    " already");
+    }
+    Edit edit{};
+    edit.kind = Edit::Kind::AddParameter;
+    edit.id = ObjectId{m_nextId++};
+    edit.index = m_parameters.size();
+    edit.parameter = Parameter{edit.id, std::move(name), std::move(expression), std::move(comment)};
+    const ObjectId id = edit.id;
+    record(std::move(edit), "Add Parameter");
+    return id;
+}
+
+void Document::changeParameter(ObjectId id, Parameter definition) {
+    const Parameter* old = findParameter(id);
+    if (old == nullptr) {
+        throw std::invalid_argument("changeParameter: there is no parameter with id " +
+                                    std::to_string(id.value));
+    }
+    definition.id = id;
+    requireParameterName(definition.name, "changeParameter");
+    if (const Parameter* same = findParameter(definition.name); same != nullptr && same->id != id) {
+        throw std::invalid_argument("changeParameter: there is a parameter called " +
+                                    definition.name + " already");
+    }
+    if (definition == *old) {
+        return;
+    }
+    Edit edit{};
+    edit.kind = Edit::Kind::ChangeParameter;
+    edit.id = id;
+    edit.parameter = *old;
+    edit.newParameter = definition;
+    if (definition.name != old->name) {
+        // Everything that uses the old name uses the new one instead.
+        const auto uses = [&old](const std::string& expression) {
+            try {
+                const std::vector<std::string> names = core::namesIn(expression);
+                return std::find(names.begin(), names.end(), old->name) != names.end();
+            } catch (const core::ExpressionError&) {
+                return false;
+            }
+        };
+        const auto rename = [&old, &definition](const std::string& expression) {
+            return core::renamed(expression, old->name, definition.name);
+        };
+        for (const Parameter& other : m_parameters) {
+            if (other.id != id && uses(other.expression)) {
+                Parameter changed = other;
+                changed.expression = rename(other.expression);
+                edit.renamedParameters.emplace_back(other, changed);
+            }
+        }
+        if (uses(edit.newParameter.expression)) {
+            edit.newParameter.expression = rename(edit.newParameter.expression);
+        }
+        for (const Feature& feature : m_features) {
+            Feature changed = feature;
+            bool any = false;
+            for (auto& [field, expression] : changed.expressions) {
+                if (uses(expression)) {
+                    expression = rename(expression);
+                    any = true;
+                }
+            }
+            if (any) {
+                edit.renamedFeatures.emplace_back(feature, changed);
+            }
+        }
+        for (const SketchItem& sketch : m_sketches) {
+            Edit::SketchExpressions change{sketch.id, sketch.expressions, sketch.expressions};
+            bool any = false;
+            for (auto& [dimension, expression] : change.after) {
+                if (uses(expression)) {
+                    expression = rename(expression);
+                    any = true;
+                }
+            }
+            if (any) {
+                edit.renamedSketches.push_back(std::move(change));
+            }
+        }
+    }
+    record(std::move(edit), "Change Parameter");
+}
+
+void Document::removeParameter(ObjectId id) {
+    const auto found = std::find_if(m_parameters.begin(), m_parameters.end(),
+                                    [id](const Parameter& p) { return p.id == id; });
+    if (found == m_parameters.end()) {
+        throw std::invalid_argument("removeParameter: there is no parameter with id " +
+                                    std::to_string(id.value));
+    }
+    Edit edit{};
+    edit.kind = Edit::Kind::RemoveParameter;
+    edit.id = id;
+    edit.index = static_cast<std::size_t>(found - m_parameters.begin());
+    edit.parameter = *found;
+    record(std::move(edit), "Delete Parameter");
+}
+
+std::optional<double> Document::parameterValue(ObjectId id) const {
+    const auto found = m_parameterValues.find(id);
+    if (found == m_parameterValues.end()) {
+        return std::nullopt;
+    }
+    return found->second;
+}
+
+std::string Document::parameterError(ObjectId id) const {
+    const auto found = m_parameterErrors.find(id);
+    return found == m_parameterErrors.end() ? std::string() : found->second;
+}
+
+double Document::evaluateForModel(const std::string& expression) const {
+    try {
+        return core::evaluate(expression, [this](const std::string& name) -> std::optional<double> {
+            const Parameter* parameter = findParameter(name);
+            if (parameter == nullptr) {
+                return std::nullopt;
+            }
+            if (const auto value = parameterValue(parameter->id)) {
+                return value;
+            }
+            throw core::ExpressionError("The parameter " + name + " cannot be worked out itself.");
+        });
+    } catch (const core::ExpressionError& error) {
+        throw std::invalid_argument(error.what());
+    }
+}
+
+double Document::evaluate(std::string_view expression) const {
+    return evaluateForModel(std::string(expression));
+}
+
+void Document::setDimensionExpression(ObjectId sketch, sketch::ConstraintId dimension,
+                                      std::string expression) {
+    const std::size_t index = sketchIndexOf(sketch);
+    if (index == notFound) {
+        throw std::invalid_argument("setDimensionExpression: there is no sketch with id " +
+                                    std::to_string(sketch.value));
+    }
+    const sketch::Constraint* constraint = m_sketches[index].geometry.findConstraint(dimension);
+    if (constraint == nullptr || !sketch::isDimension(constraint->kind)) {
+        throw std::invalid_argument("setDimensionExpression: there is no such dimension");
+    }
+    if (!expression.empty()) {
+        (void)evaluateForModel(expression);
+    }
+    Edit::SketchExpressions change{sketch, m_sketches[index].expressions,
+                                   m_sketches[index].expressions};
+    if (expression.empty()) {
+        change.after.erase(dimension);
+    } else {
+        change.after[dimension] = std::move(expression);
+    }
+    if (change.after == change.before) {
+        return;
+    }
+    Edit edit{};
+    edit.kind = Edit::Kind::SetSketchExpressions;
+    edit.id = sketch;
+    edit.renamedSketches.push_back(std::move(change));
+    record(std::move(edit), "Dimension from Parameters");
+}
+
+void Document::computeParameters() {
+    m_parameterValues.clear();
+    m_parameterErrors.clear();
+    std::unordered_set<ObjectId> working;
+    std::function<void(const Parameter&)> compute = [&](const Parameter& parameter) {
+        if (m_parameterValues.contains(parameter.id) || m_parameterErrors.contains(parameter.id)) {
+            return;
+        }
+        working.insert(parameter.id);
+        try {
+            m_parameterValues[parameter.id] = core::evaluate(
+                parameter.expression, [&](const std::string& name) -> std::optional<double> {
+                    const Parameter* other = findParameter(name);
+                    if (other == nullptr) {
+                        return std::nullopt;
+                    }
+                    if (working.contains(other->id)) {
+                        throw core::ExpressionError(
+                            other->id == parameter.id ? std::string("It is worked out from itself.")
+                                                      : "It is worked out from " + name +
+                                                            ", which is worked out from it.");
+                    }
+                    compute(*other);
+                    if (const auto error = m_parameterErrors.find(other->id);
+                        error != m_parameterErrors.end()) {
+                        throw core::ExpressionError("It uses " + name +
+                                                    ", which cannot be worked out.");
+                    }
+                    return m_parameterValues.at(other->id);
+                });
+        } catch (const core::ExpressionError& error) {
+            m_parameterErrors[parameter.id] = error.what();
+        }
+        working.erase(parameter.id);
+    };
+    for (const Parameter& parameter : m_parameters) {
+        compute(parameter);
+    }
+}
+
+Feature Document::resolved(const Feature& feature) const {
+    if (feature.expressions.empty()) {
+        return feature;
+    }
+    static const std::map<std::string, std::string> labels{
+        {"distance", "distance"},
+        {"distanceBack", "distance the other way"},
+        {"taper", "taper"},
+        {"angle", "angle"},
+        {"size", "size"},
+        {"count", "count"},
+        {"count2", "second count"},
+        {"spacing", "spacing"},
+        {"spacing2", "second spacing"},
+        {"tipAngle", "tip angle"},
+        {"headDiameter", "head diameter"},
+        {"headDepth", "head depth"},
+        {"countersinkAngle", "countersink angle"},
+    };
+    Feature result = feature;
+    for (const auto& [field, expression] : feature.expressions) {
+        const auto label = labels.find(field);
+        if (label == labels.end()) {
+            throw detail::FeatureFailure("It has an expression for \"" + field +
+                                         "\", which it has no value of.");
+        }
+        double value = 0.0;
+        try {
+            value = evaluateForModel(expression);
+        } catch (const std::invalid_argument& error) {
+            throw detail::FeatureFailure("Its " + label->second + ", \"" + expression +
+                                         "\", cannot be worked out. " + error.what());
+        }
+        const auto whole = [&]() {
+            if (std::abs(value - std::round(value)) > 1e-9 || std::abs(value) > 1e6) {
+                throw detail::FeatureFailure("Its " + label->second + ", \"" + expression +
+                                             "\", is not a whole number.");
+            }
+            return static_cast<int>(std::lround(value));
+        };
+        if (field == "distance") {
+            result.distance = value;
+        } else if (field == "distanceBack") {
+            result.distanceBack = value;
+        } else if (field == "taper") {
+            result.taper = value;
+        } else if (field == "angle") {
+            result.angle = value;
+        } else if (field == "size") {
+            result.size = value;
+        } else if (field == "count") {
+            result.count = whole();
+        } else if (field == "count2") {
+            result.count2 = whole();
+        } else if (field == "spacing") {
+            result.spacing = value;
+        } else if (field == "spacing2") {
+            result.spacing2 = value;
+        } else if (field == "tipAngle") {
+            result.tipAngle = value;
+        } else if (field == "headDiameter") {
+            result.headDiameter = value;
+        } else if (field == "headDepth") {
+            result.headDepth = value;
+        } else if (field == "countersinkAngle") {
+            result.countersinkAngle = value;
+        }
+    }
+    return result;
+}
+
 FeatureTrial Document::tryFeature(Feature feature) const {
     for (std::vector<sketch::EntityId>& outline : feature.regions) {
         std::sort(outline.begin(), outline.end());
@@ -636,6 +964,12 @@ FeatureTrial Document::tryFeature(Feature feature) const {
         }
     }
     FeatureTrial trial;
+    try {
+        feature = resolved(feature);
+    } catch (const detail::FeatureFailure& failure) {
+        trial.error = failure.what();
+        return trial;
+    }
     if (feature.kind == FeatureKind::Plane) {
         try {
             trial.plane = detail::placePlane(feature, *this, bodies);
@@ -882,6 +1216,59 @@ void Document::apply(const Edit& edit) {
         m_rebuildAll = true;
         notify(Change::Kind::TimelineChanged);
         break;
+    case Edit::Kind::AddParameter:
+        m_parameters.insert(m_parameters.begin() + static_cast<std::ptrdiff_t>(edit.index),
+                            edit.parameter);
+        m_rebuildAll = true;
+        notify(Change::Kind::ParametersChanged);
+        break;
+    case Edit::Kind::RemoveParameter:
+        m_parameters.erase(m_parameters.begin() + static_cast<std::ptrdiff_t>(edit.index));
+        m_rebuildAll = true;
+        notify(Change::Kind::ParametersChanged);
+        break;
+    case Edit::Kind::ChangeParameter:
+    case Edit::Kind::SetSketchExpressions:
+        applyExpressions(edit, true);
+        break;
+    }
+}
+
+void Document::applyExpressions(const Edit& edit, bool forward) {
+    // A parameter changed, and with a new name, what used the old one; or a sketch's
+    // expressions.
+    const auto setParameter = [this](const Parameter& to) {
+        for (Parameter& parameter : m_parameters) {
+            if (parameter.id == to.id) {
+                parameter = to;
+            }
+        }
+    };
+    if (edit.kind == Edit::Kind::ChangeParameter) {
+        setParameter(forward ? edit.newParameter : edit.parameter);
+    }
+    for (const auto& [before, after] : edit.renamedParameters) {
+        setParameter(forward ? after : before);
+    }
+    for (const auto& [before, after] : edit.renamedFeatures) {
+        const std::size_t index = featureIndexOf(before.id);
+        if (index != notFound) {
+            m_features[index] = forward ? after : before;
+            touch(before.id);
+        }
+    }
+    for (const Edit::SketchExpressions& change : edit.renamedSketches) {
+        const std::size_t index = sketchIndexOf(change.sketch);
+        if (index != notFound) {
+            m_sketches[index].expressions = forward ? change.after : change.before;
+            touch(change.sketch);
+        }
+    }
+    m_rebuildAll = true;
+    if (edit.kind == Edit::Kind::ChangeParameter) {
+        notify(Change::Kind::ParametersChanged);
+    } else {
+        notify(Change::Kind::SketchGeometryChanged, edit.id);
     }
 }
 
@@ -996,6 +1383,22 @@ void Document::revert(const Edit& edit) {
         m_marker = edit.oldMarker;
         m_rebuildAll = true;
         notify(Change::Kind::TimelineChanged);
+        break;
+    case Edit::Kind::AddParameter:
+        m_parameters.erase(m_parameters.begin() + static_cast<std::ptrdiff_t>(edit.index));
+        m_rebuildAll = true;
+        notify(Change::Kind::ParametersChanged);
+        break;
+    case Edit::Kind::RemoveParameter:
+        m_parameters.insert(m_parameters.begin() + static_cast<std::ptrdiff_t>(
+                                                       std::min(edit.index, m_parameters.size())),
+                            edit.parameter);
+        m_rebuildAll = true;
+        notify(Change::Kind::ParametersChanged);
+        break;
+    case Edit::Kind::ChangeParameter:
+    case Edit::Kind::SetSketchExpressions:
+        applyExpressions(edit, false);
         break;
     }
 }
@@ -1162,6 +1565,13 @@ void Document::rebuild() {
         applied = std::min(applied, placeOf(m_edited));
     }
 
+    // What the parameters come to, first: features and sketches are worked out from them.
+    const auto valuesBefore = m_parameterValues;
+    const auto errorsBefore = m_parameterErrors;
+    computeParameters();
+    const bool parametersChanged =
+        valuesBefore != m_parameterValues || errorsBefore != m_parameterErrors;
+
     detail::BodyStates state;
     // Bodies whose state, at this point in the timeline, is not what it was last time.
     std::unordered_set<ObjectId> changed;
@@ -1184,23 +1594,63 @@ void Document::rebuild() {
         const bool reached = place < applied;
         const std::size_t featureIndex = featureIndexOf(item);
         if (const std::size_t sketchIndex = sketchIndexOf(item); sketchIndex != notFound) {
-            // An attached sketch goes where what it is attached to now is.
             SketchItem& sketch = m_sketches[sketchIndex];
-            if (!reached || !sketch.attachedTo.isValid()) {
+            if (!reached) {
                 setError(item, {});
                 continue;
             }
-            try {
-                const kernel::Plane now = detail::placeSketch(sketch, *this, state, planes);
-                if (!samePlace(now, sketch.plane)) {
-                    sketch.plane = now;
+            std::string error;
+            // Dimensions worked out from parameters take what they come to.
+            if (!sketch.expressions.empty()) {
+                sketch::Sketch geometry = sketch.geometry;
+                bool differs = false;
+                for (const auto& [dimension, expression] : sketch.expressions) {
+                    const sketch::Constraint* constraint = geometry.findConstraint(dimension);
+                    if (constraint == nullptr || !sketch::isDimension(constraint->kind)) {
+                        // The dimension was deleted; its expression goes with it on the next
+                        // edit of the sketch.
+                        continue;
+                    }
+                    double value = 0.0;
+                    try {
+                        value = evaluateForModel(expression);
+                    } catch (const std::invalid_argument& failure) {
+                        error = "Its dimension \"" + expression + "\" cannot be worked out. " +
+                                failure.what();
+                        break;
+                    }
+                    if (constraint->kind == sketch::ConstraintKind::Angle) {
+                        value *= 3.14159265358979323846 / 180.0;
+                    }
+                    if (std::abs(constraint->value - value) <= 1e-12 * std::max(1.0, value)) {
+                        continue;
+                    }
+                    if (!sketch::tryDimensionValue(geometry, dimension, value).ok()) {
+                        error = "Its dimension \"" + expression +
+                                "\" comes to a value the sketch cannot take.";
+                        break;
+                    }
+                    differs = true;
+                }
+                if (error.empty() && differs) {
+                    sketch.geometry = std::move(geometry);
                     moved.insert(item);
                 }
-                setError(item, {});
-            } catch (const detail::FeatureFailure& failure) {
-                // It stays where it was, and says why.
-                setError(item, failure.what());
             }
+            // An attached sketch goes where what it is attached to now is.
+            if (error.empty() && sketch.attachedTo.isValid()) {
+                try {
+                    const kernel::Plane now = detail::placeSketch(sketch, *this, state, planes);
+                    if (!samePlace(now, sketch.plane)) {
+                        sketch.plane = now;
+                        moved.insert(item);
+                    }
+                } catch (const detail::FeatureFailure& failure) {
+                    // It stays where it was, and says why.
+                    error = failure.what();
+                }
+            }
+            setError(item, error);
             continue;
         }
         if (featureIndex != notFound && m_features[featureIndex].kind == FeatureKind::Plane) {
@@ -1213,7 +1663,7 @@ void Document::rebuild() {
                 continue;
             }
             try {
-                const PlaneState placed = detail::placePlane(feature, *this, state);
+                const PlaneState placed = detail::placePlane(resolved(feature), *this, state);
                 const auto before = m_planes.find(item);
                 if (before == m_planes.end() || !samePlace(before->second.plane, placed.plane) ||
                     before->second.size != placed.size) {
@@ -1270,7 +1720,7 @@ void Document::rebuild() {
         }
         const std::string before = built.error;
         try {
-            built.result = detail::evaluate(feature, *this, state);
+            built.result = detail::evaluate(resolved(feature), *this, state);
             built.applied = true;
             built.error.clear();
             state[feature.body] = built.result;
@@ -1304,6 +1754,9 @@ void Document::rebuild() {
     }
     for (const ObjectId sketch : moved) {
         notify(Change::Kind::SketchGeometryChanged, sketch);
+    }
+    if (parametersChanged) {
+        notify(Change::Kind::ParametersChanged);
     }
     if (statusChanged || !reshaped.empty()) {
         notify(Change::Kind::TimelineChanged);

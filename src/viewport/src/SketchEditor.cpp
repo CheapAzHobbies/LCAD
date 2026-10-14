@@ -626,6 +626,11 @@ public:
             default:
                 continue;
             }
+            // A value worked out from parameters is marked so.
+            if (const document::SketchItem* sketch = item();
+                sketch != nullptr && sketch->expressions.contains(c.id)) {
+                a.text = QStringLiteral("ƒ ") + a.text;
+            }
             a.rect = labelRect(labelAt, a.text);
             annotations.push_back(a);
         }
@@ -1557,14 +1562,31 @@ public:
         }
         const QString text = field->text();
         if (editing != 0) {
-            const auto value = parseValue(text);
+            auto value = parseValue(text);
+            // Not a number: an expression of parameters, such as "width / 2".
+            QString expression;
+            if (!value.has_value() && document != nullptr) {
+                try {
+                    value = document->evaluate(text.trimmed().toStdString());
+                    expression = text.trimmed();
+                } catch (const std::invalid_argument& error) {
+                    markField(tr("\"%1\" is neither a number nor an expression that can be "
+                                 "worked out: %2")
+                                  .arg(text, QString::fromUtf8(error.what())));
+                    return;
+                }
+            }
             if (!value.has_value()) {
                 markField(tr("\"%1\" is not a number.").arg(text));
                 return;
             }
             const ConstraintId dimension = editing;
+            // One undo step: the value, and whether it follows an expression.
+            document::Transaction transaction(*document, tr("Change Dimension").toStdString());
             // The field stays open, with what was typed, if the value is refused.
             if (q->setDimensionValue(dimension, *value)) {
+                document->setDimensionExpression(sketchId, dimension, expression.toStdString());
+                transaction.commit();
                 closeField();
             } else {
                 // setDimensionValue() has said why.
@@ -2415,7 +2437,15 @@ void SketchEditor::editDimension(sketch::ConstraintId dimension) {
         where = QRectF(m_impl->view->width() / 2.0 - 40.0, m_impl->view->height() / 2.0 - 12.0,
                        80.0, 24.0);
     }
-    m_impl->openField(where, formatValue(dimensionValue(dimension)), true);
+    // A value worked out from parameters is edited as the expression it comes from.
+    const document::SketchItem* sketch = m_impl->item();
+    const auto expression = sketch != nullptr ? sketch->expressions.find(dimension)
+                                              : decltype(sketch->expressions)::const_iterator{};
+    m_impl->openField(where,
+                      sketch != nullptr && expression != sketch->expressions.end()
+                          ? QString::fromStdString(expression->second)
+                          : formatValue(dimensionValue(dimension)),
+                      true);
     m_impl->editing = dimension;
     m_impl->update();
 }

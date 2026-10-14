@@ -6,10 +6,12 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/BrowserPanel.h
     include/lcad/app/CommandSearch.h
     include/lcad/app/Commands.h
+    include/lcad/app/ExpressionBox.h
     include/lcad/app/FeaturePanel.h
     include/lcad/app/Icons.h
     include/lcad/app/MainWindow.h
     include/lcad/app/MeasurePanel.h
+    include/lcad/app/ParametersDialog.h
     include/lcad/app/PrimitivePanel.h
     include/lcad/app/PropertiesPanel.h
     include/lcad/app/ShortcutsDialog.h
@@ -20,10 +22,12 @@ qt_add_library(lcad_app STATIC
     src/BrowserPanel.cpp
     src/CommandSearch.cpp
     src/Commands.cpp
+    src/ExpressionBox.cpp
     src/FeaturePanel.cpp
     src/Icons.cpp
     src/MainWindow.cpp
     src/MeasurePanel.cpp
+    src/ParametersDialog.cpp
     src/PrimitivePanel.cpp
     src/PropertiesPanel.cpp
     src/ShortcutsDialog.cpp

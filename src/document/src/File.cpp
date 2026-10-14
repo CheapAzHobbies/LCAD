@@ -246,6 +246,13 @@ nlohmann::ordered_json writeSketch(const SketchItem& item) {
         out["attachedTo"] = item.attachedTo.value;
         out["attachedFace"] = item.attachedFace;
     }
+    // Only for a sketch with dimensions worked out from parameters.
+    if (!item.expressions.empty()) {
+        out["expressions"] = ordered_json::object();
+        for (const auto& [dimension, expression] : item.expressions) {
+            out["expressions"][std::to_string(dimension)] = expression;
+        }
+    }
     out["nextEntityId"] = item.geometry.nextEntityId();
     out["nextConstraintId"] = item.geometry.nextConstraintId();
     out["entities"] = ordered_json::array();
@@ -401,6 +408,22 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
         item.attachedTo = ObjectId{idMember(entry, "attachedTo", where, path)};
         item.attachedFace = stringMember(entry, "attachedFace", where, path);
     }
+    if (entry.contains("expressions")) {
+        const json& expressions = entry.at("expressions");
+        if (!expressions.is_object()) {
+            damaged(path, "\"expressions\" in " + where + " is not an object");
+        }
+        for (const auto& [key, value] : expressions.items()) {
+            if (!value.is_string() || key.empty() ||
+                key.find_first_not_of("0123456789") != std::string::npos) {
+                damaged(path, "\"expressions\" in " + where +
+                                  " holds something that is not "
+                                  "an expression for a dimension");
+            }
+            item.expressions[static_cast<sketch::ConstraintId>(std::stoul(key))] =
+                value.get<std::string>();
+        }
+    }
     return item;
 }
 
@@ -467,6 +490,9 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     if (feature.kind == FeatureKind::Plane) {
         out["reference"] = feature.reference;
         out["visible"] = feature.visible;
+    }
+    if (!feature.expressions.empty()) {
+        out["expressions"] = feature.expressions;
     }
     // A taper and a pull up to a face: written only when there is one.
     if (feature.taper != 0.0) {
@@ -553,6 +579,20 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     if (feature.kind == FeatureKind::Plane) {
         feature.reference = stringMember(entry, "reference", where, path);
         feature.visible = boolMember(entry, "visible", where, path);
+    }
+    if (entry.contains("expressions")) {
+        const json& expressions = entry.at("expressions");
+        if (!expressions.is_object()) {
+            damaged(path, "\"expressions\" in " + where + " is not an object");
+        }
+        for (const auto& [key, value] : expressions.items()) {
+            if (!value.is_string()) {
+                damaged(path, "\"expressions\" in " + where +
+                                  " holds something that is not "
+                                  "text");
+            }
+            feature.expressions[key] = value.get<std::string>();
+        }
     }
     if (entry.contains("taper")) {
         feature.taper = numberMember(entry, "taper", where, path);
@@ -680,6 +720,25 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
             state.features.push_back(readFeature(entry, path));
         }
     }
+    // And parameters.
+    const auto parameters = contents.document.find("parameters");
+    if (parameters != contents.document.end()) {
+        if (!parameters->is_array()) {
+            damaged(path, "\"parameters\" in document.json is not a list");
+        }
+        for (const json& entry : *parameters) {
+            if (!entry.is_object()) {
+                damaged(path, "an entry of \"parameters\" is not an object");
+            }
+            Parameter parameter;
+            parameter.id = ObjectId{idMember(entry, "id", "a parameter", path)};
+            const std::string where = "parameter " + std::to_string(parameter.id.value);
+            parameter.name = stringMember(entry, "name", where, path);
+            parameter.expression = stringMember(entry, "expression", where, path);
+            parameter.comment = stringMember(entry, "comment", where, path);
+            state.parameters.push_back(std::move(parameter));
+        }
+    }
     if (contents.document.contains("timeline")) {
         for (const std::uint64_t id :
              idsMember(contents.document, "timeline", documentName, path)) {
@@ -743,6 +802,15 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
     for (const Feature& feature : document.features()) {
         model["features"].push_back(writeFeature(feature));
     }
+    if (!document.parameters().empty()) {
+        model["parameters"] = ordered_json::array();
+        for (const Parameter& parameter : document.parameters()) {
+            model["parameters"].push_back(ordered_json{{"id", parameter.id.value},
+                                                       {"name", parameter.name},
+                                                       {"expression", parameter.expression},
+                                                       {"comment", parameter.comment}});
+        }
+    }
     model["timeline"] = ordered_json::array();
     for (const ObjectId item : document.timeline()) {
         model["timeline"].push_back(item.value);
@@ -803,6 +871,13 @@ LoadedDocument loadDocument(const std::filesystem::path& path) {
     }
     // The bodies have been built from the features. One that could not be is reported, and
     // stays in the timeline to be put right.
+    for (const Parameter& parameter : loaded.document->parameters()) {
+        const std::string why = loaded.document->parameterError(parameter.id);
+        if (!why.empty()) {
+            loaded.warnings.push_back("The parameter " + parameter.name +
+                                      " cannot be worked out. " + why);
+        }
+    }
     for (const Feature& feature : loaded.document->features()) {
         const std::string why = loaded.document->featureError(feature.id);
         if (!why.empty()) {

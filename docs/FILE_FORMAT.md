@@ -141,6 +141,12 @@ optional, and a file without them opens as it always did.
 | `holeKind`, `throughAll`, `tipAngle`, `headDiameter`, `headDepth`, `countersinkAngle`, `flipped` | A hole only: `Simple`, `Counterbore`, or `Countersink`; right through or to `distance` with a point of `tipAngle` degrees; the width and depth of a counterbore or the angle of a countersink; and whether it is drilled toward the side the sketch is seen from. Its `size` is the diameter, and the holes go at the free-standing points of its `sketch`. |
 | `reference`, `visible` | A construction plane only: what it is placed against (`XY`, `XZ`, `YZ`, or the name of a flat face of `body`), and whether it is shown. Its `distance` is how far it is from that, along its normal. It makes no body; `body` is 0 for one placed against an origin plane. |
 
+`document.json` may also hold `parameters`, a list of `{"id", "name", "expression", "comment"}`.
+A feature may have `expressions`, an object from the name of a value (`distance`, `size`,
+`count`, and so on) to the expression it is worked out from, and a sketch `expressions`, from
+the id of a dimension to its expression. The values stored next to them are what the
+expressions came to when the file was saved; on opening they are worked out again.
+
 A sketch that follows something has `attachedTo`, the id of a construction plane or of a body,
 and `attachedFace`, the name of the body's face (empty for a plane). Its `plane` is then where it
 was when the file was saved, and it is placed again from what it follows on opening.

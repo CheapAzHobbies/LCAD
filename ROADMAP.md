@@ -161,8 +161,8 @@ What Phase 2 leaves for later, besides ellipse and spline:
   that says "the same distance all round".
 - **Dimension values place themselves.** They are drawn next to what they measure and cannot be
   dragged somewhere else. That needs a place for them in the file.
-- **Values are numbers.** `40`, `40 mm`, `40,5`. Expressions and named parameters come with the
-  parameter table in Phase 3.
+- **Values are numbers.** `40`, `40 mm`, `40,5`. (Phase 3 added expressions and named
+  parameters.)
 - **A sketch being edited is drawn over the model**, not hidden by bodies in front of it.
 - **Tangent arcs in a chain of lines, fillets, patterns, and text** are not there yet.
 
@@ -192,7 +192,11 @@ Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
       a feature that cannot be applied is left out with a sentence saying why ("It does not reach
       Body, so there is nothing to cut away.", "An edge it works on no longer exists: the edge
       between a side of Pull 1 and the end of Pull 1."), and the rest carries on without it.
-- [ ] Global parameter table with units and expressions. Not started.
+- [x] Global parameter table with units and expressions: named parameters (Modify >
+      Parameters), expressions with units (mm, cm, m, in, ft, deg, rad), arithmetic, and
+      functions, typed into any value box of a feature or any sketch dimension. A change to a
+      parameter rebuilds what uses it; a new name is put everywhere the old one was. Units are
+      converted, not checked: adding a length to an angle is not refused.
 - [ ] Measure tool (done), construction planes (done: offset from an origin plane or a flat
       face, and they follow it), construction axes (not started; patterns take an edge or a
       round face as their axis meanwhile).

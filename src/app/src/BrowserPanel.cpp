@@ -429,6 +429,7 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
         fillPlanes();
         break;
     case Kind::SketchGeometryChanged:
+    case Kind::ParametersChanged:
     case Kind::HistoryChanged:
         break;
     }

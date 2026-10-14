@@ -9,6 +9,7 @@
 #include <lcad/app/FeaturePanel.h>
 #include <lcad/app/Icons.h>
 #include <lcad/app/MeasurePanel.h>
+#include <lcad/app/ParametersDialog.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/ShortcutsDialog.h>
 #include <lcad/app/SketchPanel.h>
@@ -322,7 +323,20 @@ MainWindow::~MainWindow() {
     m_viewport->setDocument(nullptr);
     m_browser->setDocument(nullptr, {});
     m_timeline->setDocument(nullptr);
+    if (m_parametersDialog != nullptr) {
+        m_parametersDialog->setDocument(nullptr);
+    }
     m_properties->refresh(nullptr, {}, {});
+}
+
+void MainWindow::showParameters() {
+    if (m_parametersDialog == nullptr) {
+        m_parametersDialog = new ParametersDialog(this);
+    }
+    m_parametersDialog->setDocument(document());
+    m_parametersDialog->show();
+    m_parametersDialog->raise();
+    m_parametersDialog->activateWindow();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -643,6 +657,13 @@ void MainWindow::defineCommands() {
                      tr("reference plane"), tr("plane")};
         c.run = [this](bool) { startFeature(FeatureKind::Plane); };
         c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
+        c = make("model.parameters", tr("&Parameters…"), modify,
+                 tr("Name values, and work other values out from them"));
+        c.aliases = {tr("variables"), tr("user parameters"), tr("equations"), tr("expressions"),
+                     tr("change parameters")};
+        c.run = [this](bool) { showParameters(); };
         m_commands->add(std::move(c));
 
         c = make("solid.fillet", tr("&Fillet"), modify, tr("Round edges of a body"));
@@ -1331,6 +1352,7 @@ void MainWindow::createTopBar() {
     modifyMenu->addActions(
         {action("solid.fillet"), action("solid.chamfer"), action("solid.shell")});
     modifyMenu->addSeparator();
+    modifyMenu->addAction(action("model.parameters"));
     QMenu* timelineMenu = modifyMenu->addMenu(tr("&Timeline"));
     timelineMenu->addActions(
         {action("timeline.edit"), action("timeline.rename"), action("timeline.suppress")});
@@ -1887,6 +1909,9 @@ void MainWindow::activate(int index) {
     m_browser->setOriginVisibility(session.origin);
     m_browser->setDocument(session.document.get(), documentName());
     m_timeline->setDocument(session.document.get());
+    if (m_parametersDialog != nullptr) {
+        m_parametersDialog->setDocument(session.document.get());
+    }
     {
         const QSignalBlocker blocker(m_tabs);
         m_tabs->setCurrentIndex(index);
@@ -1971,6 +1996,9 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
         m_viewport->setDocument(nullptr);
         m_browser->setDocument(nullptr, {});
         m_timeline->setDocument(nullptr);
+        if (m_parametersDialog != nullptr) {
+            m_parametersDialog->setDocument(nullptr);
+        }
         m_sessions.erase(m_sessions.begin() + replaced);
         {
             const QSignalBlocker blocker(m_tabs);
@@ -2013,6 +2041,9 @@ void MainWindow::closeDocument(int index) {
         m_viewport->setDocument(nullptr);
         m_browser->setDocument(nullptr, {});
         m_timeline->setDocument(nullptr);
+        if (m_parametersDialog != nullptr) {
+            m_parametersDialog->setDocument(nullptr);
+        }
         m_properties->refresh(nullptr, {}, {});
     } else {
         storeViewOf(m_current);

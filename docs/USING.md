@@ -79,6 +79,17 @@ Under **Modify**: **Fillet** (F) rounds edges, **Chamfer** bevels them, **Shell*
 out, open at the faces you click. Click the edges or faces in the 3D view, before or after
 starting the command; Shift-click picks more.
 
+## Parameters
+
+**Modify > Parameters…** opens a table of named values. **Add** a row, name it (`width`), and type
+what it is (`60 mm`), or work it out from others (`width / 10`). Then type the name, or an
+expression with it, in place of a number in any value box of a feature (`thick`, `width / 2 + 3`)
+or in a sketch dimension. A dimension worked out from parameters is marked **ƒ**. Change a
+parameter and everything that uses it follows; rename it and the new name goes everywhere the old
+one was. Expressions take units (mm, cm, m, in, ft for lengths; deg, rad for angles), + - * /
+and ^, parentheses, and sqrt, abs, sin, cos, tan, asin, acos, atan, min, max, round, floor, ceil,
+and pi.
+
 ## Construction planes
 
 **Offset Plane** (under **Create**) adds a plane to sketch on: pick an origin plane in the panel,
@@ -336,7 +347,7 @@ These are the shortcuts LCAD starts with.
 | Ctrl + Q | Quit |
 
 Not there yet: autosave and crash recovery, inches as a display unit, import or export of other
-formats, construction axes, a parameter table, and pulling up to a curved face.
+formats, construction axes, and pulling up to a curved face.
 The origin guides that are shown are not saved with the document.
 
 ## If something goes wrong

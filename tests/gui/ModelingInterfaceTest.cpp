@@ -5,6 +5,7 @@
 #include <lcad/app/FeaturePanel.h>
 #include <lcad/app/MainWindow.h>
 #include <lcad/app/MeasurePanel.h>
+#include <lcad/app/ParametersDialog.h>
 #include <lcad/app/Theme.h>
 #include <lcad/app/TimelinePanel.h>
 #include <lcad/document/File.h>
@@ -34,6 +35,7 @@
 #include <QSettings>
 #include <QSpinBox>
 #include <QStatusBar>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
@@ -107,6 +109,7 @@ private slots:
     void sketchesFollowConstructionPlanesAndFaces();
     void holesAreDrilledAtSketchPoints();
     void aPullTapersOrGoesUpToAFace();
+    void parametersDriveTheModel();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -1162,6 +1165,110 @@ void ModelingInterfaceTest::aPullTapersOrGoesUpToAFace() {
     QVERIFY(near(volumeOf(window, rise), pi * 25.0 * 8.0));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-taper-to-face");
+}
+
+void ModelingInterfaceTest::parametersDriveTheModel() {
+    MainWindow window;
+    show(window);
+
+    // The table, from the Modify menu's command: two parameters, one worked out from the other.
+    QVERIFY(trigger(window, "model.parameters"));
+    lcad::app::ParametersDialog* parameters = window.parametersDialog();
+    QVERIFY(parameters != nullptr);
+    QVERIFY(parameters->isVisible());
+    QTableWidget* table = parameters->table();
+    QCOMPARE(table->rowCount(), 0);
+    parameters->findChild<QPushButton*>(QStringLiteral("addParameter"))->click();
+    QTRY_COMPARE(table->rowCount(), 1);
+    QCOMPARE(table->item(0, 0)->text(), QStringLiteral("param1"));
+    table->item(0, 0)->setText(QStringLiteral("width"));
+    QTRY_COMPARE(QString::fromStdString(window.document()->parameters().front().name),
+                 QStringLiteral("width"));
+    table->item(0, 1)->setText(QStringLiteral("60 mm"));
+    QTRY_COMPARE(table->item(0, 2)->text(), QStringLiteral("60"));
+    parameters->findChild<QPushButton*>(QStringLiteral("addParameter"))->click();
+    QTRY_COMPARE(table->rowCount(), 2);
+    table->item(1, 0)->setText(QStringLiteral("thick"));
+    QTRY_COMPARE(QString::fromStdString(window.document()->parameters().back().name),
+                 QStringLiteral("thick"));
+    table->item(1, 1)->setText(QStringLiteral("width / 10"));
+    QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("6"));
+    // A name that cannot be is refused, and the table says why.
+    table->item(1, 0)->setText(QStringLiteral("2thick"));
+    QTRY_VERIFY(parameters->message().contains(QStringLiteral("cannot be a parameter's name")));
+    QTRY_COMPARE(table->item(1, 0)->text(), QStringLiteral("thick"));
+    // One that cannot be worked out says so in its value.
+    table->item(1, 1)->setText(QStringLiteral("depth * 2"));
+    QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("cannot be worked out"));
+    QVERIFY(table->item(1, 2)->toolTip().contains(QStringLiteral("no parameter called depth")));
+    keepFrame(parameters->grab().toImage(), "modeling-parameters-table");
+    table->item(1, 1)->setText(QStringLiteral("width / 10"));
+    QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("6"));
+    parameters->close();
+    // Typing goes to the main window again.
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+
+    // A plate whose width dimension is typed as "width" in the 3D view.
+    const auto [sketch, dimension] = drawPlate(window, 50.0, 40.0);
+    render(window);
+    auto* editor = window.viewport()->sketchEditor();
+    editor->editDimension(dimension);
+    QLineEdit* field = editor->valueField();
+    QVERIFY(field != nullptr);
+    field->selectAll();
+    QTest::keyClicks(field, QStringLiteral("width"));
+    QTest::keyClick(field, Qt::Key_Return);
+    QCOMPARE(window.document()->findSketch(sketch)->expressions.at(dimension),
+             std::string("width"));
+    QCOMPARE(window.document()->findSketch(sketch)->geometry.findConstraint(dimension)->value,
+             60.0);
+    QCOMPARE(QString::fromStdString(window.document()->undoLabel()),
+             QStringLiteral("Change Dimension"));
+    // Opened again, the field shows the expression.
+    editor->editDimension(dimension);
+    QCOMPARE(editor->valueField()->text(), QStringLiteral("width"));
+    QTest::keyClick(editor->valueField(), Qt::Key_Escape);
+
+    // Pull by "thick".
+    QVERIFY(trigger(window, "solid.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    auto* distance = pull->findChild<QDoubleSpinBox*>(QStringLiteral("distance"));
+    distance->setFocus();
+    distance->selectAll();
+    QTest::keyClicks(distance, QStringLiteral("thick"));
+    QTest::keyClick(distance, Qt::Key_Tab);
+    QCOMPARE(distance->value(), 6.0);
+    QCOMPARE(pull->feature().expressions.at("distance"), std::string("thick"));
+    QVERIFY(distance->text().startsWith(QStringLiteral("thick")));
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId plate = window.document()->features().back().id;
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 6.0));
+
+    // One change in the table: the sketch and the thickness follow.
+    window.showParameters();
+    table->item(0, 1)->setText(QStringLiteral("80 mm"));
+    QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("8"));
+    QVERIFY(near(volumeOf(window, plate), 80.0 * 40.0 * 8.0));
+    // Undone from the window, as any edit.
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    QVERIFY(trigger(window, "edit.undo"));
+    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 6.0));
+    QTRY_COMPARE(table->item(0, 1)->text(), QStringLiteral("60 mm"));
+
+    // Edited again, the pull's box shows its expression.
+    clickTimeline(window, plate, true);
+    QVERIFY(panel(window) != nullptr);
+    QVERIFY(panel(window)
+                ->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))
+                ->text()
+                .startsWith(QStringLiteral("thick")));
+    QVERIFY(trigger(window, "edit.cancel"));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-parameters");
 }
 
 QTEST_MAIN(ModelingInterfaceTest)
