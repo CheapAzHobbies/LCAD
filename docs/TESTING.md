@@ -34,7 +34,7 @@ cmake --preset asan && cmake --build --preset asan && ctest --preset asan    # s
 | Unit | Catch2 | `unit` | No | `core`: the log. `kernel`: primitives, measurement, moving, sub-shapes, serialization, errors, message routing, planes and projection onto them. `sketch`: geometry, every constraint, the solver's states, dragging, closed outlines, and the sketch tools. `document`: the model, undo, transactions, the file format, sketches as shapes |
 | Save and reopen | Catch2 | `unit` | No | A reopened document measures the same as the one saved; damaged, foreign, and newer files are refused |
 | Reference models | Catch2 | `unit` | No | The documents in `tests/models/` open and measure correctly, whichever OCCT wrote them |
-| Interface | Qt Test | `gui` | A virtual one | Five programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen |
+| Interface | Qt Test | `gui` | A virtual one | Six programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen. `ModelingInterfaceTest`: features, the timeline, and measuring through the whole window |
 | Sanitizers | All of the above, built with ASan and UBSan | all | A virtual one | Memory errors, leaks, undefined behavior |
 | Package | A shell script, in CI | | A virtual one | The AppImage starts on another distribution and draws a document |
 
@@ -76,6 +76,23 @@ geometry updates". It exists three times, each closer to the user than the one b
 
 All three end by measuring the sketch: where its corners are, and the area its outline
 encloses. None of them judges a picture.
+
+Phase 3's is "build a dimensioned bracket, edit the first sketch, and verify downstream
+features update or report a specific failure". The bracket is a plate 60 by 40 and 8 thick,
+pulled from a fully dimensioned rectangle, with a hole of radius 6 cut through it and its four
+upright edges rounded to 5. Its volume is known in closed form, `(w·h − (4 − π)·25 − π·36)·8`,
+so every check is a measurement against a formula:
+
+- `tests/document/FeatureTest.cpp` builds it from the document's API, widens the plate to 85,
+  and checks the volume; then breaks features on purpose (a hole moved off the plate, an edge
+  that no longer exists, a radius too large) and checks each says what is wrong and the rest of
+  the model carries on.
+- `tests/gui/ModelingInterfaceTest.cpp` builds it through the window: Pull from inside the
+  sketch, a cut that LCAD guesses is a cut, edges picked for the fillet, the sketch opened from
+  the browser and its dimension changed in the 3D view, the model following when the sketch is
+  finished, a feature selected and edited from the timeline. It also drives the timeline with
+  the pointer (dragging the marker, dragging an entry, refused moves), patterns, mirror,
+  measure, and saving and reopening.
 
 ## Sketch assertions
 

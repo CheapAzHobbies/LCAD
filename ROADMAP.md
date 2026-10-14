@@ -23,7 +23,7 @@ more than writing the code, now sets the pace.
 | 1. Desktop foundation | Window, viewport, selection, documents, save/open, undo | 2026-10-12 | 2027-01-31 | 2026-10-12 | |
 | 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-12 | 2026-10-25 | 2026-10-12 | |
 | 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-12 | 2026-11-30 | 2026-10-13 | |
-| 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-12-01 | 2027-02-15 | | v0.1 alpha |
+| 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-10-13 | 2027-02-15 | in progress | v0.1 alpha |
 | 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-16 | 2027-03-31 | | v0.2 |
 | 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-04-01 | 2027-07-15 | | v0.5 beta |
 | Port | Windows and macOS builds | 2027-07-16 | 2027-09-15 | | v0.6 |
@@ -165,20 +165,38 @@ What Phase 2 leaves for later, besides ellipse and spline:
 - **A sketch being edited is drawn over the model**, not hidden by bodies in front of it.
 - **Tangent arcs in a chain of lines, fillets, patterns, and text** are not there yet.
 
-## Phase 3: Parametric solids (2026-12-01 to 2027-02-15)
+## Phase 3: Parametric solids (started 2026-10-13, in progress, target 2027-02-15)
 
-- [ ] Carried over from Phase 2: ellipse and spline in the sketcher.
-- [ ] Feature graph with dependency tracking and incremental recompute.
-- [ ] Stable references to faces and edges that survive upstream edits (topological naming).
-- [ ] Extrude (join, cut, intersect, new body; symmetric, two-sided, to-object, taper), revolve.
-- [ ] Fillet, chamfer, shell, hole, mirror, rectangular and circular pattern.
-- [ ] Timeline: edit, suppress, reorder, roll back, failure markers.
-- [ ] Failure handling that keeps the last valid state and names the broken feature and reference.
-- [ ] Global parameter table with units and expressions.
-- [ ] Measure tool, construction planes and axes.
+Started early, on the owner's word. The extrude command is called **Pull**: it pulls, and with
+Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
+
+- [ ] Carried over from Phase 2: ellipse and spline in the sketcher. Not started.
+- [x] Feature graph with dependency tracking and incremental recompute. A feature is built again
+      only when something it depends on changed; while a sketch is open, rebuilding waits.
+- [x] Stable references to faces and edges that survive upstream edits. Faces are named by the
+      feature and the sketch curve they come from, edges by the faces they lie between. See
+      [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#11-stable-references). Tested by the bracket:
+      widen the plate, and the fillets stay on the same four edges.
+- [ ] Pull (join, cut, intersect, new body; symmetric, two-sided) and revolve are done. To-object
+      and taper are not.
+- [ ] Fillet, chamfer, shell, mirror, rectangular and circular pattern are done. Hole is not; a
+      circle pulled as a cut does the job of a plain one meanwhile.
+- [x] Timeline: select, edit (the model rolls back to just before the feature), rename,
+      suppress, delete, reorder by dragging (refused, with the reason, where it would put a
+      feature before what it depends on), the history marker dragged to roll back, failure
+      markers with the reason, a compact size.
+- [x] Failure handling that keeps the last valid state and names the broken feature and reference:
+      a feature that cannot be applied is left out with a sentence saying why ("It does not reach
+      Body, so there is nothing to cut away.", "An edge it works on no longer exists: the edge
+      between a side of Pull 1 and the end of Pull 1."), and the rest carries on without it.
+- [ ] Global parameter table with units and expressions. Not started.
+- [ ] Measure tool (done), construction planes and axes (not started).
 
 Acceptance: build a dimensioned bracket, edit the first sketch, and verify downstream features update or
-report a specific failure.
+report a specific failure. Met, at two levels: in the document (`FeatureTest`) and through the
+window with the pointer and the keyboard (`ModelingInterfaceTest`), including saving and reopening.
+
+What is there so far is on the branch `phase-3-parametric-solids`.
 
 Stable references are the hardest problem in this phase and the usual reason parametric CAD projects stall.
 Budget time for it first, not last.
@@ -250,12 +268,13 @@ Decided in Phases 0 and 1, with the reasoning in [docs/ARCHITECTURE.md](docs/ARC
 | Mouse | Fusion's mapping. Wheel away from the user zooms in, with a setting to reverse it |
 | Sketch solver | LCAD's own, built on Eigen. See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for what was weighed |
 | Sketch display | Drawn by LCAD over the 3D view while a sketch is open; as OCCT wires among the bodies otherwise |
+| Stable references | Faces named by what made them, carried through booleans by OCCT's history; edges by the faces they lie between |
+| Extrude command | Called Pull (owner's choice, 2026-10-13) |
 
 Still open:
 
 | Decision | Options | Needed by |
 |---|---|---|
-| Stable references to faces and edges | To be designed | Start of Phase 3 |
 | When to make the repository public | v0.1, v0.5, or later | Owner's call |
 
 ## Risks found so far

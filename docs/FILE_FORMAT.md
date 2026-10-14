@@ -112,6 +112,37 @@ constrained on reopening as it was on saving. A sketch that does not fit togethe
 end is not a point, a constraint on entities it does not take, no origin) makes the file
 damaged, and the file is refused as a whole like any other.
 
+`document.json` may also hold `features`, `timeline`, and `marker`. Like `sketches` they are
+optional, and a file without them opens as it always did.
+
+```json
+{
+  "id": 7, "name": "Pull 1", "kind": "Pull", "suppressed": false,
+  "body": 8, "sketch": 2, "regions": [[3, 6, 9, 12]],
+  "operation": "NewBody", "distance": 8, "distanceBack": 0, "symmetric": false,
+  "axis": 0, "angle": 360, "edges": [], "faces": [], "size": 1
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, or `Circular Pattern`. |
+| `suppressed` | Left out of the model, and kept. |
+| `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
+| `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
+| `operation` | `NewBody`, `Join`, `Cut`, or `Intersect`. |
+| `distance`, `distanceBack`, `symmetric` | How far a pull goes along the sketch's normal, how far the other way (0 for one side), and whether `distance` is split evenly to both sides. |
+| `axis`, `angle` | The sketch line a revolve turns about, and how far, in degrees. A circular pattern's `angle` too. |
+| `edges`, `faces` | A fillet's or chamfer's edges, a shell's open faces, by name (see ARCHITECTURE.md, section 11). |
+| `size` | A fillet's radius, a chamfer's distance, a shell's wall thickness. |
+| `sources`, `reference`, `reference2`, `count`, `count2`, `spacing`, `spacing2` | Mirror and patterns only: the features copied (empty: the whole body), the plane, direction, or axis (`XY`, `XZ`, `YZ`, `X`, `Y`, `Z`, or a face or edge name), how many, and how far apart. |
+
+A body that a feature makes is written as `{"id", "name", "visible", "madeBy"}`, without
+geometry: it is built again from its feature on opening. `timeline` lists the ids of the bodies
+put in as they are, the sketches, and the features in the order they are applied; `marker`, if
+present, is how many of them are applied. A feature that cannot be applied on opening does not
+stop the file from opening: it is reported, with its reason, as a warning.
+
 A reader ignores fields and archive entries it does not know, so that a later LCAD can add
 optional ones without changing the version. Everything listed above is required, and a file
 with a missing or wrong value is refused as a whole. LCAD never opens a document partially.
@@ -215,7 +246,8 @@ licenses are in [DEPENDENCIES.md](DEPENDENCIES.md).
 ## Not done yet
 
 - **Where a sketch came from.** A sketch started on a face keeps the plane, not the face. A
-  projected edge keeps the geometry, not the edge. Both need the stable references of Phase 3.
+  projected edge keeps the geometry, not the edge. The names of section 11 of ARCHITECTURE.md
+  can now say which face or edge it was; following it is still to do.
 - **Where a dimension's value is drawn.** Not stored: values place themselves.
 
 - **The notice before converting.** When the first migration exists, LCAD has to say so before

@@ -8,7 +8,8 @@ Linux comes first. Windows and macOS ports are planned once the core modeling wo
 
 ## Status
 
-Early. LCAD can sketch, and cannot extrude yet: a sketch does not become a solid until Phase 3.
+Early. LCAD can sketch, turn sketches into solids, and change them through a feature timeline.
+Phase 3 is in progress.
 
 What works today:
 
@@ -17,8 +18,15 @@ What works today:
   constraints; dimensions typed in the 3D view; a solver that shows what can still move and
   refuses what contradicts; dragging; trim, extend, offset, mirror, and projecting edges of a
   body into the sketch.
+- **Solids from sketches.** Pull (extrude) closed areas of a sketch into a new body, or join,
+  cut, or intersect with one, to one side, both sides, or symmetrically; revolve them about a
+  line; fillet, chamfer, and shell; mirror and rectangular and circular patterns of features.
+  Each with a live preview, and editable later.
+- **A feature timeline.** Edit, rename, suppress, reorder, and roll back. Change a sketch and the
+  solid follows; a feature that no longer fits says why, and the rest of the model carries on.
 - **Solids from primitives.** Box, cylinder, sphere, cone, and torus by their sizes, with a
   live preview.
+- **Measuring** distances and angles between faces, edges, and bodies.
 - **The window.** A 3D view with a view cube, standard views, display styles, and a grid;
   selecting bodies, faces, edges, vertices, and sketches, with their measurements; a browser
   tree and a properties panel to rename, hide, isolate, and delete; several documents in tabs;
@@ -27,8 +35,8 @@ What works today:
 
 [docs/USING.md](docs/USING.md) shows how.
 
-Next is Phase 3: extrude, revolve, fillet, and the feature timeline. See the
-[roadmap](ROADMAP.md).
+Still to come in Phase 3: holes, construction planes, a parameter table, pulling up to a face
+or with a taper, and ellipses and splines in sketches. See the [roadmap](ROADMAP.md).
 
 ## Building
 

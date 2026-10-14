@@ -38,6 +38,63 @@ Every command is also in a menu. Commands that cannot be used at the moment are 
 
 Each solid you create is one undo step. You can turn and zoom the view while the panel is open.
 
+## Making a solid from a sketch
+
+This is how most parts start: sketch an outline, then **Pull** it into a solid (what other
+programs call extrude).
+
+1. Draw a closed outline in a sketch. You do not have to finish the sketch first.
+2. Press **E**, or click **Pull** under **Create**. If the sketch has one closed area, it is
+   picked already; otherwise click the areas you want in the 3D view (they light up under the
+   pointer; a second click lets one go).
+3. Type the distance on the right. A negative distance, or **Flip Direction**, pulls the other
+   way. **Direction** pulls to one side, by the same amount to both sides (**Symmetric**), or
+   by different amounts (**Two Sides**).
+4. **Operation**: a **New Body**, **Join** it to a body, **Cut** it out of one, or keep only
+   what it shares with one (**Intersect**). Until you choose, LCAD guesses: a pull that lies
+   mostly inside a body cuts it, one that touches a body joins it, one on its own is a new body.
+5. Press Enter or click **OK**. The sketch is hidden; show it again from the browser.
+
+The 3D view shows the result as you type. If it cannot be made, the panel says why and OK waits.
+
+**Revolve** turns closed areas about a line of the same sketch; draw that line as construction
+geometry if it is not part of the outline. **Mirror**, **Rectangular Pattern**, and **Circular
+Pattern** (under **Create**, and the pattern button in the toolbar) copy pulls and revolves, or
+a whole body: select the feature in the timeline first, or check it in the panel. The plane,
+direction, or axis is one through the origin, or an edge or face you click in the 3D view.
+
+## Changing a solid
+
+Under **Modify**: **Fillet** (F) rounds edges, **Chamfer** bevels them, **Shell** hollows a body
+out, open at the faces you click. Click the edges or faces in the 3D view, before or after
+starting the command; Shift-click picks more.
+
+## The timeline
+
+The strip under the 3D view lists the sketches and features in the order they are applied.
+
+- **Click** an entry to select what it made. **Double-click** it, or press Enter, to edit it:
+  the model goes back to how it was just before that feature, so that what it works on can be
+  picked again, and comes forward again when you click OK or Cancel.
+- **Right-click** for **Edit**, **Rename**, **Suppress** (leave it out, and keep it),
+  **Roll Back to Here**, **Roll Forward to the End**, and **Delete**.
+- **Drag an entry** to move it. LCAD refuses, and says why in the status bar, if that would put
+  a feature before something it depends on.
+- **Drag the marker** (the dark line with the handle) to the left to see, or work on, an
+  earlier state of the model. New features go where the marker is.
+- An entry with a **red outline and dot** fails: hover over it, or select it, to read why. The
+  rest of the model is built without it.
+- **Compact**, on the right, makes the entries smaller.
+
+When you change a sketch, the features made from it follow when you finish the sketch.
+
+## Measuring
+
+Press **M**, or click the measure button under **View**. Click one thing in the 3D view to see
+its length, area, radius, or position; click a second to see the distance between them (also
+along X, Y, and Z) and, for flat faces and straight edges, the angle between them. A third click
+starts again. Esc closes it.
+
 ## Sketching
 
 A sketch is flat geometry on a plane: lines, circles, and arcs, held in shape by constraints
@@ -249,12 +306,16 @@ These are the shortcuts LCAD starts with.
 | Ctrl + Enter | Finish the sketch |
 | L, R, C, A | In a sketch: line, rectangle, circle, arc |
 | D, T, O, P, X | In a sketch: dimension, trim, offset, project, construction |
+| E | Pull (also from inside a sketch, which it finishes) |
+| F | Fillet |
+| M | Measure |
 | F6, Shift + F6, Home | Fit the view, zoom to the selection, go to the home view |
 | F11 | Give the window to the 3D view, and back |
 | Ctrl + Q | Quit |
 
-Not there yet: autosave and crash recovery, inches as a display unit, and import or export of
-other formats. The origin guides that are shown are not saved with the document.
+Not there yet: autosave and crash recovery, inches as a display unit, import or export of other
+formats, holes, construction planes, a parameter table, and pulling up to a face or with a taper.
+The origin guides that are shown are not saved with the document.
 
 ## If something goes wrong
 
