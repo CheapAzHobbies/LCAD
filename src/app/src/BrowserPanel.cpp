@@ -5,6 +5,7 @@
 #include <QFont>
 #include <QHeaderView>
 #include <QLineEdit>
+#include <QPalette>
 #include <QSignalBlocker>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -279,8 +280,24 @@ QTreeWidgetItem* BrowserPanel::makeBodyItem(const document::Body& body) {
     item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable |
                    Qt::ItemIsUserCheckable);
     item->setCheckState(0, body.visible ? Qt::Checked : Qt::Unchecked);
-    item->setToolTip(0, tr("Check to show, clear to hide. Double-click to rename."));
+    markExistence(item, body);
     return item;
+}
+
+void BrowserPanel::markExistence(QTreeWidgetItem* item, const document::Body& body) {
+    // A body whose feature fails, is suppressed, or lies beyond the history marker is listed,
+    // so that it can still be found and renamed, but in italics and with the reason.
+    const bool exists = !body.shape.isNull();
+    QFont font = item->font(0);
+    font.setItalic(!exists);
+    item->setFont(0, font);
+    item->setData(0, Qt::ForegroundRole,
+                  exists ? QVariant()
+                         : QVariant(m_tree->palette().color(QPalette::PlaceholderText)));
+    item->setToolTip(0, exists ? tr("Check to show, clear to hide. Double-click to rename.")
+                               : tr("This body does not exist at this point in the timeline: "
+                                    "the feature that makes it is suppressed, fails, or comes "
+                                    "after the history marker."));
 }
 
 void BrowserPanel::onDocumentChanged(const document::Change& change) {
@@ -345,7 +362,13 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
             sketchEntry->setCheckState(0, sketch->visible ? Qt::Checked : Qt::Unchecked);
         }
         break;
+    case Kind::BodyGeometryChanged:
+        if (item != nullptr && body != nullptr) {
+            markExistence(item, *body);
+        }
+        break;
     case Kind::SketchGeometryChanged:
+    case Kind::TimelineChanged:
     case Kind::HistoryChanged:
         break;
     }

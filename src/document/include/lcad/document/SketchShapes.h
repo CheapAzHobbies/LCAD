@@ -4,9 +4,11 @@
 
 #include <lcad/document/Document.h>
 #include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Shape.h>
 
 #include <optional>
+#include <vector>
 
 namespace lcad::document {
 
@@ -21,6 +23,15 @@ enum class SketchPart {
 /// A sketch's geometry as one shape in model space: an edge for each line, circle, and arc, and
 /// a vertex for each free-standing point. A null shape when the sketch has none of that part.
 [[nodiscard]] kernel::Shape sketchShape(const SketchItem& sketch, SketchPart part);
+
+/// A region of a sketch as the kernel takes it: its curves as edges in model space, each named
+/// by the number of its sketch entity. Throws kernel::Error or std::invalid_argument if a curve
+/// has shrunk to nothing.
+[[nodiscard]] kernel::Region kernelRegion(const SketchItem& sketch, const sketch::Region& region);
+
+/// Every region of a sketch as a flat face in model space, in the order of
+/// sketch::Sketch::regions(). A region that cannot be made into a face is a null shape.
+[[nodiscard]] std::vector<kernel::Shape> sketchRegionFaces(const SketchItem& sketch);
 
 /// The box around all of a sketch's geometry in model space, or nothing for an empty sketch.
 [[nodiscard]] std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch);

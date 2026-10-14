@@ -14,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <random>
 #include <string_view>
 #include <system_error>
@@ -392,6 +393,119 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
     return item;
 }
 
+// A list of whole numbers.
+std::vector<std::uint64_t> idsMember(const json& object, const char* key, std::string_view where,
+                                     const std::filesystem::path& path) {
+    const json& value = member(object, key, where, path);
+    if (!value.is_array()) {
+        damaged(path, "\"" + std::string(key) + "\" in " + std::string(where) + " is not a list");
+    }
+    std::vector<std::uint64_t> ids;
+    for (const json& entry : value) {
+        if (!entry.is_number_unsigned()) {
+            damaged(path, "\"" + std::string(key) + "\" in " + std::string(where) +
+                              " holds something that is not a whole number");
+        }
+        ids.push_back(entry.get<std::uint64_t>());
+    }
+    return ids;
+}
+
+// A list of texts.
+std::vector<std::string> stringsMember(const json& object, const char* key, std::string_view where,
+                                       const std::filesystem::path& path) {
+    const json& value = member(object, key, where, path);
+    if (!value.is_array()) {
+        damaged(path, "\"" + std::string(key) + "\" in " + std::string(where) + " is not a list");
+    }
+    std::vector<std::string> texts;
+    for (const json& entry : value) {
+        if (!entry.is_string()) {
+            damaged(path, "\"" + std::string(key) + "\" in " + std::string(where) +
+                              " holds something that is not text");
+        }
+        texts.push_back(entry.get<std::string>());
+    }
+    return texts;
+}
+
+nlohmann::ordered_json writeFeature(const Feature& feature) {
+    using nlohmann::ordered_json;
+    ordered_json out;
+    out["id"] = feature.id.value;
+    out["name"] = feature.name;
+    out["kind"] = toString(feature.kind);
+    out["suppressed"] = feature.suppressed;
+    out["body"] = feature.body.value;
+    out["sketch"] = feature.sketch.value;
+    out["regions"] = ordered_json::array();
+    for (const std::vector<sketch::EntityId>& outline : feature.regions) {
+        out["regions"].push_back(outline);
+    }
+    out["operation"] = toString(feature.operation);
+    out["distance"] = feature.distance;
+    out["distanceBack"] = feature.distanceBack;
+    out["symmetric"] = feature.symmetric;
+    out["axis"] = feature.axis;
+    out["angle"] = feature.angle;
+    out["edges"] = feature.edges;
+    out["faces"] = feature.faces;
+    out["size"] = feature.size;
+    return out;
+}
+
+Feature readFeature(const json& entry, const std::filesystem::path& path) {
+    if (!entry.is_object()) {
+        damaged(path, "an entry of \"features\" is not an object");
+    }
+    Feature feature;
+    feature.id = ObjectId{idMember(entry, "id", "a feature", path)};
+    const std::string where = "feature " + std::to_string(feature.id.value);
+    feature.name = stringMember(entry, "name", where, path);
+    const std::string kind = stringMember(entry, "kind", where, path);
+    const auto knownKind = featureKindFromString(kind);
+    if (!knownKind.has_value()) {
+        damaged(path, where + " is of the unknown kind \"" + kind + "\"");
+    }
+    feature.kind = *knownKind;
+    feature.suppressed = boolMember(entry, "suppressed", where, path);
+    feature.body = ObjectId{idMember(entry, "body", where, path)};
+    feature.sketch = ObjectId{idMember(entry, "sketch", where, path)};
+    const json& regions = member(entry, "regions", where, path);
+    if (!regions.is_array()) {
+        damaged(path, "\"regions\" in " + where + " is not a list");
+    }
+    for (const json& outline : regions) {
+        std::vector<sketch::EntityId> curves;
+        if (!outline.is_array()) {
+            damaged(path, "\"regions\" in " + where + " holds something that is not a list");
+        }
+        for (const json& curve : outline) {
+            if (!curve.is_number_unsigned()) {
+                damaged(path, "an outline in " + where + " holds something that is not a curve");
+            }
+            curves.push_back(curve.get<sketch::EntityId>());
+        }
+        std::sort(curves.begin(), curves.end());
+        feature.regions.push_back(std::move(curves));
+    }
+    const std::string operation = stringMember(entry, "operation", where, path);
+    const auto knownOperation = operationFromString(operation);
+    if (!knownOperation.has_value()) {
+        damaged(path, where + " has the unknown operation \"" + operation + "\"");
+    }
+    feature.operation = *knownOperation;
+    feature.distance = numberMember(entry, "distance", where, path);
+    feature.distanceBack = numberMember(entry, "distanceBack", where, path);
+    feature.symmetric = boolMember(entry, "symmetric", where, path);
+    feature.axis = static_cast<sketch::EntityId>(idMember(entry, "axis", where, path));
+    feature.angle = numberMember(entry, "angle", where, path);
+    feature.edges = stringsMember(entry, "edges", where, path);
+    feature.faces = stringsMember(entry, "faces", where, path);
+    feature.size = numberMember(entry, "size", where, path);
+    return feature;
+}
+
 DocumentState interpret(const ArchiveContents& contents, const std::filesystem::path& path,
                         std::vector<std::string>& warnings) {
     const json& units = objectMember(contents.manifest, "units", manifestName, path);
@@ -416,6 +530,12 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
         const std::string where = "body " + std::to_string(body.id.value);
         body.name = stringMember(entry, "name", where, path);
         body.visible = boolMember(entry, "visible", where, path);
+        if (entry.contains("madeBy")) {
+            // A body that a feature makes has no geometry in the file: it is built again.
+            body.madeBy = ObjectId{idMember(entry, "madeBy", where, path)};
+            state.bodies.push_back(std::move(body));
+            continue;
+        }
 
         const json& geometry = objectMember(entry, "geometry", where, path);
         const std::string role = stringMember(geometry, "role", where, path);
@@ -451,6 +571,27 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
             state.sketches.push_back(readSketch(entry, path));
         }
     }
+
+    // So were features, and the order things are applied in.
+    const auto features = contents.document.find("features");
+    if (features != contents.document.end()) {
+        if (!features->is_array()) {
+            damaged(path, "\"features\" in document.json is not a list");
+        }
+        for (const json& entry : *features) {
+            state.features.push_back(readFeature(entry, path));
+        }
+    }
+    if (contents.document.contains("timeline")) {
+        for (const std::uint64_t id :
+             idsMember(contents.document, "timeline", documentName, path)) {
+            state.timeline.push_back(ObjectId{id});
+        }
+    }
+    if (contents.document.contains("marker")) {
+        state.marker =
+            static_cast<std::size_t>(idMember(contents.document, "marker", documentName, path));
+    }
     return state;
 }
 
@@ -474,17 +615,24 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
 
     std::vector<std::pair<std::string, std::string>> geometry;
     for (const Body& body : document.bodies()) {
-        const std::string file = "geometry/" + std::to_string(body.id.value) + ".brep";
-        try {
-            geometry.emplace_back(file, kernel::toBrep(body.shape));
-        } catch (const kernel::Error& error) {
-            throw FileError("Could not save " + path.string() + ": the geometry of \"" + body.name +
-                            "\" cannot be written (" + error.reason() + ").");
-        }
         ordered_json entry;
         entry["id"] = body.id.value;
         entry["name"] = body.name;
         entry["visible"] = body.visible;
+        if (body.madeBy.isValid()) {
+            // What features make is not stored. The features are, and it is built from them.
+            entry["madeBy"] = body.madeBy.value;
+            model["bodies"].push_back(std::move(entry));
+            continue;
+        }
+        // The shape the body was given, not what features have since made of it.
+        const std::string file = "geometry/" + std::to_string(body.id.value) + ".brep";
+        try {
+            geometry.emplace_back(file, kernel::toBrep(body.source));
+        } catch (const kernel::Error& error) {
+            throw FileError("Could not save " + path.string() + ": the geometry of \"" + body.name +
+                            "\" cannot be written (" + error.reason() + ").");
+        }
         entry["geometry"] = ordered_json{{"file", file}, {"role", "source"}};
         model["bodies"].push_back(std::move(entry));
     }
@@ -492,6 +640,17 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
     model["sketches"] = ordered_json::array();
     for (const SketchItem& item : document.sketches()) {
         model["sketches"].push_back(writeSketch(item));
+    }
+    model["features"] = ordered_json::array();
+    for (const Feature& feature : document.features()) {
+        model["features"].push_back(writeFeature(feature));
+    }
+    model["timeline"] = ordered_json::array();
+    for (const ObjectId item : document.timeline()) {
+        model["timeline"].push_back(item.value);
+    }
+    if (document.historyMarker() < document.timeline().size()) {
+        model["marker"] = document.historyMarker();
     }
 
     std::vector<std::pair<std::string, std::string>> entries;
@@ -543,6 +702,14 @@ LoadedDocument loadDocument(const std::filesystem::path& path) {
         loaded.document = std::make_unique<Document>(std::move(state));
     } catch (const std::invalid_argument& error) {
         damaged(path, error.what());
+    }
+    // The bodies have been built from the features. One that could not be is reported, and
+    // stays in the timeline to be put right.
+    for (const Feature& feature : loaded.document->features()) {
+        const std::string why = loaded.document->featureError(feature.id);
+        if (!why.empty()) {
+            loaded.warnings.push_back(feature.name + " could not be applied. " + why);
+        }
     }
     for (const std::string& warning : loaded.warnings) {
         core::log(core::LogLevel::Warning, "document", path.string() + ": " + warning);

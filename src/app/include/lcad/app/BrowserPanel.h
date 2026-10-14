@@ -83,6 +83,7 @@ private:
     void onItemChanged(QTreeWidgetItem* item);
     void showContextMenu(const QPoint& position);
     QTreeWidgetItem* makeBodyItem(const document::Body& body);
+    void markExistence(QTreeWidgetItem* item, const document::Body& body);
     QTreeWidgetItem* makeSketchItem(const document::SketchItem& sketch);
     void markEditedSketch();
 

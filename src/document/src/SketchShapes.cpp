@@ -2,6 +2,7 @@
 
 #include <lcad/document/SketchShapes.h>
 
+#include <lcad/kernel/Error.h>
 #include <lcad/kernel/Plane.h>
 
 #include <algorithm>
@@ -52,6 +53,69 @@ kernel::Shape sketchShape(const SketchItem& sketch, SketchPart part) {
         }
     }
     return kernel::makeCompound(parts);
+}
+
+namespace {
+
+// One curve of a sketch as an edge in model space.
+kernel::Shape curveShape(const SketchItem& sketch, const sketch::Entity& entity) {
+    const sketch::Sketch& geometry = sketch.geometry;
+    const kernel::Plane& plane = sketch.plane;
+    switch (entity.kind) {
+    case sketch::EntityKind::Line: {
+        const sketch::Point2 a = geometry.position(entity.start);
+        const sketch::Point2 b = geometry.position(entity.end);
+        return kernel::makeSegment(kernel::toWorld(plane, a.x, a.y),
+                                   kernel::toWorld(plane, b.x, b.y));
+    }
+    case sketch::EntityKind::Circle: {
+        const sketch::Point2 c = geometry.position(entity.center);
+        return kernel::makeCircleEdge(plane, c.x, c.y, entity.radius);
+    }
+    case sketch::EntityKind::Arc: {
+        const sketch::Point2 c = geometry.position(entity.center);
+        const sketch::Point2 a = geometry.position(entity.start);
+        const sketch::Point2 b = geometry.position(entity.end);
+        return kernel::makeArcEdge(plane, c.x, c.y, a.x, a.y, b.x, b.y);
+    }
+    case sketch::EntityKind::Point:
+        break;
+    }
+    throw std::invalid_argument("a point is not a curve");
+}
+
+} // namespace
+
+kernel::Region kernelRegion(const SketchItem& sketch, const sketch::Region& region) {
+    const auto outline = [&sketch](const std::vector<sketch::EntityId>& curves) {
+        std::vector<kernel::OutlineCurve> made;
+        for (const sketch::EntityId id : curves) {
+            const sketch::Entity* entity = sketch.geometry.find(id);
+            if (entity == nullptr) {
+                throw std::invalid_argument("the outline names a curve the sketch does not have");
+            }
+            made.push_back({curveShape(sketch, *entity), std::to_string(id)});
+        }
+        return made;
+    };
+    kernel::Region made;
+    made.outer = outline(region.outer);
+    for (const std::vector<sketch::EntityId>& hole : region.holes) {
+        made.holes.push_back(outline(hole));
+    }
+    return made;
+}
+
+std::vector<kernel::Shape> sketchRegionFaces(const SketchItem& sketch) {
+    std::vector<kernel::Shape> faces;
+    for (const sketch::Region& region : sketch.geometry.regions()) {
+        try {
+            faces.push_back(kernel::makeRegionFace(sketch.plane, kernelRegion(sketch, region)));
+        } catch (const std::exception&) {
+            faces.emplace_back();
+        }
+    }
+    return faces;
 }
 
 std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch) {

@@ -6,7 +6,9 @@ add_library(lcad_document STATIC
     src/Archive.cpp
     src/Document.cpp
     src/File.cpp
+    src/Feature.cpp
     src/Migration.cpp
+    src/Rebuild.cpp
     src/SketchShapes.cpp)
 add_library(lcad::document ALIAS lcad_document)
 target_include_directories(lcad_document PUBLIC include)

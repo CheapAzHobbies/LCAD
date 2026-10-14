@@ -845,11 +845,15 @@ public:
         return box;
     }
 
-    void showBody(const document::Body& body) {
-        if (context.IsNull() || bodyObjects.contains(body.id)) {
+    // `reshaped` for a body that was shown before with another shape: that one leaves the
+    // camera alone even if it is the only body.
+    void showBody(const document::Body& body, bool reshaped = false) {
+        if (context.IsNull() || bodyObjects.contains(body.id) || body.shape.isNull()) {
+            // A body whose feature fails, is suppressed, or lies beyond the history marker does
+            // not exist at the moment.
             return;
         }
-        const bool wasEmpty = bodyObjects.empty();
+        const bool wasEmpty = bodyObjects.empty() && !reshaped;
         Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(body.shape));
         styleBody(object);
         // Displaying with the whole-shape mode first prepares the owner that selecting the body
@@ -901,6 +905,12 @@ public:
         case Kind::BodyRemoved:
             hideBody(change.body);
             break;
+        case Kind::BodyGeometryChanged:
+            hideBody(change.body);
+            if (body != nullptr && body->visible) {
+                showBody(*body, true);
+            }
+            break;
         case Kind::SketchAdded:
         case Kind::SketchVisibilityChanged:
         case Kind::SketchGeometryChanged:
@@ -920,6 +930,7 @@ public:
             break;
         case Kind::BodyRenamed:
         case Kind::SketchRenamed:
+        case Kind::TimelineChanged:
         case Kind::HistoryChanged:
             return;
         }
