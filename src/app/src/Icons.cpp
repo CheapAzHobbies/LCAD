@@ -444,6 +444,20 @@ const QHash<QString, Drawing>& drawings() {
              path.addRoundedRect(QRectF(3.5, 8, 17, 8), 4, 4);
              i.p.drawPath(path);
          }},
+        {QStringLiteral("ellipse"),
+         [](const Ink& i) {
+             i.ellipse(12, 12, 9, 5.5);
+             node(i, 12, 12);
+             node(i, 21, 12);
+         }},
+        {QStringLiteral("spline"),
+         [](const Ink& i) {
+             QPainterPath curve(QPointF(3.5, 17));
+             curve.cubicTo(7, 3, 15, 21, 20.5, 7);
+             i.p.drawPath(curve);
+             node(i, 3.5, 17);
+             node(i, 20.5, 7);
+         }},
         {QStringLiteral("dimension"),
          [](const Ink& i) {
              i.line(5, 5, 5, 13);

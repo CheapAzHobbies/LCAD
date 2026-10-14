@@ -36,6 +36,11 @@ enum class SketchTool {
     Point,
     Polygon,
     Slot,
+    /// By its center, the end of its major axis, and a point its minor radius reaches to.
+    Ellipse,
+    /// Through the first and the last of the points clicked, drawn toward the others. Enter, a
+    /// double-click, or Esc ends it.
+    Spline,
     /// Click what to measure, then empty space, and type the value.
     Dimension,
     /// Applies one kind of geometric constraint to whatever is clicked.

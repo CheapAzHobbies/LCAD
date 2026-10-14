@@ -12,6 +12,38 @@
 
 namespace lcad::document {
 
+namespace {
+
+// An arc, an ellipse, or a spline of a sketch as an edge in model space.
+kernel::Shape curveEdge(const sketch::Sketch& geometry, const kernel::Plane& plane,
+                        const sketch::Entity& entity) {
+    switch (entity.kind) {
+    case sketch::EntityKind::Arc: {
+        const sketch::Point2 c = geometry.position(entity.center);
+        const sketch::Point2 a = geometry.position(entity.start);
+        const sketch::Point2 b = geometry.position(entity.end);
+        return kernel::makeArcEdge(plane, c.x, c.y, a.x, a.y, b.x, b.y);
+    }
+    case sketch::EntityKind::Ellipse: {
+        const sketch::Point2 c = geometry.position(entity.center);
+        const sketch::Point2 m = geometry.position(entity.start);
+        return kernel::makeEllipseEdge(plane, c.x, c.y, m.x, m.y, entity.radius);
+    }
+    case sketch::EntityKind::Spline: {
+        std::vector<std::pair<double, double>> controls;
+        for (const sketch::EntityId point : entity.points) {
+            const sketch::Point2 p = geometry.position(point);
+            controls.emplace_back(p.x, p.y);
+        }
+        return kernel::makeSplineEdge(plane, controls, sketch::splineDegree(controls.size()));
+    }
+    default:
+        throw std::invalid_argument("not an arc, an ellipse, or a spline");
+    }
+}
+
+} // namespace
+
 kernel::Shape sketchShape(const SketchItem& sketch, SketchPart part) {
     const sketch::Sketch& geometry = sketch.geometry;
     const kernel::Plane& plane = sketch.plane;
@@ -40,13 +72,11 @@ kernel::Shape sketchShape(const SketchItem& sketch, SketchPart part) {
                 parts.push_back(kernel::makeCircleEdge(plane, c.x, c.y, entity.radius));
                 break;
             }
-            case sketch::EntityKind::Arc: {
-                const sketch::Point2 c = geometry.position(entity.center);
-                const sketch::Point2 a = geometry.position(entity.start);
-                const sketch::Point2 b = geometry.position(entity.end);
-                parts.push_back(kernel::makeArcEdge(plane, c.x, c.y, a.x, a.y, b.x, b.y));
+            case sketch::EntityKind::Arc:
+            case sketch::EntityKind::Ellipse:
+            case sketch::EntityKind::Spline:
+                parts.push_back(curveEdge(geometry, plane, entity));
                 break;
-            }
             }
         } catch (const std::invalid_argument&) {
             // A curve that has shrunk to nothing has no shape. It is still in the sketch.
@@ -72,12 +102,10 @@ kernel::Shape curveShape(const SketchItem& sketch, const sketch::Entity& entity)
         const sketch::Point2 c = geometry.position(entity.center);
         return kernel::makeCircleEdge(plane, c.x, c.y, entity.radius);
     }
-    case sketch::EntityKind::Arc: {
-        const sketch::Point2 c = geometry.position(entity.center);
-        const sketch::Point2 a = geometry.position(entity.start);
-        const sketch::Point2 b = geometry.position(entity.end);
-        return kernel::makeArcEdge(plane, c.x, c.y, a.x, a.y, b.x, b.y);
-    }
+    case sketch::EntityKind::Arc:
+    case sketch::EntityKind::Ellipse:
+    case sketch::EntityKind::Spline:
+        return curveEdge(geometry, plane, entity);
     case sketch::EntityKind::Point:
         break;
     }

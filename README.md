@@ -41,7 +41,7 @@ What works today:
 
 [docs/USING.md](docs/USING.md) shows how.
 
-Still to come in Phase 3: construction axes, and ellipses and splines in sketches. See the [roadmap](ROADMAP.md).
+Still to come in Phase 3: construction axes. See the [roadmap](ROADMAP.md).
 
 ## Building
 

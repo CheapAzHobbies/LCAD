@@ -22,14 +22,17 @@ struct Point2 {
     double y = 0.0;
 };
 
-enum class EntityKind { Point, Line, Circle, Arc };
+enum class EntityKind { Point, Line, Circle, Arc, Ellipse, Spline };
 
 /// A piece of sketch geometry.
 ///
 /// Every position is a Point entity. A line has two of its own, a circle one (its center), and
-/// an arc three (center, start, end; the arc runs counter-clockwise from start to end). Those
-/// points belong to their curve: they are created with it and go when it goes. Constraints
-/// refer to points and curves alike by id.
+/// an arc three (center, start, end; the arc runs counter-clockwise from start to end). An
+/// ellipse has its center and, as `start`, the end of its major axis, the point where the
+/// ellipse is farthest from its center; `radius` is its minor radius. A spline has its control
+/// points, in order, of which the first is its `start` and the last its `end`: it runs through
+/// those two and is drawn toward the others. Those points belong to their curve: they are
+/// created with it and go when it goes. Constraints refer to points and curves alike by id.
 struct Entity {
     EntityId id = 0;
     EntityKind kind = EntityKind::Point;
@@ -44,13 +47,22 @@ struct Entity {
     // Point
     double x = 0.0;
     double y = 0.0;
-    // Line: start and end. Circle: center. Arc: center, start, and end.
+    // Line: start and end. Circle: center. Arc: center, start, and end. Ellipse: center, and
+    // the end of its major axis as start. Spline: its first and last control points.
     EntityId center = 0;
     EntityId start = 0;
     EntityId end = 0;
-    /// Circle only. An arc's radius is the distance from its center to its start.
+    /// A circle's radius; an ellipse's minor radius. An arc's radius is the distance from its
+    /// center to its start.
     double radius = 0.0;
+    /// Spline only: all its control points, in order.
+    std::vector<EntityId> points;
 };
+
+/// The degree of a spline with `controlPoints` control points: cubic, or less if there are too
+/// few for that. Its knots are spread evenly, and it is clamped: it starts at its first control
+/// point and ends at its last.
+[[nodiscard]] int splineDegree(std::size_t controlPoints);
 
 enum class ConstraintKind {
     // Geometric. The comment gives what `first`, `second`, and `third` have to be.
@@ -162,6 +174,12 @@ public:
     /// An arc around `center` from `start` counter-clockwise to the direction of `end`. The end
     /// point is placed at the start's distance from the center.
     EntityId addArc(Point2 center, Point2 start, Point2 end);
+    /// An ellipse around `center`, with `majorEnd` at the end of its major axis and the given
+    /// minor radius, which has to be smaller than the major one.
+    EntityId addEllipse(Point2 center, Point2 majorEnd, double minorRadius);
+    /// A spline through its first and last control points, drawn toward the others. It needs
+    /// three control points or more, no two in the same place.
+    EntityId addSpline(const std::vector<Point2>& controlPoints);
 
     /// Removes a curve or a free-standing point, the points that belong to it, and every
     /// constraint that refers to any of them. Given a point of a curve, removes the curve.
@@ -177,8 +195,15 @@ public:
     [[nodiscard]] const Entity* find(EntityId id) const;
     /// Where a point entity is. Throws std::invalid_argument if `id` is not a point.
     [[nodiscard]] Point2 position(EntityId point) const;
-    /// The radius of a circle or an arc.
+    /// The radius of a circle or an arc; the minor radius of an ellipse.
     [[nodiscard]] double radiusOf(EntityId curve) const;
+    /// The point at `t`, from 0 to 1, along a curve: from its start to its end for a line, an
+    /// arc, or a spline; once round, counter-clockwise from the end of the major axis or from
+    /// the point to the right of the center, for an ellipse or a circle.
+    [[nodiscard]] Point2 pointAt(EntityId curve, double t) const;
+    /// `pieces` + 1 points along a curve, evenly in `t` (see pointAt()). For drawing it, and for
+    /// telling what is near it.
+    [[nodiscard]] std::vector<Point2> samples(EntityId curve, int pieces) const;
 
     // Constraints
 

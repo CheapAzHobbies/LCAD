@@ -226,6 +226,10 @@ const char* entityKindName(sketch::EntityKind kind) {
         return "circle";
     case sketch::EntityKind::Arc:
         return "arc";
+    case sketch::EntityKind::Ellipse:
+        return "ellipse";
+    case sketch::EntityKind::Spline:
+        return "spline";
     }
     return "point";
 }
@@ -278,6 +282,14 @@ nlohmann::ordered_json writeSketch(const SketchItem& item) {
             e["center"] = entity.center;
             e["start"] = entity.start;
             e["end"] = entity.end;
+            break;
+        case sketch::EntityKind::Ellipse:
+            e["center"] = entity.center;
+            e["major"] = entity.start;
+            e["minorRadius"] = entity.radius;
+            break;
+        case sketch::EntityKind::Spline:
+            e["controlPoints"] = entity.points;
             break;
         }
         e["construction"] = entity.construction;
@@ -358,6 +370,29 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
             entity.center = smallId(e, "center", in);
             entity.start = smallId(e, "start", in);
             entity.end = smallId(e, "end", in);
+        } else if (kind == "ellipse") {
+            entity.kind = sketch::EntityKind::Ellipse;
+            entity.center = smallId(e, "center", in);
+            entity.start = smallId(e, "major", in);
+            entity.radius = numberMember(e, "minorRadius", in, path);
+        } else if (kind == "spline") {
+            entity.kind = sketch::EntityKind::Spline;
+            const json& controls = member(e, "controlPoints", in, path);
+            if (!controls.is_array()) {
+                damaged(path, "\"controlPoints\" in " + in + " is not a list");
+            }
+            for (const json& point : controls) {
+                if (!point.is_number_unsigned() || point.get<std::uint64_t>() > 0xffffffffULL) {
+                    damaged(path, "\"controlPoints\" in " + in +
+                                      " holds something that is not "
+                                      "a point");
+                }
+                entity.points.push_back(point.get<sketch::EntityId>());
+            }
+            if (!entity.points.empty()) {
+                entity.start = entity.points.front();
+                entity.end = entity.points.back();
+            }
         } else {
             damaged(path, in + " is of the unknown kind \"" + kind + "\"");
         }

@@ -171,7 +171,11 @@ What Phase 2 leaves for later, besides ellipse and spline:
 Started early, on the owner's word. The extrude command is called **Pull**: it pulls, and with
 Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
 
-- [ ] Carried over from Phase 2: ellipse and spline in the sketcher. Not started.
+- [x] Carried over from Phase 2: ellipse and spline in the sketcher. An ellipse is its center,
+      the end of its major axis, and a minor radius the solver can move; a spline is a clamped
+      cubic B-spline through its first and last control points, which are ordinary points, so
+      every point constraint works on them. Trim, extend, offset, and crossings leave both
+      alone; mirror, outlines with holes, Pull, and files take them.
 - [x] Feature graph with dependency tracking and incremental recompute. A feature is built again
       only when something it depends on changed; while a sketch is open, rebuilding waits.
 - [x] Stable references to faces and edges that survive upstream edits. Faces are named by the

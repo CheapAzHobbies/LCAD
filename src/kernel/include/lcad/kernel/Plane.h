@@ -6,6 +6,7 @@
 #include <lcad/kernel/Shape.h>
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace lcad::kernel {
@@ -94,6 +95,17 @@ struct PlaneCurve {
 /// seen from the side the normal points to, to the direction of (endU, endV).
 [[nodiscard]] Shape makeArcEdge(const Plane& plane, double centerU, double centerV, double startU,
                                 double startV, double endU, double endV);
+/// A full ellipse in the plane around (centerU, centerV), with the end of its major axis at
+/// (majorU, majorV) and the given minor radius. Should the minor radius be the larger, the two
+/// axes trade places.
+[[nodiscard]] Shape makeEllipseEdge(const Plane& plane, double centerU, double centerV,
+                                    double majorU, double majorV, double minorRadius);
+/// A spline in the plane, of the given degree, clamped (through its first and last control
+/// points), with its knots spread evenly: the sketch's own splines. The control points are in
+/// the plane's (u, v); three or more are needed, and a degree from 1 to their count less one.
+[[nodiscard]] Shape makeSplineEdge(const Plane& plane,
+                                   const std::vector<std::pair<double, double>>& controlPoints,
+                                   int degree);
 /// A single point as a shape.
 [[nodiscard]] Shape makeVertex(const Point& at);
 /// Several shapes as one. Null shapes are left out; an empty list gives a null shape.

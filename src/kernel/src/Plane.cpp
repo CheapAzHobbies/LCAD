@@ -11,12 +11,17 @@
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColgp_Array1OfPnt.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Elips.hxx>
 #include <gp_Pln.hxx>
 
 #include <cmath>
@@ -165,6 +170,61 @@ Shape makeCircleEdge(const Plane& plane, double centerU, double centerV, double 
     return occt::guarded("make a circle", [&] {
         return occt::wrap(
             BRepBuilderAPI_MakeEdge(gp_Circ(axesOf(plane, centerU, centerV), radius)).Edge());
+    });
+}
+
+Shape makeEllipseEdge(const Plane& plane, double centerU, double centerV, double majorU,
+                      double majorV, double minorRadius) {
+    requireFinite({centerU, centerV, majorU, majorV, minorRadius}, "makeEllipseEdge");
+    const double major = std::hypot(majorU - centerU, majorV - centerV);
+    if (major <= 1e-7 || minorRadius <= 1e-7) {
+        throw std::invalid_argument("makeEllipseEdge: both radii must be greater than zero");
+    }
+    return occt::guarded("make an ellipse", [&] {
+        const Point center = toWorld(plane, centerU, centerV);
+        const Point end = toWorld(plane, majorU, majorV);
+        const gp_Dir normal(plane.normal.x, plane.normal.y, plane.normal.z);
+        gp_Dir along(end.x - center.x, end.y - center.y, end.z - center.z);
+        double a = major;
+        double b = minorRadius;
+        if (b > a) {
+            // OCCT keeps the larger radius as the major one.
+            along = normal.Crossed(along);
+            std::swap(a, b);
+        }
+        const gp_Elips ellipse(gp_Ax2(gp_Pnt(center.x, center.y, center.z), normal, along), a, b);
+        return occt::wrap(BRepBuilderAPI_MakeEdge(ellipse).Edge());
+    });
+}
+
+Shape makeSplineEdge(const Plane& plane,
+                     const std::vector<std::pair<double, double>>& controlPoints, int degree) {
+    const int n = static_cast<int>(controlPoints.size());
+    if (n < 3 || degree < 1 || degree > n - 1) {
+        throw std::invalid_argument("makeSplineEdge: three control points or more are needed, and "
+                                    "a degree less than their count");
+    }
+    for (const auto& [u, v] : controlPoints) {
+        requireFinite({u, v}, "makeSplineEdge");
+    }
+    return occt::guarded("make a spline", [&] {
+        TColgp_Array1OfPnt poles(1, n);
+        for (int i = 0; i < n; ++i) {
+            const auto& [u, v] = controlPoints[static_cast<std::size_t>(i)];
+            const Point p = toWorld(plane, u, v);
+            poles.SetValue(i + 1, gp_Pnt(p.x, p.y, p.z));
+        }
+        // Clamped, with the inner knots evenly between 0 and 1.
+        const int distinct = n - degree + 1;
+        TColStd_Array1OfReal knots(1, distinct);
+        TColStd_Array1OfInteger multiplicities(1, distinct);
+        for (int i = 0; i < distinct; ++i) {
+            knots.SetValue(i + 1, static_cast<double>(i) / (distinct - 1));
+            multiplicities.SetValue(i + 1, i == 0 || i == distinct - 1 ? degree + 1 : 1);
+        }
+        const Handle(Geom_BSplineCurve) curve =
+            new Geom_BSplineCurve(poles, knots, multiplicities, degree);
+        return occt::wrap(BRepBuilderAPI_MakeEdge(curve).Edge());
     });
 }
 

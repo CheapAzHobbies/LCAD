@@ -84,6 +84,15 @@ QString describeSketchEntity(const sketch::Sketch& geometry, sketch::EntityId id
         return prefix + SketchPanel::tr("Circle · Ø%1 mm").arg(formatNumber(2.0 * entity->radius));
     case sketch::EntityKind::Arc:
         return prefix + SketchPanel::tr("Arc · R%1 mm").arg(formatNumber(geometry.radiusOf(id)));
+    case sketch::EntityKind::Ellipse: {
+        const sketch::Point2 c = geometry.position(entity->center);
+        const sketch::Point2 m = geometry.position(entity->start);
+        return prefix + SketchPanel::tr("Ellipse · R%1 × r%2 mm")
+                            .arg(formatNumber(std::hypot(m.x - c.x, m.y - c.y)),
+                                 formatNumber(entity->radius));
+    }
+    case sketch::EntityKind::Spline:
+        return prefix + SketchPanel::tr("Spline · %1 control points").arg(entity->points.size());
     }
     return {};
 }

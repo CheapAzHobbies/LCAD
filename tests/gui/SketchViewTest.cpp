@@ -89,6 +89,7 @@ private slots:
     void endsLandOnExistingGeometryAndStayThere();
     void rectangleToolDrawsAConstrainedRectangle();
     void circleArcAndPointTools();
+    void ellipseAndSplineTools();
     void polygonAndSlotTools();
     void constructionModeDrawsConstructionGeometry();
     void typingWhileDrawingGivesTheSize();
@@ -849,6 +850,70 @@ void SketchViewTest::circleArcAndPointTools() {
     // A point put on the circle stays on it.
     click(at(30.0, 45.0) + QPoint(0, 2));
     QCOMPARE(count(ConstraintKind::PointOnCircle), 1);
+}
+
+void SketchViewTest::ellipseAndSplineTools() {
+    openSketch();
+    // An ellipse: its center, the end of its major axis, and how far out it reaches across.
+    editor()->setTool(SketchTool::Ellipse);
+    QVERIFY(editor()->hint().contains(QStringLiteral("center")));
+    click(at(40.0, 30.0));
+    click(at(70.0, 30.0));
+    move(at(50.0, 40.0));
+    render();
+    keepFrame(overlayImage(), "sketch-ellipse-preview");
+    click(at(50.0, 42.0));
+    const std::vector<Entity> ellipses = curves(EntityKind::Ellipse);
+    QCOMPARE(ellipses.size(), std::size_t{1});
+    QVERIFY(apart(sketch().position(ellipses[0].center), {40.0, 30.0}) < 0.4);
+    QVERIFY(apart(sketch().position(ellipses[0].start), {70.0, 30.0}) < 0.4);
+    QVERIFY(qAbs(ellipses[0].radius - 12.0) < 0.4);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Ellipse"));
+    // It is a closed outline.
+    QCOMPARE(sketch().profiles().size(), std::size_t{1});
+    // Clicked farther out than the major axis, it is refused with the reason.
+    click(at(40.0, -40.0));
+    click(at(50.0, -40.0));
+    click(at(45.0, -10.0));
+    QCOMPARE(curves(EntityKind::Ellipse).size(), std::size_t{1});
+    editor()->cancel();
+
+    // A spline through four points, ended with Enter.
+    editor()->setTool(SketchTool::Spline);
+    click(at(0.0, 60.0));
+    click(at(20.0, 80.0));
+    click(at(40.0, 60.0));
+    click(at(60.0, 80.0));
+    QVERIFY(curves(EntityKind::Spline).empty());
+    render();
+    keepFrame(overlayImage(), "sketch-spline-preview");
+    QTest::keyClick(m_viewport, Qt::Key_Return);
+    const std::vector<Entity> splines = curves(EntityKind::Spline);
+    QCOMPARE(splines.size(), std::size_t{1});
+    QCOMPARE(splines[0].points.size(), std::size_t{4});
+    QVERIFY(apart(sketch().position(splines[0].start), {0.0, 60.0}) < 0.4);
+    QVERIFY(apart(sketch().position(splines[0].end), {60.0, 80.0}) < 0.4);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Spline"));
+    // Another, ended with a double-click, starting on the first one's end: they are joined.
+    click(at(60.0, 80.0));
+    click(at(80.0, 100.0));
+    QTest::mouseDClick(m_viewport, Qt::LeftButton, Qt::NoModifier, at(100.0, 80.0));
+    render();
+    QCOMPARE(curves(EntityKind::Spline).size(), std::size_t{2});
+    QCOMPARE(curves(EntityKind::Spline)[1].points.size(), std::size_t{3});
+    QCOMPARE(count(ConstraintKind::Coincident), 1);
+    render();
+    keepFrame(overlayImage(), "sketch-curves");
+
+    // A point of a spline dragged with the Select tool reshapes it.
+    editor()->setTool(SketchTool::Select);
+    const Point2 before = sketch().pointAt(splines[0].id, 0.25);
+    const QPoint grab = at(20.0, 80.0);
+    QTest::mousePress(m_viewport, Qt::LeftButton, Qt::NoModifier, grab);
+    QTest::mouseMove(m_viewport, grab + QPoint(5, -10));
+    QTest::mouseMove(m_viewport, grab + QPoint(10, -30));
+    QTest::mouseRelease(m_viewport, Qt::LeftButton, Qt::NoModifier, grab + QPoint(10, -30));
+    QVERIFY(sketch().pointAt(splines[0].id, 0.25).y > before.y + 1.0);
 }
 
 void SketchViewTest::polygonAndSlotTools() {

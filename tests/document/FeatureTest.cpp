@@ -1318,3 +1318,37 @@ TEST_CASE("Parameters drive sketch dimensions and feature values", "[document][f
     REQUIRE(!warned.warnings.empty());
     CHECK_THAT(warned.warnings.front(), ContainsSubstring("parameter height cannot be worked out"));
 }
+
+TEST_CASE("Ellipses and splines are pulled into solids, and saved", "[document][feature]") {
+    Document document;
+    const ObjectId sketch = document.addSketch("Curves", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    // An ellipse 30 by 12 around (100, 0).
+    s.addEllipse({100.0, 0.0}, {130.0, 0.0}, 12.0);
+    // A cubic spline closed by a line: 420 square millimeters, worked out by hand.
+    const lcad::sketch::EntityId curve =
+        s.addSpline({{0.0, 0.0}, {10.0, 20.0}, {30.0, 20.0}, {40.0, 0.0}});
+    const lcad::sketch::EntityId base = s.addLine({40.0, 0.0}, {0.0, 0.0});
+    s.addConstraint(ConstraintKind::Coincident, s.find(curve)->end, s.find(base)->start);
+    s.addConstraint(ConstraintKind::Coincident, s.find(base)->end, s.find(curve)->start);
+    REQUIRE(s.solve().status == lcad::sketch::SolveStatus::Solved);
+    document.setSketchGeometry(sketch, s, "Curves");
+    REQUIRE(document.findSketch(sketch)->geometry.regions().size() == 2);
+
+    const ObjectId pulled = document.addFeature(pullOf(sketch, 5.0));
+    REQUIRE(document.featureError(pulled).empty());
+    const lcad::kernel::Shape& solid = document.findBody(document.findFeature(pulled)->body)->shape;
+    CHECK_THAT(lcad::kernel::volume(solid), WithinRel((pi * 30.0 * 12.0 + 420.0) * 5.0, 1e-9));
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("curves.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    const auto& reread = loaded.document->findSketch(sketch)->geometry;
+    CHECK(reread.find(curve)->kind == lcad::sketch::EntityKind::Spline);
+    CHECK(reread.find(curve)->points == s.find(curve)->points);
+    CHECK_THAT(lcad::kernel::volume(
+                   loaded.document->findBody(loaded.document->findFeature(pulled)->body)->shape),
+               WithinRel((pi * 30.0 * 12.0 + 420.0) * 5.0, 1e-9));
+}

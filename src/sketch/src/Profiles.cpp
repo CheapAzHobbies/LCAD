@@ -32,6 +32,8 @@ struct Edge {
     Point2 start;
     Point2 end;
     Point2 center; // arcs
+    // Splines: points along it from its start to its end, close together.
+    std::vector<Point2> path;
     bool alive = true;
 };
 
@@ -53,6 +55,11 @@ double counterClockwiseSweep(const Edge& arc) {
 
 // The direction in which a walk leaves a node along one direction of an edge.
 double leavingAngle(const Edge& edge, bool forward) {
+    if (!edge.path.empty()) {
+        const Point2 a = forward ? edge.path[0] : edge.path[edge.path.size() - 1];
+        const Point2 b = forward ? edge.path[1] : edge.path[edge.path.size() - 2];
+        return std::atan2(b.y - a.y, b.x - a.x);
+    }
     if (!edge.isArc) {
         const Point2 a = forward ? edge.start : edge.end;
         const Point2 b = forward ? edge.end : edge.start;
@@ -67,6 +74,15 @@ double leavingAngle(const Edge& edge, bool forward) {
 
 // What one direction along an edge adds to the area enclosed by a walk.
 double areaTerm(const Edge& edge, bool forward) {
+    if (!edge.path.empty()) {
+        double term = 0.0;
+        for (std::size_t i = 1; i < edge.path.size(); ++i) {
+            const Point2 a = edge.path[i - 1];
+            const Point2 b = edge.path[i];
+            term += (a.x * b.y - b.x * a.y) / 2.0;
+        }
+        return forward ? term : -term;
+    }
     const Point2 a = forward ? edge.start : edge.end;
     const Point2 b = forward ? edge.end : edge.start;
     double term = (a.x * b.y - b.x * a.y) / 2.0;
@@ -105,6 +121,12 @@ std::vector<Profile> Sketch::profiles() const {
             found.push_back({{item.id}, pi * item.radius * item.radius});
             continue;
         }
+        if (item.kind == EntityKind::Ellipse) {
+            const Point2 c = position(item.center);
+            const Point2 m = position(item.start);
+            found.push_back({{item.id}, pi * std::hypot(m.x - c.x, m.y - c.y) * item.radius});
+            continue;
+        }
         Edge edge;
         edge.curve = item.id;
         edge.isArc = item.kind == EntityKind::Arc;
@@ -112,6 +134,9 @@ std::vector<Profile> Sketch::profiles() const {
         edge.end = position(item.end);
         if (edge.isArc) {
             edge.center = position(item.center);
+        }
+        if (item.kind == EntityKind::Spline) {
+            edge.path = samples(item.id, 120);
         }
         edge.from = nodeAt(edge.start);
         edge.to = nodeAt(edge.end);
@@ -210,6 +235,9 @@ std::vector<Point2> Sketch::outlinePolygon(const std::vector<EntityId>& curves) 
         if (item.kind == EntityKind::Line) {
             points = {position(item.start), position(item.end)};
             return points;
+        }
+        if (item.kind == EntityKind::Ellipse || item.kind == EntityKind::Spline) {
+            return samples(item.id, 120);
         }
         const Point2 center = position(item.center);
         const double radius = radiusOf(item.id);

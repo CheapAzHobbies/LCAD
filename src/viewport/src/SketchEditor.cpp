@@ -140,7 +140,19 @@ struct Stroke {
     double radius = 0.0;
     double from = 0.0;
     double sweep = 2.0 * pi;
+    // An ellipse or a spline: points along it, close together. Drawn through those.
+    std::vector<Point2> path;
 };
+
+Stroke along(std::vector<Point2> points) {
+    Stroke stroke;
+    if (!points.empty()) {
+        stroke.a = points.front();
+        stroke.b = points.back();
+    }
+    stroke.path = std::move(points);
+    return stroke;
+}
 
 Stroke segment(Point2 a, Point2 b) {
     Stroke stroke;
@@ -175,6 +187,18 @@ Stroke strokeOf(const sketch::Sketch& geometry, const Entity& entity) {
     case EntityKind::Arc:
         return arc(geometry.position(entity.center), geometry.position(entity.start),
                    geometry.position(entity.end));
+    case EntityKind::Ellipse: {
+        Stroke stroke = along(geometry.samples(entity.id, 240));
+        // Its minor radius, for the dimension that measures it.
+        const Point2 center = geometry.position(entity.center);
+        const Point2 major = geometry.position(entity.start);
+        stroke.center = center;
+        stroke.radius = entity.radius;
+        stroke.from = std::atan2(major.y - center.y, major.x - center.x) + pi / 2.0;
+        return stroke;
+    }
+    case EntityKind::Spline:
+        return along(geometry.samples(entity.id, 240));
     case EntityKind::Point:
         break;
     }
@@ -376,6 +400,13 @@ public:
 
     [[nodiscard]] QPainterPath pathOf(const Stroke& stroke) const {
         QPainterPath path;
+        if (!stroke.path.empty()) {
+            path.moveTo(toWidget(stroke.path.front()));
+            for (std::size_t i = 1; i < stroke.path.size(); ++i) {
+                path.lineTo(toWidget(stroke.path[i]));
+            }
+            return path;
+        }
         if (!stroke.round) {
             path.moveTo(toWidget(stroke.a));
             path.lineTo(toWidget(stroke.b));
@@ -421,6 +452,10 @@ public:
             const Stroke stroke = strokeOf(g, entity);
             return stroke.center + direction(stroke.from + stroke.sweep / 2.0) * stroke.radius;
         }
+        case EntityKind::Ellipse:
+            return g.pointAt(entity.id, 0.375);
+        case EntityKind::Spline:
+            return g.pointAt(entity.id, 0.5);
         }
         return {};
     }
@@ -569,8 +604,11 @@ public:
                     continue;
                 }
                 const Stroke stroke = strokeOf(g, *first);
-                const double angle =
-                    first->kind == EntityKind::Arc ? stroke.from + stroke.sweep / 2.0 : 0.25 * pi;
+                // An ellipse's radius is its minor one, measured across its major axis.
+                const double angle = first->kind == EntityKind::Arc
+                                         ? stroke.from + stroke.sweep / 2.0
+                                     : first->kind == EntityKind::Ellipse ? stroke.from
+                                                                          : 0.25 * pi;
                 const Point2 out = direction(angle);
                 const Point2 rim = stroke.center + out * stroke.radius;
                 const Point2 from = c.kind == ConstraintKind::Radius
@@ -903,6 +941,75 @@ public:
         clicks.clear();
     }
 
+    // The minor radius of an ellipse with its center and the end of its major axis where they
+    // are, reaching to `toward`: how far that is from the major axis. Nothing if it is not
+    // shorter than the major radius.
+    [[nodiscard]] static std::optional<double> ellipseFrom(Point2 center, Point2 major,
+                                                           Point2 toward) {
+        const double a = apart(center, major);
+        if (a < 1e-9) {
+            return std::nullopt;
+        }
+        const Point2 u = (major - center) * (1.0 / a);
+        const Point2 d = toward - center;
+        const double minor = std::abs(u.x * d.y - u.y * d.x);
+        if (minor < 1e-9 || minor >= a) {
+            return std::nullopt;
+        }
+        return minor;
+    }
+
+    void addEllipse(const Snap& center, const Snap& major, Point2 toward) {
+        const auto minor = ellipseFrom(center.position, major.position, toward);
+        if (!minor.has_value()) {
+            emit q->message(tr("Click closer to the center than the end of the major axis: an "
+                               "ellipse's minor radius is the smaller one."));
+            return;
+        }
+        sketch::Sketch g = geometry();
+        EntityId made = 0;
+        try {
+            made = g.addEllipse(center.position, major.position, *minor);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("An ellipse needs two radii."));
+            return;
+        }
+        finishCurve(g, made);
+        attach(g, g.find(made)->center, center);
+        attach(g, g.find(made)->start, major);
+        commit(std::move(g), tr("Ellipse"));
+        clicks.clear();
+    }
+
+    // Ends the spline being drawn, with the points clicked so far.
+    void finishSpline() {
+        if (clicks.size() < 3) {
+            emit q->message(tr("A spline needs three points or more."));
+            clicks.clear();
+            return;
+        }
+        std::vector<Point2> controls;
+        for (const Snap& click : clicks) {
+            controls.push_back(click.position);
+        }
+        sketch::Sketch g = geometry();
+        EntityId made = 0;
+        try {
+            made = g.addSpline(controls);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("Two points of the spline are in one place."));
+            clicks.clear();
+            return;
+        }
+        finishCurve(g, made);
+        const std::vector<EntityId> points = g.find(made)->points;
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            attach(g, points[i], clicks[i]);
+        }
+        commit(std::move(g), tr("Spline"));
+        clicks.clear();
+    }
+
     void addArc(const Snap& center, const Snap& start, const Snap& end) {
         sketch::Sketch g = geometry();
         const double radius = apart(center.position, start.position);
@@ -1046,6 +1153,41 @@ public:
             }
             break;
         }
+        case SketchTool::Ellipse:
+            if (clicks.size() == 1) {
+                strokes.push_back(segment(first, at));
+            } else if (const auto shape = ellipseFrom(first, clicks[1].position, at)) {
+                sketch::Sketch scratch;
+                try {
+                    const EntityId made = scratch.addEllipse(first, clicks[1].position, *shape);
+                    strokes.push_back(strokeOf(scratch, *scratch.find(made)));
+                } catch (const std::invalid_argument&) {
+                    // Not an ellipse yet: the pointer is as far out as the major axis.
+                }
+                strokes.push_back(segment(first, clicks[1].position));
+            }
+            break;
+        case SketchTool::Spline: {
+            std::vector<Point2> controls;
+            for (const Snap& click : clicks) {
+                controls.push_back(click.position);
+            }
+            controls.push_back(at);
+            // The control points, and, once there are enough, the curve.
+            for (std::size_t i = 1; i < controls.size(); ++i) {
+                strokes.push_back(segment(controls[i - 1], controls[i]));
+            }
+            if (controls.size() >= 3) {
+                sketch::Sketch scratch;
+                try {
+                    const EntityId made = scratch.addSpline(controls);
+                    strokes.push_back(strokeOf(scratch, *scratch.find(made)));
+                } catch (const std::invalid_argument&) {
+                    // Two control points in one place.
+                }
+            }
+            break;
+        }
         case SketchTool::Slot:
             if (clicks.size() == 1) {
                 strokes.push_back(segment(first, at));
@@ -1091,6 +1233,15 @@ public:
                                       : tr("%1°").arg(formatValue(std::abs(arcSweep) * 180.0 / pi));
         case SketchTool::Polygon:
             return tr("R%1 mm").arg(formatValue(apart(first, at)));
+        case SketchTool::Ellipse: {
+            if (clicks.size() == 1) {
+                return tr("R%1 mm").arg(formatValue(apart(first, at)));
+            }
+            const auto minor = ellipseFrom(first, clicks[1].position, at);
+            return minor.has_value() ? tr("r%1 mm").arg(formatValue(*minor)) : QString();
+        }
+        case SketchTool::Spline:
+            return tr("%1 points").arg(clicks.size() + 1);
         case SketchTool::Slot:
             return clicks.size() == 1
                        ? tr("%1 mm").arg(formatValue(apart(first, at)))
@@ -1110,7 +1261,8 @@ public:
         const bool draws = tool == SketchTool::Line || tool == SketchTool::Rectangle ||
                            tool == SketchTool::Circle || tool == SketchTool::Arc ||
                            tool == SketchTool::Point || tool == SketchTool::Polygon ||
-                           tool == SketchTool::Slot;
+                           tool == SketchTool::Slot || tool == SketchTool::Ellipse ||
+                           tool == SketchTool::Spline;
         if (draws) {
             const std::optional<Point2> anchor =
                 clicks.empty() ? std::nullopt : std::optional<Point2>(clicks.back().position);
@@ -1198,6 +1350,21 @@ public:
                 addSlot(clicks[0], clicks[1], cursor.position);
             }
             break;
+        case SketchTool::Ellipse:
+            if (clicks.size() < 2) {
+                clicks.push_back(cursor);
+            } else {
+                addEllipse(clicks[0], clicks[1], cursor.position);
+            }
+            break;
+        case SketchTool::Spline:
+            if (!clicks.empty() && apart(clicks.back().position, cursor.position) < 1e-9) {
+                // The same place twice: that ends it.
+                finishSpline();
+            } else {
+                clicks.push_back(cursor);
+            }
+            break;
         case SketchTool::Dimension: {
             const EntityId under = hover;
             if (under != 0 && !contains(pending, under)) {
@@ -1206,7 +1373,8 @@ public:
                 const bool complete =
                     pending.size() == 2 ||
                     (pending.size() == 1 && entity != nullptr &&
-                     (entity->kind == EntityKind::Circle || entity->kind == EntityKind::Arc));
+                     (entity->kind == EntityKind::Circle || entity->kind == EntityKind::Arc ||
+                      entity->kind == EntityKind::Ellipse));
                 if (complete) {
                     placeDimension();
                 }
@@ -1675,7 +1843,7 @@ public:
         if (entity == nullptr) {
             return;
         }
-        if (entity->kind == EntityKind::Circle) {
+        if (entity->kind == EntityKind::Circle || entity->kind == EntityKind::Ellipse) {
             g.dragRadius(dragEntity, *at);
         } else if (entity->kind == EntityKind::Point) {
             // Toward the pointer from wherever the point has got to, so that a point held back
@@ -1898,6 +2066,22 @@ public:
             painter.setPen(pen);
             painter.setBrush(Qt::NoBrush);
             painter.drawPath(pathOf(strokeOf(g, entity)));
+            if (entity.kind == EntityKind::Spline) {
+                // Its control points, joined thin and dashed, so that it is clear which points
+                // shape it.
+                QPen polygon(colorOf(entity), 1.0, Qt::DashLine);
+                painter.setPen(polygon);
+                QPainterPath controls;
+                for (std::size_t i = 0; i < entity.points.size(); ++i) {
+                    const QPointF at = toWidget(g.position(entity.points[i]));
+                    if (i == 0) {
+                        controls.moveTo(at);
+                    } else {
+                        controls.lineTo(at);
+                    }
+                }
+                painter.drawPath(controls);
+            }
         }
 
         // Points.
@@ -2105,6 +2289,9 @@ void SketchEditor::cancel() {
     } else if (m_impl->dragging) {
         m_impl->finishDrag(false);
         m_impl->pressed = false;
+    } else if (m_impl->tool == SketchTool::Spline && m_impl->clicks.size() >= 3) {
+        // As Esc ends a line, it ends a spline, keeping what was drawn.
+        m_impl->finishSpline();
     } else if (!m_impl->clicks.empty() || !m_impl->pending.empty()) {
         m_impl->resetTool();
     } else if (m_impl->tool != SketchTool::Select) {
@@ -2509,6 +2696,13 @@ QString SketchEditor::hint() const {
         return placed == 0   ? tr("Slot: click the first center")
                : placed == 1 ? tr("Slot: click the second center")
                              : tr("Slot: click to set the width");
+    case SketchTool::Ellipse:
+        return placed == 0   ? tr("Ellipse: click the center")
+               : placed == 1 ? tr("Ellipse: click the end of the major axis")
+                             : tr("Ellipse: click to set the minor radius");
+    case SketchTool::Spline:
+        return placed < 3 ? tr("Spline: click the points it goes through and toward")
+                          : tr("Spline: click more points; Enter or a double-click ends it");
     case SketchTool::Dimension:
         return m_impl->pending.empty()
                    ? tr("Dimension: click what to measure")
@@ -2715,6 +2909,20 @@ void SketchEditor::mouseDoubleClick(const QPointF& position, Qt::KeyboardModifie
     if (!isActive()) {
         return;
     }
+    if (m_impl->tool == SketchTool::Spline) {
+        // The first click of the pair has normally placed the last point already; if it has
+        // not, the double-click places it.
+        m_impl->moveCursor(position);
+        if (m_impl->cursorValid &&
+            (m_impl->clicks.empty() ||
+             apart(m_impl->clicks.back().position, m_impl->cursor.position) > 1e-9)) {
+            m_impl->clicks.push_back(m_impl->cursor);
+        }
+        m_impl->finishSpline();
+        m_impl->update();
+        emit changed();
+        return;
+    }
     if (m_impl->tool == SketchTool::Line) {
         // The first click of the pair has placed a point; the second ends the line there.
         m_impl->clicks.clear();
@@ -2744,6 +2952,13 @@ void SketchEditor::mouseDoubleClick(const QPointF& position, Qt::KeyboardModifie
 bool SketchEditor::keyPress(QKeyEvent* event) {
     if (!isActive() || m_impl->field != nullptr) {
         return false;
+    }
+    if (m_impl->tool == SketchTool::Spline && !m_impl->clicks.empty() &&
+        (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
+        m_impl->finishSpline();
+        m_impl->update();
+        emit changed();
+        return true;
     }
     // Typing a number while a line, a rectangle, or a circle is being drawn gives it its size.
     const bool sizing = (m_impl->tool == SketchTool::Line || m_impl->tool == SketchTool::Circle ||

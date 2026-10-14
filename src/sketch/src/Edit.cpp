@@ -56,6 +56,13 @@ bool isLine(const Entity* entity) {
 bool isPoint(const Entity* entity) {
     return entity != nullptr && entity->kind == EntityKind::Point;
 }
+// An ellipse or a spline: a curve the tools that work things out exactly (crossings, trim,
+// offset) do not take.
+bool isFreeform(const Entity* entity) {
+    return entity != nullptr &&
+           (entity->kind == EntityKind::Ellipse || entity->kind == EntityKind::Spline);
+}
+
 bool isRound(const Entity* entity) {
     return entity != nullptr &&
            (entity->kind == EntityKind::Circle || entity->kind == EntityKind::Arc);
@@ -322,7 +329,7 @@ struct Cut {
 std::vector<Cut> cutsOf(const Sketch& sketch, const Curve& curve) {
     std::vector<Cut> cuts;
     for (const Entity& other : sketch.entities()) {
-        if (other.kind == EntityKind::Point || other.id == curve.id) {
+        if (other.kind == EntityKind::Point || other.id == curve.id || isFreeform(&other)) {
             continue;
         }
         for (const double parameter : crossings(curve, describe(sketch, other))) {
@@ -349,6 +356,25 @@ Point2 nearestOn(const Sketch& sketch, EntityId id, Point2 position) {
     const Entity* entity = sketch.find(id);
     if (!isCurve(entity)) {
         throw std::invalid_argument("nearestOn: not a curve");
+    }
+    if (isFreeform(entity)) {
+        // Close enough for aiming: the nearest point of fine chords along it.
+        const std::vector<Point2> chords = sketch.samples(id, 360);
+        Point2 best = chords.front();
+        double bestDistance = apart(position, best);
+        for (std::size_t i = 1; i < chords.size(); ++i) {
+            const Point2 a = chords[i - 1];
+            const Point2 d = chords[i] - a;
+            const double squared = dot(d, d);
+            const double t =
+                squared > 0.0 ? std::clamp(dot(position - a, d) / squared, 0.0, 1.0) : 0.0;
+            const Point2 on = a + d * t;
+            if (apart(position, on) < bestDistance) {
+                bestDistance = apart(position, on);
+                best = on;
+            }
+        }
+        return best;
     }
     const Curve curve = describe(sketch, *entity);
     if (curve.isLine()) {
@@ -401,7 +427,7 @@ std::vector<Point2> intersections(const Sketch& sketch, EntityId first, EntityId
     const Entity* a = sketch.find(first);
     const Entity* b = sketch.find(second);
     std::vector<Point2> found;
-    if (!isCurve(a) || !isCurve(b) || a == b) {
+    if (!isCurve(a) || !isCurve(b) || a == b || isFreeform(a) || isFreeform(b)) {
         return found;
     }
     const Curve one = describe(sketch, *a);
@@ -672,7 +698,8 @@ std::optional<ConstraintChoice> dimensionFor(const Sketch& sketch,
         } else if (only->kind == EntityKind::Circle) {
             made.kind = ConstraintKind::Diameter;
             made.first = only->id;
-        } else if (only->kind == EntityKind::Arc) {
+        } else if (only->kind == EntityKind::Arc || only->kind == EntityKind::Ellipse) {
+            // Of an ellipse, its minor radius.
             made.kind = ConstraintKind::Radius;
             made.first = only->id;
         } else {
@@ -838,6 +865,25 @@ std::vector<EntityId> mirror(Sketch& sketch, const std::vector<EntityId>& entiti
             pair(entity.end, work.find(copy)->start);
             pair(entity.start, work.find(copy)->end);
             break;
+        case EntityKind::Ellipse:
+            copy = work.addEllipse(image(sketch.position(entity.center)),
+                                   image(sketch.position(entity.start)), entity.radius);
+            pair(entity.center, work.find(copy)->center);
+            pair(entity.start, work.find(copy)->start);
+            work.addConstraint(ConstraintKind::Equal, entity.id, copy);
+            break;
+        case EntityKind::Spline: {
+            std::vector<Point2> images;
+            for (const EntityId point : entity.points) {
+                images.push_back(image(sketch.position(point)));
+            }
+            copy = work.addSpline(images);
+            const std::vector<EntityId> copied = work.find(copy)->points;
+            for (std::size_t i = 0; i < copied.size(); ++i) {
+                pair(entity.points[i], copied[i]);
+            }
+            break;
+        }
         }
         work.setConstruction(copy, entity.construction);
         made.push_back(copy);
@@ -949,7 +995,7 @@ std::vector<EntityId> offset(Sketch& sketch, const std::vector<EntityId>& curves
     std::vector<Link> pool;
     for (const EntityId id : curves) {
         const Entity* entity = sketch.find(id);
-        if (!isCurve(entity)) {
+        if (!isCurve(entity) || isFreeform(entity)) {
             throw std::invalid_argument("offset: choose lines, arcs, and circles");
         }
         if (std::any_of(pool.begin(), pool.end(),
@@ -1078,7 +1124,8 @@ std::vector<EntityId> offset(Sketch& sketch, const std::vector<EntityId>& curves
 
 bool trim(Sketch& sketch, EntityId id, Point2 near) {
     const Entity* found = sketch.find(id);
-    if (!isCurve(found) || found->fixed) {
+    // Ellipses and splines are not trimmed: where they cross other curves is not worked out.
+    if (!isCurve(found) || found->fixed || isFreeform(found)) {
         return false;
     }
     const Entity entity = *found;

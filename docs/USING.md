@@ -157,6 +157,8 @@ in the 3D view.
 | Point | | Click where it goes. |
 | Polygon | | Click the center, then a corner. The number of sides is set in the panel on the right. |
 | Slot | | Click the two centers, then move away from the line between them and click to set the width. |
+| Ellipse | | Click the center, then the end of the major axis, then how far out it reaches across (its minor radius). The dimension tool gives it its minor radius; its major radius is the distance from the center to the end of the major axis. |
+| Spline | | Click the points it goes through first and last, and the ones it is drawn toward in between. Enter, a double-click, or Esc ends it. Drag its points to reshape it. |
 
 While drawing, the pointer catches on what is already there: ends, middles of lines, and curves.
 What it catches on, the new geometry stays attached to. A line that is nearly level or upright
@@ -248,8 +250,9 @@ coincident with it), then add dimensions until nothing is blue.
 | Mirror | | Select what to mirror, choose Mirror, and click the line to mirror in. |
 | Project | P | Click an edge or a corner of a body. It comes into the sketch as reference geometry, in its own color, and does not move. |
 
-Not there yet: ellipses and splines; tangent arcs in a chain of lines; patterns; moving a
-dimension's value somewhere else; expressions as values. Curves that cross are not split where
+Not there yet: tangent arcs in a chain of lines; patterns in a sketch; moving a dimension's
+value somewhere else; trimming, extending, or offsetting an ellipse or a spline, and
+constraining a point onto one. Curves that cross are not split where
 they cross, so an outline is closed only where curves meet at their ends: trim first. A
 projected edge is a copy, and does not follow its body if the body changes.
 

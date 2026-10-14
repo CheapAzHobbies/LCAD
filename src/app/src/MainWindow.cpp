@@ -1167,6 +1167,20 @@ void MainWindow::defineSketchCommands() {
          "slot",
          {},
          {tr("oblong")}},
+        {SketchTool::Ellipse,
+         "sketch.ellipse",
+         tr("&Ellipse"),
+         tr("Draw an ellipse by its center, the end of its major axis, and its minor radius"),
+         "ellipse",
+         {},
+         {tr("oval")}},
+        {SketchTool::Spline,
+         "sketch.spline",
+         tr("Spli&ne"),
+         tr("Draw a smooth curve through its first and last points, toward the others"),
+         "spline",
+         {},
+         {tr("curve"), tr("freeform"), tr("bezier")}},
         {SketchTool::Trim,
          "sketch.trim",
          tr("&Trim"),
@@ -1366,8 +1380,9 @@ void MainWindow::createTopBar() {
         {action("sketch.new.xy"), action("sketch.new.xz"), action("sketch.new.yz")});
     sketchMenu->addActions({action("sketch.edit"), action("sketch.finish")});
     sketchMenu->addSeparator();
-    for (const char* id : {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle",
-                           "sketch.arc", "sketch.point", "sketch.polygon", "sketch.slot"}) {
+    for (const char* id :
+         {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
+          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
@@ -1559,8 +1574,9 @@ void MainWindow::createSketchToolbar() {
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
     toolbar->addWidget(groupLabel(tr("Draw"), toolbar));
-    for (const char* id : {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle",
-                           "sketch.arc", "sketch.point", "sketch.polygon", "sketch.slot"}) {
+    for (const char* id :
+         {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
+          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addAction(action("sketch.construction"));
