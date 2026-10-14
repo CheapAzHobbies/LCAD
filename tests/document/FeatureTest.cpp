@@ -652,3 +652,71 @@ TEST_CASE("Saved state with features is checked like the rest", "[document][feat
     state.features[0].name = " ";
     CHECK_THROWS_AS(Document(state), std::invalid_argument);
 }
+
+TEST_CASE("A feature can be tried on the model without changing it", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+    int heard = 0;
+    document.addListener([&heard](const Change&) { ++heard; });
+    const std::string drawn = document.undoLabel();
+
+    // A new body: the result is the pulled plate, and the tool is the same solid.
+    FeatureTrial trial = document.tryFeature(pullOf(made.outline, 8.0));
+    CHECK(trial.error.empty());
+    CHECK_THAT(lcad::kernel::volume(trial.result.shape), WithinRel(60.0 * 40.0 * 8.0, 1e-9));
+    CHECK_THAT(lcad::kernel::volume(trial.tool.shape), WithinRel(60.0 * 40.0 * 8.0, 1e-9));
+    CHECK(trial.result.faceNames.size() == 6);
+    CHECK(heard == 0);
+    CHECK(document.undoLabel() == drawn);
+    CHECK(document.bodies().empty());
+
+    made.plate = document.addFeature(pullOf(made.outline, 8.0));
+    const ObjectId body = document.findFeature(made.plate)->body;
+    made.holes = document.addSketch("Holes", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    made.circle = s.addCircle({20.0, 20.0}, 6.0);
+    document.setSketchGeometry(made.holes, s, "Circle");
+    const std::string lastStep = document.undoLabel();
+
+    // A cut: the result is the body with the hole, the tool the cylinder that is cut away.
+    trial = document.tryFeature(pullOf(made.holes, 8.0, Operation::Cut, body));
+    CHECK(trial.error.empty());
+    CHECK_THAT(lcad::kernel::volume(trial.result.shape),
+               WithinRel((60.0 * 40.0 - pi * 36.0) * 8.0, 1e-6));
+    CHECK_THAT(lcad::kernel::volume(trial.tool.shape), WithinRel(pi * 36.0 * 8.0, 1e-6));
+    // The body itself is as it was.
+    CHECK_THAT(made.volume(), WithinRel(60.0 * 40.0 * 8.0, 1e-9));
+    CHECK(document.undoLabel() == lastStep);
+
+    // One that misses the body fails with the reason, and still has its tool to show.
+    trial = document.tryFeature(pullOf(made.holes, -8.0, Operation::Cut, body));
+    CHECK(trial.result.shape.isNull());
+    CHECK_THAT(trial.error, ContainsSubstring("does not reach"));
+    CHECK_FALSE(trial.tool.shape.isNull());
+
+    // A fillet of edges the body has, and one whose radius cannot fit.
+    Feature rounds;
+    rounds.kind = FeatureKind::Fillet;
+    rounds.body = body;
+    rounds.edges = uprightEdges(document, body);
+    rounds.size = 5.0;
+    trial = document.tryFeature(rounds);
+    CHECK(trial.error.empty());
+    CHECK(trial.tool.shape.isNull());
+    CHECK_THAT(lcad::kernel::volume(trial.result.shape),
+               WithinRel((60.0 * 40.0 - (4.0 - pi) * 25.0) * 8.0, 1e-6));
+    rounds.size = 30.0;
+    trial = document.tryFeature(rounds);
+    CHECK(trial.result.shape.isNull());
+    CHECK_FALSE(trial.error.empty());
+
+    // While a feature is being edited, a trial sees the model as it is just before it.
+    made.hole = document.addFeature(pullOf(made.holes, 8.0, Operation::Cut, body));
+    document.setEditedFeature(made.hole);
+    trial = document.tryFeature(pullOf(made.holes, 4.0, Operation::Cut, body));
+    CHECK_THAT(lcad::kernel::volume(trial.result.shape),
+               WithinRel((60.0 * 40.0 * 8.0 - pi * 36.0 * 4.0), 1e-6));
+    document.setEditedFeature({});
+    CHECK(heard > 0);
+}

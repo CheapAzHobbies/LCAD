@@ -32,6 +32,8 @@ namespace lcad::app {
 
 class BrowserPanel;
 class CommandRegistry;
+class FeaturePanel;
+class TimelinePanel;
 class CommandSearch;
 class PropertiesPanel;
 class SketchPanel;
@@ -46,7 +48,7 @@ class SketchPlanePanel;
 ///   viewport      the 3D view (center)
 ///   properties    the command in progress, or the sketch being edited, or else what is
 ///                 selected (right)
-///   timeline      the feature history (bottom; empty until parametric features exist)
+///   timeline      the sketches and features in the order they are applied (bottom)
 ///   status bar    what is selected and its measurement, the active command, the units
 ///
 /// Every command is defined once, in a CommandRegistry, and reached from the toolbar, the
@@ -61,6 +63,7 @@ public:
     [[nodiscard]] viewport::ViewportWidget* viewport() const { return m_viewport; }
     [[nodiscard]] BrowserPanel* browser() const { return m_browser; }
     [[nodiscard]] PropertiesPanel* properties() const { return m_properties; }
+    [[nodiscard]] TimelinePanel* timeline() const { return m_timeline; }
     [[nodiscard]] QMenuBar* mainMenu() const { return m_menuBar; }
     [[nodiscard]] CommandRegistry* commands() const { return m_commands; }
     [[nodiscard]] CommandSearch* commandSearch() const { return m_search; }
@@ -116,6 +119,23 @@ public:
     /// step.
     void deleteSelectedBodies();
 
+    // Features
+
+    /// Starts adding a feature: opens its panel, and lets what it works on be picked in the 3D
+    /// view. While a sketch is open, it is finished first, and a pull or a revolve starts from
+    /// it. Cancels a command in progress.
+    void startFeature(document::FeatureKind kind);
+    /// Opens a feature for editing: the model goes back to just before it, its panel opens with
+    /// its values, and what it works on is shown picked. Returns false if there is no such
+    /// feature.
+    bool editFeature(document::ObjectId feature);
+    /// The panel of the feature being added or edited, or nullptr.
+    [[nodiscard]] FeaturePanel* featurePanel() const { return m_featurePanel; }
+    /// The feature being edited, or an invalid id when a new one is being added or none.
+    [[nodiscard]] document::ObjectId editedFeature() const { return m_editedFeature; }
+    /// Deletes an entry of the timeline: a feature, a sketch, or a body put in as it is.
+    void deleteTimelineItem(document::ObjectId item);
+
     // Sketching
 
     /// Starts a new sketch: on the flat face that is selected, or else by asking for a plane in
@@ -157,6 +177,7 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     struct Session {
@@ -194,6 +215,18 @@ private:
     void updateRecentMenu();
     void rememberFile(const QString& path);
     void showInspector();
+    /// Opens the panel for a feature and sets up picking for it.
+    void openFeaturePanel(document::FeatureKind kind);
+    void closeFeaturePanel();
+    void acceptFeature();
+    /// Tries the panel's feature on the model and shows the outcome.
+    void updateFeaturePreview();
+    /// Hands what is picked in the 3D view to the feature panel.
+    void takeFeaturePicks();
+    /// The sketches whose profiles a pull or a revolve can be picked from.
+    [[nodiscard]] std::vector<document::ObjectId> profileSketches(document::ObjectId also) const;
+    void onTimelineSelection(document::ObjectId item);
+    void showTimelineMenu(document::ObjectId item, const QPoint& where);
 
     [[nodiscard]] std::vector<document::ObjectId> selectedBodies() const;
     [[nodiscard]] std::vector<document::ObjectId> selectedSketches() const;
@@ -227,6 +260,15 @@ private:
     PrimitivePanel* m_panel = nullptr;
     SketchPanel* m_sketchPanel = nullptr;
     SketchPlanePanel* m_planePanel = nullptr;
+    FeaturePanel* m_featurePanel = nullptr;
+    TimelinePanel* m_timeline = nullptr;
+    document::ObjectId m_editedFeature;
+    /// The selection filter to go back to when a fillet, chamfer, or shell is done.
+    std::optional<viewport::SelectionFilter> m_filterBeforeFeature;
+    /// The document whose rebuilding is held back while one of its sketches is open.
+    document::Document* m_suspendedDocument = nullptr;
+    /// Set while the window itself changes what the 3D view has picked.
+    bool m_settingPicks = false;
     QToolBar* m_modelToolbar = nullptr;
     QToolBar* m_sketchToolbar = nullptr;
     /// The sketch toolbar's buttons for single constraints, and the one that lists them all.

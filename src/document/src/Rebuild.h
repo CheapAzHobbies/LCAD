@@ -21,9 +21,11 @@ public:
 };
 
 /// What a feature makes of its body, given the bodies as they are when its turn comes. Throws
-/// FeatureFailure if it cannot be applied.
+/// FeatureFailure if it cannot be applied. For a pull or a revolve, `tool`, if given, receives
+/// the solid it makes before that is combined with a body, also when combining fails.
 [[nodiscard]] kernel::NamedShape evaluate(const Feature& feature, const Document& document,
-                                          const BodyStates& bodies);
+                                          const BodyStates& bodies,
+                                          kernel::NamedShape* tool = nullptr);
 
 /// What a face's or an edge's name refers to, in words: "a side of Pull 1".
 [[nodiscard]] std::string describeName(const Document& document, const std::string& name);

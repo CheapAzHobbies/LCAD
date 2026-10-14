@@ -3,6 +3,7 @@
 #pragma once
 
 #include <lcad/document/Document.h>
+#include <lcad/kernel/Shape.h>
 #include <lcad/viewport/ViewportWidget.h>
 
 #include <QStringList>
@@ -49,6 +50,8 @@ private:
     QStringList m_rows;
     document::Document* m_document = nullptr;
     document::ObjectId m_body;
+    /// The shape the measurements shown were taken of.
+    kernel::Shape m_shape;
     // Set while an edit made in the panel is on its way through the document. What that edit
     // leads to must not rebuild the panel under the control that is making it.
     bool m_applying = false;

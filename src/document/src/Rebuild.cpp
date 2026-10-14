@@ -153,7 +153,13 @@ std::string describeName(const Document& document, const std::string& name) {
 }
 
 kernel::NamedShape evaluate(const Feature& feature, const Document& document,
-                            const BodyStates& bodies) {
+                            const BodyStates& bodies, kernel::NamedShape* tool) {
+    const auto keep = [tool](kernel::NamedShape made) {
+        if (tool != nullptr) {
+            *tool = made;
+        }
+        return made;
+    };
     const std::string tag = std::to_string(feature.id.value);
     try {
         switch (feature.kind) {
@@ -177,7 +183,7 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
                     throw FeatureFailure("Its distance is zero.");
                 }
                 return placed(feature, document, bodies,
-                              kernel::pull(sketch->plane, regions, from, to, tag));
+                              keep(kernel::pull(sketch->plane, regions, from, to, tag)));
             }
             const sketch::Entity* axis = sketch->geometry.find(feature.axis);
             if (axis == nullptr || axis->kind != sketch::EntityKind::Line) {
@@ -192,8 +198,8 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             const sketch::Point2 a = sketch->geometry.position(axis->start);
             const sketch::Point2 b = sketch->geometry.position(axis->end);
             return placed(feature, document, bodies,
-                          kernel::revolve(sketch->plane, regions, a.x, a.y, b.x, b.y,
-                                          feature.angle * pi / 180.0, tag));
+                          keep(kernel::revolve(sketch->plane, regions, a.x, a.y, b.x, b.y,
+                                               feature.angle * pi / 180.0, tag)));
         }
         case FeatureKind::Fillet:
         case FeatureKind::Chamfer: {

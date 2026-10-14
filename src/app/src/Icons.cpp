@@ -183,6 +183,65 @@ const QHash<QString, Drawing>& drawings() {
              i.ellipse(12, 12, 9, 5.5);
              i.ellipse(12, 11.5, 3.5, 1.6);
          }},
+        // Features
+        {QStringLiteral("pull"),
+         [](const Ink& i) {
+             // A flat outline, and the arrow it is pulled along.
+             i.fill({{3.5, 18.5}, {13.5, 18.5}, {20.5, 13.5}, {10.5, 13.5}});
+             i.poly({{3.5, 18.5}, {13.5, 18.5}, {20.5, 13.5}, {10.5, 13.5}});
+             i.line(12, 16, 12, 3.5);
+             i.poly({{8.5, 7}, {12, 3.5}, {15.5, 7}}, false);
+         }},
+        {QStringLiteral("revolve"),
+         [](const Ink& i) {
+             // An outline beside an axis, and the turn about it.
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(6, 3, 6, 21);
+             i.p.restore();
+             i.fill({{9, 6}, {15, 6}, {15, 13}, {9, 13}});
+             i.poly({{9, 6}, {15, 6}, {15, 13}, {9, 13}});
+             i.arc(6, 17.5, 13, 3, 200, 290);
+             i.poly({{16.5, 14}, {19.2, 16.3}, {16, 18}}, false);
+         }},
+        {QStringLiteral("fillet"),
+         [](const Ink& i) {
+             QPainterPath body(QPointF(4, 20));
+             body.lineTo(4, 12);
+             body.arcTo(QRectF(4, 4, 16, 16), 180, -90);
+             body.lineTo(20, 4);
+             body.lineTo(20, 20);
+             body.closeSubpath();
+             i.p.fillPath(body, i.accent);
+             i.p.drawPath(body);
+         }},
+        {QStringLiteral("chamfer"),
+         [](const Ink& i) {
+             i.fill({{4, 20}, {4, 11}, {11, 4}, {20, 4}, {20, 20}});
+             i.poly({{4, 20}, {4, 11}, {11, 4}, {20, 4}, {20, 20}});
+         }},
+        {QStringLiteral("shell"),
+         [](const Ink& i) {
+             // A hollowed solid cut through: walls, and a floor.
+             i.fill({{4, 4},
+                     {4, 20},
+                     {20, 20},
+                     {20, 4},
+                     {16.5, 4},
+                     {16.5, 16.5},
+                     {7.5, 16.5},
+                     {7.5, 4}});
+             i.poly({{4, 4},
+                     {4, 20},
+                     {20, 20},
+                     {20, 4},
+                     {16.5, 4},
+                     {16.5, 16.5},
+                     {7.5, 16.5},
+                     {7.5, 4}});
+         }},
         // View
         {QStringLiteral("fit"),
          [](const Ink& i) {

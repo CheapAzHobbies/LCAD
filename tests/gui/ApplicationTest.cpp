@@ -202,10 +202,11 @@ void ApplicationTest::windowHasItsFiveRegions() {
     for (const QAction* menu : window.mainMenu()->actions()) {
         menus << menu->text().remove(QLatin1Char('&'));
     }
-    QCOMPARE(menus, (QStringList{QStringLiteral("File"), QStringLiteral("Edit"),
-                                 QStringLiteral("Create"), QStringLiteral("Sketch"),
-                                 QStringLiteral("Select"), QStringLiteral("View"),
-                                 QStringLiteral("Window"), QStringLiteral("Help")}));
+    QCOMPARE(
+        menus,
+        (QStringList{QStringLiteral("File"), QStringLiteral("Edit"), QStringLiteral("Create"),
+                     QStringLiteral("Modify"), QStringLiteral("Sketch"), QStringLiteral("Select"),
+                     QStringLiteral("View"), QStringLiteral("Window"), QStringLiteral("Help")}));
     QList<QAction*> quickActions;
     for (const QToolButton* button :
          topBar->findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {

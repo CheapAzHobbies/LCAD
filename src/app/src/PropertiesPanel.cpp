@@ -118,8 +118,10 @@ void PropertiesPanel::refresh(document::Document* document,
             : nullptr;
 
     // A body's name box keeps the keyboard while its own edits arrive back from the document.
+    // The same body, with the same shape: a feature it depends on may have changed it since.
     const bool sameBody = body != nullptr && bodies.size() == 1 && m_name != nullptr &&
-                          m_document == document && m_body == body->id;
+                          m_document == document && m_body == body->id &&
+                          m_shape.impl() == body->shape.impl();
     if (sameBody) {
         const QSignalBlocker nameBlocker(m_name);
         const QSignalBlocker visibleBlocker(m_visible);
@@ -134,6 +136,7 @@ void PropertiesPanel::refresh(document::Document* document,
     clearRows();
     m_document = document;
     m_body = {};
+    m_shape = {};
     if (total == 0 || document == nullptr) {
         m_heading->setText(tr("Nothing selected"));
         if (document != nullptr) {
@@ -199,6 +202,16 @@ void PropertiesPanel::refresh(document::Document* document,
             applyEdit([this, on] { m_document->setBodyVisible(m_body, on); });
         });
 
+        m_shape = body->shape;
+        if (const document::Feature* maker = document->findFeature(body->madeBy)) {
+            addRow(tr("Made by"), QString::fromStdString(maker->name));
+        }
+        if (body->shape.isNull()) {
+            addRow(tr("Exists"), tr("Not at this point in the timeline: the feature that makes "
+                                    "it is suppressed, fails, or comes after the history "
+                                    "marker."));
+            return;
+        }
         addRow(tr("Volume"), tr("%1 mm³").arg(formatNumber(kernel::volume(body->shape))));
         addRow(tr("Surface area"),
                tr("%1 mm²").arg(formatNumber(kernel::surfaceArea(body->shape))));

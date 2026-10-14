@@ -574,6 +574,26 @@ kernel::NamedShape Document::namedBody(ObjectId body) const {
                             : kernel::NamedShape{found->shape, found->faceNames};
 }
 
+FeatureTrial Document::tryFeature(Feature feature) const {
+    for (std::vector<sketch::EntityId>& outline : feature.regions) {
+        std::sort(outline.begin(), outline.end());
+    }
+    detail::BodyStates bodies;
+    for (const Body& body : m_bodies) {
+        if (!body.shape.isNull()) {
+            bodies[body.id] = kernel::NamedShape{body.shape, body.faceNames};
+        }
+    }
+    FeatureTrial trial;
+    try {
+        trial.result = detail::evaluate(feature, *this, bodies, &trial.tool);
+    } catch (const detail::FeatureFailure& failure) {
+        trial.result = {};
+        trial.error = failure.what();
+    }
+    return trial;
+}
+
 void Document::setEditedFeature(ObjectId feature) {
     if (feature.isValid() && featureIndexOf(feature) == notFound) {
         throw std::invalid_argument("setEditedFeature: there is no feature with id " +

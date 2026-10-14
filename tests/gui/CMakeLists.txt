@@ -45,6 +45,7 @@ lcad_add_gui_test(lcad_sketch_view_tests SketchViewTest.cpp)
 lcad_add_gui_test(lcad_app_tests ApplicationTest.cpp)
 lcad_add_gui_test(lcad_interface_tests InterfaceTest.cpp)
 lcad_add_gui_test(lcad_sketch_interface_tests SketchInterfaceTest.cpp)
+lcad_add_gui_test(lcad_modeling_interface_tests ModelingInterfaceTest.cpp)
 # ApplicationTest asks the X server which kind of server it is.
 find_package(X11 REQUIRED)
 target_link_libraries(lcad_app_tests PRIVATE X11::xcb)

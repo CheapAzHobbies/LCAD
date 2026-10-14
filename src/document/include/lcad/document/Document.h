@@ -97,6 +97,17 @@ struct DocumentState {
     std::uint64_t nextId = 1;
 };
 
+/// What a feature would give if it were applied now. See Document::tryFeature().
+struct FeatureTrial {
+    /// The body the feature makes or changes, as it would be. Null if the feature fails.
+    kernel::NamedShape result;
+    /// For a pull or a revolve: the solid it makes, before that is combined with a body. Null
+    /// for other features, and if the solid cannot be made.
+    kernel::NamedShape tool;
+    /// Why the feature fails, in a sentence fit to show, or empty.
+    std::string error;
+};
+
 /// What an entry of the timeline is.
 enum class ItemKind { Body, Sketch, Feature };
 
@@ -201,6 +212,11 @@ public:
 
     /// A body as it is now, with the names of its faces. A null shape if it does not exist.
     [[nodiscard]] kernel::NamedShape namedBody(ObjectId body) const;
+
+    /// What a feature would make of the model as it is now: at the history marker, which is
+    /// where addFeature() puts it, or, while a feature is being edited, just before that one.
+    /// Changes nothing. For previewing a feature while its values are being chosen.
+    [[nodiscard]] FeatureTrial tryFeature(Feature feature) const;
 
     /// Shows the model as it is just before a feature, for as long as that feature is being
     /// edited: what the feature refers to can be seen and picked there. Not an edit: it is not

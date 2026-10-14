@@ -329,6 +329,48 @@ public:
     bool planePicking = false;
     int hoveredPlane = -1;
     int pressedPlane = -1;
+    // The closed regions shown while profiles are being chosen, of which sketches, which of them
+    // are picked, and which the pointer is on and the button went down on (-1 for none).
+    struct ProfilePatch {
+        Profile profile;
+        Handle(AIS_Shape) object;
+    };
+    std::vector<ProfilePatch> profilePatches;
+    std::vector<document::ObjectId> profileSketches;
+    std::vector<Profile> pickedProfiles;
+    int hoveredProfile = -1;
+    int pressedProfile = -1;
+    // What a feature would make, drawn as a body in place of the body it replaces. That body is
+    // hidden, or, if `previewGhost`, left unseen but pickable under the preview.
+    Handle(AIS_Shape) featureResult;
+    document::ObjectId previewReplaces;
+    bool previewGhost = false;
+
+    [[nodiscard]] bool ghosted(document::ObjectId id) const {
+        return previewGhost && id == previewReplaces;
+    }
+
+    // A body that cannot be seen but can be picked: its faces fully see-through, no outlines.
+    static void ghost(const Handle(AIS_Shape)& object) {
+        object->SetTransparency(1.0);
+        object->Attributes()->SetFaceBoundaryDraw(false);
+    }
+
+    // Draws a body as it should be now: plain, or as the ghost under a preview.
+    void restyle(document::ObjectId id) {
+        const auto found = bodyObjects.find(id);
+        if (found == bodyObjects.end()) {
+            return;
+        }
+        styleBody(found->second);
+        if (ghosted(id)) {
+            ghost(found->second);
+            context->SetDisplayMode(found->second, AIS_Shaded, false);
+        } else {
+            context->SetDisplayMode(found->second, displayMode(), false);
+        }
+        context->Redisplay(found->second, false);
+    }
     // Physical pixels per logical pixel of the screen the viewport is on.
     double pixelRatio = 1.0;
 
@@ -421,9 +463,12 @@ public:
 
     void restyleBodies() {
         for (const auto& entry : bodyObjects) {
-            styleBody(entry.second);
-            context->SetDisplayMode(entry.second, displayMode(), false);
-            context->Redisplay(entry.second, false);
+            restyle(entry.first);
+        }
+        if (!featureResult.IsNull()) {
+            styleBody(featureResult);
+            context->SetDisplayMode(featureResult, displayMode(), false);
+            context->Redisplay(featureResult, false);
         }
         // Hidden lines are removed by OCCT's computed mode, which applies to the whole view.
         view->SetComputedMode(style == DisplayStyle::HiddenLine);
@@ -461,6 +506,10 @@ public:
             context->Redisplay(previewObject, false);
         }
         restyleBodies();
+        for (const ProfilePatch& patch : profilePatches) {
+            styleProfile(patch.object, isPicked(patch.profile), false);
+            context->Redisplay(patch.object, false);
+        }
         for (const auto& entry : sketchObjects) {
             for (const Handle(AIS_Shape)& object :
                  {entry.second.ordinary, entry.second.construction}) {
@@ -641,6 +690,95 @@ public:
         return -1;
     }
 
+    [[nodiscard]] bool profilePicking() const { return !profileSketches.empty(); }
+
+    [[nodiscard]] bool isPicked(const Profile& profile) const {
+        return std::find(pickedProfiles.begin(), pickedProfiles.end(), profile) !=
+               pickedProfiles.end();
+    }
+
+    // A region at rest, under the pointer, or picked. See-through, so that what lies under it
+    // shows, and drawn over the model, so that a body on the sketch's plane does not hide it.
+    void styleProfile(const Handle(AIS_Shape)& object, bool picked, bool hovered) const {
+        QColor fill = picked ? colors.selection : colors.preview;
+        if (hovered) {
+            fill = fill.lighter(125);
+        }
+        object->SetMaterial(bodyMaterial());
+        object->SetColor(toOcct(fill));
+        // Light enough, picked, that the preview of what is made of it shows through.
+        object->SetTransparency(picked ? 0.6 : hovered ? 0.5 : 0.8);
+        object->Attributes()->SetFaceBoundaryDraw(true);
+        object->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(
+            toOcct(hovered ? colors.hover : fill), Aspect_TOL_SOLID, hovered ? 2.5 : 1.0));
+    }
+
+    void restyleProfiles() {
+        for (std::size_t i = 0; i < profilePatches.size(); ++i) {
+            styleProfile(profilePatches[i].object, isPicked(profilePatches[i].profile),
+                         static_cast<int>(i) == hoveredProfile);
+            context->Redisplay(profilePatches[i].object, false);
+        }
+        redraw();
+    }
+
+    void hideProfiles() {
+        for (const ProfilePatch& patch : profilePatches) {
+            context->Remove(patch.object, false);
+        }
+        profilePatches.clear();
+    }
+
+    // Shows the regions of the sketches that are to be picked from, as the sketches are now.
+    // Picked profiles that are no longer there are let go.
+    void showProfiles() {
+        hideProfiles();
+        hoveredProfile = -1;
+        pressedProfile = -1;
+        if (document == nullptr) {
+            return;
+        }
+        for (const document::ObjectId id : profileSketches) {
+            const document::SketchItem* sketch = document->findSketch(id);
+            if (sketch == nullptr) {
+                continue;
+            }
+            const std::vector<sketch::Region> regions = sketch->geometry.regions();
+            const std::vector<kernel::Shape> faces = document::sketchRegionFaces(*sketch);
+            for (std::size_t i = 0; i < regions.size() && i < faces.size(); ++i) {
+                if (faces[i].isNull()) {
+                    continue;
+                }
+                Profile profile{id, regions[i].outer};
+                std::sort(profile.outline.begin(), profile.outline.end());
+                Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(faces[i]));
+                object->SetZLayer(Graphic3d_ZLayerId_Topmost);
+                styleProfile(object, isPicked(profile), false);
+                context->Display(object, AIS_Shaded, AIS_Shape::SelectionMode(TopAbs_SHAPE), false);
+                profilePatches.push_back({std::move(profile), object});
+            }
+        }
+        std::erase_if(pickedProfiles, [this](const Profile& profile) {
+            return std::none_of(
+                profilePatches.begin(), profilePatches.end(),
+                [&profile](const ProfilePatch& patch) { return patch.profile == profile; });
+        });
+    }
+
+    // Which region's patch OCCT last found under the pointer, or -1.
+    [[nodiscard]] int detectedProfile() const {
+        if (!profilePicking() || context.IsNull() || !context->HasDetected()) {
+            return -1;
+        }
+        const Handle(AIS_InteractiveObject) under = context->DetectedInteractive();
+        for (std::size_t i = 0; i < profilePatches.size(); ++i) {
+            if (under == profilePatches[i].object) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
     // The selection entry an owner stands for, if it belongs to a body.
     [[nodiscard]] std::optional<SelectedItem>
     itemOf(const Handle(SelectMgr_EntityOwner)& owner) const {
@@ -659,7 +797,8 @@ public:
         const Handle(StdSelect_BRepOwner) shapeOwner = Handle(StdSelect_BRepOwner)::DownCast(owner);
         if (!shapeOwner.IsNull() && shapeOwner->HasShape()) {
             const TopoDS_Shape& part = shapeOwner->Shape();
-            const document::Body* source = document->findBody(body->second);
+            const document::Body* source =
+                document != nullptr ? document->findBody(body->second) : nullptr;
             const int index =
                 source != nullptr ? kernel::occt::subShapeIndex(source->shape, part) : -1;
             if (index >= 0) {
@@ -697,6 +836,10 @@ public:
 
     void applyFilter(const Handle(AIS_Shape)& object) const {
         context->Deactivate(object);
+        if (profilePicking()) {
+            // Clicks belong to the regions being chosen from.
+            return;
+        }
         if (sketching()) {
             // While a sketch is open, clicks belong to the sketch. Only the Project tool has
             // use for the bodies: their edges and corners are what it brings into the sketch.
@@ -718,7 +861,7 @@ public:
     // A sketch is picked as a whole, by its curves, when the filter lets edges be picked.
     void applySketchFilter(const Handle(AIS_Shape)& object) const {
         context->Deactivate(object);
-        if (!sketching() &&
+        if (!sketching() && !profilePicking() &&
             (filter == SelectionFilter::FacesEdgesVertices || filter == SelectionFilter::Edges)) {
             const int mode = AIS_Shape::SelectionMode(TopAbs_SHAPE);
             context->SetSelectionModeActive(object, mode, true,
@@ -848,14 +991,18 @@ public:
     // `reshaped` for a body that was shown before with another shape: that one leaves the
     // camera alone even if it is the only body.
     void showBody(const document::Body& body, bool reshaped = false) {
-        if (context.IsNull() || bodyObjects.contains(body.id) || body.shape.isNull()) {
+        if (context.IsNull() || bodyObjects.contains(body.id) || body.shape.isNull() ||
+            (body.id == previewReplaces && !previewGhost)) {
             // A body whose feature fails, is suppressed, or lies beyond the history marker does
-            // not exist at the moment.
+            // not exist at the moment. One that a feature's preview stands in for is not shown.
             return;
         }
         const bool wasEmpty = bodyObjects.empty() && !reshaped;
         Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(body.shape));
         styleBody(object);
+        if (ghosted(body.id)) {
+            ghost(object);
+        }
         // Displaying with the whole-shape mode first prepares the owner that selecting the body
         // as a whole needs, whichever filter is active afterwards.
         context->Display(object, displayMode(), AIS_Shape::SelectionMode(TopAbs_SHAPE), false);
@@ -920,9 +1067,18 @@ public:
                 hideSketch(change.body);
             }
             editor->documentChanged(change);
+            if (change.kind == Kind::SketchGeometryChanged &&
+                std::find(profileSketches.begin(), profileSketches.end(), change.body) !=
+                    profileSketches.end()) {
+                showProfiles();
+            }
             break;
         case Kind::SketchRemoved:
             hideSketch(change.body);
+            if (std::find(profileSketches.begin(), profileSketches.end(), change.body) !=
+                profileSketches.end()) {
+                showProfiles();
+            }
             if (change.body == activeSketch) {
                 // The sketch being edited is gone: its creation was undone.
                 m_widget->finishSketch();
@@ -1075,6 +1231,8 @@ ViewportWidget::~ViewportWidget() {
     makeCurrent();
     m_impl->context->RemoveAll(false);
     m_impl->previewObject.Nullify();
+    m_impl->featureResult.Nullify();
+    m_impl->profilePatches.clear();
     m_impl->viewCube.Nullify();
     for (Handle(AIS_Shape)& object : m_impl->originObjects) {
         object.Nullify();
@@ -1111,6 +1269,9 @@ void ViewportWidget::setDocument(document::Document* document) {
     m_impl->cameraBeforeSketch.reset();
     m_impl->fitAfterSketch = false;
     finishSketch();
+    // So are the previews of a command, and the profiles it was picking from.
+    setProfileSketches({});
+    setFeaturePreview({}, kernel::Shape(), false);
     if (m_impl->document != nullptr) {
         m_impl->document->removeListener(m_impl->listener);
         m_impl->listener = 0;
@@ -1165,6 +1326,47 @@ void ViewportWidget::setPreview(const kernel::Shape& shape) {
         }
     }
     m_impl->redraw();
+}
+
+void ViewportWidget::setFeaturePreview(document::ObjectId replaces, const kernel::Shape& result,
+                                       bool pickable) {
+    if (m_impl->context.IsNull()) {
+        return;
+    }
+    if (!m_impl->featureResult.IsNull()) {
+        m_impl->context->Remove(m_impl->featureResult, false);
+        m_impl->featureResult.Nullify();
+    }
+    const document::ObjectId was = m_impl->previewReplaces;
+    const bool wasGhost = m_impl->previewGhost;
+    m_impl->previewReplaces = result.isNull() ? document::ObjectId{} : replaces;
+    m_impl->previewGhost = m_impl->previewReplaces.isValid() && pickable;
+    if (was != m_impl->previewReplaces || wasGhost != m_impl->previewGhost) {
+        // The body the preview stood in for is drawn as it was, and the one it stands in for
+        // now hidden or made a ghost. A ghost is changed in place, which keeps what of it is
+        // selected.
+        if (was.isValid() && m_impl->document != nullptr) {
+            if (wasGhost) {
+                m_impl->restyle(was);
+            } else if (const document::Body* body = m_impl->document->findBody(was);
+                       body != nullptr && body->visible) {
+                m_impl->showBody(*body, true);
+            }
+        }
+        if (m_impl->previewGhost) {
+            m_impl->restyle(m_impl->previewReplaces);
+        } else if (m_impl->previewReplaces.isValid()) {
+            m_impl->hideBody(m_impl->previewReplaces);
+        }
+    }
+    if (!result.isNull()) {
+        m_impl->featureResult = new AIS_Shape(kernel::occt::unwrap(result));
+        m_impl->styleBody(m_impl->featureResult);
+        // Selection mode -1: displayed, but nothing of it can be picked.
+        m_impl->context->Display(m_impl->featureResult, m_impl->displayMode(), -1, false);
+    }
+    m_impl->redraw();
+    m_impl->reportSelection();
 }
 
 void ViewportWidget::fitAll() {
@@ -1568,6 +1770,76 @@ std::optional<OriginItem> ViewportWidget::pickPlaneAt(const QPoint& position) {
     return static_cast<OriginItem>(plane);
 }
 
+void ViewportWidget::setProfileSketches(const std::vector<document::ObjectId>& sketches) {
+    if (!m_impl->canRender() || sketches == m_impl->profileSketches) {
+        return;
+    }
+    const bool was = m_impl->profilePicking();
+    m_impl->profileSketches = sketches;
+    m_impl->context->ClearDetected(false);
+    if (sketches.empty()) {
+        m_impl->hideProfiles();
+        m_impl->pickedProfiles.clear();
+        m_impl->hoveredProfile = -1;
+        m_impl->pressedProfile = -1;
+        unsetCursor();
+    } else {
+        // Nothing is selected while profiles are chosen: a click means a profile.
+        m_impl->context->ClearSelected(false);
+        m_impl->showProfiles();
+    }
+    if (was != m_impl->profilePicking()) {
+        m_impl->applyFilters();
+    }
+    m_impl->redraw();
+    m_impl->reportSelection();
+}
+
+bool ViewportWidget::isProfilePicking() const {
+    return m_impl->profilePicking();
+}
+
+void ViewportWidget::setPickedProfiles(const std::vector<Profile>& profiles) {
+    m_impl->pickedProfiles.clear();
+    for (const Profile& profile : profiles) {
+        const bool exists = std::any_of(
+            m_impl->profilePatches.begin(), m_impl->profilePatches.end(),
+            [&profile](const Impl::ProfilePatch& patch) { return patch.profile == profile; });
+        if (exists && !m_impl->isPicked(profile)) {
+            m_impl->pickedProfiles.push_back(profile);
+        }
+    }
+    if (!m_impl->context.IsNull()) {
+        m_impl->restyleProfiles();
+    }
+}
+
+std::vector<Profile> ViewportWidget::pickedProfiles() const {
+    return m_impl->pickedProfiles;
+}
+
+std::vector<Profile> ViewportWidget::pickableProfiles() const {
+    std::vector<Profile> profiles;
+    for (const Impl::ProfilePatch& patch : m_impl->profilePatches) {
+        profiles.push_back(patch.profile);
+    }
+    return profiles;
+}
+
+std::optional<Profile> ViewportWidget::profileAt(const QPoint& position) {
+    if (!m_impl->profilePicking() || !m_impl->canRender() || m_impl->view->Window().IsNull()) {
+        return std::nullopt;
+    }
+    const Graphic3d_Vec2i pixel = m_impl->toFramebufferPixels(position);
+    m_impl->context->MoveTo(pixel.x(), pixel.y(), m_impl->view, false);
+    update();
+    const int index = m_impl->detectedProfile();
+    if (index < 0) {
+        return std::nullopt;
+    }
+    return m_impl->profilePatches[static_cast<std::size_t>(index)].profile;
+}
+
 void ViewportWidget::setSelectionFilter(SelectionFilter filter) {
     if (filter == m_impl->filter) {
         return;
@@ -1852,6 +2124,23 @@ void ViewportWidget::paintGL() {
             Qt::QueuedConnection);
     }
 
+    if (const int profile = m_impl->detectedProfile(); profile != m_impl->hoveredProfile) {
+        m_impl->hoveredProfile = profile;
+        QMetaObject::invokeMethod(
+            this,
+            [this, profile] {
+                if (m_impl->profilePicking() && m_impl->hoveredProfile == profile) {
+                    if (profile >= 0) {
+                        setCursor(Qt::PointingHandCursor);
+                    } else {
+                        unsetCursor();
+                    }
+                    m_impl->restyleProfiles();
+                }
+            },
+            Qt::QueuedConnection);
+    }
+
     // And restore what Qt expects, or it draws text and other textures corrupted.
     gl->glPixelStorei(GL_PACK_ALIGNMENT, 4);
     gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -1882,6 +2171,12 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
             m_impl->pressedPlane = static_cast<int>(*plane);
             return;
         }
+    }
+    if (m_impl->profilePicking() && event->button() == Qt::LeftButton) {
+        // Profiles are being chosen. A press elsewhere selects nothing either.
+        const auto profile = profileAt(event->position().toPoint());
+        m_impl->pressedProfile = profile.has_value() ? m_impl->detectedProfile() : -1;
+        return;
     }
     if (m_impl->sketching() && event->button() == Qt::LeftButton) {
         if (m_impl->editor->tool() == SketchTool::Project) {
@@ -1947,6 +2242,23 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
             emit planePicked(*plane);
         }
         return;
+    } else if (m_impl->profilePicking() && event->button() == Qt::LeftButton) {
+        // Picked, or let go, if the button comes up on the region it went down on.
+        const int pressed = m_impl->pressedProfile;
+        m_impl->pressedProfile = -1;
+        const auto profile = profileAt(event->position().toPoint());
+        if (pressed >= 0 && profile.has_value() && m_impl->detectedProfile() == pressed) {
+            auto& picked = m_impl->pickedProfiles;
+            const auto found = std::find(picked.begin(), picked.end(), *profile);
+            if (found != picked.end()) {
+                picked.erase(found);
+            } else {
+                picked.push_back(*profile);
+            }
+            m_impl->restyleProfiles();
+            emit profilesPicked();
+        }
+        return;
     } else if (m_impl->sketching() && event->button() == Qt::LeftButton) {
         m_impl->editor->mouseRelease(event->position(), event->modifiers());
         return;
@@ -1987,8 +2299,8 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
         // OCCT never heard of the left button going down, and is not to act on it.
         buttons.setFlag(Qt::LeftButton, false);
     }
-    if (m_impl->pressedPlane >= 0) {
-        // Nor of a press on a plane that is being chosen.
+    if (m_impl->pressedPlane >= 0 || m_impl->profilePicking()) {
+        // Nor of a press on a plane or a profile that is being chosen.
         buttons.setFlag(Qt::LeftButton, false);
     }
     if (m_impl->UpdateMousePosition(m_impl->toFramebufferPixels(event->position()),
