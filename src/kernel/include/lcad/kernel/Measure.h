@@ -56,4 +56,23 @@ struct TopologyCount {
 /// shape is not valid.
 [[nodiscard]] bool isValid(const Shape& shape);
 
+/// How two shapes stand to each other.
+struct Measurement {
+    /// The shortest distance between them, in millimeters. Zero where they touch or overlap.
+    double distance = 0.0;
+    /// Where on each the shortest distance is.
+    Point from;
+    Point to;
+    /// For two flat faces, two straight edges, or one of each: the angle between them, in
+    /// degrees, from 0 (parallel) to 90 (square).
+    std::optional<double> angle;
+};
+
+/// Measures between two shapes: vertices, edges, faces, or whole bodies. Throws
+/// std::invalid_argument for a null shape.
+[[nodiscard]] Measurement measureBetween(const Shape& first, const Shape& second);
+
+/// The radius of a circular edge, or of a cylindrical or spherical face. Nothing for others.
+[[nodiscard]] std::optional<double> radiusOf(const Shape& part);
+
 } // namespace lcad::kernel

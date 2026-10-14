@@ -8,12 +8,14 @@
 #include <lcad/app/Commands.h>
 #include <lcad/app/FeaturePanel.h>
 #include <lcad/app/Icons.h>
+#include <lcad/app/MeasurePanel.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/ShortcutsDialog.h>
 #include <lcad/app/SketchPanel.h>
 #include <lcad/app/Theme.h>
 #include <lcad/app/TimelinePanel.h>
 #include <lcad/document/File.h>
+#include <lcad/document/SketchShapes.h>
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
@@ -154,6 +156,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport, &viewport::ViewportWidget::selectionChanged, this, [this] {
         if (m_featurePanel != nullptr && !m_settingPicks) {
             takeFeaturePicks();
+        }
+        if (m_measurePanel != nullptr && !m_settingPicks) {
+            takeMeasurePick();
         }
         if (m_planePanel != nullptr) {
             // A new sketch is waiting for its plane: a flat face that is clicked is it.
@@ -434,7 +439,8 @@ void MainWindow::defineCommands() {
         c.shortcuts = {QKeySequence(Qt::Key_Escape)};
         c.aliases = {tr("escape"), tr("abort")};
         c.run = [this](bool) {
-            if (m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr) {
+            if (m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
+                m_measurePanel != nullptr) {
                 cancelCommand();
             } else if (isSketching()) {
                 m_viewport->sketchEditor()->cancel();
@@ -442,6 +448,7 @@ void MainWindow::defineCommands() {
         };
         c.isEnabled = [this] {
             return m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
+                   m_measurePanel != nullptr ||
                    (isSketching() && m_viewport->sketchEditor()->canCancel());
         };
         m_commands->add(std::move(c));
@@ -754,6 +761,16 @@ void MainWindow::defineCommands() {
         c.aliases = {tr("frame selection"), tr("zoom selected")};
         c.run = [this](bool) { m_viewport->fitSelection(); };
         c.isEnabled = [this] { return !isSketching() && !m_viewport->selection().empty(); };
+        m_commands->add(std::move(c));
+    }
+    {
+        Command c = make("inspect.measure", tr("&Measure"), tr("Inspect"),
+                         tr("Measure distances and angles between things picked in the 3D view"));
+        c.iconName = QStringLiteral("dimension");
+        c.shortcuts = {QKeySequence(Qt::Key_M)};
+        c.aliases = {tr("distance"), tr("ruler"), tr("angle"), tr("inspect"), tr("radius")};
+        c.run = [this](bool) { startMeasure(); };
+        c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
     }
     const std::tuple<StandardView, QString, const char*> views[] = {
@@ -1320,6 +1337,7 @@ void MainWindow::createTopBar() {
 
     QMenu* view = m_menuBar->addMenu(tr("&View"));
     view->addActions({action("view.fit"), action("view.fitSelection")});
+    view->addAction(action("inspect.measure"));
     view->addSeparator();
     for (const char* id : {"view.home", "view.front", "view.back", "view.left", "view.right",
                            "view.top", "view.bottom"}) {
@@ -1452,7 +1470,7 @@ void MainWindow::createToolbar() {
     toolbar->addSeparator();
 
     m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("View"), toolbar)));
-    for (const char* id : {"view.fit", "view.fitSelection", "view.grid"}) {
+    for (const char* id : {"inspect.measure", "view.fit", "view.fitSelection", "view.grid"}) {
         toolbar->addAction(action(id));
         auto* button = qobject_cast<QToolButton*>(toolbar->widgetForAction(action(id)));
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -2110,7 +2128,8 @@ void MainWindow::updateSelectionState() {
         if (m_panel == nullptr && m_planePanel == nullptr) {
             m_commandLabel->setText(m_viewport->sketchEditor()->hint());
         }
-    } else if (m_panel == nullptr && m_planePanel == nullptr && m_featurePanel == nullptr) {
+    } else if (m_panel == nullptr && m_planePanel == nullptr && m_featurePanel == nullptr &&
+               m_measurePanel == nullptr) {
         // A sketch selected in the browser while it is hidden is not in the viewport's
         // selection, and is what is selected all the same.
         std::vector<SelectedItem> parts = m_viewport->selection();
@@ -2329,6 +2348,10 @@ void MainWindow::showInspector() {
             edited != nullptr ? tr("Edit %1").arg(QString::fromStdString(edited->name)) : name;
         m_inspectorDock->setWindowTitle(title);
         m_commandLabel->setText(title);
+    } else if (m_measurePanel != nullptr) {
+        stack->setCurrentWidget(m_measurePanel);
+        m_inspectorDock->setWindowTitle(tr("Measure"));
+        m_commandLabel->setText(tr("Measure"));
     } else if (m_planePanel != nullptr) {
         stack->setCurrentWidget(m_planePanel);
         m_inspectorDock->setWindowTitle(tr("New Sketch"));
@@ -2382,6 +2405,9 @@ void MainWindow::acceptCommand() {
 void MainWindow::cancelCommand() {
     if (m_featurePanel != nullptr) {
         closeFeaturePanel();
+    }
+    if (m_measurePanel != nullptr) {
+        closeMeasure();
     }
     if (m_panel == nullptr && m_planePanel == nullptr) {
         return;
@@ -2892,6 +2918,169 @@ void MainWindow::showTimelineMenu(document::ObjectId item, const QPoint& where) 
     menu->addSeparator();
     menu->addAction(tr("&Delete"), this, [this, item] { deleteTimelineItem(item); });
     menu->popup(where);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Measuring
+
+void MainWindow::startMeasure() {
+    if (isSketching()) {
+        return;
+    }
+    // What is selected already is the first thing measured, and the second if there are two.
+    std::vector<SelectedItem> picked = m_viewport->selection();
+    cancelCommand();
+    m_measurePanel = new MeasurePanel(m_inspectorStack);
+    m_measurePanel->setObjectName(QStringLiteral("measurePanel"));
+    m_inspectorStack->addWidget(m_measurePanel);
+    connect(m_measurePanel, &MeasurePanel::closed, this, &MainWindow::cancelCommand);
+    m_filterBeforeMeasure = m_viewport->selectionFilter();
+    m_viewport->setSelectionFilter(SelectionFilter::FacesEdgesVertices);
+    if (picked.size() > 2) {
+        picked.erase(picked.begin(), picked.end() - 2);
+    }
+    m_measured = picked;
+    showInspector();
+    m_inspectorDock->show();
+    m_settingPicks = true;
+    m_viewport->setSelection(m_measured);
+    m_settingPicks = false;
+    showMeasurement();
+    m_commands->refresh();
+}
+
+void MainWindow::closeMeasure() {
+    if (m_measurePanel == nullptr) {
+        return;
+    }
+    m_viewport->setPreview(kernel::Shape());
+    if (m_filterBeforeMeasure.has_value()) {
+        m_viewport->setSelectionFilter(*m_filterBeforeMeasure);
+        m_filterBeforeMeasure.reset();
+    }
+    m_measured.clear();
+    m_inspectorStack->removeWidget(m_measurePanel);
+    m_measurePanel->disconnect(this);
+    m_measurePanel->deleteLater();
+    m_measurePanel = nullptr;
+    showInspector();
+    updateSelectionState();
+}
+
+void MainWindow::takeMeasurePick() {
+    const std::vector<SelectedItem> now = m_viewport->selection();
+    if (now.size() >= 2) {
+        // Picked together, with Shift: the last two.
+        m_measured.assign(now.end() - 2, now.end());
+    } else if (now.size() == 1) {
+        // A click picks the next thing: the second, or after two, the first again.
+        if (m_measured.size() == 1 && !(m_measured.front() == now.front())) {
+            m_measured.push_back(now.front());
+        } else {
+            m_measured = now;
+        }
+    } else {
+        m_measured.clear();
+    }
+    m_settingPicks = true;
+    m_viewport->setSelection(m_measured);
+    m_settingPicks = false;
+    showMeasurement();
+}
+
+kernel::Shape MainWindow::shapeOf(const SelectedItem& item) const {
+    if (item.kind == SelectedItem::Kind::Sketch) {
+        const document::SketchItem* sketch = document()->findSketch(item.body);
+        return sketch != nullptr ? document::sketchShape(*sketch, document::SketchPart::Ordinary)
+                                 : kernel::Shape();
+    }
+    const document::Body* body = document()->findBody(item.body);
+    if (body == nullptr || body->shape.isNull()) {
+        return {};
+    }
+    try {
+        switch (item.kind) {
+        case SelectedItem::Kind::Face:
+            return kernel::subShape(body->shape, kernel::SubShapeKind::Face, item.index);
+        case SelectedItem::Kind::Edge:
+            return kernel::subShape(body->shape, kernel::SubShapeKind::Edge, item.index);
+        case SelectedItem::Kind::Vertex:
+            return kernel::subShape(body->shape, kernel::SubShapeKind::Vertex, item.index);
+        case SelectedItem::Kind::Body:
+        case SelectedItem::Kind::Sketch:
+            break;
+        }
+    } catch (const std::out_of_range&) {
+        return {};
+    }
+    return body->shape;
+}
+
+void MainWindow::showMeasurement() {
+    if (m_measurePanel == nullptr) {
+        return;
+    }
+    m_viewport->setPreview(kernel::Shape());
+    const auto millimeters = [](double value) { return tr("%1 mm").arg(formatNumber(value)); };
+    QList<QPair<QString, QString>> rows;
+    if (m_measured.empty()) {
+        m_measurePanel->show(tr("Nothing picked yet"), rows);
+        return;
+    }
+    const kernel::Shape first = shapeOf(m_measured.front());
+    if (m_measured.size() == 1 || first.isNull()) {
+        // One thing: what it is, and its own measures.
+        if (const auto radius = kernel::radiusOf(first)) {
+            rows.append({tr("Radius"), millimeters(*radius)});
+            rows.append({tr("Diameter"), millimeters(2.0 * *radius)});
+        }
+        switch (m_measured.front().kind) {
+        case SelectedItem::Kind::Edge:
+            rows.append({tr("Length"), millimeters(kernel::length(first))});
+            break;
+        case SelectedItem::Kind::Face:
+            rows.append({tr("Area"), tr("%1 mm²").arg(formatNumber(kernel::surfaceArea(first)))});
+            break;
+        case SelectedItem::Kind::Vertex:
+            if (const auto box = kernel::boundingBox(first)) {
+                rows.append(
+                    {tr("Position"), tr("%1, %2, %3 mm")
+                                         .arg(formatNumber(box->min.x), formatNumber(box->min.y),
+                                              formatNumber(box->min.z))});
+            }
+            break;
+        case SelectedItem::Kind::Body:
+            rows.append({tr("Volume"), tr("%1 mm³").arg(formatNumber(kernel::volume(first)))});
+            break;
+        case SelectedItem::Kind::Sketch:
+            rows.append({tr("Length"), millimeters(kernel::length(first))});
+            break;
+        }
+        m_measurePanel->show(describe(m_measured.front()).section(QStringLiteral(" · "), 0, 0),
+                             rows);
+        return;
+    }
+    const kernel::Shape second = shapeOf(m_measured.back());
+    if (second.isNull()) {
+        m_measurePanel->show(tr("That cannot be measured"), rows);
+        return;
+    }
+    const kernel::Measurement between = kernel::measureBetween(first, second);
+    rows.append({tr("Distance"), millimeters(between.distance)});
+    rows.append({tr("Along X"), millimeters(between.to.x - between.from.x)});
+    rows.append({tr("Along Y"), millimeters(between.to.y - between.from.y)});
+    rows.append({tr("Along Z"), millimeters(between.to.z - between.from.z)});
+    if (between.angle.has_value()) {
+        rows.append({tr("Angle"), tr("%1°").arg(formatNumber(*between.angle))});
+    }
+    m_measurePanel->show(tr("%1 to %2")
+                             .arg(describe(m_measured.front()).section(QStringLiteral(" · "), 0, 0),
+                                  describe(m_measured.back()).section(QStringLiteral(" · "), 0, 0)),
+                         rows);
+    // The shortest distance, drawn between where it is.
+    if (between.distance > 1e-9) {
+        m_viewport->setPreview(kernel::makeSegment(between.from, between.to));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

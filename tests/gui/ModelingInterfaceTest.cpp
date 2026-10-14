@@ -4,13 +4,16 @@
 #include <lcad/app/Commands.h>
 #include <lcad/app/FeaturePanel.h>
 #include <lcad/app/MainWindow.h>
+#include <lcad/app/MeasurePanel.h>
 #include <lcad/app/Theme.h>
 #include <lcad/app/TimelinePanel.h>
 #include <lcad/document/File.h>
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
+#include <lcad/kernel/Primitives.h>
 #include <lcad/kernel/SubShapes.h>
+#include <lcad/kernel/Transform.h>
 #include <lcad/sketch/Edit.h>
 #include <lcad/viewport/SketchEditor.h>
 #include <lcad/viewport/ViewportWidget.h>
@@ -98,6 +101,7 @@ private slots:
     void shellAndRevolveWork();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
+    void measureGivesDistancesAndAngles();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -863,6 +867,73 @@ void ModelingInterfaceTest::patternsAndMirrorsRepeatFeatures() {
     QTest::mouseClick(okButton(mirror), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
     QVERIFY(near(volumeOf(window, plate), 2.0 * before));
+}
+
+void ModelingInterfaceTest::measureGivesDistancesAndAngles() {
+    MainWindow window;
+    show(window);
+    // A box 50 by 30 by 20, and a rod of radius 5 standing 30 beyond it in X.
+    const ObjectId box = window.document()->addBody("Box", lcad::kernel::makeBox(50.0, 30.0, 20.0));
+    const ObjectId rod = window.document()->addBody(
+        "Rod", lcad::kernel::translated(lcad::kernel::makeCylinder(5.0, 20.0), 85.0, 15.0, 0.0));
+    render(window);
+    const auto faceWhere = [&window](ObjectId body, auto test) {
+        const lcad::kernel::Shape& shape = window.document()->findBody(body)->shape;
+        for (int i = 0; i < lcad::kernel::subShapeCount(shape, lcad::kernel::SubShapeKind::Face);
+             ++i) {
+            const auto bounds = lcad::kernel::boundingBox(
+                lcad::kernel::subShape(shape, lcad::kernel::SubShapeKind::Face, i));
+            if (test(*bounds)) {
+                return SelectedItem{body, SelectedItem::Kind::Face, i};
+            }
+        }
+        return SelectedItem{};
+    };
+    const SelectedItem left = faceWhere(box, [](const auto& b) { return b.max.x < 1e-9; });
+    const SelectedItem right = faceWhere(box, [](const auto& b) { return b.min.x > 50.0 - 1e-9; });
+    const SelectedItem bottom = faceWhere(box, [](const auto& b) { return b.max.z < 1e-9; });
+    const SelectedItem round =
+        faceWhere(rod, [](const auto& b) { return b.max.z - b.min.z > 19.0; });
+
+    QCOMPARE(action(window, "inspect.measure")->shortcut(), QKeySequence(Qt::Key_M));
+    QVERIFY(trigger(window, "inspect.measure"));
+    lcad::app::MeasurePanel* measure = window.measurePanel();
+    QVERIFY(measure != nullptr);
+    QVERIFY(measure->isVisible());
+    QCOMPARE(window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"))->windowTitle(),
+             QStringLiteral("Measure"));
+
+    // One face: its area. Then the other: 50 apart, parallel.
+    window.viewport()->setSelection({left});
+    QVERIFY(measure->rows().contains(QStringLiteral("Area: 600 mm²")));
+    window.viewport()->setSelection({right});
+    QCOMPARE(window.viewport()->selection().size(), std::size_t{2});
+    QVERIFY2(measure->rows().contains(QStringLiteral("Distance: 50 mm")),
+             qPrintable(measure->rows().join(QStringLiteral(" | "))));
+    QVERIFY(measure->rows().contains(QStringLiteral("Along X: 50 mm")));
+    QVERIFY(measure->rows().contains(QStringLiteral("Angle: 0°")));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-measure");
+
+    // A third pick starts again; the bottom then meets the side square.
+    window.viewport()->setSelection({bottom});
+    QCOMPARE(window.viewport()->selection().size(), std::size_t{1});
+    window.viewport()->setSelection({left});
+    QVERIFY(measure->rows().contains(QStringLiteral("Distance: 0 mm")));
+    QVERIFY(measure->rows().contains(QStringLiteral("Angle: 90°")));
+
+    // The rod's round face: its radius, and how far it is from the box's side.
+    window.viewport()->setSelection({round});
+    QVERIFY(measure->rows().contains(QStringLiteral("Radius: 5 mm")));
+    QVERIFY(measure->rows().contains(QStringLiteral("Diameter: 10 mm")));
+    window.viewport()->setSelection({right});
+    QVERIFY(measure->rows().contains(QStringLiteral("Distance: 30 mm")));
+
+    // Esc closes it, and the selection filter is what it was.
+    QVERIFY(trigger(window, "edit.cancel"));
+    QTRY_VERIFY(window.measurePanel() == nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(),
+             lcad::viewport::SelectionFilter::FacesEdgesVertices);
 }
 
 QTEST_MAIN(ModelingInterfaceTest)

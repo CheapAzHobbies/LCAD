@@ -33,6 +33,7 @@ namespace lcad::app {
 class BrowserPanel;
 class CommandRegistry;
 class FeaturePanel;
+class MeasurePanel;
 class TimelinePanel;
 class CommandSearch;
 class PropertiesPanel;
@@ -136,6 +137,14 @@ public:
     /// Deletes an entry of the timeline: a feature, a sketch, or a body put in as it is.
     void deleteTimelineItem(document::ObjectId item);
 
+    // Measuring
+
+    /// Opens the Measure panel. Each click in the 3D view picks the next thing to measure;
+    /// with two, the panel shows the distance between them and, where it makes sense, the
+    /// angle, and the 3D view draws the distance. Cancels a command in progress.
+    void startMeasure();
+    [[nodiscard]] MeasurePanel* measurePanel() const { return m_measurePanel; }
+
     // Sketching
 
     /// Starts a new sketch: on the flat face that is selected, or else by asking for a plane in
@@ -226,6 +235,11 @@ private:
     /// The sketches whose profiles a pull or a revolve can be picked from.
     [[nodiscard]] std::vector<document::ObjectId> profileSketches(document::ObjectId also) const;
     void onTimelineSelection(document::ObjectId item);
+    void closeMeasure();
+    void takeMeasurePick();
+    void showMeasurement();
+    /// The shape a selection entry stands for, or a null shape.
+    [[nodiscard]] kernel::Shape shapeOf(const viewport::SelectedItem& item) const;
     void showTimelineMenu(document::ObjectId item, const QPoint& where);
 
     [[nodiscard]] std::vector<document::ObjectId> selectedBodies() const;
@@ -261,6 +275,10 @@ private:
     SketchPanel* m_sketchPanel = nullptr;
     SketchPlanePanel* m_planePanel = nullptr;
     FeaturePanel* m_featurePanel = nullptr;
+    MeasurePanel* m_measurePanel = nullptr;
+    /// What is being measured: the first and the second thing picked.
+    std::vector<viewport::SelectedItem> m_measured;
+    std::optional<viewport::SelectionFilter> m_filterBeforeMeasure;
     TimelinePanel* m_timeline = nullptr;
     document::ObjectId m_editedFeature;
     /// The selection filter to go back to when a fillet, chamfer, or shell is done.

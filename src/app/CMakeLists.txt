@@ -9,6 +9,7 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/FeaturePanel.h
     include/lcad/app/Icons.h
     include/lcad/app/MainWindow.h
+    include/lcad/app/MeasurePanel.h
     include/lcad/app/PrimitivePanel.h
     include/lcad/app/PropertiesPanel.h
     include/lcad/app/ShortcutsDialog.h
@@ -22,6 +23,7 @@ qt_add_library(lcad_app STATIC
     src/FeaturePanel.cpp
     src/Icons.cpp
     src/MainWindow.cpp
+    src/MeasurePanel.cpp
     src/PrimitivePanel.cpp
     src/PropertiesPanel.cpp
     src/ShortcutsDialog.cpp
