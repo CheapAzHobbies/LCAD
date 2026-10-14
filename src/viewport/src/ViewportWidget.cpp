@@ -549,6 +549,8 @@ public:
         viewer->SetRectangularGridGraphicValues(500.0, 500.0, 0.0);
         viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
         viewer->Grid()->SetColors(toOcct(colors.grid), toOcct(colors.gridMajor));
+        // OCCT would otherwise leave a star on the grid point nearest a click in empty space.
+        viewer->SetGridEcho(false);
     }
 
     Handle(AIS_Shape) makeOriginObject(OriginItem item) const {
