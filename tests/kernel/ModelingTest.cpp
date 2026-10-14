@@ -338,6 +338,15 @@ TEST_CASE("Shell hollows a body out", "[kernel][modeling]") {
     }
     CHECK(inner == 5);
     CHECK_THROWS_AS(shell(body, {findFace(body, "7/end/1")}, 20.0, "8"), Error);
+    // A quarter ring 10 wide and 6 high, opened at one end, cannot have walls 20 thick. Some
+    // versions of OCCT return a solid for it anyway, which is refused.
+    const NamedShape ring =
+        revolve(planeXZ(), {Region{rectangle(planeXZ(), 20.0, 0.0, 10.0, 6.0), {}}}, 0.0, -10.0,
+                0.0, 30.0, pi / 2.0, "9");
+    const int opening = findFace(ring, "9/start/1");
+    REQUIRE(opening >= 0);
+    CHECK_NOTHROW(shell(ring, {opening}, 1.0, "8"));
+    CHECK_THROWS_AS(shell(ring, {opening}, 20.0, "8"), Error);
     CHECK_THROWS_AS(shell(body, {99}, 2.0, "8"), std::out_of_range);
     CHECK_THROWS_AS(shell(body, {}, 0.0, "8"), std::invalid_argument);
 }

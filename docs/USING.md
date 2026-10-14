@@ -69,6 +69,17 @@ Under **Modify**: **Fillet** (F) rounds edges, **Chamfer** bevels them, **Shell*
 out, open at the faces you click. Click the edges or faces in the 3D view, before or after
 starting the command; Shift-click picks more.
 
+## Construction planes
+
+**Offset Plane** (under **Create**) adds a plane to sketch on: pick an origin plane in the panel,
+or click a flat face in the 3D view, and type how far from it. Planes are listed under
+**Construction** in the browser (uncheck to hide, double-click to move), and drawn in amber.
+To sketch on one, select it in the browser and click **New Sketch**, or click **New Sketch** and
+then the plane in the 3D view.
+
+A sketch drawn on a construction plane, or started on a flat face of a body, follows it: move
+the plane or change the body, and the sketch and what was made from it move too.
+
 ## The timeline
 
 The strip under the 3D view lists the sketches and features in the order they are applied.
@@ -314,7 +325,7 @@ These are the shortcuts LCAD starts with.
 | Ctrl + Q | Quit |
 
 Not there yet: autosave and crash recovery, inches as a display unit, import or export of other
-formats, holes, construction planes, a parameter table, and pulling up to a face or with a taper.
+formats, holes, construction axes, a parameter table, and pulling up to a face or with a taper.
 The origin guides that are shown are not saved with the document.
 
 ## If something goes wrong

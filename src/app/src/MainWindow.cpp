@@ -249,6 +249,20 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(m_browser, &BrowserPanel::sketchActivated, this,
             [this](document::ObjectId sketch) { editSketch(sketch); });
+    connect(m_browser, &BrowserPanel::planeActivated, this,
+            [this](document::ObjectId plane) { editFeature(plane); });
+    // A new sketch on a construction plane, clicked in the 3D view. Queued, as for the origin
+    // planes.
+    connect(
+        m_viewport, &viewport::ViewportWidget::constructionPlanePicked, this,
+        [this](document::ObjectId plane) {
+            if (m_planePanel != nullptr) {
+                if (const auto state = document()->planeState(plane)) {
+                    createSketch(state->plane, plane);
+                }
+            }
+        },
+        Qt::QueuedConnection);
     connect(m_viewport->sketchEditor(), &viewport::SketchEditor::changed, this,
             [this] { updateSelectionState(); });
     connect(m_viewport->sketchEditor(), &viewport::SketchEditor::message, this,
@@ -608,6 +622,16 @@ void MainWindow::defineCommands() {
         c.aliases = {tr("pattern"), tr("polar array"), tr("radial pattern"), tr("repeat")};
         c.run = [this](bool) { startFeature(FeatureKind::CircularPattern); };
         c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("construct.offsetPlane", tr("&Offset Plane"), create,
+                 tr("Add a construction plane to sketch on: an origin plane or a flat face, "
+                    "moved along its normal"));
+        c.iconName = QStringLiteral("plane");
+        c.aliases = {tr("construction plane"), tr("work plane"), tr("datum plane"),
+                     tr("reference plane"), tr("plane")};
+        c.run = [this](bool) { startFeature(FeatureKind::Plane); };
+        c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
 
         c = make("solid.fillet", tr("&Fillet"), modify, tr("Round edges of a body"));
@@ -1285,6 +1309,8 @@ void MainWindow::createTopBar() {
     pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
     create->addAction(action("solid.mirror"));
     create->addSeparator();
+    create->addAction(action("construct.offsetPlane"));
+    create->addSeparator();
     for (const char* id :
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
         create->addAction(action(id));
@@ -1932,6 +1958,7 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     if (replaced >= 0) {
         m_viewport->setDocument(nullptr);
         m_browser->setDocument(nullptr, {});
+        m_timeline->setDocument(nullptr);
         m_sessions.erase(m_sessions.begin() + replaced);
         {
             const QSignalBlocker blocker(m_tabs);
@@ -2089,6 +2116,32 @@ std::optional<kernel::Plane> MainWindow::selectedFacePlane() const {
     } catch (const std::out_of_range&) {
         return std::nullopt;
     }
+}
+
+std::optional<std::pair<document::ObjectId, std::string>> MainWindow::selectedFaceName() const {
+    const std::vector<SelectedItem> picked = m_viewport->selection();
+    if (picked.size() != 1 || picked.front().kind != SelectedItem::Kind::Face ||
+        !selectedFacePlane().has_value()) {
+        return std::nullopt;
+    }
+    const kernel::NamedShape named = document()->namedBody(picked.front().body);
+    const auto index = static_cast<std::size_t>(picked.front().index);
+    if (index >= named.faceNames.size()) {
+        return std::nullopt;
+    }
+    return std::pair{picked.front().body, named.faceNames[index]};
+}
+
+document::ObjectId MainWindow::selectedConstructionPlane() const {
+    for (const document::ObjectId id : m_browser->selectedPlanes()) {
+        return id;
+    }
+    const document::Feature* feature = document()->findFeature(m_timeline->selectedItem());
+    if (feature != nullptr && feature->kind == document::FeatureKind::Plane &&
+        m_timeline->isAncestorOf(QApplication::focusWidget())) {
+        return feature->id;
+    }
+    return {};
 }
 
 // Shows or hides bodies, and the sketches that are selected with them, as one undo step.
@@ -2531,10 +2584,24 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         seed.spacing2 = 20.0;
         seed.angle = 360.0;
     }
+    if (kind == document::FeatureKind::Plane) {
+        // Against the flat face that is selected, or else the XY plane.
+        seed.reference = "XY";
+        seed.distance = 20.0;
+        if (const auto face = selectedFaceName()) {
+            seed.body = face->first;
+            seed.reference = face->second;
+        }
+    }
     cancelCommand();
     m_editedFeature = {};
     openFeaturePanel(kind);
-    if (copiesFeatures(kind)) {
+    if (kind == document::FeatureKind::Plane) {
+        m_featurePanel->setFeature(seed);
+        m_settingPicks = true;
+        m_viewport->clearSelection();
+        m_settingPicks = false;
+    } else if (copiesFeatures(kind)) {
         m_featurePanel->setFeature(seed);
         m_settingPicks = true;
         m_viewport->clearSelection();
@@ -2590,7 +2657,7 @@ bool MainWindow::editFeature(document::ObjectId id) {
             }
         }
         m_viewport->setPickedProfiles(profiles);
-    } else if (copiesFeatures(feature.kind)) {
+    } else if (copiesFeatures(feature.kind) || feature.kind == document::FeatureKind::Plane) {
         m_viewport->clearSelection();
     } else {
         // The edges or faces it works on, as far as the body still has them.
@@ -2631,7 +2698,8 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         // mirror is in; a pattern takes its direction or axis from either.
         m_filterBeforeFeature = m_viewport->selectionFilter();
         SelectionFilter filter = SelectionFilter::Edges;
-        if (kind == document::FeatureKind::Shell || kind == document::FeatureKind::Mirror) {
+        if (kind == document::FeatureKind::Shell || kind == document::FeatureKind::Mirror ||
+            kind == document::FeatureKind::Plane) {
             filter = SelectionFilter::Faces;
         } else if (copiesFeatures(kind)) {
             filter = SelectionFilter::FacesEdgesVertices;
@@ -2699,10 +2767,11 @@ void MainWindow::takeFeaturePicks() {
         m_featurePanel->setProfiles(sketch, outlines);
         return;
     }
-    if (copiesFeatures(kind)) {
+    if (copiesFeatures(kind) || kind == document::FeatureKind::Plane) {
         // The edge or face that gives the plane, the direction, or the axis.
         for (const SelectedItem& item : m_viewport->selection()) {
-            if (item.kind != SelectedItem::Kind::Edge && item.kind != SelectedItem::Kind::Face) {
+            if (item.kind != SelectedItem::Kind::Face &&
+                (item.kind != SelectedItem::Kind::Edge || kind == document::FeatureKind::Plane)) {
                 continue;
             }
             const kernel::NamedShape named = document()->namedBody(item.body);
@@ -2770,6 +2839,21 @@ void MainWindow::updateFeaturePreview() {
         return;
     }
     document::Feature feature = m_featurePanel->feature();
+    if (feature.kind == document::FeatureKind::Plane) {
+        const document::FeatureTrial trial = document()->tryFeature(feature);
+        m_featurePanel->setError(QString::fromStdString(trial.error));
+        m_viewport->setFeaturePreview({}, kernel::Shape());
+        kernel::Shape square;
+        if (trial.plane.has_value()) {
+            try {
+                square = document::planeShape(*trial.plane);
+            } catch (const std::exception&) {
+                // Nothing to show; the panel says what is wrong, if anything.
+            }
+        }
+        m_viewport->setPreview(square);
+        return;
+    }
     if (usesProfiles(feature.kind) && !m_featurePanel->operationChosen() &&
         feature.body.isValid()) {
         // Until the user chooses, LCAD guesses: a solid that lies mostly inside the body is
@@ -3102,11 +3186,22 @@ void MainWindow::startSketch() {
     if (isSketching()) {
         return;
     }
-    // A flat face that is selected is where the sketch goes.
+    // A construction plane that is selected, or else a flat face that is, is where the sketch
+    // goes, and what it follows.
+    const document::ObjectId construction = selectedConstructionPlane();
     const std::optional<kernel::Plane> face = selectedFacePlane();
+    const auto faceName = selectedFaceName();
     cancelCommand();
+    if (const auto state = document()->planeState(construction)) {
+        createSketch(state->plane, construction);
+        return;
+    }
     if (face.has_value()) {
-        createSketch(*face);
+        if (faceName.has_value()) {
+            createSketch(*face, faceName->first, faceName->second);
+        } else {
+            createSketch(*face);
+        }
         return;
     }
     m_planePanel = new SketchPlanePanel(m_inspectorStack);
@@ -3127,13 +3222,15 @@ void MainWindow::startSketch() {
         tr("Click a plane in the 3D view, or a flat face of a body, to sketch on it."), 9000);
 }
 
-document::ObjectId MainWindow::createSketch(const kernel::Plane& plane) {
+document::ObjectId MainWindow::createSketch(const kernel::Plane& plane,
+                                            document::ObjectId attachedTo,
+                                            const std::string& attachedFace) {
     if (isSketching()) {
         finishSketch();
     }
     cancelCommand();
-    const document::ObjectId id =
-        document()->addSketch(document()->uniqueSketchName("Sketch"), plane);
+    const document::ObjectId id = document()->addSketch(document()->uniqueSketchName("Sketch"),
+                                                        plane, attachedTo, attachedFace);
     editSketch(id);
     return id;
 }

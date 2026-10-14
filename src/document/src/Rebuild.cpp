@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <optional>
 
 namespace lcad::document::detail {
 
@@ -381,6 +382,118 @@ kernel::NamedShape placed(const Feature& feature, const Document& document,
 
 } // namespace
 
+PlaneState placePlane(const Feature& feature, const Document& document, const BodyStates& bodies) {
+    if (!std::isfinite(feature.distance)) {
+        throw FeatureFailure("Its distance is not a number.");
+    }
+    PlaneState state;
+    kernel::Plane base;
+    if (feature.reference == "XY" || feature.reference == "XZ" || feature.reference == "YZ") {
+        base = feature.reference == "XY"   ? kernel::planeXY()
+               : feature.reference == "XZ" ? kernel::planeXZ()
+                                           : kernel::planeYZ();
+        // Drawn over the model, as large as the model, where there is one.
+        state.center = base.origin;
+        std::optional<kernel::BoundingBox> all;
+        for (const auto& entry : bodies) {
+            const auto box = kernel::boundingBox(entry.second.shape);
+            if (!box.has_value()) {
+                continue;
+            }
+            if (!all.has_value()) {
+                all = box;
+                continue;
+            }
+            all->min = {std::min(all->min.x, box->min.x), std::min(all->min.y, box->min.y),
+                        std::min(all->min.z, box->min.z)};
+            all->max = {std::max(all->max.x, box->max.x), std::max(all->max.y, box->max.y),
+                        std::max(all->max.z, box->max.z)};
+        }
+        if (all.has_value()) {
+            state.center = {(all->min.x + all->max.x) / 2.0, (all->min.y + all->max.y) / 2.0,
+                            (all->min.z + all->max.z) / 2.0};
+            const double dx = all->max.x - all->min.x;
+            const double dy = all->max.y - all->min.y;
+            const double dz = all->max.z - all->min.z;
+            state.size = std::max(state.size, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+    } else {
+        const auto found = bodies.find(feature.body);
+        const Body* body = document.findBody(feature.body);
+        if (found == bodies.end() || found->second.shape.isNull()) {
+            throw FeatureFailure(body != nullptr
+                                     ? "The body it is placed on, " + body->name +
+                                           ", does not exist at this point in the timeline."
+                                     : std::string("The body it is placed on is gone."));
+        }
+        const int index = kernel::findFace(found->second, feature.reference);
+        if (index < 0) {
+            throw FeatureFailure("The face it is placed on no longer exists: " +
+                                 describeName(document, feature.reference) + ".");
+        }
+        const kernel::Shape face =
+            kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, index);
+        const auto plane = kernel::planeOfFace(face);
+        if (!plane.has_value()) {
+            throw FeatureFailure("The face it is placed on, " +
+                                 describeName(document, feature.reference) + ", is not flat.");
+        }
+        base = *plane;
+        const auto box = kernel::boundingBox(face);
+        if (box.has_value()) {
+            state.center = {(box->min.x + box->max.x) / 2.0, (box->min.y + box->max.y) / 2.0,
+                            (box->min.z + box->max.z) / 2.0};
+            const double dx = box->max.x - box->min.x;
+            const double dy = box->max.y - box->min.y;
+            const double dz = box->max.z - box->min.z;
+            state.size = std::max(20.0, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+    }
+    const kernel::Vector& n = base.normal;
+    const double d = feature.distance;
+    base.origin = {base.origin.x + n.x * d, base.origin.y + n.y * d, base.origin.z + n.z * d};
+    // The middle, dropped onto the plane where it now is.
+    const kernel::Point& c = state.center;
+    const double above =
+        (c.x - base.origin.x) * n.x + (c.y - base.origin.y) * n.y + (c.z - base.origin.z) * n.z;
+    state.center = {c.x - above * n.x, c.y - above * n.y, c.z - above * n.z};
+    state.plane = base;
+    return state;
+}
+
+kernel::Plane placeSketch(const SketchItem& sketch, const Document& document,
+                          const BodyStates& bodies,
+                          const std::unordered_map<ObjectId, PlaneState>& planes) {
+    if (const Feature* plane = document.findFeature(sketch.attachedTo)) {
+        const auto found = planes.find(plane->id);
+        if (found == planes.end()) {
+            throw FeatureFailure("The plane it is drawn on, " + plane->name +
+                                 ", does not exist at this point in the timeline.");
+        }
+        return found->second.plane;
+    }
+    const Body* body = document.findBody(sketch.attachedTo);
+    const auto found = bodies.find(sketch.attachedTo);
+    if (body == nullptr) {
+        throw FeatureFailure("What it was drawn on is gone.");
+    }
+    if (found == bodies.end() || found->second.shape.isNull()) {
+        throw FeatureFailure("The body it was drawn on, " + body->name +
+                             ", does not exist at this point in the timeline.");
+    }
+    const int index = kernel::findFace(found->second, sketch.attachedFace);
+    if (index < 0) {
+        throw FeatureFailure("The face it was drawn on no longer exists: " +
+                             describeName(document, sketch.attachedFace) + ".");
+    }
+    const auto plane = kernel::planeOfFace(
+        kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, index));
+    if (!plane.has_value()) {
+        throw FeatureFailure("The face it was drawn on is no longer flat.");
+    }
+    return *plane;
+}
+
 std::string describeName(const Document& document, const std::string& name) {
     // An edge is named by the faces it lies between: "a|b#0".
     const std::size_t hash = name.rfind('#');
@@ -411,6 +524,8 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
         case FeatureKind::RectangularPattern:
         case FeatureKind::CircularPattern:
             return copiesOf(feature, document, targetOf(feature, document, bodies));
+        case FeatureKind::Plane:
+            throw FeatureFailure("A construction plane makes no solid.");
         case FeatureKind::Fillet:
         case FeatureKind::Chamfer: {
             const kernel::NamedShape& body = targetOf(feature, document, bodies);

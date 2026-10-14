@@ -19,6 +19,7 @@ constexpr KindName kindNames[] = {
     {FeatureKind::Mirror, "Mirror"},
     {FeatureKind::RectangularPattern, "Rectangular Pattern"},
     {FeatureKind::CircularPattern, "Circular Pattern"},
+    {FeatureKind::Plane, "Plane"},
 };
 
 struct OperationName {

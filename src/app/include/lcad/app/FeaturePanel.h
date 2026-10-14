@@ -127,6 +127,7 @@ private:
     /// The edge or face picked in the 3D view for the plane, direction, or axis, and what it is.
     std::string m_pickedName;
     QString m_pickedDescription;
+    document::ObjectId m_pickedBody;
     QLabel* m_errorLabel = nullptr;
     QPushButton* m_okButton = nullptr;
     QFormLayout* m_form = nullptr;

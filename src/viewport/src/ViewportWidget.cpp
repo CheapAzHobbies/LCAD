@@ -329,6 +329,10 @@ public:
     bool planePicking = false;
     int hoveredPlane = -1;
     int pressedPlane = -1;
+    // Construction planes, and which of them the pointer is on and the button went down on.
+    std::unordered_map<document::ObjectId, Handle(AIS_Shape)> constructionObjects;
+    document::ObjectId hoveredConstruction;
+    document::ObjectId pressedConstruction;
     // The closed regions shown while profiles are being chosen, of which sketches, which of them
     // are picked, and which the pointer is on and the button went down on (-1 for none).
     struct ProfilePatch {
@@ -521,6 +525,7 @@ public:
         }
         applyAxes();
         applyGrid();
+        showConstructionPlanes();
     }
 
     void applyAxes() {
@@ -688,6 +693,67 @@ public:
             }
         }
         return -1;
+    }
+
+    // A construction plane: see-through amber, more solid while planes are being chosen, and
+    // lit up under the pointer.
+    void styleConstruction(const Handle(AIS_Shape)& object, bool hovered) const {
+        const QColor amber(224, 160, 48);
+        object->SetMaterial(bodyMaterial());
+        object->SetColor(toOcct(hovered ? amber.lighter(125) : amber));
+        object->SetTransparency(planePicking ? (hovered ? 0.2 : 0.45) : 0.75);
+        object->Attributes()->SetFaceBoundaryDraw(true);
+        object->Attributes()->SetFaceBoundaryAspect(
+            new Prs3d_LineAspect(toOcct(hovered ? colors.hover : amber.darker(140)),
+                                 Aspect_TOL_SOLID, hovered ? 2.5 : 1.0));
+    }
+
+    // Shows the visible construction planes where they now are.
+    void showConstructionPlanes() {
+        if (context.IsNull()) {
+            return;
+        }
+        for (const auto& entry : constructionObjects) {
+            context->Remove(entry.second, false);
+        }
+        constructionObjects.clear();
+        if (document == nullptr) {
+            return;
+        }
+        for (const document::Feature& feature : document->features()) {
+            if (feature.kind != document::FeatureKind::Plane || !feature.visible) {
+                continue;
+            }
+            const auto state = document->planeState(feature.id);
+            if (!state.has_value()) {
+                continue;
+            }
+            kernel::Shape shape;
+            try {
+                shape = document::planeShape(*state);
+            } catch (const std::exception&) {
+                continue;
+            }
+            Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(shape));
+            styleConstruction(object, feature.id == hoveredConstruction);
+            context->Display(object, AIS_Shaded,
+                             planePicking ? AIS_Shape::SelectionMode(TopAbs_SHAPE) : -1, false);
+            constructionObjects.emplace(feature.id, object);
+        }
+    }
+
+    // Which construction plane OCCT last found under the pointer, while planes are chosen.
+    [[nodiscard]] document::ObjectId detectedConstruction() const {
+        if (!planePicking || context.IsNull() || !context->HasDetected()) {
+            return {};
+        }
+        const Handle(AIS_InteractiveObject) under = context->DetectedInteractive();
+        for (const auto& entry : constructionObjects) {
+            if (under == entry.second) {
+                return entry.first;
+            }
+        }
+        return {};
     }
 
     [[nodiscard]] bool profilePicking() const { return !profileSketches.empty(); }
@@ -1092,8 +1158,11 @@ public:
             }
             break;
         case Kind::BodyRenamed:
-        case Kind::SketchRenamed:
         case Kind::TimelineChanged:
+            // Construction planes come and go and move with the timeline.
+            showConstructionPlanes();
+            break;
+        case Kind::SketchRenamed:
         case Kind::HistoryChanged:
             return;
         }
@@ -1240,6 +1309,7 @@ ViewportWidget::~ViewportWidget() {
     m_impl->previewObject.Nullify();
     m_impl->featureResult.Nullify();
     m_impl->profilePatches.clear();
+    m_impl->constructionObjects.clear();
     m_impl->viewCube.Nullify();
     for (Handle(AIS_Shape)& object : m_impl->originObjects) {
         object.Nullify();
@@ -1301,6 +1371,7 @@ void ViewportWidget::setDocument(document::Document* document) {
             m_impl->showSketch(sketch);
         }
     }
+    m_impl->showConstructionPlanes();
     fitAll();
     m_impl->reportSelection();
 }
@@ -1747,9 +1818,13 @@ void ViewportWidget::setPlanePicking(bool on) {
         m_impl->pickSides = {looking.X() > 1e-6 ? -1 : 1, looking.Y() > 1e-6 ? -1 : 1,
                              looking.Z() > 1e-6 ? -1 : 1};
         m_impl->showPickPlanes();
+        m_impl->showConstructionPlanes();
     } else {
         m_impl->context->ClearDetected(false);
         m_impl->hidePickPlanes();
+        m_impl->hoveredConstruction = {};
+        m_impl->pressedConstruction = {};
+        m_impl->showConstructionPlanes();
         unsetCursor();
         if (m_impl->hoveredPlane != -1) {
             m_impl->hoveredPlane = -1;
@@ -1845,6 +1920,16 @@ std::optional<Profile> ViewportWidget::profileAt(const QPoint& position) {
         return std::nullopt;
     }
     return m_impl->profilePatches[static_cast<std::size_t>(index)].profile;
+}
+
+document::ObjectId ViewportWidget::constructionPlaneAt(const QPoint& position) {
+    if (!m_impl->planePicking || !m_impl->canRender() || m_impl->view->Window().IsNull()) {
+        return {};
+    }
+    const Graphic3d_Vec2i pixel = m_impl->toFramebufferPixels(position);
+    m_impl->context->MoveTo(pixel.x(), pixel.y(), m_impl->view, false);
+    update();
+    return m_impl->detectedConstruction();
 }
 
 void ViewportWidget::setSelectionFilter(SelectionFilter filter) {
@@ -2131,6 +2216,27 @@ void ViewportWidget::paintGL() {
             Qt::QueuedConnection);
     }
 
+    if (const document::ObjectId plane = m_impl->detectedConstruction();
+        plane != m_impl->hoveredConstruction) {
+        m_impl->hoveredConstruction = plane;
+        QMetaObject::invokeMethod(
+            this,
+            [this, plane] {
+                if (m_impl->planePicking && m_impl->hoveredConstruction == plane) {
+                    if (plane.isValid()) {
+                        setCursor(Qt::PointingHandCursor);
+                    } else if (m_impl->hoveredPlane < 0) {
+                        unsetCursor();
+                    }
+                    for (const auto& entry : m_impl->constructionObjects) {
+                        m_impl->styleConstruction(entry.second, entry.first == plane);
+                        m_impl->context->Redisplay(entry.second, false);
+                    }
+                    m_impl->redraw();
+                }
+            },
+            Qt::QueuedConnection);
+    }
     if (const int profile = m_impl->detectedProfile(); profile != m_impl->hoveredProfile) {
         m_impl->hoveredProfile = profile;
         QMetaObject::invokeMethod(
@@ -2176,6 +2282,10 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
         if (const auto plane = pickPlaneAt(event->position().toPoint())) {
             // A plane is being chosen, and this is one. OCCT is not to select anything.
             m_impl->pressedPlane = static_cast<int>(*plane);
+            return;
+        }
+        if (const document::ObjectId plane = m_impl->detectedConstruction(); plane.isValid()) {
+            m_impl->pressedConstruction = plane;
             return;
         }
     }
@@ -2240,6 +2350,13 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
         m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(m_impl->cubePressPosition),
                                    Aspect_VKeyMouse_LeftButton,
                                    toOcctModifiers(m_impl->cubePressModifiers), false);
+    } else if (m_impl->pressedConstruction.isValid() && event->button() == Qt::LeftButton) {
+        const document::ObjectId pressed = m_impl->pressedConstruction;
+        m_impl->pressedConstruction = {};
+        if (constructionPlaneAt(event->position().toPoint()) == pressed) {
+            emit constructionPlanePicked(pressed);
+        }
+        return;
     } else if (m_impl->pressedPlane >= 0 && event->button() == Qt::LeftButton) {
         // Chosen if the button comes up on the patch it went down on.
         const int pressed = m_impl->pressedPlane;
@@ -2306,7 +2423,8 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
         // OCCT never heard of the left button going down, and is not to act on it.
         buttons.setFlag(Qt::LeftButton, false);
     }
-    if (m_impl->pressedPlane >= 0 || m_impl->profilePicking()) {
+    if (m_impl->pressedPlane >= 0 || m_impl->pressedConstruction.isValid() ||
+        m_impl->profilePicking()) {
         // Nor of a press on a plane or a profile that is being chosen.
         buttons.setFlag(Qt::LeftButton, false);
     }

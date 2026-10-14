@@ -916,3 +916,133 @@ TEST_CASE("Circular patterns and mirrors", "[document][feature]") {
     document.changeFeature(other, curved);
     CHECK_THAT(document.featureError(other), ContainsSubstring("is not flat"));
 }
+
+namespace {
+
+// The name of the plate's top face: the flat one facing up at the top.
+std::string topFace(const Document& document, ObjectId body) {
+    const lcad::kernel::NamedShape named = document.namedBody(body);
+    std::string found;
+    double highest = -1e9;
+    for (std::size_t i = 0; i < named.faceNames.size(); ++i) {
+        const lcad::kernel::Shape face = lcad::kernel::subShape(
+            named.shape, lcad::kernel::SubShapeKind::Face, static_cast<int>(i));
+        const auto plane = lcad::kernel::planeOfFace(face);
+        if (plane.has_value() && plane->normal.z > 0.999 && plane->origin.z > highest) {
+            highest = plane->origin.z;
+            found = named.faceNames[i];
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("Sketches follow the face or the plane they are drawn on", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+    made.plate = document.addFeature(pullOf(made.outline, 8.0));
+    const ObjectId body = document.findFeature(made.plate)->body;
+
+    // A hole drawn on the plate's top face, cut 8 down from it.
+    const std::string top = topFace(document, body);
+    REQUIRE_FALSE(top.empty());
+    const lcad::kernel::Shape topShape =
+        lcad::kernel::subShape(document.namedBody(body).shape, lcad::kernel::SubShapeKind::Face,
+                               lcad::kernel::findFace(document.namedBody(body), top));
+    const ObjectId onTop =
+        document.addSketch("On top", *lcad::kernel::planeOfFace(topShape), body, top);
+    CHECK(document.findSketch(onTop)->attachedTo == body);
+    lcad::sketch::Sketch s;
+    s.addCircle({10.0, 10.0}, 4.0);
+    document.setSketchGeometry(onTop, s, "Circle");
+    const ObjectId hole = document.addFeature(pullOf(onTop, -8.0, Operation::Cut, body));
+    REQUIRE(document.featureError(hole).empty());
+    CHECK_THAT(made.volume(), WithinRel(60.0 * 40.0 * 8.0 - pi * 16.0 * 8.0, 1e-6));
+
+    // The plate gets thicker: the sketch rises with its top, and the hole is 8 deep from there.
+    Feature thicker = *document.findFeature(made.plate);
+    thicker.distance = 12.0;
+    document.changeFeature(made.plate, thicker);
+    CHECK_THAT(document.findSketch(onTop)->plane.origin.z, WithinAbs(12.0, 1e-9));
+    CHECK(document.featureError(onTop).empty());
+    CHECK_THAT(made.volume(), WithinRel(60.0 * 40.0 * 12.0 - pi * 16.0 * 8.0, 1e-6));
+    document.undo();
+    CHECK_THAT(document.findSketch(onTop)->plane.origin.z, WithinAbs(8.0, 1e-9));
+
+    // It cannot come before the pull that makes the face it is on.
+    CHECK_THROWS_WITH(document.moveInTimeline(onTop, 0),
+                      ContainsSubstring("is drawn on a face of Body, which Pull 1 makes"));
+
+    // With the plate suppressed, the face is not there: the sketch stays, and says why.
+    document.setFeatureSuppressed(made.plate, true);
+    CHECK_THAT(document.featureError(onTop), ContainsSubstring("does not exist at this point"));
+    CHECK_THAT(document.findSketch(onTop)->plane.origin.z, WithinAbs(8.0, 1e-9));
+    document.undo();
+    CHECK(document.featureError(onTop).empty());
+
+    // A construction plane 20 above the XY plane, and a disc pulled up from a sketch on it.
+    Feature raised;
+    raised.kind = FeatureKind::Plane;
+    raised.reference = "XY";
+    raised.distance = 20.0;
+    const ObjectId plane = document.addFeature(raised);
+    CHECK(document.findFeature(plane)->name == "Plane 1");
+    CHECK(document.featureError(plane).empty());
+    REQUIRE(document.planeState(plane).has_value());
+    CHECK_THAT(document.planeState(plane)->plane.origin.z, WithinAbs(20.0, 1e-9));
+    CHECK(document.bodies().size() == 1);
+    const ObjectId onPlane =
+        document.addSketch("On the plane", document.planeState(plane)->plane, plane);
+    lcad::sketch::Sketch disc;
+    disc.addCircle({30.0, 20.0}, 5.0);
+    document.setSketchGeometry(onPlane, disc, "Circle");
+    const ObjectId lid = document.addFeature(pullOf(onPlane, 5.0));
+    const ObjectId lidBody = document.findFeature(lid)->body;
+    auto box = lcad::kernel::boundingBox(document.findBody(lidBody)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->min.z, WithinAbs(20.0, 1e-6));
+
+    // Moving the plane moves the sketch and the disc.
+    Feature higher = *document.findFeature(plane);
+    higher.distance = 30.0;
+    document.changeFeature(plane, higher);
+    box = lcad::kernel::boundingBox(document.findBody(lidBody)->shape);
+    CHECK_THAT(box->min.z, WithinAbs(30.0, 1e-6));
+    CHECK_THAT(document.findSketch(onPlane)->plane.origin.z, WithinAbs(30.0, 1e-9));
+
+    // A plane on a face of the body, 10 above the plate's top.
+    Feature onFace;
+    onFace.kind = FeatureKind::Plane;
+    onFace.body = body;
+    onFace.reference = top;
+    onFace.distance = 10.0;
+    const ObjectId above = document.addFeature(onFace);
+    REQUIRE(document.planeState(above).has_value());
+    CHECK_THAT(document.planeState(above)->plane.origin.z, WithinAbs(18.0, 1e-9));
+    // Drawn over the face's middle.
+    CHECK_THAT(document.planeState(above)->center.x, WithinAbs(30.0, 1e-6));
+    CHECK_THAT(document.planeState(above)->center.y, WithinAbs(20.0, 1e-6));
+
+    // Saved and opened again, all of it is where it was.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("planes.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findSketch(onTop)->attachedTo == body);
+    CHECK(loaded.document->findSketch(onTop)->attachedFace == top);
+    CHECK(loaded.document->findSketch(onPlane)->attachedTo == plane);
+    CHECK(*loaded.document->findFeature(plane) == *document.findFeature(plane));
+    CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(body)->shape),
+               WithinRel(made.volume(), 1e-9));
+    box = lcad::kernel::boundingBox(loaded.document->findBody(lidBody)->shape);
+    CHECK_THAT(box->min.z, WithinAbs(30.0, 1e-6));
+
+    // Attaching to something that is not there is refused.
+    CHECK_THROWS_AS(document.addSketch("Nowhere", lcad::kernel::planeXY(), ObjectId{9999}),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(document.addSketch("No face", lcad::kernel::planeXY(), body),
+                    std::invalid_argument);
+}

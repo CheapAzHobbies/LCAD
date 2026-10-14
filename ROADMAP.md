@@ -154,7 +154,8 @@ What Phase 2 leaves for later, besides ellipse and spline:
   lines that cross in the middle do not make four regions; trim them first.
 - **A projected edge does not follow its body.** It is a copy made when it was projected. Following
   needs the feature history of Phase 3.
-- **A sketch on a face does not follow the face** either, for the same reason.
+- **A sketch on a face does not follow the face** either, for the same reason. (Fixed in
+  Phase 3: a sketch started on a face, or on a construction plane, follows it.)
 - **Offset keeps one dimension.** The copy's lines stay parallel to their originals and its corners
   stay joined, but only the first line carries the offset distance. There is no constraint yet
   that says "the same distance all round".
@@ -190,7 +191,9 @@ Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
       Body, so there is nothing to cut away.", "An edge it works on no longer exists: the edge
       between a side of Pull 1 and the end of Pull 1."), and the rest carries on without it.
 - [ ] Global parameter table with units and expressions. Not started.
-- [ ] Measure tool (done), construction planes and axes (not started).
+- [ ] Measure tool (done), construction planes (done: offset from an origin plane or a flat
+      face, and they follow it), construction axes (not started; patterns take an edge or a
+      round face as their axis meanwhile).
 
 Acceptance: build a dimensioned bracket, edit the first sketch, and verify downstream features update or
 report a specific failure. Met, at two levels: in the document (`FeatureTest`) and through the

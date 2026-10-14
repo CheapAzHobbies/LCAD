@@ -306,6 +306,13 @@ feature (`setEditedFeature()`) and holding rebuilding back while a sketch is ope
 `tryFeature()` applies a feature that is not in the document to the model as it is, and is how
 a command previews what it is about to do without touching the document.
 
+Two kinds of timeline entry place things rather than make solids. A construction plane (a
+feature of kind `Plane`) is worked out when its turn comes, from an origin plane or from a face
+of a body as it is at that point (`planeState()`). A sketch that is attached to a construction
+plane or to a face is moved there when its turn comes, and the features made from it are built
+again if it moved. Either one keeps where it last was, and says why, when what it is placed on
+is gone.
+
 ### 11. Stable references
 
 When an early feature changes, later features must still find "that edge" and "that face".

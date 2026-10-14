@@ -55,6 +55,8 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Rectangular Pattern");
     case FeatureKind::CircularPattern:
         return FeaturePanel::tr("Circular Pattern");
+    case FeatureKind::Plane:
+        return FeaturePanel::tr("Plane");
     }
     return {};
 }
@@ -117,6 +119,8 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_sources->setMaximumHeight(110);
         connect(m_sources, &QListWidget::itemChanged, this, [this] { readFields(); });
         m_form->addRow(tr("Copy"), m_sources);
+    }
+    if (copies(kind) || kind == FeatureKind::Plane) {
         m_reference = new QComboBox(this);
         m_reference->setObjectName(QStringLiteral("reference"));
         connect(m_reference, &QComboBox::activated, this, [this] { readFields(); });
@@ -201,8 +205,18 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_angle->setToolTip(tr("The angle they are spread over. At 360° they go evenly all "
                                "the way round."));
         break;
+    case FeatureKind::Plane:
+        m_reference->setToolTip(tr("What the plane is placed against. Click a flat face in the "
+                                   "3D view to place it against that."));
+        m_form->addRow(tr("From"), m_reference);
+        m_distance = addField(QStringLiteral("distance"), tr("Offset"), -largestInput, largestInput,
+                              tr(" mm"));
+        m_distance->setValue(20.0);
+        m_distance->setToolTip(tr("How far from it, along its normal. Negative goes the other "
+                                  "way."));
+        break;
     }
-    if (copies(kind)) {
+    if (copies(kind) || kind == FeatureKind::Plane) {
         fillReferences();
         fillSources();
     }
@@ -288,7 +302,8 @@ void FeaturePanel::fillReferences() {
     const QString was = m_reference->currentData().toString();
     const QSignalBlocker blocker(m_reference);
     m_reference->clear();
-    const bool mirror = m_feature.kind == FeatureKind::Mirror;
+    const bool mirror =
+        m_feature.kind == FeatureKind::Mirror || m_feature.kind == FeatureKind::Plane;
     if (mirror) {
         m_reference->addItem(tr("XY Plane"), QStringLiteral("XY"));
         m_reference->addItem(tr("XZ Plane"), QStringLiteral("XZ"));
@@ -315,7 +330,8 @@ void FeaturePanel::fillReferences() {
     } else if (index < 0) {
         index = m_reference->findData(QString::fromStdString(m_feature.reference));
     }
-    m_reference->setCurrentIndex(index >= 0 ? index : (mirror ? 2 : 0));
+    const int fallback = m_feature.kind == FeatureKind::Mirror ? 2 : 0;
+    m_reference->setCurrentIndex(index >= 0 ? index : fallback);
     if (m_reference2 != nullptr) {
         const QString second = m_reference2->count() > 0
                                    ? m_reference2->currentData().toString()
@@ -345,6 +361,7 @@ void FeaturePanel::setPickedReference(document::ObjectId body, const std::string
     }
     m_pickedName = name;
     m_pickedDescription = description;
+    m_pickedBody = body;
     fillReferences();
     readFields();
 }
@@ -444,6 +461,12 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
     if (m_size != nullptr) {
         m_size->setValue(feature.size);
     }
+    if (feature.kind == FeatureKind::Plane) {
+        m_pickedName.clear();
+        m_pickedBody = feature.body;
+        fillReferences();
+        m_distance->setValue(feature.distance);
+    }
     if (copies(feature.kind)) {
         const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
         if (index >= 0) {
@@ -509,6 +532,8 @@ bool FeaturePanel::hasInput() const {
     case FeatureKind::RectangularPattern:
     case FeatureKind::CircularPattern:
         return m_feature.body.isValid() && !m_feature.reference.empty();
+    case FeatureKind::Plane:
+        return !m_feature.reference.empty();
     }
     return false;
 }
@@ -618,6 +643,12 @@ void FeaturePanel::readFields() {
             m_feature.spacing2 = m_spacing2->value();
         }
     }
+    if (m_feature.kind == FeatureKind::Plane) {
+        m_feature.reference = m_reference->currentData().toString().toStdString();
+        // An origin plane needs no body; a face, the body it is a face of.
+        m_feature.body = m_feature.reference.size() > 2 ? m_pickedBody : document::ObjectId{};
+        m_feature.distance = m_distance->value();
+    }
     if (m_axis != nullptr) {
         m_feature.axis = m_axis->count() > 0 ? m_axis->currentData().toUInt() : 0;
     }
@@ -684,6 +715,10 @@ void FeaturePanel::updatePicked() {
         }
         break;
     }
+    case FeatureKind::Plane:
+        text = tr("Choose an origin plane below, or click a flat face in the 3D view, and how far "
+                  "from it the plane goes.");
+        break;
     case FeatureKind::Shell: {
         const document::Body* body = m_document->findBody(m_feature.body);
         if (body == nullptr) {

@@ -241,6 +241,11 @@ nlohmann::ordered_json writeSketch(const SketchItem& item) {
                      {"normal", {item.plane.normal.x, item.plane.normal.y, item.plane.normal.z}},
                      {"xDirection",
                       {item.plane.xDirection.x, item.plane.xDirection.y, item.plane.xDirection.z}}};
+    // Only for a sketch that follows something, so that other files read as they did.
+    if (item.attachedTo.isValid()) {
+        out["attachedTo"] = item.attachedTo.value;
+        out["attachedFace"] = item.attachedFace;
+    }
     out["nextEntityId"] = item.geometry.nextEntityId();
     out["nextConstraintId"] = item.geometry.nextConstraintId();
     out["entities"] = ordered_json::array();
@@ -392,6 +397,10 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
     } catch (const std::invalid_argument& error) {
         damaged(path, where + " does not hold together (" + error.what() + ")");
     }
+    if (entry.contains("attachedTo")) {
+        item.attachedTo = ObjectId{idMember(entry, "attachedTo", where, path)};
+        item.attachedFace = stringMember(entry, "attachedFace", where, path);
+    }
     return item;
 }
 
@@ -453,7 +462,12 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     out["edges"] = feature.edges;
     out["faces"] = feature.faces;
     out["size"] = feature.size;
-    // Mirror and patterns. Written only for them, so that files without them read as they did.
+    // Construction planes and mirrors and patterns. Written only for them, so that files without
+    // them read as they did.
+    if (feature.kind == FeatureKind::Plane) {
+        out["reference"] = feature.reference;
+        out["visible"] = feature.visible;
+    }
     if (feature.kind == FeatureKind::Mirror || feature.kind == FeatureKind::RectangularPattern ||
         feature.kind == FeatureKind::CircularPattern) {
         out["sources"] = ordered_json::array();
@@ -519,6 +533,10 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     feature.edges = stringsMember(entry, "edges", where, path);
     feature.faces = stringsMember(entry, "faces", where, path);
     feature.size = numberMember(entry, "size", where, path);
+    if (feature.kind == FeatureKind::Plane) {
+        feature.reference = stringMember(entry, "reference", where, path);
+        feature.visible = boolMember(entry, "visible", where, path);
+    }
     if (entry.contains("sources")) {
         const json& sources = entry.at("sources");
         if (!sources.is_array()) {

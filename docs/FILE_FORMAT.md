@@ -126,7 +126,7 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, or `Circular Pattern`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, or `Plane` (a construction plane). |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
@@ -136,6 +136,11 @@ optional, and a file without them opens as it always did.
 | `edges`, `faces` | A fillet's or chamfer's edges, a shell's open faces, by name (see ARCHITECTURE.md, section 11). |
 | `size` | A fillet's radius, a chamfer's distance, a shell's wall thickness. |
 | `sources`, `reference`, `reference2`, `count`, `count2`, `spacing`, `spacing2` | Mirror and patterns only: the features copied (empty: the whole body), the plane, direction, or axis (`XY`, `XZ`, `YZ`, `X`, `Y`, `Z`, or a face or edge name), how many, and how far apart. |
+| `reference`, `visible` | A construction plane only: what it is placed against (`XY`, `XZ`, `YZ`, or the name of a flat face of `body`), and whether it is shown. Its `distance` is how far it is from that, along its normal. It makes no body; `body` is 0 for one placed against an origin plane. |
+
+A sketch that follows something has `attachedTo`, the id of a construction plane or of a body,
+and `attachedFace`, the name of the body's face (empty for a plane). Its `plane` is then where it
+was when the file was saved, and it is placed again from what it follows on opening.
 
 A body that a feature makes is written as `{"id", "name", "visible", "madeBy"}`, without
 geometry: it is built again from its feature on opening. `timeline` lists the ids of the bodies
@@ -245,9 +250,8 @@ licenses are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ## Not done yet
 
-- **Where a sketch came from.** A sketch started on a face keeps the plane, not the face. A
-  projected edge keeps the geometry, not the edge. The names of section 11 of ARCHITECTURE.md
-  can now say which face or edge it was; following it is still to do.
+- **Where a projected edge came from.** A projected edge keeps the geometry, not the edge. (A
+  sketch on a face now follows the face; see `attachedTo` above.)
 - **Where a dimension's value is drawn.** Not stored: values place themselves.
 
 - **The notice before converting.** When the first migration exists, LCAD has to say so before

@@ -263,6 +263,10 @@ public:
     [[nodiscard]] bool isPlanePicking() const;
     /// The plane whose patch is at a position in the widget, while plane picking is on.
     [[nodiscard]] std::optional<OriginItem> pickPlaneAt(const QPoint& position);
+    /// The construction plane at a position in the widget, while plane picking is on, or an
+    /// invalid id. Construction planes are drawn as see-through squares whenever they are
+    /// visible, and can be clicked only while a plane is being chosen.
+    [[nodiscard]] document::ObjectId constructionPlaneAt(const QPoint& position);
 
     // Choosing profiles
 
@@ -315,6 +319,9 @@ signals:
     void itemActivated(const lcad::viewport::SelectedItem& item);
     /// While plane picking is on: the user clicked a plane's patch.
     void planePicked(lcad::viewport::OriginItem plane);
+    /// While plane picking is on: the user clicked a construction plane (a feature of the
+    /// document).
+    void constructionPlanePicked(lcad::document::ObjectId plane);
     /// While plane picking is on: the pointer came onto a plane's patch (0 for XY, 1 for XZ, 2
     /// for YZ) or left the patches (-1).
     void planeHovered(int plane);

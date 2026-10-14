@@ -26,6 +26,8 @@ What works today:
   solid follows; a feature that no longer fits says why, and the rest of the model carries on.
 - **Solids from primitives.** Box, cylinder, sphere, cone, and torus by their sizes, with a
   live preview.
+- **Construction planes** to sketch on; sketches on a face or a plane follow it when the model
+  changes.
 - **Measuring** distances and angles between faces, edges, and bodies.
 - **The window.** A 3D view with a view cube, standard views, display styles, and a grid;
   selecting bodies, faces, edges, vertices, and sketches, with their measurements; a browser
@@ -35,8 +37,8 @@ What works today:
 
 [docs/USING.md](docs/USING.md) shows how.
 
-Still to come in Phase 3: holes, construction planes, a parameter table, pulling up to a face
-or with a taper, and ellipses and splines in sketches. See the [roadmap](ROADMAP.md).
+Still to come in Phase 3: holes, construction axes, a parameter table, pulling up to a face or
+with a taper, and ellipses and splines in sketches. See the [roadmap](ROADMAP.md).
 
 ## Building
 

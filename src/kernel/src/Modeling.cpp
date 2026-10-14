@@ -290,6 +290,12 @@ std::string keyOf(const Region& region) {
     return key;
 }
 
+double solidVolume(const TopoDS_Shape& shape) {
+    GProp_GProps properties;
+    BRepGProp::VolumeProperties(shape, properties);
+    return properties.Mass();
+}
+
 NamedShape named(const TopoDS_Shape& shape, const FaceNamer& namer, const std::string& tag) {
     return NamedShape{occt::wrap(shape), namer.names(tag)};
 }
@@ -621,6 +627,20 @@ NamedShape shell(const NamedShape& body, const std::vector<int>& openFaces, doub
             throw Error("shell", "the walls are too thick for this body");
         }
         requireValid(maker.Shape(), "shell");
+        // Where walls that thick cannot fit, some versions of OCCT still return a solid, its
+        // walls passing through each other. A hollowed solid is smaller than the solid, and
+        // lies inside it.
+        const double was = solidVolume(solid);
+        const double now = solidVolume(maker.Shape());
+        bool hollowed = now > 1e-9 * was && now < was * (1.0 - 1e-9);
+        if (hollowed) {
+            BRepAlgoAPI_Common inside(maker.Shape(), solid);
+            inside.Build();
+            hollowed = inside.IsDone() && std::abs(solidVolume(inside.Shape()) - now) <= 1e-6 * was;
+        }
+        if (!hollowed) {
+            throw Error("shell", "the walls are too thick for this body");
+        }
         const TopoDS_Shape result = maker.Shape();
         FaceNamer namer(result);
         namer.inherit(body, maker);

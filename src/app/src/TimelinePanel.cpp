@@ -287,6 +287,8 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("pattern-rectangular");
         case FeatureKind::CircularPattern:
             return QStringLiteral("pattern-circular");
+        case FeatureKind::Plane:
+            return QStringLiteral("plane");
         }
     }
     return QStringLiteral("box");
@@ -333,6 +335,14 @@ QString TimelineStrip::describe(document::ObjectId item) const {
     case ItemKind::Sketch: {
         const document::SketchItem* sketch = m_document->findSketch(item);
         lines.append(tr("%1 · Sketch").arg(name(sketch->name)));
+        if (const document::Feature* plane = m_document->findFeature(sketch->attachedTo)) {
+            lines.append(tr("Drawn on %1, and follows it").arg(name(plane->name)));
+        } else if (const document::Body* body = m_document->findBody(sketch->attachedTo)) {
+            lines.append(tr("Drawn on a face of %1, and follows it").arg(name(body->name)));
+        }
+        if (const std::string error = m_document->featureError(item); !error.empty()) {
+            lines.append(tr("Cannot follow: %1").arg(name(error)));
+        }
         if (const QStringList users = usedBy(item); !users.isEmpty()) {
             lines.append(tr("Used by %1").arg(users.join(QStringLiteral(", "))));
         }
@@ -406,7 +416,8 @@ void TimelineStrip::paintEvent(QPaintEvent* /*event*/) {
         const QRect box = itemRect(item);
         const document::Feature* feature = m_document->findFeature(item);
         const bool suppressed = feature != nullptr && feature->suppressed;
-        const bool failed = feature != nullptr && !m_document->featureError(item).empty();
+        // A feature that fails, or a sketch that cannot follow what it was drawn on.
+        const bool failed = !m_document->featureError(item).empty();
         const bool beyond = i >= marker;
         painter.setOpacity(suppressed || beyond ? 0.4 : 1.0);
         if (item == m_selected) {

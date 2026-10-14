@@ -33,6 +33,9 @@ enum class SketchPart {
 /// sketch::Sketch::regions(). A region that cannot be made into a face is a null shape.
 [[nodiscard]] std::vector<kernel::Shape> sketchRegionFaces(const SketchItem& sketch);
 
+/// A construction plane as a square to draw: centered where it is drawn, of its size.
+[[nodiscard]] kernel::Shape planeShape(const PlaneState& state);
+
 /// The box around all of a sketch's geometry in model space, or nothing for an empty sketch.
 [[nodiscard]] std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch);
 

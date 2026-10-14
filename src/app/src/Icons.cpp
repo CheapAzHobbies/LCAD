@@ -242,6 +242,19 @@ const QHash<QString, Drawing>& drawings() {
                      {7.5, 16.5},
                      {7.5, 4}});
          }},
+        {QStringLiteral("plane"),
+         [](const Ink& i) {
+             // A plane seen at a slant, and the line it is offset along.
+             i.fill({{3, 15}, {14, 15}, {21, 9}, {10, 9}});
+             i.poly({{3, 15}, {14, 15}, {21, 9}, {10, 9}});
+             i.line(12, 12, 12, 21);
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(12, 3, 12, 9);
+             i.p.restore();
+         }},
         {QStringLiteral("pattern-rectangular"),
          [](const Ink& i) {
              // The original, tinted, and its copies in rows and columns.

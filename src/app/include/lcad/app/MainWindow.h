@@ -152,8 +152,10 @@ public:
     void startSketch();
     /// The panel that asks where a new sketch goes, or nullptr.
     [[nodiscard]] SketchPlanePanel* planePanel() const { return m_planePanel; }
-    /// Adds a sketch on a plane, as one undo step, and opens it for editing.
-    document::ObjectId createSketch(const kernel::Plane& plane);
+    /// Adds a sketch on a plane, as one undo step, and opens it for editing. A sketch on a
+    /// construction plane, or on a flat face of a body, is attached to it and follows it.
+    document::ObjectId createSketch(const kernel::Plane& plane, document::ObjectId attachedTo = {},
+                                    const std::string& attachedFace = {});
     /// Opens a sketch for editing: the camera turns to face it and the toolbar shows the sketch
     /// tools. Returns false if there is no such sketch.
     bool editSketch(document::ObjectId sketch);
@@ -246,6 +248,11 @@ private:
     [[nodiscard]] std::vector<document::ObjectId> selectedSketches() const;
     /// The plane of the one flat face that is selected, if that is what is selected.
     [[nodiscard]] std::optional<kernel::Plane> selectedFacePlane() const;
+    /// The body and the name of the one flat face that is selected, if that is what is selected.
+    [[nodiscard]] std::optional<std::pair<document::ObjectId, std::string>>
+    selectedFaceName() const;
+    /// The construction plane selected in the browser or the timeline, if there is one.
+    [[nodiscard]] document::ObjectId selectedConstructionPlane() const;
     /// The bodies a command about bodies acts on: those selected, and those whose faces,
     /// edges, or vertices are.
     [[nodiscard]] std::vector<document::ObjectId> targetBodies() const;

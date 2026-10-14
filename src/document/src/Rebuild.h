@@ -27,6 +27,17 @@ public:
                                           const BodyStates& bodies,
                                           kernel::NamedShape* tool = nullptr);
 
+/// Where a construction plane goes, given the bodies as they are when its turn comes. Throws
+/// FeatureFailure if it cannot be placed.
+[[nodiscard]] PlaneState placePlane(const Feature& feature, const Document& document,
+                                    const BodyStates& bodies);
+
+/// Where an attached sketch goes, given the bodies and the construction planes as they are
+/// when its turn comes. Throws FeatureFailure if what it is attached to is not there.
+[[nodiscard]] kernel::Plane placeSketch(const SketchItem& sketch, const Document& document,
+                                        const BodyStates& bodies,
+                                        const std::unordered_map<ObjectId, PlaneState>& planes);
+
 /// What a face's or an edge's name refers to, in words: "a side of Pull 1".
 [[nodiscard]] std::string describeName(const Document& document, const std::string& name);
 

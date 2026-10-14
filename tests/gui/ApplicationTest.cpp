@@ -575,8 +575,11 @@ void ApplicationTest::browserListsBodiesAndEditsThem() {
     QCOMPARE(tree->topLevelItemCount(), 1);
     QTreeWidgetItem* root = tree->topLevelItem(0);
     QCOMPARE(root->text(0), QStringLiteral("Untitled"));
-    QCOMPARE(root->childCount(), 3);
+    QCOMPARE(root->childCount(), 4);
     QCOMPARE(root->child(0)->text(0), QStringLiteral("Origin"));
+    // Construction planes have a group of their own, hidden while there are none.
+    QCOMPARE(root->child(3)->text(0), QStringLiteral("Construction"));
+    QVERIFY(root->child(3)->isHidden());
     // The entry for sketches is not shown while the document has none.
     QCOMPARE(root->child(2)->text(0), QStringLiteral("Sketches"));
     QVERIFY(root->child(2)->isHidden());

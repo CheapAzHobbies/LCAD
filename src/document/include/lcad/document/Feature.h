@@ -29,6 +29,9 @@ enum class FeatureKind {
     RectangularPattern,
     /// Repeats features, or the whole body, around an axis.
     CircularPattern,
+    /// A construction plane, which sketches can be drawn on: an origin plane or a flat face of a
+    /// body, moved along its normal. It makes no solid.
+    Plane,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
@@ -101,7 +104,9 @@ struct Feature {
     std::vector<ObjectId> sources;
     /// Mirror: the plane to mirror in: "XY", "XZ", "YZ", or the name of a flat face of the
     /// body. Patterns: the direction to repeat along, or the axis to repeat around: "X", "Y",
-    /// "Z", or the name of an edge or a face of the body (see kernel::axisOf).
+    /// "Z", or the name of an edge or a face of the body (see kernel::axisOf). Plane: what it
+    /// is placed against, an origin plane or a flat face of `body`; `distance` is how far
+    /// along that plane's normal it is.
     std::string reference;
     /// Rectangular pattern: the second direction, like `reference`. Empty for none.
     std::string reference2;
@@ -114,6 +119,8 @@ struct Feature {
     /// spread over; 360 spreads them evenly all the way round.
     double spacing = 10.0;
     double spacing2 = 10.0;
+    /// Plane: whether it is shown.
+    bool visible = true;
 
     friend bool operator==(const Feature&, const Feature&) = default;
 };

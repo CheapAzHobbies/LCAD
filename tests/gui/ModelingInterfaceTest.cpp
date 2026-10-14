@@ -37,6 +37,7 @@
 #include <QTest>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItem>
 
 #include <cmath>
 
@@ -102,6 +103,7 @@ private slots:
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
+    void sketchesFollowConstructionPlanesAndFaces();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -934,6 +936,109 @@ void ModelingInterfaceTest::measureGivesDistancesAndAngles() {
     QTRY_VERIFY(window.measurePanel() == nullptr);
     QCOMPARE(window.viewport()->selectionFilter(),
              lcad::viewport::SelectionFilter::FacesEdgesVertices);
+}
+
+void ModelingInterfaceTest::sketchesFollowConstructionPlanesAndFaces() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+
+    // An offset plane, 20 above the XY plane.
+    QVERIFY(action(window, "construct.offsetPlane")->isEnabled());
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* offset = panel(window);
+    QVERIFY(offset != nullptr);
+    QCOMPARE(offset->feature().kind, FeatureKind::Plane);
+    QCOMPARE(offset->feature().reference, std::string("XY"));
+    typeInto(offset, "distance", 20.0);
+    QVERIFY(offset->errorText().isEmpty());
+    QVERIFY(okButton(offset)->isEnabled());
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-plane-preview");
+    QTest::mouseClick(okButton(offset), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId plane = window.document()->features().back().id;
+    QCOMPARE(QString::fromStdString(window.document()->findFeature(plane)->name),
+             QStringLiteral("Plane 1"));
+    QVERIFY(window.document()->planeState(plane).has_value());
+    QCOMPARE(window.document()->planeState(plane)->plane.origin.z, 20.0);
+    // It is listed under Construction, and makes no body.
+    QVERIFY(window.browser()->planeItem(plane) != nullptr);
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+
+    // New Sketch, and click the plane in the 3D view: the sketch is on it, and follows it.
+    window.viewport()->setStandardView(StandardView::Home);
+    render(window);
+    QVERIFY(trigger(window, "sketch.new"));
+    render(window);
+    const lcad::kernel::Point middle = window.document()->planeState(plane)->center;
+    // A little off its middle, where the plate below is not in the way.
+    const QPoint onPlane = at(window, middle.x + 20.0, middle.y + 15.0, middle.z);
+    QCOMPARE(window.viewport()->constructionPlaneAt(onPlane), plane);
+    click(window, onPlane);
+    QTRY_VERIFY(window.isSketching());
+    const ObjectId raised = window.viewport()->editedSketch();
+    QCOMPARE(window.document()->findSketch(raised)->attachedTo, plane);
+    QCOMPARE(window.document()->findSketch(raised)->plane.origin.z, 20.0);
+    lcad::sketch::Sketch disc = window.document()->findSketch(raised)->geometry;
+    disc.addCircle({30.0, 20.0}, 5.0);
+    window.document()->setSketchGeometry(raised, disc, "Circle");
+    QVERIFY(trigger(window, "solid.pull"));
+    typeInto(panel(window), "distance", 4.0);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId cap = window.document()->features().back().id;
+    QCOMPARE(window.document()->findFeature(cap)->operation, Operation::NewBody);
+    QVERIFY(near(lcad::kernel::boundingBox(bodyOf(window, cap).shape)->min.z, 20.0));
+
+    // Double-click the plane in the browser, and move it to 30: the disc goes with it.
+    QTreeWidget* tree = window.browser()->tree();
+    QTreeWidgetItem* entry = window.browser()->planeItem(plane);
+    tree->scrollToItem(entry);
+    const QPoint onEntry = tree->visualItemRect(entry).center();
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QTest::mouseDClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QVERIFY(panel(window) != nullptr);
+    QCOMPARE(window.editedFeature(), plane);
+    typeInto(panel(window), "distance", 30.0);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QCOMPARE(window.document()->findSketch(raised)->plane.origin.z, 30.0);
+    QVERIFY(near(lcad::kernel::boundingBox(bodyOf(window, cap).shape)->min.z, 30.0));
+
+    // A sketch started on the plate's top face is attached to it.
+    std::string topName;
+    int topIndex = -1;
+    const lcad::kernel::NamedShape named = window.document()->namedBody(body);
+    for (std::size_t i = 0; i < named.faceNames.size(); ++i) {
+        const auto facing = lcad::kernel::planeOfFace(lcad::kernel::subShape(
+            named.shape, lcad::kernel::SubShapeKind::Face, static_cast<int>(i)));
+        if (facing.has_value() && facing->normal.z > 0.999) {
+            topName = named.faceNames[i];
+            topIndex = static_cast<int>(i);
+        }
+    }
+    QVERIFY(topIndex >= 0);
+    window.viewport()->setSelectionFilter(lcad::viewport::SelectionFilter::Faces);
+    window.viewport()->setSelection({{body, SelectedItem::Kind::Face, topIndex}});
+    QVERIFY(trigger(window, "sketch.new"));
+    QVERIFY(window.isSketching());
+    const ObjectId onTop = window.viewport()->editedSketch();
+    QCOMPARE(window.document()->findSketch(onTop)->attachedTo, body);
+    QCOMPARE(window.document()->findSketch(onTop)->attachedFace, topName);
+    QVERIFY(window.timeline()->describe(onTop).contains(QStringLiteral("Drawn on a face of Body")));
+    window.finishSketch();
+
+    // The plate gets thicker: the sketch on its top rises with it.
+    Feature thicker = *window.document()->findFeature(plate);
+    thicker.distance = 12.0;
+    window.document()->changeFeature(plate, thicker);
+    QCOMPARE(window.document()->findSketch(onTop)->plane.origin.z, 12.0);
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-planes");
 }
 
 QTEST_MAIN(ModelingInterfaceTest)

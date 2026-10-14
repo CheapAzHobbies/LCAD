@@ -39,6 +39,20 @@ bool usesSketch(const Feature& feature) {
     return feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve;
 }
 
+// A construction plane placed against an origin plane needs no body.
+bool needsBody(const Feature& feature) {
+    return !(feature.kind == FeatureKind::Plane && !feature.body.isValid());
+}
+
+bool samePlace(const kernel::Plane& a, const kernel::Plane& b) {
+    const auto near = [](double x, double y) { return std::abs(x - y) < 1e-12; };
+    return near(a.origin.x, b.origin.x) && near(a.origin.y, b.origin.y) &&
+           near(a.origin.z, b.origin.z) && near(a.normal.x, b.normal.x) &&
+           near(a.normal.y, b.normal.y) && near(a.normal.z, b.normal.z) &&
+           near(a.xDirection.x, b.xDirection.x) && near(a.xDirection.y, b.xDirection.y) &&
+           near(a.xDirection.z, b.xDirection.z);
+}
+
 } // namespace
 
 Document::Document() = default;
@@ -85,7 +99,23 @@ Document::Document(DocumentState state)
         }
         body.source = body.shape;
     }
+    for (const SketchItem& sketch : m_sketches) {
+        if (!sketch.attachedTo.isValid()) {
+            continue;
+        }
+        const Feature* plane = findFeature(sketch.attachedTo);
+        const bool onPlane =
+            plane != nullptr && plane->kind == FeatureKind::Plane && sketch.attachedFace.empty();
+        const bool onFace = findBody(sketch.attachedTo) != nullptr && !sketch.attachedFace.empty();
+        if (!onPlane && !onFace) {
+            throw std::invalid_argument("Document: sketch \"" + sketch.name +
+                                        "\" is attached to something the document does not have");
+        }
+    }
     for (const Feature& feature : m_features) {
+        if (!needsBody(feature)) {
+            continue;
+        }
         const Body* body = findBody(feature.body);
         if (body == nullptr || (makesBody(feature) && body->madeBy != feature.id)) {
             throw std::invalid_argument("Document: feature \"" + feature.name +
@@ -262,13 +292,25 @@ std::string Document::uniqueSketchName(std::string_view base) const {
     }
 }
 
-ObjectId Document::addSketch(std::string name, const kernel::Plane& plane) {
+ObjectId Document::addSketch(std::string name, const kernel::Plane& plane, ObjectId attachedTo,
+                             std::string attachedFace) {
     requireName(name, "addSketch");
+    if (attachedTo.isValid()) {
+        const Feature* onPlane = findFeature(attachedTo);
+        const bool toPlane =
+            onPlane != nullptr && onPlane->kind == FeatureKind::Plane && attachedFace.empty();
+        const bool toFace = findBody(attachedTo) != nullptr && !attachedFace.empty();
+        if (!toPlane && !toFace) {
+            throw std::invalid_argument("addSketch: it is attached to something the document "
+                                        "does not have");
+        }
+    }
     Edit edit{};
     edit.kind = Edit::Kind::AddSketch;
     edit.id = ObjectId{m_nextId};
     edit.index = m_sketches.size();
-    edit.sketch = SketchItem{edit.id, std::move(name), true, plane, sketch::Sketch()};
+    edit.sketch = SketchItem{edit.id,    std::move(name),        true, plane, sketch::Sketch(),
+                             attachedTo, std::move(attachedFace)};
     edit.place = placeForNew();
     markersForAdding(edit);
     const ObjectId id = edit.id;
@@ -368,7 +410,7 @@ ObjectId Document::addFeature(Feature feature) {
                                     std::to_string(feature.sketch.value));
     }
     const bool makes = makesBody(feature);
-    if (!makes && findBody(feature.body) == nullptr) {
+    if (!makes && needsBody(feature) && findBody(feature.body) == nullptr) {
         throw std::invalid_argument("addFeature: there is no body with id " +
                                     std::to_string(feature.body.value));
     }
@@ -437,7 +479,7 @@ void Document::changeFeature(ObjectId id, Feature definition) {
         edit.index = m_bodies.size();
         edit.body = Body{definition.body, uniqueBodyName("Body"), true, {}};
         edit.body.madeBy = id;
-    } else if (findBody(definition.body) == nullptr) {
+    } else if (needsBody(definition) && findBody(definition.body) == nullptr) {
         throw std::invalid_argument("changeFeature: there is no body with id " +
                                     std::to_string(definition.body.value));
     }
@@ -568,6 +610,14 @@ void Document::moveInTimeline(ObjectId item, std::size_t index) {
     record(std::move(edit), "Reorder Timeline");
 }
 
+std::optional<PlaneState> Document::planeState(ObjectId plane) const {
+    const auto found = m_planes.find(plane);
+    if (found == m_planes.end()) {
+        return std::nullopt;
+    }
+    return found->second;
+}
+
 kernel::NamedShape Document::namedBody(ObjectId body) const {
     const Body* found = findBody(body);
     return found == nullptr ? kernel::NamedShape{}
@@ -585,6 +635,14 @@ FeatureTrial Document::tryFeature(Feature feature) const {
         }
     }
     FeatureTrial trial;
+    if (feature.kind == FeatureKind::Plane) {
+        try {
+            trial.plane = detail::placePlane(feature, *this, bodies);
+        } catch (const detail::FeatureFailure& failure) {
+            trial.error = failure.what();
+        }
+        return trial;
+    }
     try {
         trial.result = detail::evaluate(feature, *this, bodies, &trial.tool);
     } catch (const detail::FeatureFailure& failure) {
@@ -1016,6 +1074,27 @@ std::string Document::orderProblem(const std::vector<ObjectId>& order) const {
         return static_cast<std::size_t>(std::find(order.begin(), order.end(), item) -
                                         order.begin());
     };
+    // A sketch comes after what it is drawn on.
+    for (const SketchItem& sketch : m_sketches) {
+        if (!sketch.attachedTo.isValid()) {
+            continue;
+        }
+        const std::size_t place = at(sketch.id);
+        if (const Feature* plane = findFeature(sketch.attachedTo)) {
+            if (at(plane->id) > place) {
+                return sketch.name + " is drawn on " + plane->name +
+                       ", so it cannot come before it.";
+            }
+        } else if (const Body* body = findBody(sketch.attachedTo)) {
+            const Feature* maker = findFeature(body->madeBy);
+            const ObjectId first = maker != nullptr ? maker->id : body->id;
+            if (at(first) > place) {
+                return sketch.name + " is drawn on a face of " + body->name +
+                       (maker != nullptr ? ", which " + maker->name + " makes" : std::string()) +
+                       ", so it cannot come before it.";
+            }
+        }
+    }
     for (const Feature& feature : m_features) {
         const std::size_t place = at(feature.id);
         if (usesSketch(feature)) {
@@ -1074,11 +1153,71 @@ void Document::rebuild() {
     detail::BodyStates state;
     // Bodies whose state, at this point in the timeline, is not what it was last time.
     std::unordered_set<ObjectId> changed;
+    // Sketches that have moved with what they are attached to.
+    std::unordered_set<ObjectId> moved;
+    std::unordered_map<ObjectId, PlaneState> planes;
     bool statusChanged = false;
+    // Notes why an item that is not a solid feature fails, or that it works again.
+    const auto setError = [this, &statusChanged](ObjectId item, const std::string& error) {
+        Built& built = m_built[item];
+        if (built.error != error) {
+            statusChanged = true;
+        }
+        built.error = error;
+        built.done = true;
+        built.applied = error.empty();
+    };
     for (std::size_t place = 0; place < m_timeline.size(); ++place) {
         const ObjectId item = m_timeline[place];
         const bool reached = place < applied;
         const std::size_t featureIndex = featureIndexOf(item);
+        if (const std::size_t sketchIndex = sketchIndexOf(item); sketchIndex != notFound) {
+            // An attached sketch goes where what it is attached to now is.
+            SketchItem& sketch = m_sketches[sketchIndex];
+            if (!reached || !sketch.attachedTo.isValid()) {
+                setError(item, {});
+                continue;
+            }
+            try {
+                const kernel::Plane now = detail::placeSketch(sketch, *this, state, planes);
+                if (!samePlace(now, sketch.plane)) {
+                    sketch.plane = now;
+                    moved.insert(item);
+                }
+                setError(item, {});
+            } catch (const detail::FeatureFailure& failure) {
+                // It stays where it was, and says why.
+                setError(item, failure.what());
+            }
+            continue;
+        }
+        if (featureIndex != notFound && m_features[featureIndex].kind == FeatureKind::Plane) {
+            const Feature& feature = m_features[featureIndex];
+            if (!reached || feature.suppressed) {
+                if (m_planes.erase(item) > 0) {
+                    statusChanged = true;
+                }
+                setError(item, {});
+                continue;
+            }
+            try {
+                const PlaneState placed = detail::placePlane(feature, *this, state);
+                const auto before = m_planes.find(item);
+                if (before == m_planes.end() || !samePlace(before->second.plane, placed.plane) ||
+                    before->second.size != placed.size) {
+                    statusChanged = true;
+                }
+                planes[item] = placed;
+                m_planes[item] = placed;
+                setError(item, {});
+            } catch (const detail::FeatureFailure& failure) {
+                if (m_planes.erase(item) > 0) {
+                    statusChanged = true;
+                }
+                setError(item, failure.what());
+            }
+            continue;
+        }
         if (featureIndex == notFound) {
             if (const Body* body = findBody(item)) {
                 // A body no feature makes starts from the shape it was given.
@@ -1105,7 +1244,8 @@ void Document::rebuild() {
         }
         const bool stale = m_rebuildAll || !built.done || m_touched.contains(item) ||
                            m_touched.contains(feature.body) ||
-                           (feature.sketch.isValid() && m_touched.contains(feature.sketch)) ||
+                           (feature.sketch.isValid() && (m_touched.contains(feature.sketch) ||
+                                                         moved.contains(feature.sketch))) ||
                            changed.contains(feature.body);
         if (!stale) {
             if (built.applied) {
@@ -1146,6 +1286,9 @@ void Document::rebuild() {
         if (findBody(body) != nullptr) {
             notify(Change::Kind::BodyGeometryChanged, body);
         }
+    }
+    for (const ObjectId sketch : moved) {
+        notify(Change::Kind::SketchGeometryChanged, sketch);
     }
     if (statusChanged || !reshaped.empty()) {
         notify(Change::Kind::TimelineChanged);

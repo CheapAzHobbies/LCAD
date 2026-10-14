@@ -47,10 +47,24 @@ struct SketchItem {
     ObjectId id;
     std::string name;
     bool visible = true;
-    /// Where the sketch sits in space. Set when the sketch is created; if it was taken from a
-    /// face, it does not follow that face afterwards.
+    /// Where the sketch sits in space. For a sketch that is attached (see below), where it was
+    /// when the model was last built.
     kernel::Plane plane;
     sketch::Sketch geometry;
+    /// What the sketch's plane follows, if anything: a construction plane (a feature of kind
+    /// Plane), or, with `attachedFace` the name of one of its flat faces, a body. When that
+    /// moves, the sketch moves with it, and so does what is made from the sketch.
+    ObjectId attachedTo;
+    std::string attachedFace;
+};
+
+/// What a construction plane is now: where it lies, and where on it to draw it.
+struct PlaneState {
+    kernel::Plane plane;
+    /// The middle of what it was placed against, dropped onto it: where it is drawn.
+    kernel::Point center;
+    /// How large to draw it, in millimeters.
+    double size = 100.0;
 };
 
 /// What a listener is told when the document changes.
@@ -106,6 +120,8 @@ struct FeatureTrial {
     kernel::NamedShape tool;
     /// Why the feature fails, in a sentence fit to show, or empty.
     std::string error;
+    /// For a construction plane: where it would be.
+    std::optional<PlaneState> plane;
 };
 
 /// What an entry of the timeline is.
@@ -164,8 +180,12 @@ public:
     void renameBody(ObjectId id, std::string name);
     void setBodyVisible(ObjectId id, bool visible);
 
-    /// Adds an empty sketch on a plane and returns its id.
-    ObjectId addSketch(std::string name, const kernel::Plane& plane);
+    /// Adds an empty sketch on a plane and returns its id. A sketch can be attached to a
+    /// construction plane (`attachedTo` a Plane feature, no face), or to a flat face of a body
+    /// (`attachedTo` the body, `attachedFace` the face's name): it then follows it. Throws
+    /// std::invalid_argument if what it is attached to does not exist.
+    ObjectId addSketch(std::string name, const kernel::Plane& plane, ObjectId attachedTo = {},
+                       std::string attachedFace = {});
     void removeSketch(ObjectId id);
     void renameSketch(ObjectId id, std::string name);
     void setSketchVisible(ObjectId id, bool visible);
@@ -194,8 +214,9 @@ public:
     void removeFeature(ObjectId id);
     void renameFeature(ObjectId id, std::string name);
     void setFeatureSuppressed(ObjectId id, bool suppressed);
-    /// Why a feature could not be applied, in a sentence fit to show. Empty if it was applied,
-    /// is suppressed, or lies beyond the history marker.
+    /// Why a feature could not be applied, or an attached sketch could not follow what it is
+    /// attached to, in a sentence fit to show. Empty if all is well, or the item is suppressed
+    /// or lies beyond the history marker.
     [[nodiscard]] std::string featureError(ObjectId id) const;
 
     /// Bodies no feature makes, sketches, and features, in the order they are applied.
@@ -212,6 +233,9 @@ public:
 
     /// A body as it is now, with the names of its faces. A null shape if it does not exist.
     [[nodiscard]] kernel::NamedShape namedBody(ObjectId body) const;
+    /// Where a construction plane is now. Nothing if it does not exist at this point in the
+    /// timeline, or cannot be placed.
+    [[nodiscard]] std::optional<PlaneState> planeState(ObjectId plane) const;
 
     /// What a feature would make of the model as it is now: at the history marker, which is
     /// where addFeature() puts it, or, while a feature is being edited, just before that one.
@@ -362,6 +386,7 @@ private:
         std::string error;
     };
     std::unordered_map<ObjectId, Built> m_built;
+    std::unordered_map<ObjectId, PlaneState> m_planes;
     std::unordered_set<ObjectId> m_touched;
     bool m_rebuildAll = false;
     int m_suspended = 0;

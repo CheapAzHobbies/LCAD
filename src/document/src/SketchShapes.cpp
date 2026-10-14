@@ -118,6 +118,20 @@ std::vector<kernel::Shape> sketchRegionFaces(const SketchItem& sketch) {
     return faces;
 }
 
+kernel::Shape planeShape(const PlaneState& state) {
+    const kernel::PlaneCoordinates middle = kernel::toLocal(state.plane, state.center);
+    const double half = state.size / 2.0;
+    const auto at = [&](double du, double dv) {
+        return kernel::toWorld(state.plane, middle.u + du, middle.v + dv);
+    };
+    kernel::Region square;
+    square.outer = {{kernel::makeSegment(at(-half, -half), at(half, -half)), "1"},
+                    {kernel::makeSegment(at(half, -half), at(half, half)), "2"},
+                    {kernel::makeSegment(at(half, half), at(-half, half)), "3"},
+                    {kernel::makeSegment(at(-half, half), at(-half, -half)), "4"}};
+    return kernel::makeRegionFace(state.plane, square);
+}
+
 std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch) {
     const sketch::Sketch& geometry = sketch.geometry;
     std::optional<kernel::BoundingBox> box;

@@ -47,6 +47,8 @@ BrowserPanel::BrowserPanel(QWidget* parent)
             m_tree->editItem(item, 0);
         } else if (item->parent() == m_sketches && m_sketches != nullptr) {
             emit sketchActivated(idOf(item));
+        } else if (item->parent() == m_planes && m_planes != nullptr) {
+            emit planeActivated(idOf(item));
         }
     });
 
@@ -140,6 +142,57 @@ QTreeWidgetItem* BrowserPanel::sketchItem(document::ObjectId id) const {
     return nullptr;
 }
 
+QTreeWidgetItem* BrowserPanel::planeItem(document::ObjectId id) const {
+    if (m_planes == nullptr) {
+        return nullptr;
+    }
+    for (int i = 0; i < m_planes->childCount(); ++i) {
+        if (idOf(m_planes->child(i)) == id) {
+            return m_planes->child(i);
+        }
+    }
+    return nullptr;
+}
+
+std::vector<document::ObjectId> BrowserPanel::selectedPlanes() const {
+    std::vector<document::ObjectId> ids;
+    if (m_planes == nullptr) {
+        return ids;
+    }
+    for (int i = 0; i < m_planes->childCount(); ++i) {
+        if (m_planes->child(i)->isSelected()) {
+            ids.push_back(idOf(m_planes->child(i)));
+        }
+    }
+    return ids;
+}
+
+void BrowserPanel::fillPlanes() {
+    if (m_planes == nullptr || m_document == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_tree);
+    const std::vector<document::ObjectId> selected = selectedPlanes();
+    while (m_planes->childCount() > 0) {
+        delete m_planes->takeChild(0);
+    }
+    for (const document::Feature& feature : m_document->features()) {
+        if (feature.kind != document::FeatureKind::Plane) {
+            continue;
+        }
+        auto* item = new QTreeWidgetItem(m_planes, {QString::fromStdString(feature.name)});
+        item->setData(0, idRole, QVariant::fromValue<qulonglong>(feature.id.value));
+        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable |
+                       Qt::ItemIsUserCheckable);
+        item->setCheckState(0, feature.visible ? Qt::Checked : Qt::Unchecked);
+        item->setToolTip(0, tr("A construction plane. Check to show, clear to hide. Double-click "
+                               "to change where it is."));
+        item->setSelected(std::find(selected.begin(), selected.end(), feature.id) !=
+                          selected.end());
+    }
+    m_planes->setHidden(m_planes->childCount() == 0);
+}
+
 void BrowserPanel::editSketchName(document::ObjectId id) {
     if (QTreeWidgetItem* item = sketchItem(id)) {
         m_tree->editItem(item, 0);
@@ -225,6 +278,7 @@ void BrowserPanel::rebuild() {
     m_origin = nullptr;
     m_bodies = nullptr;
     m_sketches = nullptr;
+    m_planes = nullptr;
     if (m_document == nullptr) {
         return;
     }
@@ -257,9 +311,13 @@ void BrowserPanel::rebuild() {
     for (const document::SketchItem& sketch : m_document->sketches()) {
         m_sketches->addChild(makeSketchItem(sketch));
     }
+    m_planes = new QTreeWidgetItem(m_root, {tr("Construction")});
+    m_planes->setFlags(Qt::ItemIsEnabled);
+    fillPlanes();
     m_root->setExpanded(true);
     m_bodies->setExpanded(true);
     m_sketches->setExpanded(true);
+    m_planes->setExpanded(true);
     markEditedSketch();
     applyFilter();
 }
@@ -367,8 +425,10 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
             markExistence(item, *body);
         }
         break;
-    case Kind::SketchGeometryChanged:
     case Kind::TimelineChanged:
+        fillPlanes();
+        break;
+    case Kind::SketchGeometryChanged:
     case Kind::HistoryChanged:
         break;
     }
@@ -380,6 +440,38 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
 }
 
 void BrowserPanel::onItemChanged(QTreeWidgetItem* item) {
+    if (m_document != nullptr && item->parent() == m_planes && m_planes != nullptr) {
+        const document::ObjectId id = idOf(item);
+        const document::Feature* plane = m_document->findFeature(id);
+        if (plane == nullptr) {
+            return;
+        }
+        const std::string name = item->text(0).trimmed().toStdString();
+        const bool visible = item->checkState(0) == Qt::Checked;
+        // Later: the document's answer rebuilds this list, which is no thing to do while the
+        // tree is still delivering this change.
+        QMetaObject::invokeMethod(
+            this,
+            [this, id, name, visible] {
+                const document::Feature* current = m_document->findFeature(id);
+                if (current == nullptr) {
+                    return;
+                }
+                try {
+                    if (!name.empty() && name != current->name) {
+                        m_document->renameFeature(id, name);
+                    } else if (visible != current->visible) {
+                        document::Feature shown = *current;
+                        shown.visible = visible;
+                        m_document->changeFeature(id, shown);
+                    }
+                } catch (const std::invalid_argument&) {
+                }
+                fillPlanes();
+            },
+            Qt::QueuedConnection);
+        return;
+    }
     if (m_document != nullptr && item->parent() == m_origin && m_origin != nullptr) {
         const int index = m_origin->indexOfChild(item);
         const bool visible = item->checkState(0) == Qt::Checked;
