@@ -698,7 +698,7 @@ public:
     }
 
     // A region at rest, under the pointer, or picked. See-through, so that what lies under it
-    // shows, and drawn over the model, so that a body on the sketch's plane does not hide it.
+    // shows.
     void styleProfile(const Handle(AIS_Shape)& object, bool picked, bool hovered) const {
         QColor fill = picked ? colors.selection : colors.preview;
         if (hovered) {
@@ -715,8 +715,12 @@ public:
 
     void restyleProfiles() {
         for (std::size_t i = 0; i < profilePatches.size(); ++i) {
-            styleProfile(profilePatches[i].object, isPicked(profilePatches[i].profile),
-                         static_cast<int>(i) == hoveredProfile);
+            const bool hovered = static_cast<int>(i) == hoveredProfile;
+            styleProfile(profilePatches[i].object, isPicked(profilePatches[i].profile), hovered);
+            // The one under the pointer is drawn over everything, so that it shows where the
+            // preview of what is being made covers it.
+            context->SetZLayer(profilePatches[i].object,
+                               hovered ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top);
             context->Redisplay(profilePatches[i].object, false);
         }
         redraw();
@@ -752,7 +756,10 @@ public:
                 Profile profile{id, regions[i].outer};
                 std::sort(profile.outline.begin(), profile.outline.end());
                 Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(faces[i]));
-                object->SetZLayer(Graphic3d_ZLayerId_Topmost);
+                // Over a body's face that lies in the sketch's plane, but behind whatever is
+                // in front of it, such as the preview of what is being made of it. Picking
+                // ignores what hides it: nothing else can be picked meanwhile.
+                object->SetZLayer(Graphic3d_ZLayerId_Top);
                 styleProfile(object, isPicked(profile), false);
                 context->Display(object, AIS_Shaded, AIS_Shape::SelectionMode(TopAbs_SHAPE), false);
                 profilePatches.push_back({std::move(profile), object});

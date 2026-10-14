@@ -2843,6 +2843,10 @@ void MainWindow::acceptFeature() {
         return;
     }
     closeFeaturePanel();
+    // What was picked for the feature has done its work.
+    m_viewport->clearSelection();
+    m_browser->setSelection({}, {});
+    updateSelectionState();
 }
 
 void MainWindow::deleteTimelineItem(document::ObjectId item) {
