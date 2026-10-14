@@ -331,6 +331,8 @@ public:
     int pressedPlane = -1;
     // Construction planes, and which of them the pointer is on and the button went down on.
     std::unordered_map<document::ObjectId, Handle(AIS_Shape)> constructionObjects;
+    // Construction axes: drawn, not picked; what turns or repeats about them names them.
+    std::unordered_map<document::ObjectId, Handle(AIS_Shape)> axisObjects;
     document::ObjectId hoveredConstruction;
     document::ObjectId pressedConstruction;
     // The closed regions shown while profiles are being chosen, of which sketches, which of them
@@ -709,7 +711,7 @@ public:
                                  Aspect_TOL_SOLID, hovered ? 2.5 : 1.0));
     }
 
-    // Shows the visible construction planes where they now are.
+    // Shows the visible construction planes and axes where they now are.
     void showConstructionPlanes() {
         if (context.IsNull()) {
             return;
@@ -718,10 +720,17 @@ public:
             context->Remove(entry.second, false);
         }
         constructionObjects.clear();
+        for (const auto& entry : axisObjects) {
+            context->Remove(entry.second, false);
+        }
+        axisObjects.clear();
         if (document == nullptr) {
             return;
         }
         for (const document::Feature& feature : document->features()) {
+            if (feature.kind == document::FeatureKind::Axis && feature.visible) {
+                showAxis(feature.id);
+            }
             if (feature.kind != document::FeatureKind::Plane || !feature.visible) {
                 continue;
             }
@@ -741,6 +750,28 @@ public:
                              planePicking ? AIS_Shape::SelectionMode(TopAbs_SHAPE) : -1, false);
             constructionObjects.emplace(feature.id, object);
         }
+    }
+
+    // A construction axis: a dashed amber line through the model.
+    void showAxis(document::ObjectId id) {
+        const auto state = document->axisState(id);
+        if (!state.has_value()) {
+            return;
+        }
+        kernel::Shape shape;
+        try {
+            shape = document::axisShape(*state);
+        } catch (const std::exception&) {
+            return;
+        }
+        Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(shape));
+        const Quantity_Color amber = toOcct(QColor(224, 160, 48));
+        object->SetColor(amber);
+        const Handle(Prs3d_Drawer)& drawer = object->Attributes();
+        drawer->SetWireAspect(new Prs3d_LineAspect(amber, Aspect_TOL_DOTDASH, 2.0));
+        drawer->SetLineAspect(new Prs3d_LineAspect(amber, Aspect_TOL_DOTDASH, 2.0));
+        context->Display(object, AIS_WireFrame, -1, false);
+        axisObjects.emplace(id, object);
     }
 
     // Which construction plane OCCT last found under the pointer, while planes are chosen.
@@ -1322,6 +1353,7 @@ ViewportWidget::~ViewportWidget() {
     m_impl->featureResult.Nullify();
     m_impl->profilePatches.clear();
     m_impl->constructionObjects.clear();
+    m_impl->axisObjects.clear();
     m_impl->viewCube.Nullify();
     for (Handle(AIS_Shape)& object : m_impl->originObjects) {
         object.Nullify();

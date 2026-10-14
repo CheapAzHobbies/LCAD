@@ -160,6 +160,14 @@ kernel::Shape planeShape(const PlaneState& state) {
     return kernel::makeRegionFace(state.plane, square);
 }
 
+kernel::Shape axisShape(const AxisState& state) {
+    const kernel::Point& c = state.center;
+    const kernel::Vector& d = state.axis.direction;
+    const double half = state.length / 2.0;
+    return kernel::makeSegment({c.x - d.x * half, c.y - d.y * half, c.z - d.z * half},
+                               {c.x + d.x * half, c.y + d.y * half, c.z + d.z * half});
+}
+
 std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch) {
     const sketch::Sketch& geometry = sketch.geometry;
     std::optional<kernel::BoundingBox> box;

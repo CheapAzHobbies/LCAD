@@ -126,20 +126,22 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), or `Hole`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, or `Axis` (a construction axis). |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
 | `operation` | `NewBody`, `Join`, `Cut`, or `Intersect`. |
 | `distance`, `distanceBack`, `symmetric` | How far a pull goes along the sketch's normal, how far the other way (0 for one side), and whether `distance` is split evenly to both sides. |
 | `axis`, `angle` | The sketch line a revolve turns about, and how far, in degrees. A circular pattern's `angle` too. |
+| `reference` (revolve) | Written only when a revolve turns about an axis of the model rather than a sketch line: `X`, `Y`, `Z`, or `axis:` and the id of a construction axis. Its `axis` is then 0. |
 | `edges`, `faces` | A fillet's or chamfer's edges, a shell's open faces, by name (see ARCHITECTURE.md, section 11). |
 | `size` | A fillet's radius, a chamfer's distance, a shell's wall thickness, a hole's diameter. |
 | `taper` | A pull only, and only when not zero: how far its sides lean in, in degrees. |
 | `extentBody`, `extentFace` | A pull up to a face only: the body, and the name of its flat face, that the pull ends in. |
-| `sources`, `reference`, `reference2`, `count`, `count2`, `spacing`, `spacing2` | Mirror and patterns only: the features copied (empty: the whole body), the plane, direction, or axis (`XY`, `XZ`, `YZ`, `X`, `Y`, `Z`, or a face or edge name), how many, and how far apart. |
+| `sources`, `reference`, `reference2`, `count`, `count2`, `spacing`, `spacing2` | Mirror and patterns only: the features copied (empty: the whole body), the plane, direction, or axis (`XY`, `XZ`, `YZ`, `X`, `Y`, `Z`, a face or edge name, `plane:` and the id of a construction plane, or `axis:` and the id of a construction axis), how many, and how far apart. |
 | `holeKind`, `throughAll`, `tipAngle`, `headDiameter`, `headDepth`, `countersinkAngle`, `flipped` | A hole only: `Simple`, `Counterbore`, or `Countersink`; right through or to `distance` with a point of `tipAngle` degrees; the width and depth of a counterbore or the angle of a countersink; and whether it is drilled toward the side the sketch is seen from. Its `size` is the diameter, and the holes go at the free-standing points of its `sketch`. |
 | `reference`, `visible` | A construction plane only: what it is placed against (`XY`, `XZ`, `YZ`, or the name of a flat face of `body`), and whether it is shown. Its `distance` is how far it is from that, along its normal. It makes no body; `body` is 0 for one placed against an origin plane. |
+| `reference`, `visible` (axis) | A construction axis only: what it runs along (`X`, `Y`, `Z`, or the name of an edge or a face of `body`: a straight edge, or a round edge or face, whose axis it is), and whether it is shown. It makes no body; `body` is 0 for an origin axis. |
 
 `document.json` may also hold `parameters`, a list of `{"id", "name", "expression", "comment"}`.
 A feature may have `expressions`, an object from the name of a value (`distance`, `size`,

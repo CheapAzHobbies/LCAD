@@ -59,11 +59,13 @@ programs call extrude).
 
 The 3D view shows the result as you type. If it cannot be made, the panel says why and OK waits.
 
-**Revolve** turns closed areas about a line of the same sketch; draw that line as construction
-geometry if it is not part of the outline. **Mirror**, **Rectangular Pattern**, and **Circular
+**Revolve** turns closed areas about a line of the same sketch (draw that line as construction
+geometry if it is not part of the outline), an origin axis, or a construction axis: choose it
+under **Axis** in the panel. **Mirror**, **Rectangular Pattern**, and **Circular
 Pattern** (under **Create**, and the pattern button in the toolbar) copy pulls and revolves, or
 a whole body: select the feature in the timeline first, or check it in the panel. The plane,
-direction, or axis is one through the origin, or an edge or face you click in the 3D view.
+direction, or axis is one through the origin, a construction plane or axis, or an edge or face
+you click in the 3D view.
 
 ## Holes
 
@@ -100,6 +102,12 @@ then the plane in the 3D view.
 
 A sketch drawn on a construction plane, or started on a flat face of a body, follows it: move
 the plane or change the body, and the sketch and what was made from it move too.
+
+**Axis** (under **Create**) adds a construction axis: pick an origin axis in the panel, or click
+a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
+listed under **Construction** too and drawn as dashed amber lines. A revolve can turn about one,
+and a pattern go along or around one; when the edge or face it runs along moves, the axis and
+what uses it follow.
 
 ## The timeline
 
@@ -350,7 +358,8 @@ These are the shortcuts LCAD starts with.
 | Ctrl + Q | Quit |
 
 Not there yet: autosave and crash recovery, inches as a display unit, import or export of other
-formats, construction axes, and pulling up to a curved face.
+formats, and pulling up to a curved face. Construction axes are not picked by clicking them in the
+3D view: choose them from the list in the panel.
 The origin guides that are shown are not saved with the document.
 
 ## If something goes wrong

@@ -21,6 +21,7 @@ constexpr KindName kindNames[] = {
     {FeatureKind::CircularPattern, "Circular Pattern"},
     {FeatureKind::Plane, "Plane"},
     {FeatureKind::Hole, "Hole"},
+    {FeatureKind::Axis, "Axis"},
 };
 
 struct HoleKindName {

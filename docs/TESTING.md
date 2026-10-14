@@ -92,7 +92,8 @@ so every check is a measurement against a formula:
   the browser and its dimension changed in the 3D view, the model following when the sketch is
   finished, a feature selected and edited from the timeline. It also drives the timeline with
   the pointer (dragging the marker, dragging an entry, refused moves), patterns, mirror,
-  measure, and saving and reopening.
+  measure, construction planes and axes, holes, taper and up-to-face pulls, parameters, and
+  saving and reopening.
 
 ## Sketch assertions
 

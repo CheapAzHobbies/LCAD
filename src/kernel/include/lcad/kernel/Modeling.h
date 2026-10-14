@@ -87,6 +87,13 @@ struct Region {
                                  double v1, double u2, double v2, double angle,
                                  const std::string& tag);
 
+struct Axis;
+
+/// Turns regions of a plane about an axis anywhere in space, by `angle` radians,
+/// counter-clockwise seen looking against the axis's direction. Faces are named as by pull().
+[[nodiscard]] NamedShape revolve(const Plane& plane, const std::vector<Region>& regions,
+                                 const Axis& axis, double angle, const std::string& tag);
+
 /// How two solids are combined.
 enum class Combination {
     Join,      ///< everything that is in either

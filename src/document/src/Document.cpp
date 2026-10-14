@@ -46,7 +46,23 @@ bool usesSketch(const Feature& feature) {
 
 // A construction plane placed against an origin plane needs no body.
 bool needsBody(const Feature& feature) {
-    return !(feature.kind == FeatureKind::Plane && !feature.body.isValid());
+    return !((feature.kind == FeatureKind::Plane || feature.kind == FeatureKind::Axis) &&
+             !feature.body.isValid());
+}
+
+// A construction plane or axis a reference names ("plane:12", "axis:14"), or an invalid id.
+ObjectId constructionIn(const std::string& reference) {
+    for (const char* prefix : {"plane:", "axis:"}) {
+        const std::string start(prefix);
+        if (reference.rfind(start, 0) == 0) {
+            try {
+                return ObjectId{std::stoull(reference.substr(start.size()))};
+            } catch (const std::exception&) {
+                return {};
+            }
+        }
+    }
+    return {};
 }
 
 bool samePlace(const kernel::Plane& a, const kernel::Plane& b) {
@@ -623,6 +639,14 @@ void Document::moveInTimeline(ObjectId item, std::size_t index) {
     record(std::move(edit), "Reorder Timeline");
 }
 
+std::optional<AxisState> Document::axisState(ObjectId axis) const {
+    const auto found = m_axes.find(axis);
+    if (found == m_axes.end()) {
+        return std::nullopt;
+    }
+    return found->second;
+}
+
 std::optional<PlaneState> Document::planeState(ObjectId plane) const {
     const auto found = m_planes.find(plane);
     if (found == m_planes.end()) {
@@ -968,6 +992,14 @@ FeatureTrial Document::tryFeature(Feature feature) const {
         feature = resolved(feature);
     } catch (const detail::FeatureFailure& failure) {
         trial.error = failure.what();
+        return trial;
+    }
+    if (feature.kind == FeatureKind::Axis) {
+        try {
+            trial.axis = detail::placeAxis(feature, *this, bodies);
+        } catch (const detail::FeatureFailure& failure) {
+            trial.error = failure.what();
+        }
         return trial;
     }
     if (feature.kind == FeatureKind::Plane) {
@@ -1508,6 +1540,13 @@ std::string Document::orderProblem(const std::vector<ObjectId>& order) const {
                        ", so it cannot come before it.";
             }
         }
+        for (const std::string& reference : {feature.reference, feature.reference2}) {
+            const Feature* construction = findFeature(constructionIn(reference));
+            if (construction != nullptr && at(construction->id) > place) {
+                return feature.name + " uses " + construction->name +
+                       ", so it cannot come before it.";
+            }
+        }
         for (const ObjectId source : feature.sources) {
             const Feature* copied = findFeature(source);
             if (copied != nullptr && at(copied->id) > place) {
@@ -1577,6 +1616,8 @@ void Document::rebuild() {
     std::unordered_set<ObjectId> changed;
     // Sketches that have moved with what they are attached to.
     std::unordered_set<ObjectId> moved;
+    // Construction planes and axes that have moved, or come or gone.
+    std::unordered_set<ObjectId> movedConstruction;
     std::unordered_map<ObjectId, PlaneState> planes;
     bool statusChanged = false;
     // Notes why an item that is not a solid feature fails, or that it works again.
@@ -1653,6 +1694,45 @@ void Document::rebuild() {
             setError(item, error);
             continue;
         }
+        if (featureIndex != notFound && m_features[featureIndex].kind == FeatureKind::Axis) {
+            const Feature& feature = m_features[featureIndex];
+            if (!reached || feature.suppressed) {
+                if (m_axes.erase(item) > 0) {
+                    statusChanged = true;
+                }
+                setError(item, {});
+                continue;
+            }
+            try {
+                const AxisState placed = detail::placeAxis(resolved(feature), *this, state);
+                const auto before = m_axes.find(item);
+                const auto same = [](const AxisState& a, const AxisState& b) {
+                    const auto near = [](double x, double y) { return std::abs(x - y) < 1e-12; };
+                    return near(a.axis.origin.x, b.axis.origin.x) &&
+                           near(a.axis.origin.y, b.axis.origin.y) &&
+                           near(a.axis.origin.z, b.axis.origin.z) &&
+                           near(a.axis.direction.x, b.axis.direction.x) &&
+                           near(a.axis.direction.y, b.axis.direction.y) &&
+                           near(a.axis.direction.z, b.axis.direction.z) &&
+                           near(a.length, b.length) && near(a.center.x, b.center.x) &&
+                           near(a.center.y, b.center.y) && near(a.center.z, b.center.z);
+                };
+                if (before == m_axes.end() || !same(before->second, placed)) {
+                    statusChanged = true;
+                    // What turns about it, or goes around it, is built again.
+                    movedConstruction.insert(item);
+                }
+                m_axes[item] = placed;
+                setError(item, {});
+            } catch (const detail::FeatureFailure& failure) {
+                if (m_axes.erase(item) > 0) {
+                    statusChanged = true;
+                    movedConstruction.insert(item);
+                }
+                setError(item, failure.what());
+            }
+            continue;
+        }
         if (featureIndex != notFound && m_features[featureIndex].kind == FeatureKind::Plane) {
             const Feature& feature = m_features[featureIndex];
             if (!reached || feature.suppressed) {
@@ -1668,6 +1748,7 @@ void Document::rebuild() {
                 if (before == m_planes.end() || !samePlace(before->second.plane, placed.plane) ||
                     before->second.size != placed.size) {
                     statusChanged = true;
+                    movedConstruction.insert(item);
                 }
                 planes[item] = placed;
                 m_planes[item] = placed;
@@ -1711,7 +1792,9 @@ void Document::rebuild() {
              (m_touched.contains(feature.sketch) || moved.contains(feature.sketch))) ||
             changed.contains(feature.body) ||
             (feature.extentBody.isValid() &&
-             (changed.contains(feature.extentBody) || m_touched.contains(feature.extentBody)));
+             (changed.contains(feature.extentBody) || m_touched.contains(feature.extentBody))) ||
+            movedConstruction.contains(constructionIn(feature.reference)) ||
+            movedConstruction.contains(constructionIn(feature.reference2));
         if (!stale) {
             if (built.applied) {
                 state[feature.body] = built.result;

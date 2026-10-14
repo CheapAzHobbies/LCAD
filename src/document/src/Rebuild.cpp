@@ -118,6 +118,9 @@ const kernel::NamedShape& targetOf(const Feature& feature, const Document& docum
     return found->second;
 }
 
+kernel::Axis axisNamed(const std::string& name, const kernel::NamedShape& body,
+                       const Document& document);
+
 // The solid a pull or a revolve makes, before it is combined with a body. `bodies` is needed
 // for a pull up to a face.
 kernel::NamedShape madeBy(const Feature& feature, const Document& document,
@@ -174,13 +177,18 @@ kernel::NamedShape madeBy(const Feature& feature, const Document& document,
         }
         return kernel::pull(sketch->plane, regions, from, to, tag, feature.taper * pi / 180.0);
     }
-    const sketch::Entity* axis = sketch->geometry.find(feature.axis);
-    if (axis == nullptr || axis->kind != sketch::EntityKind::Line) {
-        throw FeatureFailure("The line it turns about is no longer in " + sketch->name + ".");
-    }
     if (!std::isfinite(feature.angle) || std::abs(feature.angle) < 1e-9 ||
         std::abs(feature.angle) > 360.0 + 1e-9) {
         throw FeatureFailure("Its angle has to be more than zero and at most 360 degrees.");
+    }
+    if (!feature.reference.empty()) {
+        // About an origin axis or a construction axis.
+        const kernel::Axis about = axisNamed(feature.reference, kernel::NamedShape{}, document);
+        return kernel::revolve(sketch->plane, regions, about, feature.angle * pi / 180.0, tag);
+    }
+    const sketch::Entity* axis = sketch->geometry.find(feature.axis);
+    if (axis == nullptr || axis->kind != sketch::EntityKind::Line) {
+        throw FeatureFailure("The line it turns about is no longer in " + sketch->name + ".");
     }
     const sketch::Point2 a = sketch->geometry.position(axis->start);
     const sketch::Point2 b = sketch->geometry.position(axis->end);
@@ -203,6 +211,18 @@ kernel::Plane planeNamed(const std::string& name, const kernel::NamedShape& body
     if (name.empty()) {
         throw FeatureFailure("It has no plane to mirror in.");
     }
+    if (name.rfind("plane:", 0) == 0) {
+        const ObjectId id{std::stoull(name.substr(6))};
+        const Feature* plane = document.findFeature(id);
+        const auto state = document.planeState(id);
+        if (plane == nullptr || !state.has_value()) {
+            throw FeatureFailure(plane != nullptr ? "The plane " + plane->name +
+                                                        " does not exist at this point in the "
+                                                        "timeline."
+                                                  : std::string("The plane it uses is gone."));
+        }
+        return state->plane;
+    }
     const int face = kernel::findFace(body, name);
     if (face < 0) {
         throw FeatureFailure(
@@ -221,6 +241,19 @@ kernel::Plane planeNamed(const std::string& name, const kernel::NamedShape& body
 // body stands for.
 kernel::Axis axisNamed(const std::string& name, const kernel::NamedShape& body,
                        const Document& document) {
+    if (name.rfind("axis:", 0) == 0) {
+        // A construction axis, by its id.
+        const ObjectId id{std::stoull(name.substr(5))};
+        const Feature* axis = document.findFeature(id);
+        const auto state = document.axisState(id);
+        if (axis == nullptr || !state.has_value()) {
+            throw FeatureFailure(axis != nullptr ? "The axis " + axis->name +
+                                                       " does not exist at this point in the "
+                                                       "timeline."
+                                                 : std::string("The axis it uses is gone."));
+        }
+        return state->axis;
+    }
     if (name == "X") {
         return {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
     }
@@ -493,6 +526,72 @@ kernel::NamedShape placed(const Feature& feature, const Document& document,
 
 } // namespace
 
+AxisState placeAxis(const Feature& feature, const Document& document, const BodyStates& bodies) {
+    AxisState state;
+    std::optional<kernel::BoundingBox> extent;
+    const auto widen = [&extent](const std::optional<kernel::BoundingBox>& box) {
+        if (!box.has_value()) {
+            return;
+        }
+        if (!extent.has_value()) {
+            extent = box;
+            return;
+        }
+        extent->min = {std::min(extent->min.x, box->min.x), std::min(extent->min.y, box->min.y),
+                       std::min(extent->min.z, box->min.z)};
+        extent->max = {std::max(extent->max.x, box->max.x), std::max(extent->max.y, box->max.y),
+                       std::max(extent->max.z, box->max.z)};
+    };
+    if (feature.reference == "X" || feature.reference == "Y" || feature.reference == "Z") {
+        state.axis = axisNamed(feature.reference, kernel::NamedShape{}, document);
+        // Drawn across the model.
+        for (const auto& entry : bodies) {
+            widen(kernel::boundingBox(entry.second.shape));
+        }
+    } else {
+        const auto found = bodies.find(feature.body);
+        const Body* body = document.findBody(feature.body);
+        if (found == bodies.end() || found->second.shape.isNull()) {
+            throw FeatureFailure(body != nullptr
+                                     ? "The body it is placed on, " + body->name +
+                                           ", does not exist at this point in the timeline."
+                                     : std::string("The body it is placed on is gone."));
+        }
+        kernel::Shape part;
+        if (const int edge = kernel::findEdge(found->second, feature.reference); edge >= 0) {
+            part = kernel::subShape(found->second.shape, kernel::SubShapeKind::Edge, edge);
+        } else if (const int face = kernel::findFace(found->second, feature.reference); face >= 0) {
+            part = kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, face);
+        } else {
+            throw FeatureFailure("The edge or face it is placed along no longer exists: " +
+                                 describeName(document, feature.reference) + ".");
+        }
+        const auto axis = kernel::axisOf(part);
+        if (!axis.has_value()) {
+            throw FeatureFailure(describeName(document, feature.reference) +
+                                 " gives no axis: choose a straight edge, a round edge, or a "
+                                 "round face.");
+        }
+        state.axis = *axis;
+        widen(kernel::boundingBox(part));
+    }
+    const kernel::Point& o = state.axis.origin;
+    const kernel::Vector& d = state.axis.direction;
+    kernel::Point middle = o;
+    if (extent.has_value()) {
+        middle = {(extent->min.x + extent->max.x) / 2.0, (extent->min.y + extent->max.y) / 2.0,
+                  (extent->min.z + extent->max.z) / 2.0};
+        const double dx = extent->max.x - extent->min.x;
+        const double dy = extent->max.y - extent->min.y;
+        const double dz = extent->max.z - extent->min.z;
+        state.length = std::max(20.0, 1.3 * std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    // The middle, dropped onto the line.
+    const double along = (middle.x - o.x) * d.x + (middle.y - o.y) * d.y + (middle.z - o.z) * d.z;
+    state.center = {o.x + d.x * along, o.y + d.y * along, o.z + d.z * along};
+    return state;
+}
+
 PlaneState placePlane(const Feature& feature, const Document& document, const BodyStates& bodies) {
     if (!std::isfinite(feature.distance)) {
         throw FeatureFailure("Its distance is not a number.");
@@ -637,6 +736,8 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             return copiesOf(feature, document, targetOf(feature, document, bodies), bodies);
         case FeatureKind::Plane:
             throw FeatureFailure("A construction plane makes no solid.");
+        case FeatureKind::Axis:
+            throw FeatureFailure("A construction axis makes no solid.");
         case FeatureKind::Hole:
             return drilled(feature, document, targetOf(feature, document, bodies));
         case FeatureKind::Fillet:

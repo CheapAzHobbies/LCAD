@@ -62,6 +62,15 @@ struct SketchItem {
     std::map<sketch::ConstraintId, std::string> expressions;
 };
 
+/// What a construction axis is now: the line, and where on it to draw it.
+struct AxisState {
+    kernel::Axis axis;
+    /// The middle of what it was placed along, dropped onto the line: where it is drawn.
+    kernel::Point center;
+    /// How long to draw it, in millimeters.
+    double length = 100.0;
+};
+
 /// A value the user names, which the values of features and the dimensions of sketches can be
 /// worked out from: "width" is "60 mm", "hole" is "width / 10".
 struct Parameter {
@@ -141,6 +150,8 @@ struct FeatureTrial {
     std::string error;
     /// For a construction plane: where it would be.
     std::optional<PlaneState> plane;
+    /// For a construction axis: where it would be.
+    std::optional<AxisState> axis;
 };
 
 /// What an entry of the timeline is.
@@ -255,6 +266,9 @@ public:
     /// Where a construction plane is now. Nothing if it does not exist at this point in the
     /// timeline, or cannot be placed.
     [[nodiscard]] std::optional<PlaneState> planeState(ObjectId plane) const;
+    /// Where a construction axis is now. Nothing if it does not exist at this point in the
+    /// timeline, or cannot be placed.
+    [[nodiscard]] std::optional<AxisState> axisState(ObjectId axis) const;
 
     /// What a feature would make of the model as it is now: at the history marker, which is
     /// where addFeature() puts it, or, while a feature is being edited, just before that one.
@@ -462,6 +476,7 @@ private:
     };
     std::unordered_map<ObjectId, Built> m_built;
     std::unordered_map<ObjectId, PlaneState> m_planes;
+    std::unordered_map<ObjectId, AxisState> m_axes;
     std::unordered_set<ObjectId> m_touched;
     bool m_rebuildAll = false;
     int m_suspended = 0;

@@ -598,6 +598,45 @@ NamedShape pullTo(const Plane& plane, const std::vector<Region>& regions, const 
     });
 }
 
+NamedShape revolve(const Plane& plane, const std::vector<Region>& regions, const Axis& axis,
+                   double angle, const std::string& tag) {
+    const Vector& d = axis.direction;
+    if (std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) < 1e-12) {
+        throw std::invalid_argument("revolve: the axis needs a direction");
+    }
+    // Two points of the axis, in the plane's own coordinates and height, give the same turn as
+    // an axis drawn in the plane.
+    const Point a = axis.origin;
+    const Point b{a.x + d.x, a.y + d.y, a.z + d.z};
+    const PlaneCoordinates first = toLocal(plane, a);
+    const PlaneCoordinates second = toLocal(plane, b);
+    if (std::abs(first.w) > 1e-9 || std::abs(second.w) > 1e-9) {
+        // Out of the plane: turned about the axis as it is in space.
+        if (regions.empty()) {
+            throw std::invalid_argument("revolve: there is nothing to turn");
+        }
+        const double fullTurn = 2.0 * M_PI;
+        if (!std::isfinite(angle) || std::abs(angle) < 1e-9 || std::abs(angle) > fullTurn + 1e-9) {
+            throw std::invalid_argument("revolve: the angle must be between zero and a full turn");
+        }
+        return occt::guarded("revolve", [&] {
+            const gp_Ax1 line(gp_Pnt(a.x, a.y, a.z), gp_Dir(d.x, d.y, d.z));
+            const bool whole = std::abs(std::abs(angle) - fullTurn) < 1e-9;
+            std::vector<NamedShape> solids;
+            for (const Region& region : regions) {
+                solids.push_back(sweepRegion(
+                    plane, region, nullptr, tag, "revolve",
+                    [&line, whole, angle](const TopoDS_Face& face) {
+                        return whole ? std::make_unique<BRepPrimAPI_MakeRevol>(face, line)
+                                     : std::make_unique<BRepPrimAPI_MakeRevol>(face, line, angle);
+                    }));
+            }
+            return joinAll(std::move(solids));
+        });
+    }
+    return revolve(plane, regions, first.u, first.v, second.u, second.v, angle, tag);
+}
+
 NamedShape revolve(const Plane& plane, const std::vector<Region>& regions, double u1, double v1,
                    double u2, double v2, double angle, const std::string& tag) {
     if (regions.empty()) {

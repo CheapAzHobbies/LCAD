@@ -270,6 +270,21 @@ const QHash<QString, Drawing>& drawings() {
              i.line(12, 3, 12, 9);
              i.p.restore();
          }},
+        {QStringLiteral("axis"),
+         [](const Ink& i) {
+             // A cylinder, tinted, and the axis through it, dashed past its ends.
+             i.fill({{8, 7}, {16, 7}, {16, 17}, {8, 17}});
+             i.ellipse(12, 7, 4, 1.6);
+             i.line(8, 7, 8, 17);
+             i.line(16, 7, 16, 17);
+             i.arc(12, 17, 4, 1.6, 180, 180);
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(12, 2, 12, 22);
+             i.p.restore();
+         }},
         {QStringLiteral("pattern-rectangular"),
          [](const Ink& i) {
              // The original, tinted, and its copies in rows and columns.

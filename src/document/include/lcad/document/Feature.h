@@ -35,6 +35,9 @@ enum class FeatureKind {
     Plane,
     /// Holes drilled into a body at the points of a sketch.
     Hole,
+    /// A construction axis: an origin axis, a straight edge, or the axis of a round edge or
+    /// face. Revolves turn about it and circular patterns go around it. It makes no solid.
+    Axis,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);

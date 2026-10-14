@@ -659,6 +659,16 @@ void MainWindow::defineCommands() {
         c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
 
+        c = make("construct.axis", tr("&Axis"), create,
+                 tr("Add a construction axis to revolve about or pattern around: an origin axis, "
+                    "a straight edge, or the axis of a round edge or face"));
+        c.iconName = QStringLiteral("axis");
+        c.aliases = {tr("construction axis"), tr("work axis"), tr("datum axis"),
+                     tr("reference axis"), tr("axis through cylinder")};
+        c.run = [this](bool) { startFeature(FeatureKind::Axis); };
+        c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
         c = make("model.parameters", tr("&Parameters…"), modify,
                  tr("Name values, and work other values out from them"));
         c.aliases = {tr("variables"), tr("user parameters"), tr("equations"), tr("expressions"),
@@ -1355,7 +1365,7 @@ void MainWindow::createTopBar() {
     pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
     create->addAction(action("solid.mirror"));
     create->addSeparator();
-    create->addAction(action("construct.offsetPlane"));
+    create->addActions({action("construct.offsetPlane"), action("construct.axis")});
     create->addSeparator();
     for (const char* id :
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
@@ -2192,8 +2202,12 @@ std::optional<std::pair<document::ObjectId, std::string>> MainWindow::selectedFa
 }
 
 document::ObjectId MainWindow::selectedConstructionPlane() const {
+    // The Construction group lists axes too.
     for (const document::ObjectId id : m_browser->selectedPlanes()) {
-        return id;
+        const document::Feature* plane = document()->findFeature(id);
+        if (plane != nullptr && plane->kind == document::FeatureKind::Plane) {
+            return id;
+        }
     }
     const document::Feature* feature = document()->findFeature(m_timeline->selectedItem());
     if (feature != nullptr && feature->kind == document::FeatureKind::Plane &&
@@ -2253,6 +2267,21 @@ void MainWindow::updateSelectionState() {
         }
         m_properties->refresh(document(), selectedBodies(), parts);
     }
+}
+
+std::string MainWindow::nameOf(const SelectedItem& item) const {
+    const kernel::NamedShape named = document()->namedBody(item.body);
+    const auto index = static_cast<std::size_t>(item.index);
+    if (item.kind == SelectedItem::Kind::Face && index < named.faceNames.size()) {
+        return named.faceNames[index];
+    }
+    if (item.kind == SelectedItem::Kind::Edge && !named.shape.isNull()) {
+        const std::vector<std::string> edges = kernel::edgeNames(named);
+        if (index < edges.size()) {
+            return edges[index];
+        }
+    }
+    return {};
 }
 
 QString MainWindow::describe(const SelectedItem& item) const {
@@ -2680,10 +2709,29 @@ void MainWindow::startFeature(document::FeatureKind kind) {
             seed.reference = face->second;
         }
     }
+    if (kind == document::FeatureKind::Axis) {
+        // Along the edge or face that is selected, or else the Z axis.
+        seed.reference = "Z";
+        if (picked.size() == 1 && (picked.front().kind == SelectedItem::Kind::Edge ||
+                                   picked.front().kind == SelectedItem::Kind::Face)) {
+            if (const std::string name = nameOf(picked.front()); !name.empty()) {
+                seed.body = picked.front().body;
+                seed.reference = name;
+            }
+        }
+    }
     cancelCommand();
     m_editedFeature = {};
     openFeaturePanel(kind);
-    if (kind == document::FeatureKind::Plane || kind == document::FeatureKind::Hole) {
+    if (kind == document::FeatureKind::Axis) {
+        m_featurePanel->setFeature(seed);
+        if (seed.body.isValid()) {
+            // What it is placed along stays picked, and is named in the panel.
+            m_settingPicks = true;
+            m_viewport->setSelection(picked);
+            m_settingPicks = false;
+        }
+    } else if (kind == document::FeatureKind::Plane || kind == document::FeatureKind::Hole) {
         m_featurePanel->setFeature(seed);
         m_settingPicks = true;
         m_viewport->clearSelection();
@@ -2746,6 +2794,7 @@ bool MainWindow::editFeature(document::ObjectId id) {
         }
         m_viewport->setPickedProfiles(profiles);
     } else if (copiesFeatures(feature.kind) || feature.kind == document::FeatureKind::Plane ||
+               feature.kind == document::FeatureKind::Axis ||
                feature.kind == document::FeatureKind::Hole) {
         m_viewport->clearSelection();
     } else {
@@ -2790,8 +2839,10 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         if (kind == document::FeatureKind::Shell || kind == document::FeatureKind::Mirror ||
             kind == document::FeatureKind::Plane) {
             filter = SelectionFilter::Faces;
-        } else if (copiesFeatures(kind) || kind == document::FeatureKind::Hole) {
-            // A hole's sketch is picked by clicking it, which needs edges to be pickable.
+        } else if (copiesFeatures(kind) || kind == document::FeatureKind::Hole ||
+                   kind == document::FeatureKind::Axis) {
+            // A hole's sketch is picked by clicking it, which needs edges to be pickable; an
+            // axis runs along an edge or a round face.
             filter = SelectionFilter::FacesEdgesVertices;
         }
         m_viewport->setSelectionFilter(filter);
@@ -2885,25 +2936,15 @@ void MainWindow::takeFeaturePicks() {
         }
         return;
     }
-    if (copiesFeatures(kind) || kind == document::FeatureKind::Plane) {
+    if (copiesFeatures(kind) || kind == document::FeatureKind::Plane ||
+        kind == document::FeatureKind::Axis) {
         // The edge or face that gives the plane, the direction, or the axis.
         for (const SelectedItem& item : m_viewport->selection()) {
             if (item.kind != SelectedItem::Kind::Face &&
                 (item.kind != SelectedItem::Kind::Edge || kind == document::FeatureKind::Plane)) {
                 continue;
             }
-            const kernel::NamedShape named = document()->namedBody(item.body);
-            const auto index = static_cast<std::size_t>(item.index);
-            std::string name;
-            if (item.kind == SelectedItem::Kind::Face && index < named.faceNames.size()) {
-                name = named.faceNames[index];
-            } else if (item.kind == SelectedItem::Kind::Edge) {
-                const std::vector<std::string> edges = kernel::edgeNames(named);
-                if (index < edges.size()) {
-                    name = edges[index];
-                }
-            }
-            if (!name.empty()) {
+            if (const std::string name = nameOf(item); !name.empty()) {
                 m_featurePanel->setPickedReference(item.body, name, describe(item));
             }
             break;
@@ -2957,6 +2998,21 @@ void MainWindow::updateFeaturePreview() {
         return;
     }
     document::Feature feature = m_featurePanel->feature();
+    if (feature.kind == document::FeatureKind::Axis) {
+        const document::FeatureTrial trial = document()->tryFeature(feature);
+        m_featurePanel->setError(QString::fromStdString(trial.error));
+        m_viewport->setFeaturePreview({}, kernel::Shape());
+        kernel::Shape line;
+        if (trial.axis.has_value()) {
+            try {
+                line = document::axisShape(*trial.axis);
+            } catch (const std::exception&) {
+                // Nothing to show; the panel says what is wrong, if anything.
+            }
+        }
+        m_viewport->setPreview(line);
+        return;
+    }
     if (feature.kind == document::FeatureKind::Plane) {
         const document::FeatureTrial trial = document()->tryFeature(feature);
         m_featurePanel->setError(QString::fromStdString(trial.error));

@@ -62,6 +62,8 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Plane");
     case FeatureKind::Hole:
         return FeaturePanel::tr("Hole");
+    case FeatureKind::Axis:
+        return FeaturePanel::tr("Axis");
     }
     return {};
 }
@@ -140,7 +142,7 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         fillBodies();
         fillSketches();
     }
-    if (copies(kind) || kind == FeatureKind::Plane) {
+    if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis) {
         m_reference = new QComboBox(this);
         m_reference->setObjectName(QStringLiteral("reference"));
         connect(m_reference, &QComboBox::activated, this, [this] { readFields(); });
@@ -180,8 +182,9 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
     case FeatureKind::Revolve:
         m_axis = new QComboBox(this);
         m_axis->setObjectName(QStringLiteral("axis"));
-        m_axis->setToolTip(tr("The line of the sketch to turn about. Draw it as construction "
-                              "geometry if it is not part of the outline."));
+        m_axis->setToolTip(tr("The line of the sketch to turn about, an origin axis, or a "
+                              "construction axis. A line to turn about can be drawn as "
+                              "construction geometry."));
         connect(m_axis, &QComboBox::activated, this, [this] { readFields(); });
         m_form->addRow(tr("Axis"), m_axis);
         m_angle = addField(QStringLiteral("angle"), tr("Angle"), -360.0, 360.0, tr("°"));
@@ -282,8 +285,13 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_distance->setToolTip(tr("How far from it, along its normal. Negative goes the other "
                                   "way."));
         break;
+    case FeatureKind::Axis:
+        m_reference->setToolTip(tr("What the axis runs along. Click a straight edge, or a round "
+                                   "edge or face, in the 3D view to run it along that."));
+        m_form->addRow(tr("Along"), m_reference);
+        break;
     }
-    if (copies(kind) || kind == FeatureKind::Plane) {
+    if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis) {
         fillReferences();
         fillSources();
     }
@@ -385,10 +393,19 @@ void FeaturePanel::fillReferences() {
         m_reference->addItem(tr("Y Axis"), QStringLiteral("Y"));
         m_reference->addItem(tr("Z Axis"), QStringLiteral("Z"));
     }
+    // A mirror can be in a construction plane, and a pattern go along or around a
+    // construction axis.
+    if (m_feature.kind == FeatureKind::Mirror) {
+        addConstruction(m_reference, FeatureKind::Plane);
+    } else if (m_feature.kind == FeatureKind::RectangularPattern ||
+               m_feature.kind == FeatureKind::CircularPattern) {
+        addConstruction(m_reference, FeatureKind::Axis);
+    }
     // What was picked in the 3D view, or what an existing feature refers to.
     std::string picked = m_pickedName;
     QString description = m_pickedDescription;
-    const bool named = m_feature.reference.size() > 2;
+    const bool named = !m_feature.reference.empty() &&
+                       m_reference->findData(QString::fromStdString(m_feature.reference)) < 0;
     if (picked.empty() && named) {
         picked = m_feature.reference;
         description = mirror ? tr("Picked face") : tr("Picked edge or face");
@@ -396,7 +413,8 @@ void FeaturePanel::fillReferences() {
     if (!picked.empty()) {
         m_reference->addItem(description, QString::fromStdString(picked));
     }
-    int index = m_reference->findData(was);
+    // While a feature is being shown, what it refers to; after that, what the user chose.
+    int index = m_filling ? -1 : m_reference->findData(was);
     if (!m_pickedName.empty()) {
         index = m_reference->count() - 1;
     } else if (index < 0) {
@@ -405,7 +423,7 @@ void FeaturePanel::fillReferences() {
     const int fallback = m_feature.kind == FeatureKind::Mirror ? 2 : 0;
     m_reference->setCurrentIndex(index >= 0 ? index : fallback);
     if (m_reference2 != nullptr) {
-        const QString second = m_reference2->count() > 0
+        const QString second = m_reference2->count() > 0 && !m_filling
                                    ? m_reference2->currentData().toString()
                                    : QString::fromStdString(m_feature.reference2);
         const QSignalBlocker blocker2(m_reference2);
@@ -414,8 +432,26 @@ void FeaturePanel::fillReferences() {
         m_reference2->addItem(tr("X Axis"), QStringLiteral("X"));
         m_reference2->addItem(tr("Y Axis"), QStringLiteral("Y"));
         m_reference2->addItem(tr("Z Axis"), QStringLiteral("Z"));
+        addConstruction(m_reference2, FeatureKind::Axis);
         const int at = m_reference2->findData(second);
         m_reference2->setCurrentIndex(at >= 0 ? at : 0);
+    }
+}
+
+void FeaturePanel::addConstruction(QComboBox* box, FeatureKind kind) const {
+    // Those that are there at this point in the timeline: before the feature being edited.
+    for (const document::Feature& feature : m_document->features()) {
+        if (feature.kind != kind || feature.id == m_feature.id) {
+            continue;
+        }
+        const bool placed = kind == FeatureKind::Plane
+                                ? m_document->planeState(feature.id).has_value()
+                                : m_document->axisState(feature.id).has_value();
+        if (placed) {
+            const char* prefix = kind == FeatureKind::Plane ? "plane:" : "axis:";
+            box->addItem(QString::fromStdString(feature.name),
+                         QString::fromLatin1(prefix) + QString::number(feature.id.value));
+        }
     }
 }
 
@@ -543,6 +579,12 @@ void FeaturePanel::fillAxes() {
     if (sketch == nullptr) {
         return;
     }
+    const auto origin = [this] {
+        m_axis->addItem(tr("X Axis"), QStringLiteral("X"));
+        m_axis->addItem(tr("Y Axis"), QStringLiteral("Y"));
+        m_axis->addItem(tr("Z Axis"), QStringLiteral("Z"));
+        addConstruction(m_axis, FeatureKind::Axis);
+    };
     // The lines of the sketch, construction lines first: those are drawn to be axes.
     std::vector<const sketch::Entity*> lines;
     for (const sketch::Entity& entity : sketch->geometry.entities()) {
@@ -574,9 +616,13 @@ void FeaturePanel::fillAxes() {
         if (line->construction) {
             text += tr(" · construction");
         }
-        m_axis->addItem(text, QVariant::fromValue<uint>(line->id));
+        m_axis->addItem(text, QStringLiteral("line:%1").arg(line->id));
     }
-    const int index = m_axis->findData(QVariant::fromValue<uint>(m_feature.axis));
+    // And the axes of the model.
+    origin();
+    const int index =
+        m_axis->findData(m_feature.reference.empty() ? QStringLiteral("line:%1").arg(m_feature.axis)
+                                                     : QString::fromStdString(m_feature.reference));
     m_axis->setCurrentIndex(index >= 0 ? index : 0);
 }
 
@@ -613,11 +659,13 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
     if (m_size != nullptr) {
         m_size->setValue(feature.size);
     }
-    if (feature.kind == FeatureKind::Plane) {
+    if (feature.kind == FeatureKind::Plane || feature.kind == FeatureKind::Axis) {
         m_pickedName.clear();
         m_pickedBody = feature.body;
         fillReferences();
-        m_distance->setValue(feature.distance);
+        if (m_distance != nullptr) {
+            m_distance->setValue(feature.distance);
+        }
     }
     if (feature.kind == FeatureKind::Hole) {
         fillSketches();
@@ -696,7 +744,8 @@ bool FeaturePanel::hasInput() const {
         return m_feature.sketch.isValid() && !m_feature.regions.empty() &&
                (!goesToFace() || !m_feature.extentFace.empty());
     case FeatureKind::Revolve:
-        return m_feature.sketch.isValid() && !m_feature.regions.empty() && m_feature.axis != 0;
+        return m_feature.sketch.isValid() && !m_feature.regions.empty() &&
+               (m_feature.axis != 0 || !m_feature.reference.empty());
     case FeatureKind::Fillet:
     case FeatureKind::Chamfer:
         return m_feature.body.isValid() && !m_feature.edges.empty();
@@ -707,6 +756,7 @@ bool FeaturePanel::hasInput() const {
     case FeatureKind::CircularPattern:
         return m_feature.body.isValid() && !m_feature.reference.empty();
     case FeatureKind::Plane:
+    case FeatureKind::Axis:
         return !m_feature.reference.empty();
     case FeatureKind::Hole:
         return m_feature.sketch.isValid() && m_feature.body.isValid();
@@ -855,8 +905,21 @@ void FeaturePanel::readFields() {
         m_feature.body = m_feature.reference.size() > 2 ? m_pickedBody : document::ObjectId{};
         m_feature.distance = m_distance->value();
     }
+    if (m_feature.kind == FeatureKind::Axis) {
+        m_feature.reference = m_reference->currentData().toString().toStdString();
+        // An origin axis needs no body; an edge or a face, the body it is part of.
+        m_feature.body = m_feature.reference.size() > 1 ? m_pickedBody : document::ObjectId{};
+    }
     if (m_axis != nullptr) {
-        m_feature.axis = m_axis->count() > 0 ? m_axis->currentData().toUInt() : 0;
+        // A line of the sketch, by its number; or an axis of the model, by name.
+        const QString axis = m_axis->count() > 0 ? m_axis->currentData().toString() : QString();
+        if (axis.startsWith(QStringLiteral("line:"))) {
+            m_feature.axis = axis.mid(5).toUInt();
+            m_feature.reference.clear();
+        } else {
+            m_feature.axis = 0;
+            m_feature.reference = axis.toStdString();
+        }
     }
     if (m_angle != nullptr) {
         m_feature.angle = m_angle->value();
@@ -892,10 +955,6 @@ void FeaturePanel::updatePicked() {
                 (count == 1 ? tr("1 area of %1 picked.") : tr("%1 areas of %2 picked.").arg(count))
                     .arg(QString::fromStdString(sketch->name)) +
                 QLatin1Char(' ') + tr("Click an area to pick it or let it go.");
-        }
-        if (m_feature.kind == FeatureKind::Revolve && m_axis != nullptr && m_axis->count() == 0 &&
-            sketch != nullptr) {
-            text += QLatin1Char(' ') + tr("The sketch has no line to turn about.");
         }
         break;
     }
@@ -933,6 +992,10 @@ void FeaturePanel::updatePicked() {
     case FeatureKind::Plane:
         text = tr("Choose an origin plane below, or click a flat face in the 3D view, and how far "
                   "from it the plane goes.");
+        break;
+    case FeatureKind::Axis:
+        text = tr("Choose an origin axis below, or click a straight edge, or a round edge or "
+                  "face, in the 3D view.");
         break;
     case FeatureKind::Hole: {
         const document::SketchItem* sketch = m_document->findSketch(m_feature.sketch);

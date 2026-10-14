@@ -23,7 +23,7 @@ more than writing the code, now sets the pace.
 | 1. Desktop foundation | Window, viewport, selection, documents, save/open, undo | 2026-10-12 | 2027-01-31 | 2026-10-12 | |
 | 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-12 | 2026-10-25 | 2026-10-12 | |
 | 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-12 | 2026-11-30 | 2026-10-13 | |
-| 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-10-13 | 2027-02-15 | in progress | v0.1 alpha |
+| 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-10-13 | 2027-02-15 | 2026-10-14 | v0.1 alpha |
 | 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-16 | 2027-03-31 | | v0.2 |
 | 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-04-01 | 2027-07-15 | | v0.5 beta |
 | Port | Windows and macOS builds | 2027-07-16 | 2027-09-15 | | v0.6 |
@@ -166,7 +166,7 @@ What Phase 2 leaves for later, besides ellipse and spline:
 - **A sketch being edited is drawn over the model**, not hidden by bodies in front of it.
 - **Tangent arcs in a chain of lines, fillets, patterns, and text** are not there yet.
 
-## Phase 3: Parametric solids (started 2026-10-13, in progress, target 2027-02-15)
+## Phase 3: Parametric solids (finished 2026-10-14)
 
 Started early, on the owner's word. The extrude command is called **Pull**: it pulls, and with
 Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
@@ -201,15 +201,22 @@ Cut it pushes in, so one short word covers both (owner's choice, 2026-10-13).
       functions, typed into any value box of a feature or any sketch dimension. A change to a
       parameter rebuilds what uses it; a new name is put everywhere the old one was. Units are
       converted, not checked: adding a length to an angle is not refused.
-- [ ] Measure tool (done), construction planes (done: offset from an origin plane or a flat
-      face, and they follow it), construction axes (not started; patterns take an edge or a
-      round face as their axis meanwhile).
+- [x] Measure tool, construction planes (offset from an origin plane or a flat face, and they
+      follow it), and construction axes (an origin axis, a straight edge, or the axis of a round
+      edge or face, and they follow it). Revolves turn about an origin axis or a construction
+      axis as well as a sketch line; patterns go along or around construction axes, and mirrors
+      are in construction planes.
 
 Acceptance: build a dimensioned bracket, edit the first sketch, and verify downstream features update or
 report a specific failure. Met, at two levels: in the document (`FeatureTest`) and through the
 window with the pointer and the keyboard (`ModelingInterfaceTest`), including saving and reopening.
 
-What is there so far is on the branch `phase-3-parametric-solids`.
+Built on the branch `phase-3-parametric-solids` (pull request #5).
+
+What Phase 3 leaves for later: pulling up to a curved face (only flat faces so far), a taper on
+a pull to both sides, trimming and offsetting ellipses and splines, checking that the units of
+an expression go together (they are converted, not checked), and picking a construction axis by
+clicking it in the 3D view (it is chosen from a list).
 
 Stable references are the hardest problem in this phase and the usual reason parametric CAD projects stall.
 Budget time for it first, not last.

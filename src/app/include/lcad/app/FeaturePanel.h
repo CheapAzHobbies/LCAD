@@ -103,6 +103,8 @@ private:
     void fillAxes();
     void fillSources();
     void fillReferences();
+    /// Adds the construction planes or axes there are at this point in the timeline to a list.
+    void addConstruction(QComboBox* box, document::FeatureKind kind) const;
     void fillSketches();
     /// Shows the boxes that go with the kind of hole.
     void showHoleFields();

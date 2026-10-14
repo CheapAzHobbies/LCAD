@@ -110,6 +110,7 @@ private slots:
     void holesAreDrilledAtSketchPoints();
     void aPullTapersOrGoesUpToAFace();
     void parametersDriveTheModel();
+    void constructionAxesGuideRevolvesAndPatterns();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -726,10 +727,12 @@ void ModelingInterfaceTest::shellAndRevolveWork() {
     QVERIFY(trigger(window, "solid.revolve"));
     FeaturePanel* revolve = panel(window);
     QVERIFY(revolve != nullptr);
-    // The construction line is offered first as the axis.
+    // The construction line is offered first as the axis; after the sketch's lines come the
+    // origin axes.
     auto* axes = revolve->findChild<QComboBox*>(QStringLiteral("axis"));
     QVERIFY(axes != nullptr);
-    QVERIFY(axes->count() == 5);
+    QCOMPARE(axes->count(), 8);
+    QCOMPARE(axes->itemText(7), QStringLiteral("Z Axis"));
     QVERIFY(axes->currentText().contains(QStringLiteral("construction")));
     QCOMPARE(revolve->feature().axis, axis);
     // Apart from the shelled plate, so a body of its own.
@@ -836,6 +839,8 @@ void ModelingInterfaceTest::patternsAndMirrorsRepeatFeatures() {
     QVERIFY(panel(window) != nullptr);
     QCOMPARE(panel(window)->findChild<QSpinBox*>(QStringLiteral("count"))->value(), 4);
     QCOMPARE(panel(window)->value(QStringLiteral("spacing")), 15.0);
+    QCOMPARE(panel(window)->feature().reference2, std::string("Y"));
+    QCOMPARE(panel(window)->findChild<QSpinBox*>(QStringLiteral("count2"))->value(), 2);
     QVERIFY(trigger(window, "edit.cancel"));
     QTRY_VERIFY(panel(window) == nullptr);
 
@@ -1273,3 +1278,137 @@ void ModelingInterfaceTest::parametersDriveTheModel() {
 
 QTEST_MAIN(ModelingInterfaceTest)
 #include "ModelingInterfaceTest.moc"
+
+void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    // A hole through the middle of the plate.
+    const ObjectId holes = drawHole(window, 30.0, 20.0, 5.0);
+    window.browser()->setSelection({}, {holes});
+    QVERIFY(trigger(window, "solid.pull"));
+    typeInto(panel(window), "distance", 8.0);
+    QCOMPARE(panel(window)->feature().operation, Operation::Cut);
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // Create > Axis starts on the Z axis.
+    QVERIFY(action(window, "construct.axis")->isEnabled());
+    QVERIFY(trigger(window, "construct.axis"));
+    FeaturePanel* axisPanel = panel(window);
+    QVERIFY(axisPanel != nullptr);
+    QCOMPARE(axisPanel->feature().kind, FeatureKind::Axis);
+    QCOMPARE(QString::fromStdString(axisPanel->feature().reference), QStringLiteral("Z"));
+    QVERIFY(axisPanel->errorText().isEmpty());
+    QVERIFY(okButton(axisPanel)->isEnabled());
+    // Clicking the rim of the hole puts it through the hole's middle.
+    window.viewport()->setStandardView(StandardView::Top);
+    render(window);
+    click(window, at(window, 30.0, 25.0, 8.0));
+    QVERIFY(axisPanel->feature().reference.size() > 1);
+    QCOMPARE(axisPanel->feature().body, body);
+    QVERIFY2(axisPanel->errorText().isEmpty(), qPrintable(axisPanel->errorText()));
+    window.viewport()->setStandardView(StandardView::Home);
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-axis-preview");
+    QTest::mouseClick(okButton(axisPanel), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId axis = window.document()->features().back().id;
+    QCOMPARE(QString::fromStdString(window.document()->findFeature(axis)->name),
+             QStringLiteral("Axis 1"));
+    const auto state = window.document()->axisState(axis);
+    QVERIFY(state.has_value());
+    QVERIFY(near(state->axis.origin.x, 30.0));
+    QVERIFY(near(state->axis.origin.y, 20.0));
+    QVERIFY(near(std::abs(state->axis.direction.z), 1.0));
+    // It is listed under Construction, and makes no body.
+    QVERIFY(window.browser()->planeItem(axis) != nullptr);
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+
+    // A revolve about the origin's Z axis, chosen from the list: a ring from radius 100 to 110.
+    const ObjectId id = window.createSketch(lcad::kernel::planeXZ());
+    lcad::sketch::Sketch s = window.document()->findSketch(id)->geometry;
+    lcad::sketch::addRectangle(s, {100.0, 0.0}, {110.0, 20.0});
+    window.document()->setSketchGeometry(id, s, "Profile");
+    QVERIFY(trigger(window, "solid.revolve"));
+    FeaturePanel* revolve = panel(window);
+    QVERIFY(revolve != nullptr);
+    auto* axes = revolve->findChild<QComboBox*>(QStringLiteral("axis"));
+    QVERIFY(axes != nullptr);
+    // The rectangle's four lines, the origin's three axes, and Axis 1.
+    QCOMPARE(axes->count(), 8);
+    QCOMPARE(axes->itemText(7), QStringLiteral("Axis 1"));
+    revolve->setChoice(QStringLiteral("axis"), axes->findText(QStringLiteral("Z Axis")));
+    QCOMPARE(revolve->feature().reference, std::string("Z"));
+    QCOMPARE(revolve->feature().axis, lcad::sketch::EntityId{0});
+    QCOMPARE(revolve->feature().operation, Operation::NewBody);
+    QVERIFY2(revolve->errorText().isEmpty(), qPrintable(revolve->errorText()));
+    QTest::mouseClick(okButton(revolve), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId ring = window.document()->features().back().id;
+    QVERIFY(near(volumeOf(window, ring), pi * (110.0 * 110.0 - 100.0 * 100.0) * 20.0, 1e-5));
+    const ObjectId ringBody = bodyOf(window, ring).id;
+
+    // Two of the ring around Axis 1: the copy, half a turn about (30, 20), is centered on
+    // (60, 40).
+    window.timeline()->setSelectedItem({});
+    window.viewport()->clearSelection();
+    window.browser()->setSelection({ringBody}, {});
+    QVERIFY(trigger(window, "solid.patternCircular"));
+    FeaturePanel* around = panel(window);
+    QVERIFY(around != nullptr);
+    QCOMPARE(around->feature().body, ringBody);
+    auto* references = around->findChild<QComboBox*>(QStringLiteral("reference"));
+    const int onAxis = references->findText(QStringLiteral("Axis 1"));
+    QVERIFY(onAxis >= 0);
+    around->setChoice(QStringLiteral("reference"), onAxis);
+    QCOMPARE(around->feature().reference, "axis:" + std::to_string(axis.value));
+    auto* count = around->findChild<QSpinBox*>(QStringLiteral("count"));
+    count->setFocus();
+    count->selectAll();
+    QTest::keyClicks(count, QStringLiteral("2"));
+    QTest::keyClick(count, Qt::Key_Tab);
+    QVERIFY2(around->errorText().isEmpty(), qPrintable(around->errorText()));
+    QTest::mouseClick(okButton(around), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const auto box = lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
+    QVERIFY(box.has_value());
+    QVERIFY(near(box->max.x, 170.0, 1e-6));
+    QVERIFY(near(box->max.y, 150.0, 1e-6));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-axes");
+
+    // Double-click the axis in the browser to edit it: it can go back to the Z axis, and the
+    // copy follows.
+    QTreeWidget* tree = window.browser()->tree();
+    QTreeWidgetItem* entry = window.browser()->planeItem(axis);
+    tree->scrollToItem(entry);
+    const QPoint onEntry = tree->visualItemRect(entry).center();
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QTest::mouseDClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, onEntry);
+    QVERIFY(panel(window) != nullptr);
+    QCOMPARE(window.editedFeature(), axis);
+    QCOMPARE(panel(window)->kind(), FeatureKind::Axis);
+    auto* along = panel(window)->findChild<QComboBox*>(QStringLiteral("reference"));
+    // The origin's three axes, and the rim it is on.
+    QCOMPARE(along->count(), 4);
+    QCOMPARE(along->currentIndex(), 3);
+    panel(window)->setChoice(QStringLiteral("reference"), 2);
+    QCOMPARE(panel(window)->feature().reference, std::string("Z"));
+    QCOMPARE(panel(window)->feature().body, ObjectId{});
+    QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    // About the ring's own axis now, the copy lands on the ring.
+    const auto same = lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
+    QVERIFY(near(same->max.x, 110.0, 1e-6));
+    QVERIFY(window.document()->featureError(window.document()->features().back().id).empty());
+
+    // Hidden from the browser, it stays in the model.
+    entry = window.browser()->planeItem(axis);
+    entry->setCheckState(0, Qt::Unchecked);
+    QTRY_VERIFY(!window.document()->findFeature(axis)->visible);
+    QVERIFY(window.document()->axisState(axis).has_value());
+}

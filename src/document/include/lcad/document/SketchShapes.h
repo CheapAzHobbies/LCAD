@@ -36,6 +36,9 @@ enum class SketchPart {
 /// A construction plane as a square to draw: centered where it is drawn, of its size.
 [[nodiscard]] kernel::Shape planeShape(const PlaneState& state);
 
+/// A construction axis as a line to draw: centered where it is drawn, of its length.
+[[nodiscard]] kernel::Shape axisShape(const AxisState& state);
+
 /// The box around all of a sketch's geometry in model space, or nothing for an empty sketch.
 [[nodiscard]] std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch);
 

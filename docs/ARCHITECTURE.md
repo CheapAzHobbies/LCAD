@@ -315,7 +315,10 @@ document is.
 
 Two kinds of timeline entry place things rather than make solids. A construction plane (a
 feature of kind `Plane`) is worked out when its turn comes, from an origin plane or from a face
-of a body as it is at that point (`planeState()`). A sketch that is attached to a construction
+of a body as it is at that point (`planeState()`); a construction axis (kind `Axis`) likewise,
+from an origin axis or from an edge or a round face (`axisState()`). Features that use one name it
+as `plane:<id>` or `axis:<id>`, are built again when it moves, and cannot be put before it in the
+timeline. A sketch that is attached to a construction
 plane or to a face is moved there when its turn comes, and the features made from it are built
 again if it moved. Either one keeps where it last was, and says why, when what it is placed on
 is gone.

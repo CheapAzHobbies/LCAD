@@ -32,6 +32,11 @@ public:
 [[nodiscard]] PlaneState placePlane(const Feature& feature, const Document& document,
                                     const BodyStates& bodies);
 
+/// Where a construction axis goes, given the bodies as they are when its turn comes. Throws
+/// FeatureFailure if it cannot be placed.
+[[nodiscard]] AxisState placeAxis(const Feature& feature, const Document& document,
+                                  const BodyStates& bodies);
+
 /// Where an attached sketch goes, given the bodies and the construction planes as they are
 /// when its turn comes. Throws FeatureFailure if what it is attached to is not there.
 [[nodiscard]] kernel::Plane placeSketch(const SketchItem& sketch, const Document& document,

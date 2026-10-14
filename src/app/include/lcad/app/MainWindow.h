@@ -256,6 +256,8 @@ private:
     /// The body and the name of the one flat face that is selected, if that is what is selected.
     [[nodiscard]] std::optional<std::pair<document::ObjectId, std::string>>
     selectedFaceName() const;
+    /// The stable name of a face or an edge in the 3D view, or an empty string.
+    [[nodiscard]] std::string nameOf(const viewport::SelectedItem& item) const;
     /// The construction plane selected in the browser or the timeline, if there is one.
     [[nodiscard]] document::ObjectId selectedConstructionPlane() const;
     /// The bodies a command about bodies acts on: those selected, and those whose faces,

@@ -177,7 +177,8 @@ void BrowserPanel::fillPlanes() {
         delete m_planes->takeChild(0);
     }
     for (const document::Feature& feature : m_document->features()) {
-        if (feature.kind != document::FeatureKind::Plane) {
+        if (feature.kind != document::FeatureKind::Plane &&
+            feature.kind != document::FeatureKind::Axis) {
             continue;
         }
         auto* item = new QTreeWidgetItem(m_planes, {QString::fromStdString(feature.name)});
@@ -185,8 +186,11 @@ void BrowserPanel::fillPlanes() {
         item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable |
                        Qt::ItemIsUserCheckable);
         item->setCheckState(0, feature.visible ? Qt::Checked : Qt::Unchecked);
-        item->setToolTip(0, tr("A construction plane. Check to show, clear to hide. Double-click "
-                               "to change where it is."));
+        item->setToolTip(0, feature.kind == document::FeatureKind::Plane
+                                ? tr("A construction plane. Check to show, clear to hide. "
+                                     "Double-click to change where it is.")
+                                : tr("A construction axis. Check to show, clear to hide. "
+                                     "Double-click to change where it is."));
         item->setSelected(std::find(selected.begin(), selected.end(), feature.id) !=
                           selected.end());
     }

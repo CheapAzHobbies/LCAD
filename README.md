@@ -9,27 +9,29 @@ Linux comes first. Windows and macOS ports are planned once the core modeling wo
 ## Status
 
 Early. LCAD can sketch, turn sketches into solids, and change them through a feature timeline.
-Phase 3 is in progress.
+Phases 0 to 3 of the [roadmap](ROADMAP.md) are done; assemblies, import and export, and drawings
+are still to come.
 
 What works today:
 
 - **Sketching.** A sketch on a plane or on a flat face of a body, with lines, rectangles,
-  circles, arcs, points, polygons, slots, and construction geometry; twelve geometric
+  circles, arcs, ellipses, splines, points, polygons, slots, and construction geometry; twelve geometric
   constraints; dimensions typed in the 3D view; a solver that shows what can still move and
   refuses what contradicts; dragging; trim, extend, offset, mirror, and projecting edges of a
   body into the sketch.
 - **Solids from sketches.** Pull (extrude) closed areas of a sketch into a new body, or join,
   cut, or intersect with one, to one side, both sides, symmetrically, or up to a face, with a
   taper if wanted; revolve them about a
-  line; holes (simple, counterbored, countersunk); fillet, chamfer, and shell; mirror and
+  line or an axis; holes (simple, counterbored, countersunk); fillet, chamfer, and shell; mirror and
   rectangular and circular patterns of features.
   Each with a live preview, and editable later.
 - **A feature timeline.** Edit, rename, suppress, reorder, and roll back. Change a sketch and the
   solid follows; a feature that no longer fits says why, and the rest of the model carries on.
 - **Solids from primitives.** Box, cylinder, sphere, cone, and torus by their sizes, with a
   live preview.
-- **Construction planes** to sketch on; sketches on a face or a plane follow it when the model
-  changes.
+- **Construction planes** to sketch on and **construction axes** to revolve about or pattern
+  around; they, and sketches on a face or a plane, follow what they are placed on when the
+  model changes.
 - **Parameters**: named values, with units and expressions, that feature values and sketch
   dimensions can be worked out from.
 - **Measuring** distances and angles between faces, edges, and bodies.
@@ -40,8 +42,6 @@ What works today:
 - **Files.** Saving and opening `.lcad` documents.
 
 [docs/USING.md](docs/USING.md) shows how.
-
-Still to come in Phase 3: construction axes. See the [roadmap](ROADMAP.md).
 
 ## Building
 

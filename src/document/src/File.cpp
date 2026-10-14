@@ -522,9 +522,13 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     out["size"] = feature.size;
     // Construction planes and mirrors and patterns. Written only for them, so that files without
     // them read as they did.
-    if (feature.kind == FeatureKind::Plane) {
+    if (feature.kind == FeatureKind::Plane || feature.kind == FeatureKind::Axis) {
         out["reference"] = feature.reference;
         out["visible"] = feature.visible;
+    }
+    // A revolve about an origin axis or a construction axis.
+    if (feature.kind == FeatureKind::Revolve && !feature.reference.empty()) {
+        out["reference"] = feature.reference;
     }
     if (!feature.expressions.empty()) {
         out["expressions"] = feature.expressions;
@@ -611,9 +615,12 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     feature.edges = stringsMember(entry, "edges", where, path);
     feature.faces = stringsMember(entry, "faces", where, path);
     feature.size = numberMember(entry, "size", where, path);
-    if (feature.kind == FeatureKind::Plane) {
+    if (feature.kind == FeatureKind::Plane || feature.kind == FeatureKind::Axis) {
         feature.reference = stringMember(entry, "reference", where, path);
         feature.visible = boolMember(entry, "visible", where, path);
+    }
+    if (feature.kind == FeatureKind::Revolve && entry.contains("reference")) {
+        feature.reference = stringMember(entry, "reference", where, path);
     }
     if (entry.contains("expressions")) {
         const json& expressions = entry.at("expressions");

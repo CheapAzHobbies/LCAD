@@ -1352,3 +1352,110 @@ TEST_CASE("Ellipses and splines are pulled into solids, and saved", "[document][
                    loaded.document->findBody(loaded.document->findFeature(pulled)->body)->shape),
                WithinRel((pi * 30.0 * 12.0 + 420.0) * 5.0, 1e-9));
 }
+
+TEST_CASE("Construction axes: revolves turn about them, patterns go around them",
+          "[document][feature]") {
+    Document document;
+    // A rod of radius 5 standing at (50, 0).
+    const ObjectId rodSketch = document.addSketch("Rod", lcad::kernel::planeXY());
+    lcad::sketch::Sketch rod;
+    const lcad::sketch::EntityId rim = rod.addCircle({50.0, 0.0}, 5.0);
+    document.setSketchGeometry(rodSketch, rod, "Circle");
+    const ObjectId rodPull = document.addFeature(pullOf(rodSketch, 20.0));
+    const ObjectId rodBody = document.findFeature(rodPull)->body;
+
+    // An axis along the origin's Z, and one along the rod's round side.
+    Feature upright;
+    upright.kind = FeatureKind::Axis;
+    upright.reference = "Z";
+    const ObjectId zAxis = document.addFeature(upright);
+    CHECK(document.findFeature(zAxis)->name == "Axis 1");
+    REQUIRE(document.axisState(zAxis).has_value());
+    CHECK(document.axisState(zAxis)->axis.direction.z == 1.0);
+    CHECK(document.bodies().size() == 1);
+    std::string side;
+    const lcad::kernel::NamedShape named = document.namedBody(rodBody);
+    for (const std::string& face : named.faceNames) {
+        if (face.find("/side/") != std::string::npos) {
+            side = face;
+        }
+    }
+    REQUIRE_FALSE(side.empty());
+    Feature along;
+    along.kind = FeatureKind::Axis;
+    along.body = rodBody;
+    along.reference = side;
+    const ObjectId rodAxis = document.addFeature(along);
+    REQUIRE(document.featureError(rodAxis).empty());
+    CHECK_THAT(document.axisState(rodAxis)->axis.origin.x, WithinAbs(50.0, 1e-9));
+    CHECK_THAT(document.axisState(rodAxis)->center.z, WithinAbs(10.0, 1e-9));
+
+    // A rectangle 20 to 30 out and 6 high on the XZ plane, turned about the Z axis: a ring.
+    const ObjectId profile = document.addSketch("Profile", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {20.0, 0.0}, {30.0, 6.0});
+    document.setSketchGeometry(profile, s, "Rectangle");
+    Feature turn;
+    turn.kind = FeatureKind::Revolve;
+    turn.sketch = profile;
+    turn.reference = "axis:" + std::to_string(zAxis.value);
+    turn.angle = 360.0;
+    const ObjectId ring = document.addFeature(turn);
+    REQUIRE(document.featureError(ring).empty());
+    const ObjectId ringBody = document.findFeature(ring)->body;
+    CHECK_THAT(lcad::kernel::volume(document.findBody(ringBody)->shape),
+               WithinRel(60.0 * 2.0 * pi * 25.0, 1e-9));
+    // About the origin's Z directly, the same.
+    turn = *document.findFeature(ring);
+    turn.reference = "Z";
+    document.changeFeature(ring, turn);
+    CHECK_THAT(lcad::kernel::volume(document.findBody(ringBody)->shape),
+               WithinRel(60.0 * 2.0 * pi * 25.0, 1e-9));
+    document.undo();
+    // It cannot come before the axis it turns about, even with its sketch moved first.
+    document.moveInTimeline(profile, 0);
+    CHECK_THROWS_WITH(document.moveInTimeline(ring, 1), ContainsSubstring("uses Axis 1"));
+    document.undo();
+    CHECK(document.featureError(ring).empty());
+
+    // Four copies of the ring around the rod's axis; when the rod moves, they follow.
+    Feature around;
+    around.kind = FeatureKind::CircularPattern;
+    around.body = ringBody;
+    around.reference = "axis:" + std::to_string(rodAxis.value);
+    around.count = 2;
+    around.angle = 360.0;
+    const ObjectId copies = document.addFeature(around);
+    REQUIRE(document.featureError(copies).empty());
+    auto box = lcad::kernel::boundingBox(document.findBody(ringBody)->shape);
+    REQUIRE(box.has_value());
+    // The copy, half a turn about x = 50, reaches to 50 + 50 + 30.
+    CHECK_THAT(box->max.x, WithinAbs(130.0, 1e-6));
+    lcad::sketch::Sketch moved = document.findSketch(rodSketch)->geometry;
+    moved.dragBy(rim, 10.0, 0.0);
+    document.setSketchGeometry(rodSketch, moved, "Move");
+    CHECK_THAT(document.axisState(rodAxis)->axis.origin.x, WithinAbs(60.0, 1e-9));
+    box = lcad::kernel::boundingBox(document.findBody(ringBody)->shape);
+    CHECK_THAT(box->max.x, WithinAbs(150.0, 1e-6));
+
+    // An axis along a flat face is no axis to turn about... it is the face's normal. A face
+    // that is gone is reported.
+    lcad::sketch::Sketch gone = document.findSketch(rodSketch)->geometry;
+    gone.remove(rim);
+    document.setSketchGeometry(rodSketch, gone, "Delete");
+    CHECK_FALSE(document.featureError(rodAxis).empty());
+    CHECK_THAT(document.featureError(copies), ContainsSubstring("does not exist at this point"));
+    document.undo();
+    CHECK(document.featureError(copies).empty());
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("axes.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(*loaded.document->findFeature(rodAxis) == *document.findFeature(rodAxis));
+    CHECK(*loaded.document->findFeature(ring) == *document.findFeature(ring));
+    CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(ringBody)->shape),
+               WithinRel(lcad::kernel::volume(document.findBody(ringBody)->shape), 1e-9));
+}
