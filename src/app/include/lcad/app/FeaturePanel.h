@@ -56,6 +56,8 @@ public:
     void setFaces(document::ObjectId body, const std::vector<std::string>& faces);
     /// Hole: the sketch whose points say where the holes go.
     void setSketch(document::ObjectId sketch);
+    /// Repair: the body to repair.
+    void setBody(document::ObjectId body);
     /// Pull: the flat face, of a body, by name, that a pull up to a face ends in.
     void setExtentFace(document::ObjectId body, const std::string& face,
                        const QString& description);
@@ -117,6 +119,8 @@ private:
     const document::Document* m_document;
     /// Whether the user chose the operation, or it is still LCAD's guess.
     bool m_operationChosen = false;
+    /// Move Face: whether the user chose the direction, or it is still LCAD's guess.
+    bool m_directionChosen = false;
     bool m_filling = false;
     QString m_error;
     QLabel* m_picked = nullptr;

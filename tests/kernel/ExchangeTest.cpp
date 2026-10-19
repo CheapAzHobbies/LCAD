@@ -14,6 +14,7 @@
 #include <IGESControl_Controller.hxx>
 #include <IGESControl_Writer.hxx>
 #include <Interface_Static.hxx>
+#include <STEPControl_Controller.hxx>
 #include <STEPControl_Writer.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS_Compound.hxx>
@@ -231,7 +232,9 @@ TEST_CASE("A STEP file in inches is read in millimeters", "[kernel][exchange]") 
     const lcad::test::TempDir directory;
     const auto path = directory.file("inches.stp");
     {
-        // A part modeled in inches, written in inches: 1 by 2 by 1/2.
+        // A part modeled in inches, written in inches: 1 by 2 by 1/2. The settings exist once
+        // the translator is set up.
+        STEPControl_Controller::Init();
         Interface_Static::SetCVal("xstep.cascade.unit", "INCH");
         Interface_Static::SetCVal("write.step.unit", "INCH");
         STEPControl_Writer writer;

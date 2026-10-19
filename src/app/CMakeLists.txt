@@ -6,8 +6,10 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/BrowserPanel.h
     include/lcad/app/CommandSearch.h
     include/lcad/app/Commands.h
+    include/lcad/app/ExportDialog.h
     include/lcad/app/ExpressionBox.h
     include/lcad/app/FeaturePanel.h
+    include/lcad/app/GeometryCheckDialog.h
     include/lcad/app/Icons.h
     include/lcad/app/MainWindow.h
     include/lcad/app/MeasurePanel.h
@@ -22,8 +24,10 @@ qt_add_library(lcad_app STATIC
     src/BrowserPanel.cpp
     src/CommandSearch.cpp
     src/Commands.cpp
+    src/ExportDialog.cpp
     src/ExpressionBox.cpp
     src/FeaturePanel.cpp
+    src/GeometryCheckDialog.cpp
     src/Icons.cpp
     src/MainWindow.cpp
     src/MeasurePanel.cpp

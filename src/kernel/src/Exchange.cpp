@@ -14,10 +14,12 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <IGESControl_Controller.hxx>
 #include <IGESControl_Reader.hxx>
 #include <Interface_InterfaceModel.hxx>
 #include <Interface_Static.hxx>
 #include <Poly_Triangulation.hxx>
+#include <STEPControl_Controller.hxx>
 #include <STEPControl_Reader.hxx>
 #include <STEPControl_Writer.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
@@ -62,9 +64,12 @@ namespace {
 // Faces whose edges are closer than this, in millimeters, are sewn together on import.
 constexpr double sewingTolerance = 1e-3;
 
-// OCCT's translators take their settings from one global table.
+// OCCT's translators take their settings from one global table, which a translator fills in
+// when it is first set up: a setting made before that is lost.
 std::mutex& translatorSettings() {
     static std::mutex mutex;
+    STEPControl_Controller::Init();
+    IGESControl_Controller::Init();
     return mutex;
 }
 

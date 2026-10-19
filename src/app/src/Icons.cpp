@@ -285,6 +285,95 @@ const QHash<QString, Drawing>& drawings() {
              i.line(12, 2, 12, 22);
              i.p.restore();
          }},
+        {QStringLiteral("offset-face"),
+         [](const Ink& i) {
+             // A block whose top face, tinted, is pushed up, with the arrow it moves along.
+             i.poly({{3, 21}, {16, 21}, {16, 13}, {3, 13}});
+             i.fill({{3, 9}, {16, 9}, {16, 11}, {3, 11}});
+             i.poly({{3, 9}, {16, 9}, {16, 11}, {3, 11}});
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(3, 13, 3, 11);
+             i.line(16, 13, 16, 11);
+             i.p.restore();
+             i.line(20, 18, 20, 4);
+             i.poly({{17.5, 6.5}, {20, 4}, {22.5, 6.5}}, false);
+         }},
+        {QStringLiteral("move-face"),
+         [](const Ink& i) {
+             // A plate with a hole, tinted where it was, and the arrow it moved along.
+             i.poly({{2, 8}, {22, 8}, {22, 20}, {2, 20}});
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.ellipse(7.5, 14, 2.8, 2.8);
+             i.p.restore();
+             QPainterPath hole;
+             hole.addEllipse(QPointF(16.5, 14), 2.8, 2.8);
+             i.p.fillPath(hole, i.accent);
+             i.ellipse(16.5, 14, 2.8, 2.8);
+             i.line(7, 4, 17, 4);
+             i.poly({{14.5, 1.5}, {17, 4}, {14.5, 6.5}}, false);
+         }},
+        {QStringLiteral("delete-face"),
+         [](const Ink& i) {
+             // A corner that was rounded, its round face struck out, made square again.
+             i.poly({{3, 21}, {3, 6}, {21, 6}, {21, 21}}, false);
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.arc(13, 14, 8, 8, 0, 90);
+             i.p.restore();
+             i.p.save();
+             QPen cross = i.p.pen();
+             cross.setColor(i.accent);
+             i.p.setPen(cross);
+             i.line(14, 8, 22, 16);
+             i.line(22, 8, 14, 16);
+             i.p.restore();
+         }},
+        {QStringLiteral("repair"),
+         [](const Ink& i) {
+             // A cube with a gap in an edge, and the stitch that closes it.
+             isoBox(i, true);
+             i.p.save();
+             QPen stitch = i.p.pen();
+             stitch.setColor(i.accent);
+             i.p.setPen(stitch);
+             i.line(16.5, 12, 19, 14);
+             i.line(16.5, 15, 19, 17);
+             i.p.restore();
+         }},
+        {QStringLiteral("import"),
+         [](const Ink& i) {
+             // An arrow into a tray.
+             i.poly({{3, 14}, {3, 21}, {21, 21}, {21, 14}}, false);
+             i.line(12, 2, 12, 15);
+             i.poly({{8, 11}, {12, 15}, {16, 11}}, false);
+         }},
+        {QStringLiteral("export"),
+         [](const Ink& i) {
+             // An arrow out of a tray.
+             i.poly({{3, 14}, {3, 21}, {21, 21}, {21, 14}}, false);
+             i.line(12, 16, 12, 3);
+             i.poly({{8, 7}, {12, 3}, {16, 7}}, false);
+         }},
+        {QStringLiteral("check"),
+         [](const Ink& i) {
+             // A cube with a tick.
+             isoBox(i, false);
+             i.p.save();
+             QPen tick = i.p.pen();
+             tick.setColor(i.accent);
+             tick.setWidthF(tick.widthF() * 1.4);
+             i.p.setPen(tick);
+             i.poly({{14, 17}, {17, 20}, {23, 12}}, false);
+             i.p.restore();
+         }},
         {QStringLiteral("pattern-rectangular"),
          [](const Ink& i) {
              // The original, tinted, and its copies in rows and columns.

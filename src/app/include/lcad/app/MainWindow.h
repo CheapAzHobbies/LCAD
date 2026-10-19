@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <lcad/app/ExportDialog.h>
 #include <lcad/app/PrimitivePanel.h>
 #include <lcad/document/Document.h>
 #include <lcad/kernel/Plane.h>
@@ -33,6 +34,7 @@ namespace lcad::app {
 class BrowserPanel;
 class CommandRegistry;
 class FeaturePanel;
+class GeometryCheckDialog;
 class MeasurePanel;
 class ParametersDialog;
 class TimelinePanel;
@@ -108,6 +110,24 @@ public:
     /// The files opened or saved most recently, newest first.
     [[nodiscard]] QStringList recentFiles() const;
 
+    // Other programs' files
+
+    /// Adds the solids and surfaces of a STEP or IGES file to the current document as bodies,
+    /// in one undo step, and shows them. On failure nothing changes and `error` receives the
+    /// reason. `notes` receives what was done to the geometry on the way in, or is wrong
+    /// with it.
+    bool importGeometry(const QString& path, QString* error = nullptr,
+                        QStringList* notes = nullptr);
+    /// Writes bodies to a file: those shown, or with `options.selectedOnly` those selected.
+    bool exportGeometry(const QString& path, const ExportOptions& options,
+                        QString* error = nullptr);
+    /// The bodies an export takes: those shown that exist, or those selected.
+    [[nodiscard]] std::vector<document::ObjectId> exportedBodies(bool selectedOnly) const;
+    /// Checks the geometry of the bodies selected, or of all of them, and shows what was found.
+    void checkGeometry();
+    /// The list Check Geometry shows, once it has been opened, or nullptr.
+    [[nodiscard]] GeometryCheckDialog* geometryCheckDialog() const { return m_checkDialog; }
+
     // Modeling commands
 
     /// Opens the panel for creating a primitive and previews it. Cancels a command in progress.
@@ -177,6 +197,8 @@ public:
     bool fileOpen();
     bool fileSave();
     bool fileSaveAs();
+    bool fileImport();
+    bool fileExport();
     /// Closes a document, asking first if it has unsaved changes. -1 means the current one.
     bool fileClose(int index = -1);
 
@@ -291,6 +313,9 @@ private:
     FeaturePanel* m_featurePanel = nullptr;
     MeasurePanel* m_measurePanel = nullptr;
     ParametersDialog* m_parametersDialog = nullptr;
+    GeometryCheckDialog* m_checkDialog = nullptr;
+    /// The settings the last export was made with.
+    ExportOptions m_exportOptions;
     /// What is being measured: the first and the second thing picked.
     std::vector<viewport::SelectedItem> m_measured;
     std::optional<viewport::SelectionFilter> m_filterBeforeMeasure;
