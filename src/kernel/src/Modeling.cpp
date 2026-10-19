@@ -10,10 +10,13 @@
 #include <BRepAlgoAPI_BooleanOperation.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Defeaturing.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeShape.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
@@ -21,6 +24,7 @@
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
+#include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
@@ -28,9 +32,13 @@
 #include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
+#include <ShapeBuild_ReShape.hxx>
 #include <ShapeFix_Face.hxx>
+#include <ShapeFix_Shape.hxx>
+#include <ShapeFix_Solid.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -38,12 +46,16 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Trsf.hxx>
+
+#include <Geom_Surface.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -53,6 +65,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 
@@ -172,6 +185,19 @@ public:
                 offerAll(modified, name);
             } else if (!operation.IsDeleted(face)) {
                 offer(face, name);
+            }
+        }
+    }
+
+    // Offers each face that has been offered nothing yet the name `choose` gives it, if any.
+    void offerUnnamed(const std::function<std::string(const TopoDS_Face&)>& choose) {
+        for (int i = 1; i <= m_faces.Extent(); ++i) {
+            std::vector<std::string>& offered = m_candidates[static_cast<std::size_t>(i - 1)];
+            if (offered.empty()) {
+                std::string name = choose(TopoDS::Face(m_faces(i)));
+                if (!name.empty()) {
+                    offered.push_back(std::move(name));
+                }
             }
         }
     }
@@ -995,6 +1021,348 @@ NamedShape mirrored(const NamedShape& shape, const Plane& plane, const std::stri
     placement.SetMirror(gp_Ax2(gp_Pnt(plane.origin.x, plane.origin.y, plane.origin.z),
                                gp_Dir(plane.normal.x, plane.normal.y, plane.normal.z)));
     return copied(shape, placement, prefix, "mirror");
+}
+
+namespace {
+
+// Offsets chosen faces of a solid, each by a distance of its own, while the other faces stay
+// where they are: OCCT's offset algorithm with no offset of its own and one set on each of
+// those faces. Its history then says what became of every face.
+class FaceOffsetter : public BRepOffsetAPI_MakeOffsetShape {
+public:
+    void perform(const TopoDS_Shape& solid,
+                 const std::vector<std::pair<TopoDS_Face, double>>& offsets) {
+        myLastUsedAlgo = OffsetAlgo_JOIN;
+        myOffsetShape.Initialize(solid, 0.0, 1e-7, BRepOffset_Skin, Standard_False, Standard_False,
+                                 GeomAbs_Intersection);
+        for (const auto& [face, distance] : offsets) {
+            myOffsetShape.SetOffsetOnFace(face, distance);
+        }
+        myOffsetShape.MakeOffsetShape();
+        if (!myOffsetShape.IsDone()) {
+            NotDone();
+            return;
+        }
+        myShape = myOffsetShape.Shape();
+        Done();
+    }
+};
+
+// A shape made of closed shells as a solid with its faces facing out; any other as it is.
+TopoDS_Shape asSolid(const TopoDS_Shape& shape) {
+    if (shape.IsNull() || hasSolid(shape)) {
+        return shape;
+    }
+    TopExp_Explorer shell(shape, TopAbs_SHELL);
+    if (!shell.More()) {
+        return shape;
+    }
+    BRepBuilderAPI_MakeSolid maker;
+    for (; shell.More(); shell.Next()) {
+        if (!BRep_Tool::IsClosed(shell.Current())) {
+            return shape;
+        }
+        maker.Add(TopoDS::Shell(shell.Current()));
+    }
+    if (!maker.IsDone()) {
+        return shape;
+    }
+    ShapeFix_Solid fix(maker.Solid());
+    fix.Perform();
+    return fix.Solid();
+}
+
+TopoDS_Face faceAt(const TopTools_IndexedMapOfShape& faces, int index, const char* operation) {
+    if (index < 0 || index >= faces.Extent()) {
+        throw std::out_of_range(std::string(operation) + ": there is no face " +
+                                std::to_string(index));
+    }
+    return TopoDS::Face(faces(index + 1));
+}
+
+void requireSolid(const NamedShape& body, const char* operation) {
+    if (body.shape.isNull()) {
+        throw std::invalid_argument(std::string(operation) + ": there is no body");
+    }
+    if (!hasSolid(occt::unwrap(body.shape))) {
+        throw Error(operation, "the body is not a solid");
+    }
+}
+
+// Offsets faces by the numbers, each by its own distance.
+NamedShape offsetBy(const NamedShape& body, const std::vector<std::pair<int, double>>& offsets,
+                    const std::string& tag, const char* operation) {
+    requireSolid(body, operation);
+    return occt::guarded(operation, [&] {
+        const TopoDS_Shape& solid = occt::unwrap(body.shape);
+        const TopTools_IndexedMapOfShape faces = mapOf(solid, TopAbs_FACE);
+        std::vector<std::pair<TopoDS_Face, double>> chosen;
+        bool outward = true;
+        bool inward = true;
+        for (const auto& [index, distance] : offsets) {
+            chosen.emplace_back(faceAt(faces, index, operation), distance);
+            outward = outward && distance > 0.0;
+            inward = inward && distance < 0.0;
+        }
+        FaceOffsetter maker;
+        maker.perform(solid, chosen);
+        const auto cannot = [operation] {
+            return Error(operation, "the faces around them cannot be made to meet them there");
+        };
+        if (!maker.IsDone()) {
+            throw cannot();
+        }
+        const TopoDS_Shape result = asSolid(maker.Shape());
+        if (!hasSolid(result) || !BRepCheck_Analyzer(result).IsValid()) {
+            throw cannot();
+        }
+        // Moving faces out adds material and moving them in takes it away; a result that
+        // does otherwise has folded over itself.
+        const double was = solidVolume(solid);
+        const double now = solidVolume(result);
+        if ((outward && now <= was) || (inward && now >= was) || now <= 0.0) {
+            throw cannot();
+        }
+        FaceNamer namer(result);
+        namer.inherit(body, maker);
+        // The offset algorithm reports a face it moved as made from the face, not as changed.
+        for (int i = 1; i <= faces.Extent(); ++i) {
+            namer.offerAll(maker.Generated(faces(i)),
+                           body.faceNames.at(static_cast<std::size_t>(i - 1)));
+        }
+        const std::vector<std::string> edgesByName = edgeNames(body);
+        const TopTools_IndexedMapOfShape edges = mapOf(solid, TopAbs_EDGE);
+        for (int i = 1; i <= edges.Extent(); ++i) {
+            const TopTools_ListOfShape& made = maker.Generated(edges(i));
+            if (!made.IsEmpty()) {
+                namer.offerAll(made, tag + "/edge/" +
+                                         digest(edgesByName[static_cast<std::size_t>(i - 1)]));
+            }
+        }
+        return named(result, namer, tag);
+    });
+}
+
+// The same shape in another place, each face keeping its name: the faces are the same faces,
+// placed elsewhere.
+NamedShape placedAt(const NamedShape& shape, const gp_Trsf& placement) {
+    return NamedShape{occt::wrap(occt::unwrap(shape.shape).Moved(TopLoc_Location(placement))),
+                      shape.faceNames};
+}
+
+// What is left of `body` with `tool` taken away, or nothing if nothing is left.
+std::optional<NamedShape> remainderOf(const NamedShape& body, const NamedShape& tool) {
+    try {
+        NamedShape left = combine(body, tool, Combination::Cut);
+        if (solidVolume(occt::unwrap(left.shape)) <=
+            1e-9 * std::max(1.0, solidVolume(occt::unwrap(body.shape)))) {
+            return std::nullopt;
+        }
+        return left;
+    } catch (const Error&) {
+        return std::nullopt;
+    }
+}
+
+} // namespace
+
+NamedShape offsetFaces(const NamedShape& body, const std::vector<int>& faces, double distance,
+                       const std::string& tag) {
+    if (faces.empty()) {
+        throw std::invalid_argument("offsetFaces: there are no faces to offset");
+    }
+    if (!std::isfinite(distance) || std::abs(distance) < 1e-7) {
+        throw std::invalid_argument("offsetFaces: the distance must not be zero");
+    }
+    std::vector<std::pair<int, double>> offsets;
+    for (const int face : faces) {
+        offsets.emplace_back(face, distance);
+    }
+    return offsetBy(body, offsets, tag, "offset faces");
+}
+
+NamedShape removeFaces(const NamedShape& body, const std::vector<int>& faces,
+                       const std::string& tag) {
+    if (faces.empty()) {
+        throw std::invalid_argument("removeFaces: there are no faces to delete");
+    }
+    requireSolid(body, "delete faces");
+    return occt::guarded("delete faces", [&] {
+        const TopoDS_Shape& solid = occt::unwrap(body.shape);
+        const TopTools_IndexedMapOfShape all = mapOf(solid, TopAbs_FACE);
+        TopTools_ListOfShape chosen;
+        for (const int face : faces) {
+            chosen.Append(faceAt(all, face, "delete faces"));
+        }
+        BRepAlgoAPI_Defeaturing maker;
+        maker.SetShape(solid);
+        maker.AddFacesToRemove(chosen);
+        maker.SetToFillHistory(Standard_True);
+        maker.Build();
+        const auto cannot = [] {
+            return Error("delete faces",
+                         "the faces around them cannot be extended to close the gap");
+        };
+        if (!maker.IsDone() || maker.HasErrors()) {
+            throw cannot();
+        }
+        // Where it cannot take a face out, OCCT leaves the solid as it was and says nothing.
+        for (TopTools_ListOfShape::Iterator it(chosen); it.More(); it.Next()) {
+            if (!maker.IsDeleted(it.Value())) {
+                throw cannot();
+            }
+        }
+        const TopoDS_Shape result = maker.Shape();
+        if (!hasSolid(result) || !BRepCheck_Analyzer(result).IsValid()) {
+            throw cannot();
+        }
+        FaceNamer namer(result);
+        namer.inherit(body, maker);
+        return named(result, namer, tag);
+    });
+}
+
+NamedShape moveFaces(const NamedShape& body, const std::vector<int>& faces, const Vector& by,
+                     const std::string& tag) {
+    if (faces.empty()) {
+        throw std::invalid_argument("moveFaces: there are no faces to move");
+    }
+    if (!std::isfinite(by.x) || !std::isfinite(by.y) || !std::isfinite(by.z) ||
+        std::sqrt(by.x * by.x + by.y * by.y + by.z * by.z) < 1e-7) {
+        throw std::invalid_argument("moveFaces: the distance must not be zero");
+    }
+    requireSolid(body, "move faces");
+    const TopTools_IndexedMapOfShape all = mapOf(occt::unwrap(body.shape), TopAbs_FACE);
+    // Flat faces: a plane moved by `by` is the plane moved along its normal by the part of
+    // `by` that lies along it.
+    std::vector<std::pair<int, double>> offsets;
+    bool flat = true;
+    occt::guarded("move faces", [&] {
+        for (const int index : faces) {
+            const TopoDS_Face face = faceAt(all, index, "move faces");
+            const BRepAdaptor_Surface surface(face);
+            if (surface.GetType() != GeomAbs_Plane) {
+                flat = false;
+                return;
+            }
+            gp_Dir normal = surface.Plane().Axis().Direction();
+            if (face.Orientation() == TopAbs_REVERSED) {
+                normal.Reverse();
+            }
+            const double along = by.x * normal.X() + by.y * normal.Y() + by.z * normal.Z();
+            if (std::abs(along) > 1e-9) {
+                offsets.emplace_back(index, along);
+            }
+        }
+    });
+    if (flat) {
+        if (offsets.empty()) {
+            throw Error("move faces", "flat faces moved within their own planes do not change");
+        }
+        return offsetBy(body, offsets, tag, "move faces");
+    }
+
+    // Otherwise the material the faces bound is taken out, moved, and put back.
+    NamedShape without;
+    try {
+        without = removeFaces(body, faces, tag);
+    } catch (const Error&) {
+        throw Error("move faces",
+                    "taking them out leaves a gap that the faces around them cannot close");
+    }
+    gp_Trsf placement;
+    placement.SetTranslation(gp_Vec(by.x, by.y, by.z));
+    // Material the faces add, such as a boss, and material they take away, such as a hole.
+    const std::optional<NamedShape> added = remainderOf(body, without);
+    const std::optional<NamedShape> taken = remainderOf(without, body);
+    if (!added.has_value() && !taken.has_value()) {
+        throw Error("move faces", "the faces bound no material that could be moved");
+    }
+    NamedShape result = without;
+    if (added.has_value()) {
+        result = combine(result, placedAt(*added, placement), Combination::Join);
+    }
+    if (taken.has_value()) {
+        result = combine(result, placedAt(*taken, placement), Combination::Cut);
+    }
+    return result;
+}
+
+NamedShape repaired(const NamedShape& body, const std::string& tag) {
+    if (body.shape.isNull()) {
+        throw std::invalid_argument("repaired: there is no body");
+    }
+    return occt::guarded("repair", [&] {
+        const TopoDS_Shape& original = occt::unwrap(body.shape);
+        const TopTools_IndexedMapOfShape faces = mapOf(original, TopAbs_FACE);
+        // What each face of the body has become so far.
+        std::vector<TopoDS_Shape> became;
+        for (int i = 1; i <= faces.Extent(); ++i) {
+            became.push_back(faces(i));
+        }
+
+        TopoDS_Shape current = original;
+        // Faces that do not join up into a closed solid are sewn together.
+        bool open = !hasSolid(current);
+        for (TopExp_Explorer shell(current, TopAbs_SHELL); shell.More() && !open; shell.Next()) {
+            ShapeAnalysis_FreeBounds bounds(shell.Current(), Standard_False, Standard_False);
+            open = TopExp_Explorer(bounds.GetClosedWires(), TopAbs_EDGE).More() ||
+                   TopExp_Explorer(bounds.GetOpenWires(), TopAbs_EDGE).More();
+        }
+        if (open) {
+            BRepBuilderAPI_Sewing sewing(1e-3);
+            sewing.Add(current);
+            sewing.Perform();
+            for (TopoDS_Shape& face : became) {
+                if (sewing.IsModified(face)) {
+                    face = sewing.Modified(face);
+                }
+            }
+            current = asSolid(sewing.SewedShape());
+            if (!hasSolid(current)) {
+                throw Error("repair", "the faces do not close up into a solid");
+            }
+        }
+
+        // Edges, wires, and tolerances.
+        ShapeFix_Shape fix(current);
+        fix.SetPrecision(1e-7);
+        fix.SetMaxTolerance(1e-3);
+        fix.Perform();
+        current = fix.Shape();
+        for (TopoDS_Shape& face : became) {
+            face = fix.Context()->Value(face);
+        }
+        // A solid that faces inward.
+        if (solidVolume(current) < 0.0) {
+            current.Reverse();
+        }
+        if (!hasSolid(current) || !BRepCheck_Analyzer(current).IsValid()) {
+            throw Error("repair", "it could not be made into a valid solid");
+        }
+
+        FaceNamer namer(current);
+        std::map<const Geom_Surface*, std::string> bySurface;
+        for (std::size_t i = 0; i < became.size(); ++i) {
+            const std::string& name = body.faceNames.at(i);
+            bySurface.emplace(
+                BRep_Tool::Surface(TopoDS::Face(faces(static_cast<int>(i) + 1))).get(), name);
+            if (became[i].IsNull()) {
+                continue;
+            }
+            TopTools_ListOfShape now;
+            for (TopExp_Explorer face(became[i], TopAbs_FACE); face.More(); face.Next()) {
+                now.Append(face.Current());
+            }
+            namer.offerAll(now, name);
+        }
+        // A face rebuilt on the surface it had keeps its name too.
+        namer.offerUnnamed([&bySurface](const TopoDS_Face& face) {
+            const auto found = bySurface.find(BRep_Tool::Surface(face).get());
+            return found == bySurface.end() ? std::string() : found->second;
+        });
+        return named(current, namer, tag);
+    });
 }
 
 } // namespace lcad::kernel

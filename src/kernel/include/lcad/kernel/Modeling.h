@@ -121,6 +121,35 @@ enum class Combination {
 [[nodiscard]] NamedShape shell(const NamedShape& body, const std::vector<int>& openFaces,
                                double thickness, const std::string& tag);
 
+// Direct edits: changes to the faces of a solid as it is, whatever made it, such as a solid
+// read from a STEP file. A face that is changed keeps its name.
+
+/// Moves faces along their outward normals by `distance` in millimeters, the faces around them
+/// stretching or shrinking to meet them: a positive distance adds material, a negative one
+/// takes it away. A flat face moves parallel to itself; a round one, such as the wall of a
+/// hole, grows or shrinks. Throws kernel::Error if the faces around cannot meet them there.
+[[nodiscard]] NamedShape offsetFaces(const NamedShape& body, const std::vector<int>& faces,
+                                     double distance, const std::string& tag);
+
+/// Takes faces out of a solid, the faces around them extending to close the gap: a fillet, a
+/// hole, a boss goes as if it had never been made. Throws kernel::Error if the faces around
+/// cannot close the gap.
+[[nodiscard]] NamedShape removeFaces(const NamedShape& body, const std::vector<int>& faces,
+                                     const std::string& tag);
+
+/// Moves faces by `by`, in millimeters, the faces around them following. Flat faces move along
+/// their normals (a flat face moved within its own plane does not change). Faces that are not
+/// all flat move as one piece: the material they bound is taken out, as by removeFaces(), and
+/// put back moved, so that a hole or a boss can be moved across the face it is in. Throws
+/// kernel::Error if that cannot be done.
+[[nodiscard]] NamedShape moveFaces(const NamedShape& body, const std::vector<int>& faces,
+                                   const Vector& by, const std::string& tag);
+
+/// A solid with its defects put right where that can be done: loose faces sewn together,
+/// faces turned to face out, edges and tolerances fixed. A face that is fixed keeps its name.
+/// Throws kernel::Error if no valid solid can be made of it.
+[[nodiscard]] NamedShape repaired(const NamedShape& body, const std::string& tag);
+
 /// The kinds of hole.
 enum class HoleKind {
     Simple,

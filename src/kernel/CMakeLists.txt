@@ -2,6 +2,7 @@
 
 # Exact geometry. The public headers expose no OCCT types, so OCCT is a private dependency.
 add_library(lcad_kernel STATIC
+    src/Check.cpp
     src/Error.cpp
     src/Exchange.cpp
     src/Measure.cpp
