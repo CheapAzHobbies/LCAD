@@ -78,5 +78,7 @@ TEST_CASE("Reference STEP files written with each OCCT version import correctly"
             writers.insert("OCCT " + processor[1].str());
         }
     }
+    // The oldest and the newest OCCT series that LCAD supports, as for the documents.
     CHECK(writers.contains("OCCT 7.6"));
+    CHECK(writers.contains("OCCT 7.9"));
 }

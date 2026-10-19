@@ -40,3 +40,5 @@ build/dev/bin/lcad_write_reference_model primitives.lcad tests/models/step/brack
 ```
 
 CI's `reference-model-<job>` artifacts hold the one each job wrote, as `bracket.step`.
+`bracket-occt-7.9.3.step` came from the Arch Linux job; `bracket-occt-7.6.3.step` was written on
+Ubuntu 24.04.
