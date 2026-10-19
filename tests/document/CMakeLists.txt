@@ -21,7 +21,11 @@ target_include_directories(lcad_document_tests PRIVATE "${PROJECT_SOURCE_DIR}/sr
 target_compile_definitions(lcad_document_tests PRIVATE
     LCAD_TEST_MODELS_DIR="${PROJECT_SOURCE_DIR}/tests/models")
 lcad_target_defaults(lcad_document_tests)
-catch_discover_tests(lcad_document_tests PROPERTIES LABELS unit)
+# The STEP and IGES translators leave global tables behind, which tests/lsan.supp names. Only has
+# an effect in sanitizer builds.
+catch_discover_tests(lcad_document_tests PROPERTIES
+    LABELS unit
+    ENVIRONMENT "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=0")
 
 # Writes the reference document that tests/models/ keeps one copy of per OCCT version. See
 # tests/models/README.md.

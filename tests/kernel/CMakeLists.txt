@@ -23,4 +23,8 @@ target_link_libraries(lcad_kernel_tests PRIVATE
     lcad_test_support
     Catch2::Catch2WithMain)
 lcad_target_defaults(lcad_kernel_tests)
-catch_discover_tests(lcad_kernel_tests PROPERTIES LABELS unit)
+# The STEP and IGES translators leave global tables behind, which tests/lsan.supp names. Only has
+# an effect in sanitizer builds.
+catch_discover_tests(lcad_kernel_tests PROPERTIES
+    LABELS unit
+    ENVIRONMENT "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=0")
