@@ -38,6 +38,16 @@ enum class FeatureKind {
     /// A construction axis: an origin axis, a straight edge, or the axis of a round edge or
     /// face. Revolves turn about it and circular patterns go around it. It makes no solid.
     Axis,
+    // Direct edits: they change the faces of a body as it is, whatever made it, such as a
+    // body imported from a STEP file.
+    /// Moves faces along their normals by `distance`, the faces around them following.
+    OffsetFace,
+    /// Moves faces by `distance` along the direction `reference` names.
+    MoveFace,
+    /// Takes faces out, the faces around them closing the gap.
+    DeleteFace,
+    /// Puts right what is wrong with a body's geometry, where that can be done.
+    Repair,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
@@ -118,7 +128,8 @@ struct Feature {
 
     /// Fillet and Chamfer: the edges, by name.
     std::vector<std::string> edges;
-    /// Shell: the faces to leave open, by name.
+    /// Shell: the faces to leave open, by name. Offset Face, Move Face, and Delete Face: the
+    /// faces they change.
     std::vector<std::string> faces;
     /// The radius of a fillet, the distance of a chamfer, or the wall thickness of a shell.
     double size = 1.0;
@@ -131,7 +142,8 @@ struct Feature {
     /// body. Patterns: the direction to repeat along, or the axis to repeat around: "X", "Y",
     /// "Z", or the name of an edge or a face of the body (see kernel::axisOf). Plane: what it
     /// is placed against, an origin plane or a flat face of `body`; `distance` is how far
-    /// along that plane's normal it is.
+    /// along that plane's normal it is. Move Face: the direction, like a pattern's, and
+    /// `distance` how far.
     std::string reference;
     /// Rectangular pattern: the second direction, like `reference`. Empty for none.
     std::string reference2;

@@ -763,6 +763,41 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
                        ? kernel::fillet(body, edges, feature.size, tag)
                        : kernel::chamfer(body, edges, feature.size, tag);
         }
+        case FeatureKind::OffsetFace:
+        case FeatureKind::MoveFace:
+        case FeatureKind::DeleteFace: {
+            const kernel::NamedShape& body = targetOf(feature, document, bodies);
+            if (feature.faces.empty()) {
+                throw FeatureFailure("It has no faces to work on.");
+            }
+            std::vector<int> faces;
+            for (const std::string& name : feature.faces) {
+                const int face = kernel::findFace(body, name);
+                if (face < 0) {
+                    throw FeatureFailure("A face it works on no longer exists: " +
+                                         describeName(document, name) + ".");
+                }
+                faces.push_back(face);
+            }
+            if (feature.kind == FeatureKind::DeleteFace) {
+                return kernel::removeFaces(body, faces, tag);
+            }
+            if (!std::isfinite(feature.distance) || std::abs(feature.distance) < 1e-7) {
+                throw FeatureFailure("Its distance has to be other than zero.");
+            }
+            if (feature.kind == FeatureKind::OffsetFace) {
+                return kernel::offsetFaces(body, faces, feature.distance, tag);
+            }
+            const kernel::Vector d = axisNamed(feature.reference, body, document).direction;
+            const double length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+            if (!(length > 1e-12)) {
+                throw FeatureFailure("Its direction is not a direction.");
+            }
+            const double scale = feature.distance / length;
+            return kernel::moveFaces(body, faces, {d.x * scale, d.y * scale, d.z * scale}, tag);
+        }
+        case FeatureKind::Repair:
+            return kernel::repaired(targetOf(feature, document, bodies), tag);
         case FeatureKind::Shell: {
             const kernel::NamedShape& body = targetOf(feature, document, bodies);
             if (!std::isfinite(feature.size) || feature.size <= 1e-7) {

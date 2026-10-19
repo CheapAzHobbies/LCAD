@@ -202,8 +202,9 @@ public:
     // Editing. Each throws std::invalid_argument for input that cannot be applied and leaves
     // the document unchanged.
 
-    /// Adds a body and returns its id. The name must not be empty, and the shape must pass the
-    /// kernel's validity check.
+    /// Adds a body and returns its id. The name must not be empty, and the shape must have
+    /// faces. It need not be valid geometry: a body read from another program may not be, and
+    /// a Repair feature can be applied to it.
     ObjectId addBody(std::string name, kernel::Shape shape);
     /// Removes a body. For a body that features make or change, this removes those features.
     void removeBody(ObjectId id);
