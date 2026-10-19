@@ -145,10 +145,12 @@ enum class Combination {
 [[nodiscard]] NamedShape moveFaces(const NamedShape& body, const std::vector<int>& faces,
                                    const Vector& by, const std::string& tag);
 
-/// A solid with its defects put right where that can be done: loose faces sewn together,
-/// faces turned to face out, edges and tolerances fixed. A face that is fixed keeps its name.
-/// Throws kernel::Error if no valid solid can be made of it.
-[[nodiscard]] NamedShape repaired(const NamedShape& body, const std::string& tag);
+/// A solid with its defects put right where that can be done: faces whose edges are less than
+/// `gap` millimeters apart sewn together, faces turned to face out, edges and tolerances fixed.
+/// A face that is fixed keeps its name. Throws kernel::Error if no valid solid can be made of
+/// it.
+[[nodiscard]] NamedShape repaired(const NamedShape& body, const std::string& tag,
+                                  double gap = 1e-3);
 
 /// The kinds of hole.
 enum class HoleKind {

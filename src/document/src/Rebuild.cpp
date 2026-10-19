@@ -797,7 +797,10 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             return kernel::moveFaces(body, faces, {d.x * scale, d.y * scale, d.z * scale}, tag);
         }
         case FeatureKind::Repair:
-            return kernel::repaired(targetOf(feature, document, bodies), tag);
+            if (!std::isfinite(feature.size) || feature.size <= 0.0) {
+                throw FeatureFailure("The widest gap it closes has to be more than zero.");
+            }
+            return kernel::repaired(targetOf(feature, document, bodies), tag, feature.size);
         case FeatureKind::Shell: {
             const kernel::NamedShape& body = targetOf(feature, document, bodies);
             if (!std::isfinite(feature.size) || feature.size <= 1e-7) {

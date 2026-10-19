@@ -1288,9 +1288,12 @@ NamedShape moveFaces(const NamedShape& body, const std::vector<int>& faces, cons
     return result;
 }
 
-NamedShape repaired(const NamedShape& body, const std::string& tag) {
+NamedShape repaired(const NamedShape& body, const std::string& tag, double gap) {
     if (body.shape.isNull()) {
         throw std::invalid_argument("repaired: there is no body");
+    }
+    if (!std::isfinite(gap) || gap <= 0.0) {
+        throw std::invalid_argument("repaired: the gap must be greater than zero");
     }
     return occt::guarded("repair", [&] {
         const TopoDS_Shape& original = occt::unwrap(body.shape);
@@ -1310,7 +1313,7 @@ NamedShape repaired(const NamedShape& body, const std::string& tag) {
                    TopExp_Explorer(bounds.GetOpenWires(), TopAbs_EDGE).More();
         }
         if (open) {
-            BRepBuilderAPI_Sewing sewing(1e-3);
+            BRepBuilderAPI_Sewing sewing(gap);
             sewing.Add(current);
             sewing.Perform();
             for (TopoDS_Shape& face : became) {
@@ -1320,14 +1323,18 @@ NamedShape repaired(const NamedShape& body, const std::string& tag) {
             }
             current = asSolid(sewing.SewedShape());
             if (!hasSolid(current)) {
-                throw Error("repair", "the faces do not close up into a solid");
+                throw Error("repair",
+                            "the faces do not close up into a solid: " +
+                                std::to_string(sewing.NbFreeEdges()) +
+                                (sewing.NbFreeEdges() == 1 ? " edge borders" : " edges border") +
+                                " only one face, with gaps wider than it closes");
             }
         }
 
         // Edges, wires, and tolerances.
         ShapeFix_Shape fix(current);
         fix.SetPrecision(1e-7);
-        fix.SetMaxTolerance(1e-3);
+        fix.SetMaxTolerance(std::max(1e-3, gap));
         fix.Perform();
         current = fix.Shape();
         for (TopoDS_Shape& face : became) {

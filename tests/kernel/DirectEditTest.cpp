@@ -297,4 +297,24 @@ TEST_CASE("Repair sews loose faces into a solid and turns it right way out", "[k
     }
     CHECK_THROWS_WITH(repaired(nameFaces(occt::wrap(five), "imp/f"), "fix"),
                       ContainsSubstring("do not close up"));
+
+    // The faces of a box with its top lifted 0.2 off the rest: a gap too wide by default, and
+    // closed when the repair is told to close gaps that wide.
+    TopoDS_Compound gapped;
+    builder.MakeCompound(gapped);
+    for (TopExp_Explorer face(occt::unwrap(makeBox(10.0, 10.0, 10.0)), TopAbs_FACE); face.More();
+         face.Next()) {
+        const auto plane = planeOfFace(occt::wrap(face.Current()));
+        const bool top = plane.has_value() && plane->normal.z > 0.999;
+        builder.Add(gapped,
+                    top ? occt::unwrap(translated(occt::wrap(face.Current()), 0.0, 0.0, 0.2))
+                        : face.Current());
+    }
+    const NamedShape apart = nameFaces(occt::wrap(gapped), "imp/f");
+    CHECK_THROWS_WITH(repaired(apart, "fix"), ContainsSubstring("gaps wider than it closes"));
+    const NamedShape closed = repaired(apart, "fix", 0.5);
+    CHECK(countTopology(closed.shape).solids == 1);
+    CHECK(isValid(closed.shape));
+    CHECK_THAT(volume(closed.shape), WithinRel(1000.0, 0.03));
+    CHECK_THROWS_AS(repaired(apart, "fix", 0.0), std::invalid_argument);
 }

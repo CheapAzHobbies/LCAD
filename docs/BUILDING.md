@@ -44,7 +44,7 @@ To install by hand, or on a distribution the script does not know, you need:
 |---|---|---|---|
 | C++20 compiler, CMake 3.28+, Ninja | `build-essential cmake ninja-build` | `gcc-c++ cmake ninja-build` | `base-devel cmake ninja` |
 | Qt 6.4+ | `qt6-base-dev` | `qt6-qtbase-devel` | `qt6-base` |
-| Open CASCADE 7.6 to 7.9 | `libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev libocct-visualization-dev` | `opencascade-devel` | `opencascade` |
+| Open CASCADE 7.6 to 7.9 | `libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev libocct-visualization-dev libocct-data-exchange-dev` | `opencascade-devel` | `opencascade` |
 | File format: libzip, nlohmann/json | `libzip-dev nlohmann-json3-dev` | `libzip-devel json-devel` | `libzip nlohmann-json` |
 | Sketch solver: Eigen 3.4 or 5 | `libeigen3-dev` | `eigen3-devel` | `eigen` |
 | Tests: Catch2 3, xcb headers | `catch2 libxcb1-dev` | `catch-devel libxcb-devel` | `catch2 libxcb` |

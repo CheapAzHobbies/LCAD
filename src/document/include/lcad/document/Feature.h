@@ -131,7 +131,8 @@ struct Feature {
     /// Shell: the faces to leave open, by name. Offset Face, Move Face, and Delete Face: the
     /// faces they change.
     std::vector<std::string> faces;
-    /// The radius of a fillet, the distance of a chamfer, or the wall thickness of a shell.
+    /// The radius of a fillet, the distance of a chamfer, the wall thickness of a shell, or the
+    /// widest gap between faces that a repair closes.
     double size = 1.0;
     // Mirror and patterns
     /// The features that are copied: pulls and revolves that make or change `body`, each copy

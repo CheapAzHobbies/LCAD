@@ -326,8 +326,15 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_distance->setValue(5.0);
         m_distance->setToolTip(tr("How far to move them. Negative goes the other way."));
         break;
-    case FeatureKind::DeleteFace:
     case FeatureKind::Repair:
+        m_size =
+            addField(QStringLiteral("size"), tr("Close gaps up to"), 0.000001, 10.0, tr(" mm"));
+        m_size->setDecimals(4);
+        m_size->setValue(0.01);
+        m_size->setToolTip(tr("Edges of faces closer than this are sewn together. Larger closes "
+                              "wider gaps, but can join edges that are meant to stay apart."));
+        break;
+    case FeatureKind::DeleteFace:
         break;
     }
     if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis ||
