@@ -526,8 +526,9 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["reference"] = feature.reference;
         out["visible"] = feature.visible;
     }
-    // A revolve about an origin axis or a construction axis.
-    if (feature.kind == FeatureKind::Revolve && !feature.reference.empty()) {
+    // A revolve about an origin axis or a construction axis; the direction of a face moved.
+    if ((feature.kind == FeatureKind::Revolve && !feature.reference.empty()) ||
+        feature.kind == FeatureKind::MoveFace) {
         out["reference"] = feature.reference;
     }
     if (!feature.expressions.empty()) {
@@ -619,7 +620,8 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
         feature.reference = stringMember(entry, "reference", where, path);
         feature.visible = boolMember(entry, "visible", where, path);
     }
-    if (feature.kind == FeatureKind::Revolve && entry.contains("reference")) {
+    if ((feature.kind == FeatureKind::Revolve && entry.contains("reference")) ||
+        feature.kind == FeatureKind::MoveFace) {
         feature.reference = stringMember(entry, "reference", where, path);
     }
     if (entry.contains("expressions")) {

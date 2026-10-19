@@ -81,6 +81,51 @@ Under **Modify**: **Fillet** (F) rounds edges, **Chamfer** bevels them, **Shell*
 out, open at the faces you click. Click the edges or faces in the 3D view, before or after
 starting the command; Shift-click picks more.
 
+## Changing faces directly
+
+These work on any body, whatever made it, and are the way to change a body imported from a
+STEP or IGES file, which has no sketches or features behind it. Each is a step in the timeline
+like any other: edit it, suppress it, or move it.
+
+- **Offset Face** (Q) moves the faces you click along their normals by a distance, and the faces
+  around them follow. A positive distance adds material (a plate gets thicker); a negative one
+  takes it away. On the wall of a hole, a negative distance makes the hole wider.
+- **Move Face** moves the faces you click in a direction (along X, Y, or Z, along a construction
+  axis, or square to the first face). Click the wall of a hole, or the top and side of a boss, to
+  move it across the face it is in. A flat face only moves along its own normal: moving it within
+  its plane changes nothing.
+- **Delete Face** takes the faces you click out, and the faces around them grow to close the gap:
+  a fillet, a hole, or a boss goes as if it had never been made. Where the faces around cannot
+  close the gap (the top of a box), it says so.
+- **Repair Body** sews loose faces together, turns faces to face outward, and fixes edges and
+  tolerances, where that can be done.
+
+## Importing and exporting
+
+**File > Import** (Ctrl + I) adds the solids of a STEP (.step, .stp) or IGES (.igs, .iges) file to
+the document as bodies, named as the parts are in the file, in millimeters whatever unit the file
+uses. Faces in the file that are not part of a solid are sewn together, and those that close up
+become solids; the rest are kept as surfaces, and LCAD says so. Importing is one step to undo.
+An imported body has no timeline of its own: change it with the commands above.
+
+**File > Export** (Ctrl + Shift + E) writes the bodies shown, or those selected, to:
+
+- **STEP**: the exact solids, each a part with its name, for other CAD programs. Not the timeline:
+  they get the shapes, not how they were made.
+- **STL**, **3MF**, or **OBJ**: triangles, for 3D printing and other tools. Choose how closely the
+  triangles follow curved surfaces (Coarse, Medium, Fine, or your own deviation and angle). STL
+  can be written as text; 3MF keeps each body's name and the unit. A mesh is an approximation of
+  the solid; the LCAD document itself stays as it is.
+
+LCAD remembers the folder and the settings you used last.
+
+## Checking geometry
+
+**View > Check Geometry** looks at the bodies selected, or at all of them, and lists what is wrong
+with each: edges that border only one face (it is not closed), faces that face inward, faces that
+cross each other, broken outlines, edges too short to work with. Click a problem to see where it
+is in the 3D view. **Repair Body** in that list adds a Repair of the body to the timeline.
+
 ## Parameters
 
 **Modify > Parameters…** opens a table of named values. **Add** a row, name it (`width`), and type
@@ -352,13 +397,15 @@ These are the shortcuts LCAD starts with.
 | E | Pull (also from inside a sketch, which it finishes) |
 | F | Fillet |
 | H | Hole |
+| Q | Offset Face |
 | M | Measure |
+| Ctrl + I, Ctrl + Shift + E | Import a STEP or IGES file, export bodies |
 | F6, Shift + F6, Home | Fit the view, zoom to the selection, go to the home view |
 | F11 | Give the window to the 3D view, and back |
 | Ctrl + Q | Quit |
 
-Not there yet: autosave and crash recovery, inches as a display unit, import or export of other
-formats, and pulling up to a curved face. Construction axes are not picked by clicking them in the
+Not there yet: autosave and crash recovery, inches as a display unit, importing meshes (STL,
+OBJ, 3MF) or exporting IGES, and pulling up to a curved face. Construction axes are not picked by clicking them in the
 3D view: choose them from the list in the panel.
 The origin guides that are shown are not saved with the document.
 

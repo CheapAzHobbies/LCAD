@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Finds Open CASCADE Technology (OCCT) and defines the two targets LCAD links against:
+# Finds Open CASCADE Technology (OCCT) and defines the three targets LCAD links against:
 #
 #   lcad_occt_modeling        exact geometry and topology (no graphics)
+#   lcad_occt_exchange        reading and writing STEP and IGES, on top of lcad_occt_modeling
 #   lcad_occt_visualization   the OCCT 3D viewer, on top of lcad_occt_modeling
 #
 # Only the kernel and viewport modules may link these. See docs/ARCHITECTURE.md.
@@ -80,6 +81,14 @@ lcad_find_occt_toolkits(_lcad_occt_modeling_libraries
     TKGeomBase TKG3d TKG2d TKMath TKernel)
 lcad_find_occt_toolkits(_lcad_occt_visualization_libraries
     TKOpenGl TKV3d TKService)
+# Reading and writing STEP and IGES. OCCT 7.8 gathered these toolkits into new ones.
+if(LCAD_OCCT_VERSION VERSION_LESS "7.8")
+    lcad_find_occt_toolkits(_lcad_occt_exchange_libraries
+        TKSTEP TKSTEPAttr TKSTEPBase TKSTEP209 TKIGES TKXSBase)
+else()
+    lcad_find_occt_toolkits(_lcad_occt_exchange_libraries
+        TKDESTEP TKDEIGES TKXSBase)
+endif()
 
 message(STATUS
     "Found Open CASCADE Technology ${LCAD_OCCT_VERSION} (headers in ${LCAD_OCCT_INCLUDE_DIR})")
@@ -88,6 +97,10 @@ message(STATUS
 add_library(lcad_occt_modeling INTERFACE)
 target_include_directories(lcad_occt_modeling SYSTEM INTERFACE "${LCAD_OCCT_INCLUDE_DIR}")
 target_link_libraries(lcad_occt_modeling INTERFACE ${_lcad_occt_modeling_libraries})
+
+add_library(lcad_occt_exchange INTERFACE)
+target_link_libraries(lcad_occt_exchange INTERFACE
+    ${_lcad_occt_exchange_libraries} lcad_occt_modeling)
 
 add_library(lcad_occt_visualization INTERFACE)
 target_link_libraries(lcad_occt_visualization INTERFACE

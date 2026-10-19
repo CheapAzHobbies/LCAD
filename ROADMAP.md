@@ -24,7 +24,7 @@ more than writing the code, now sets the pace.
 | 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-12 | 2026-10-25 | 2026-10-12 | |
 | 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-12 | 2026-11-30 | 2026-10-13 | |
 | 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-10-13 | 2027-02-15 | 2026-10-14 | v0.1 alpha |
-| 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-16 | 2027-03-31 | | v0.2 |
+| 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2026-10-14 | 2027-03-31 | in progress | v0.2 |
 | 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-04-01 | 2027-07-15 | | v0.5 beta |
 | Port | Windows and macOS builds | 2027-07-16 | 2027-09-15 | | v0.6 |
 | 6. Drawings and manufacturing | Associative drawings, PDF/DXF, 2.5D and 3-axis CAM | 2027-09-16 | 2028-01-15 | | v1.0 |
@@ -211,7 +211,7 @@ Acceptance: build a dimensioned bracket, edit the first sketch, and verify downs
 report a specific failure. Met, at two levels: in the document (`FeatureTest`) and through the
 window with the pointer and the keyboard (`ModelingInterfaceTest`), including saving and reopening.
 
-Built on the branch `phase-3-parametric-solids` (pull request #5).
+Built on the branch `phase-3-parametric-solids` (pull request #5), merged 2026-10-14.
 
 What Phase 3 leaves for later: pulling up to a curved face (only flat faces so far), a taper on
 a pull to both sides, trimming and offsetting ellipses and splines, checking that the units of
@@ -221,15 +221,35 @@ clicking it in the 3D view (it is chosen from a list).
 Stable references are the hardest problem in this phase and the usual reason parametric CAD projects stall.
 Budget time for it first, not last.
 
-## Phase 4: Direct modeling and interchange (2027-02-16 to 2027-03-31)
+## Phase 4: Direct modeling and interchange (started 2026-10-14, in progress, target 2027-03-31)
 
-- [ ] STEP import and export, IGES import.
-- [ ] STL, 3MF, OBJ export with resolution control.
-- [ ] Direct edits on imported solids: move face, offset face, delete face with healing.
-- [ ] Geometry validation and repair.
-- [ ] Direct edits recorded as timeline features.
+Started early, on the owner's word, once Phase 3 was merged.
 
-Acceptance: import a STEP solid, offset a face, save, export STEP, and validate the result.
+- [x] STEP import and export, IGES import. STEP (AP203, AP214, AP242) in any length unit, parts
+      named as in the file; loose faces sewn and closed into solids where they close up, open
+      surfaces kept and reported. STEP export writes AP214 in millimeters, a named part per body.
+      Tried on files other programs wrote: a Euclid screw, five Onshape parts, an IGES canopy.
+- [x] STL (binary or text), 3MF, OBJ export with resolution control: Coarse, Medium, Fine, or a
+      deviation and an angle of one's own. The meshes are closed and face outward.
+- [x] Direct edits on imported solids: Offset Face (also widens or narrows a hole), Move Face
+      (flat faces along their normals; a hole or a boss across the face it is in), Delete Face
+      with healing (a fillet, a hole, a boss goes).
+- [x] Geometry validation and repair: Check Geometry lists invalid parts, open edges, inside-out
+      solids, crossing faces, and short edges by body, and shows where; Repair sews faces (gaps
+      up to a width it is given), turns faces outward, and fixes edges and tolerances.
+- [x] Direct edits recorded as timeline features: edited, suppressed, reordered, saved, like any
+      other. The imported geometry itself is kept: suppress the edits and it is as it was read.
+
+Acceptance: import a STEP solid, offset a face, save, export STEP, and validate the result. Met
+in the document (`tests/document/DirectEditTest.cpp`) and through the window
+(`tests/gui/InterchangeInterfaceTest.cpp`): the STEP export is read back and checked, and its
+volume compared with the closed-form value. STEP files written with each OCCT version are read
+by every build (`tests/models/step/`).
+
+What Phase 4 leaves for later: importing meshes (STL, OBJ, 3MF) and exporting IGES; moving a
+flat face within its own plane, or faces that are not all flat in a direction that takes them
+off their neighbors' surfaces in a way defeaturing cannot undo; AP242 export (AP214 is
+written); and remembering which file a body was imported from.
 
 ## Phase 5: Components and assemblies (2027-04-01 to 2027-07-15)
 

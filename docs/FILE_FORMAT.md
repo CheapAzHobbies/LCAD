@@ -126,7 +126,7 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, or `Axis` (a construction axis). |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, or `Repair`. |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
@@ -134,7 +134,8 @@ optional, and a file without them opens as it always did.
 | `distance`, `distanceBack`, `symmetric` | How far a pull goes along the sketch's normal, how far the other way (0 for one side), and whether `distance` is split evenly to both sides. |
 | `axis`, `angle` | The sketch line a revolve turns about, and how far, in degrees. A circular pattern's `angle` too. |
 | `reference` (revolve) | Written only when a revolve turns about an axis of the model rather than a sketch line: `X`, `Y`, `Z`, or `axis:` and the id of a construction axis. Its `axis` is then 0. |
-| `edges`, `faces` | A fillet's or chamfer's edges, a shell's open faces, by name (see ARCHITECTURE.md, section 11). |
+| `edges`, `faces` | A fillet's or chamfer's edges, a shell's open faces, the faces an Offset Face, Move Face, or Delete Face changes, by name (see ARCHITECTURE.md, section 11). |
+| `reference` (move face) | Move Face only: the direction, as for a pattern (`X`, `Y`, `Z`, the name of an edge or face, or `axis:` and an id); its `distance` is how far. An Offset Face's `distance` is how far along the faces' normals. |
 | `size` | A fillet's radius, a chamfer's distance, a shell's wall thickness, a hole's diameter. |
 | `taper` | A pull only, and only when not zero: how far its sides lean in, in degrees. |
 | `extentBody`, `extentFace` | A pull up to a face only: the body, and the name of its flat face, that the pull ends in. |

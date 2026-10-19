@@ -9,8 +9,8 @@ Linux comes first. Windows and macOS ports are planned once the core modeling wo
 ## Status
 
 Early. LCAD can sketch, turn sketches into solids, and change them through a feature timeline.
-Phases 0 to 3 of the [roadmap](ROADMAP.md) are done; assemblies, import and export, and drawings
-are still to come.
+Phases 0 to 3 of the [roadmap](ROADMAP.md) are done, and Phase 4 (other programs' files and
+direct edits) is in progress; assemblies and drawings are still to come.
 
 What works today:
 
@@ -35,6 +35,9 @@ What works today:
 - **Parameters**: named values, with units and expressions, that feature values and sketch
   dimensions can be worked out from.
 - **Measuring** distances and angles between faces, edges, and bodies.
+- **Other programs' files.** Import STEP and IGES; export STEP, STL, 3MF, and OBJ. Change
+  imported solids directly with Offset Face, Move Face, and Delete Face, each a timeline step;
+  check geometry and repair it.
 - **The window.** A 3D view with a view cube, standard views, display styles, and a grid;
   selecting bodies, faces, edges, vertices, and sketches, with their measurements; a browser
   tree and a properties panel to rename, hide, isolate, and delete; several documents in tabs;

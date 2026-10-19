@@ -3,6 +3,9 @@
 #include <lcad/app/FeaturePanel.h>
 
 #include <lcad/app/ExpressionBox.h>
+#include <lcad/kernel/Modeling.h>
+#include <lcad/kernel/Plane.h>
+#include <lcad/kernel/SubShapes.h>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -64,6 +67,14 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Hole");
     case FeatureKind::Axis:
         return FeaturePanel::tr("Axis");
+    case FeatureKind::OffsetFace:
+        return FeaturePanel::tr("Offset Face");
+    case FeatureKind::MoveFace:
+        return FeaturePanel::tr("Move Face");
+    case FeatureKind::DeleteFace:
+        return FeaturePanel::tr("Delete Face");
+    case FeatureKind::Repair:
+        return FeaturePanel::tr("Repair");
     }
     return {};
 }
@@ -142,7 +153,16 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         fillBodies();
         fillSketches();
     }
-    if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis) {
+    if (kind == FeatureKind::Repair) {
+        m_body = new QComboBox(this);
+        m_body->setObjectName(QStringLiteral("body"));
+        m_body->setToolTip(tr("The body to repair."));
+        connect(m_body, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Body"), m_body);
+        fillBodies();
+    }
+    if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis ||
+        kind == FeatureKind::MoveFace) {
         m_reference = new QComboBox(this);
         m_reference->setObjectName(QStringLiteral("reference"));
         connect(m_reference, &QComboBox::activated, this, [this] { readFields(); });
@@ -290,8 +310,35 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
                                    "edge or face, in the 3D view to run it along that."));
         m_form->addRow(tr("Along"), m_reference);
         break;
+    case FeatureKind::OffsetFace:
+        m_distance = addField(QStringLiteral("distance"), tr("Distance"), -largestInput,
+                              largestInput, tr(" mm"));
+        m_distance->setValue(2.0);
+        m_distance->setToolTip(tr("How far the faces move along their normals. Positive adds "
+                                  "material; negative takes it away, and makes a hole wider."));
+        break;
+    case FeatureKind::MoveFace:
+        m_reference->setToolTip(tr("The direction to move the faces in."));
+        connect(m_reference, &QComboBox::activated, this, [this] { m_directionChosen = true; });
+        m_form->addRow(tr("Direction"), m_reference);
+        m_distance = addField(QStringLiteral("distance"), tr("Distance"), -largestInput,
+                              largestInput, tr(" mm"));
+        m_distance->setValue(5.0);
+        m_distance->setToolTip(tr("How far to move them. Negative goes the other way."));
+        break;
+    case FeatureKind::Repair:
+        m_size =
+            addField(QStringLiteral("size"), tr("Close gaps up to"), 0.000001, 10.0, tr(" mm"));
+        m_size->setDecimals(4);
+        m_size->setValue(0.01);
+        m_size->setToolTip(tr("Edges of faces closer than this are sewn together. Larger closes "
+                              "wider gaps, but can join edges that are meant to stay apart."));
+        break;
+    case FeatureKind::DeleteFace:
+        break;
     }
-    if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis) {
+    if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis ||
+        kind == FeatureKind::MoveFace) {
         fillReferences();
         fillSources();
     }
@@ -398,8 +445,29 @@ void FeaturePanel::fillReferences() {
     if (m_feature.kind == FeatureKind::Mirror) {
         addConstruction(m_reference, FeatureKind::Plane);
     } else if (m_feature.kind == FeatureKind::RectangularPattern ||
-               m_feature.kind == FeatureKind::CircularPattern) {
+               m_feature.kind == FeatureKind::CircularPattern ||
+               m_feature.kind == FeatureKind::MoveFace) {
         addConstruction(m_reference, FeatureKind::Axis);
+    }
+    if (m_feature.kind == FeatureKind::MoveFace) {
+        // Square to the first face picked, or along its axis if it is round.
+        if (!m_feature.faces.empty()) {
+            m_reference->addItem(tr("Square to the first face"),
+                                 QString::fromStdString(m_feature.faces.front()));
+        }
+        // What the user chose stays; LCAD's guess follows the faces picked.
+        int index = m_filling || !m_directionChosen ? -1 : m_reference->findData(was);
+        if (index < 0) {
+            index = m_reference->findData(QString::fromStdString(m_feature.reference));
+        }
+        // A face that was the direction and is no longer the first: the first one now is.
+        if (index < 0 && !m_feature.faces.empty() &&
+            std::find(m_feature.faces.begin(), m_feature.faces.end(), m_feature.reference) !=
+                m_feature.faces.end()) {
+            index = m_reference->count() - 1;
+        }
+        m_reference->setCurrentIndex(index >= 0 ? index : 0);
+        return;
     }
     // What was picked in the 3D view, or what an existing feature refers to.
     std::string picked = m_pickedName;
@@ -659,6 +727,21 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
     if (m_size != nullptr) {
         m_size->setValue(feature.size);
     }
+    if (feature.kind == FeatureKind::OffsetFace || feature.kind == FeatureKind::MoveFace) {
+        // An existing feature's direction is what the user chose.
+        m_directionChosen = feature.kind == FeatureKind::MoveFace;
+        m_distance->setValue(feature.distance);
+        if (m_reference != nullptr) {
+            fillReferences();
+        }
+    }
+    if (feature.kind == FeatureKind::Repair) {
+        fillBodies();
+        const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
+        if (index >= 0) {
+            m_body->setCurrentIndex(index);
+        }
+    }
     if (feature.kind == FeatureKind::Plane || feature.kind == FeatureKind::Axis) {
         m_pickedName.clear();
         m_pickedBody = feature.body;
@@ -735,6 +818,32 @@ void FeaturePanel::setEdges(document::ObjectId body, const std::vector<std::stri
 void FeaturePanel::setFaces(document::ObjectId body, const std::vector<std::string>& faces) {
     m_feature.body = body;
     m_feature.faces = faces;
+    if (m_feature.kind == FeatureKind::MoveFace) {
+        if (!m_directionChosen) {
+            // Square to the first face, if it is flat: the way a face is usually moved.
+            m_feature.reference = "X";
+            if (!faces.empty()) {
+                const kernel::NamedShape named = m_document->namedBody(body);
+                const int index = kernel::findFace(named, faces.front());
+                if (index >= 0 && kernel::planeOfFace(kernel::subShape(
+                                      named.shape, kernel::SubShapeKind::Face, index))) {
+                    m_feature.reference = faces.front();
+                }
+            }
+        }
+        fillReferences();
+    }
+    readFields();
+}
+
+void FeaturePanel::setBody(document::ObjectId body) {
+    if (m_body == nullptr || m_feature.kind != FeatureKind::Repair) {
+        return;
+    }
+    const int index = m_body->findData(QVariant::fromValue<qulonglong>(body.value));
+    if (index >= 0) {
+        m_body->setCurrentIndex(index);
+    }
     readFields();
 }
 
@@ -750,7 +859,13 @@ bool FeaturePanel::hasInput() const {
     case FeatureKind::Chamfer:
         return m_feature.body.isValid() && !m_feature.edges.empty();
     case FeatureKind::Shell:
+    case FeatureKind::Repair:
         return m_feature.body.isValid();
+    case FeatureKind::OffsetFace:
+    case FeatureKind::DeleteFace:
+        return m_feature.body.isValid() && !m_feature.faces.empty();
+    case FeatureKind::MoveFace:
+        return m_feature.body.isValid() && !m_feature.faces.empty() && !m_feature.reference.empty();
     case FeatureKind::Mirror:
     case FeatureKind::RectangularPattern:
     case FeatureKind::CircularPattern:
@@ -905,6 +1020,16 @@ void FeaturePanel::readFields() {
         m_feature.body = m_feature.reference.size() > 2 ? m_pickedBody : document::ObjectId{};
         m_feature.distance = m_distance->value();
     }
+    if (m_feature.kind == FeatureKind::OffsetFace || m_feature.kind == FeatureKind::MoveFace) {
+        m_feature.distance = m_distance->value();
+    }
+    if (m_feature.kind == FeatureKind::MoveFace) {
+        m_feature.reference = m_reference->currentData().toString().toStdString();
+    }
+    if (m_feature.kind == FeatureKind::Repair) {
+        m_feature.body =
+            document::ObjectId{m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
+    }
     if (m_feature.kind == FeatureKind::Axis) {
         m_feature.reference = m_reference->currentData().toString().toStdString();
         // An origin axis needs no body; an edge or a face, the body it is part of.
@@ -996,6 +1121,34 @@ void FeaturePanel::updatePicked() {
     case FeatureKind::Axis:
         text = tr("Choose an origin axis below, or click a straight edge, or a round edge or "
                   "face, in the 3D view.");
+        break;
+    case FeatureKind::OffsetFace:
+    case FeatureKind::MoveFace:
+    case FeatureKind::DeleteFace: {
+        const document::Body* body = m_document->findBody(m_feature.body);
+        const QString what = m_feature.kind == FeatureKind::OffsetFace ? tr("offset")
+                             : m_feature.kind == FeatureKind::MoveFace ? tr("move")
+                                                                       : tr("delete");
+        if (body == nullptr || m_feature.faces.empty()) {
+            text = tr("Click the faces to %1 in the 3D view. Shift-click picks more.").arg(what);
+        } else {
+            const std::size_t count = m_feature.faces.size();
+            text =
+                (count == 1 ? tr("1 face of %1 picked.") : tr("%1 faces of %2 picked.").arg(count))
+                    .arg(QString::fromStdString(body->name)) +
+                QLatin1Char(' ') + tr("Shift-click picks more, or lets one go.");
+        }
+        if (m_feature.kind == FeatureKind::DeleteFace) {
+            text += QLatin1Char(' ') +
+                    tr("The faces around them grow to close the gap, as if what the faces "
+                       "made, such as a fillet or a hole, had never been there.");
+        }
+        break;
+    }
+    case FeatureKind::Repair:
+        text = tr("Sews loose faces together, turns faces to face out, and fixes edges and "
+                  "tolerances, where that can be done. Inspect > Check Geometry says what is "
+                  "wrong first.");
         break;
     case FeatureKind::Hole: {
         const document::SketchItem* sketch = m_document->findSketch(m_feature.sketch);

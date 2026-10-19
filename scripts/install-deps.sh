@@ -44,14 +44,14 @@ family=" ${ID:-} ${ID_LIKE:-} "
 
 case "$family" in
     *" debian "* | *" ubuntu "*)
-        # Toolchain; Qt 6; Open CASCADE (kernel and viewer); the file format's libraries and
-        # Eigen for the sketch solver; test
-        # framework; and, for the GUI tests, a virtual X server with Mesa's software renderer.
+        # Toolchain; Qt 6; Open CASCADE (kernel, viewer, and STEP and IGES); the file format's
+        # libraries and Eigen for the sketch solver; test framework; and, for the GUI tests, a
+        # virtual X server with Mesa's software renderer.
         packages="
             build-essential cmake ninja-build
             qt6-base-dev
             libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev
-            libocct-visualization-dev
+            libocct-visualization-dev libocct-data-exchange-dev
             libzip-dev nlohmann-json3-dev libeigen3-dev
             catch2 libxcb1-dev
             xvfb xauth libgl1-mesa-dri"

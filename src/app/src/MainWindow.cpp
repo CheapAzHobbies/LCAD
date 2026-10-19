@@ -7,6 +7,7 @@
 #include <lcad/app/CommandSearch.h>
 #include <lcad/app/Commands.h>
 #include <lcad/app/FeaturePanel.h>
+#include <lcad/app/GeometryCheckDialog.h>
 #include <lcad/app/Icons.h>
 #include <lcad/app/MeasurePanel.h>
 #include <lcad/app/ParametersDialog.h>
@@ -17,6 +18,9 @@
 #include <lcad/app/TimelinePanel.h>
 #include <lcad/document/File.h>
 #include <lcad/document/SketchShapes.h>
+#include <lcad/kernel/Check.h>
+#include <lcad/kernel/Error.h>
+#include <lcad/kernel/Exchange.h>
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
@@ -77,6 +81,12 @@ const char* const navigationKey = "view/navigation";
 const char* const styleKey = "view/displayStyle";
 const char* const recentKey = "files/recent";
 const char* const directoryKey = "files/lastDirectory";
+const char* const importDirectoryKey = "files/lastImportDirectory";
+const char* const exportDirectoryKey = "files/lastExportDirectory";
+const char* const exportFormatKey = "export/format";
+const char* const exportDeviationKey = "export/deviation";
+const char* const exportAngleKey = "export/angle";
+const char* const exportTextKey = "export/stlText";
 const int recentLimit = 10;
 
 std::filesystem::path toPath(const QString& path) {
@@ -385,6 +395,29 @@ void MainWindow::defineCommands() {
         c.shortcuts = {QKeySequence::SaveAs};
         c.aliases = {tr("save copy"), tr("rename file")};
         c.run = [this](bool) { fileSaveAs(); };
+        m_commands->add(std::move(c));
+
+        c = make("file.import", tr("&Import…"), file,
+                 tr("Add the solids of a STEP or IGES file to the document, as bodies"));
+        c.iconName = QStringLiteral("import");
+        c.shortcuts = {QKeySequence(Qt::CTRL | Qt::Key_I)};
+        c.aliases = {tr("step"), tr("stp"), tr("iges"), tr("igs"), tr("open step"), tr("insert")};
+        c.run = [this](bool) { fileImport(); };
+        c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
+        c = make("file.export", tr("&Export…"), file,
+                 tr("Write bodies to a STEP, STL, 3MF, or OBJ file for other programs"));
+        c.iconName = QStringLiteral("export");
+        c.shortcuts = {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E)};
+        c.aliases = {tr("stl"),         tr("3mf"),      tr("obj"), tr("step"),
+                     tr("save as stl"), tr("3d print"), tr("mesh")};
+        c.run = [this](bool) { fileExport(); };
+        c.isEnabled = [this] {
+            const auto& bodies = document()->bodies();
+            return std::any_of(bodies.begin(), bodies.end(),
+                               [](const document::Body& body) { return !body.shape.isNull(); });
+        };
         m_commands->add(std::move(c));
 
         c = make("file.close", tr("&Close Document"), file, tr("Close the current document"));
@@ -698,6 +731,46 @@ void MainWindow::defineCommands() {
         c.run = [this](bool) { startFeature(FeatureKind::Shell); };
         c.isEnabled = hasBody;
         m_commands->add(std::move(c));
+
+        // Direct edits, for bodies whatever made them, such as one imported from a STEP file.
+        c = make("solid.offsetFace", tr("&Offset Face"), modify,
+                 tr("Move faces of a body along their normals, the faces around them following: "
+                    "make a part thicker, or a hole wider"));
+        c.iconName = QStringLiteral("offset-face");
+        c.shortcuts = {QKeySequence(Qt::Key_Q)};
+        c.aliases = {tr("press pull"), tr("push pull"), tr("offset"), tr("thicken face"),
+                     tr("resize hole")};
+        c.run = [this](bool) { startFeature(FeatureKind::OffsetFace); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.moveFace", tr("Mo&ve Face"), modify,
+                 tr("Move faces of a body in a direction, the faces around them following: move "
+                    "a hole or a boss across a face"));
+        c.iconName = QStringLiteral("move-face");
+        c.aliases = {tr("move"), tr("translate face"), tr("move hole"), tr("shift face")};
+        c.run = [this](bool) { startFeature(FeatureKind::MoveFace); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.deleteFace", tr("&Delete Face"), modify,
+                 tr("Take faces out of a body, the faces around them closing the gap: remove a "
+                    "fillet, a hole, or a boss"));
+        c.iconName = QStringLiteral("delete-face");
+        c.aliases = {tr("remove face"), tr("defeature"), tr("remove fillet"), tr("remove hole"),
+                     tr("heal")};
+        c.run = [this](bool) { startFeature(FeatureKind::DeleteFace); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.repair", tr("&Repair Body"), modify,
+                 tr("Put right what is wrong with a body's geometry: sew loose faces, turn faces "
+                    "outward, fix edges"));
+        c.iconName = QStringLiteral("repair");
+        c.aliases = {tr("heal"), tr("fix"), tr("sew"), tr("stitch"), tr("make solid")};
+        c.run = [this](bool) { startFeature(FeatureKind::Repair); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
     }
 
     // The timeline
@@ -837,6 +910,21 @@ void MainWindow::defineCommands() {
         c.aliases = {tr("distance"), tr("ruler"), tr("angle"), tr("inspect"), tr("radius")};
         c.run = [this](bool) { startMeasure(); };
         c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
+        c = make("inspect.checkGeometry", tr("Check &Geometry"), tr("Inspect"),
+                 tr("Find what is wrong with the geometry of bodies: open edges, faces that "
+                    "cross, faces turned inward"));
+        c.iconName = QStringLiteral("check");
+        c.aliases = {tr("validate"), tr("verify"), tr("analyze"), tr("check body"),
+                     tr("watertight")};
+        c.run = [this](bool) { checkGeometry(); };
+        c.isEnabled = [this] {
+            const auto& bodies = document()->bodies();
+            return !isSketching() &&
+                   std::any_of(bodies.begin(), bodies.end(),
+                               [](const document::Body& body) { return !body.shape.isNull(); });
+        };
         m_commands->add(std::move(c));
     }
     const std::tuple<StandardView, QString, const char*> views[] = {
@@ -1348,6 +1436,8 @@ void MainWindow::createTopBar() {
     file->addSeparator();
     file->addActions({action("file.save"), action("file.saveAs")});
     file->addSeparator();
+    file->addActions({action("file.import"), action("file.export")});
+    file->addSeparator();
     file->addActions({action("file.close"), action("file.quit")});
 
     QMenu* edit = m_menuBar->addMenu(tr("&Edit"));
@@ -1375,6 +1465,9 @@ void MainWindow::createTopBar() {
     QMenu* modifyMenu = m_menuBar->addMenu(tr("&Modify"));
     modifyMenu->addActions(
         {action("solid.fillet"), action("solid.chamfer"), action("solid.shell")});
+    modifyMenu->addSeparator();
+    modifyMenu->addActions({action("solid.offsetFace"), action("solid.moveFace"),
+                            action("solid.deleteFace"), action("solid.repair")});
     modifyMenu->addSeparator();
     modifyMenu->addAction(action("model.parameters"));
     QMenu* timelineMenu = modifyMenu->addMenu(tr("&Timeline"));
@@ -1421,7 +1514,7 @@ void MainWindow::createTopBar() {
 
     QMenu* view = m_menuBar->addMenu(tr("&View"));
     view->addActions({action("view.fit"), action("view.fitSelection")});
-    view->addAction(action("inspect.measure"));
+    view->addActions({action("inspect.measure"), action("inspect.checkGeometry")});
     view->addSeparator();
     for (const char* id : {"view.home", "view.front", "view.back", "view.left", "view.right",
                            "view.top", "view.bottom"}) {
@@ -2627,6 +2720,12 @@ bool copiesFeatures(document::FeatureKind kind) {
            kind == document::FeatureKind::CircularPattern;
 }
 
+// Features whose input is faces of one body, clicked in the 3D view.
+bool picksFaces(document::FeatureKind kind) {
+    return kind == document::FeatureKind::Shell || kind == document::FeatureKind::OffsetFace ||
+           kind == document::FeatureKind::MoveFace || kind == document::FeatureKind::DeleteFace;
+}
+
 } // namespace
 
 std::vector<document::ObjectId> MainWindow::profileSketches(document::ObjectId also) const {
@@ -2816,7 +2915,9 @@ bool MainWindow::editFeature(document::ObjectId id) {
         // The edges or faces it works on, as far as the body still has them.
         const kernel::NamedShape body = document()->namedBody(feature.body);
         std::vector<SelectedItem> items;
-        if (feature.kind == document::FeatureKind::Shell) {
+        if (feature.kind == document::FeatureKind::Repair) {
+            items.push_back({feature.body, SelectedItem::Kind::Body, -1});
+        } else if (picksFaces(feature.kind)) {
             for (const std::string& name : feature.faces) {
                 if (const int index = kernel::findFace(body, name); index >= 0) {
                     items.push_back({feature.body, SelectedItem::Kind::Face, index});
@@ -2851,8 +2952,10 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         // mirror is in; a pattern takes its direction or axis from either.
         m_filterBeforeFeature = m_viewport->selectionFilter();
         SelectionFilter filter = SelectionFilter::Edges;
-        if (kind == document::FeatureKind::Shell || kind == document::FeatureKind::Mirror ||
-            kind == document::FeatureKind::Plane) {
+        if (kind == document::FeatureKind::Repair) {
+            filter = SelectionFilter::Bodies;
+        } else if (picksFaces(kind) || kind == document::FeatureKind::Mirror ||
+                   kind == document::FeatureKind::Plane) {
             filter = SelectionFilter::Faces;
         } else if (copiesFeatures(kind) || kind == document::FeatureKind::Hole ||
                    kind == document::FeatureKind::Axis) {
@@ -2966,6 +3069,14 @@ void MainWindow::takeFeaturePicks() {
         }
         return;
     }
+    if (kind == document::FeatureKind::Repair) {
+        // The body clicked is the one to repair.
+        for (const SelectedItem& item : m_viewport->selection()) {
+            m_featurePanel->setBody(item.body);
+            break;
+        }
+        return;
+    }
     // Edges or faces, of one body: the one picked first.
     const std::vector<SelectedItem> selection = m_viewport->selection();
     document::ObjectId body;
@@ -2980,7 +3091,7 @@ void MainWindow::takeFeaturePicks() {
     }
     const kernel::NamedShape named = document()->namedBody(body);
     std::vector<std::string> names;
-    if (kind == document::FeatureKind::Shell) {
+    if (picksFaces(kind)) {
         for (const int index : indices) {
             if (index < static_cast<int>(named.faceNames.size())) {
                 names.push_back(named.faceNames[static_cast<std::size_t>(index)]);
@@ -3561,6 +3672,291 @@ bool MainWindow::fileSaveAs() {
         return false;
     }
     return true;
+}
+
+bool MainWindow::importGeometry(const QString& path, QString* error, QStringList* notes) {
+    const auto fail = [error](const QString& why) {
+        if (error != nullptr) {
+            *error = why;
+        }
+        return false;
+    };
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    const bool iges = suffix == QStringLiteral("igs") || suffix == QStringLiteral("iges");
+    const bool step = suffix == QStringLiteral("step") || suffix == QStringLiteral("stp");
+    kernel::ImportResult read;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    try {
+        if (iges) {
+            read = kernel::importIges(toPath(path));
+        } else {
+            try {
+                read = kernel::importStep(toPath(path));
+            } catch (const kernel::Error&) {
+                // A file whose name does not say what it is may still be IGES.
+                if (step) {
+                    throw;
+                }
+                read = kernel::importIges(toPath(path));
+            }
+        }
+    } catch (const kernel::Error& failure) {
+        QApplication::restoreOverrideCursor();
+        return fail(tr("Could not %1.").arg(QString::fromStdString(failure.what())));
+    }
+    QApplication::restoreOverrideCursor();
+    if (isSketching()) {
+        finishSketch();
+    }
+    cancelCommand();
+    std::vector<document::ObjectId> added;
+    try {
+        document::Transaction transaction(
+            *document(), tr("Import %1").arg(QFileInfo(path).fileName()).toStdString());
+        for (const kernel::NamedBody& body : read.bodies) {
+            added.push_back(document()->addBody(body.name, body.shape));
+        }
+        transaction.commit();
+    } catch (const std::invalid_argument& failure) {
+        return fail(tr("Could not import %1: %2")
+                        .arg(QFileInfo(path).fileName(), QString::fromUtf8(failure.what())));
+    }
+    if (notes != nullptr) {
+        notes->clear();
+        for (const std::string& note : read.notes) {
+            notes->append(QString::fromStdString(note));
+        }
+    }
+    m_browser->setSelection(added, {});
+    m_viewport->fitAll();
+    statusBar()->showMessage(
+        (added.size() == 1 ? tr("Imported 1 body from %1.")
+                           : tr("Imported %1 bodies from %2.").arg(added.size()))
+                .arg(QFileInfo(path).fileName()) +
+            QLatin1Char(' ') +
+            tr("Change imported bodies with Offset Face, Move Face, and Delete Face."),
+        12000);
+    return true;
+}
+
+std::vector<document::ObjectId> MainWindow::exportedBodies(bool selectedOnly) const {
+    std::vector<document::ObjectId> ids;
+    if (selectedOnly) {
+        for (const document::ObjectId id : targetBodies()) {
+            const document::Body* body = document()->findBody(id);
+            if (body != nullptr && !body->shape.isNull()) {
+                ids.push_back(id);
+            }
+        }
+        return ids;
+    }
+    for (const document::Body& body : document()->bodies()) {
+        if (body.visible && !body.shape.isNull()) {
+            ids.push_back(body.id);
+        }
+    }
+    return ids;
+}
+
+bool MainWindow::exportGeometry(const QString& path, const ExportOptions& options, QString* error) {
+    const auto fail = [error](const QString& why) {
+        if (error != nullptr) {
+            *error = why;
+        }
+        return false;
+    };
+    const std::vector<document::ObjectId> ids = exportedBodies(options.selectedOnly);
+    if (ids.empty()) {
+        return fail(tr("There is no body to export."));
+    }
+    std::vector<kernel::NamedBody> bodies;
+    for (const document::ObjectId id : ids) {
+        const document::Body* body = document()->findBody(id);
+        bodies.push_back({body->name, body->shape});
+    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    try {
+        switch (options.format) {
+        case ExportFormat::Step:
+            kernel::exportStep(bodies, toPath(path));
+            break;
+        case ExportFormat::Stl:
+            kernel::exportStl(bodies, toPath(path), options.mesh, options.stlEncoding);
+            break;
+        case ExportFormat::ThreeMf:
+            kernel::export3mf(bodies, toPath(path), options.mesh);
+            break;
+        case ExportFormat::Obj:
+            kernel::exportObj(bodies, toPath(path), options.mesh);
+            break;
+        }
+    } catch (const kernel::Error& failure) {
+        QApplication::restoreOverrideCursor();
+        return fail(tr("Could not %1.").arg(QString::fromStdString(failure.what())));
+    } catch (const std::invalid_argument& failure) {
+        QApplication::restoreOverrideCursor();
+        return fail(tr("Could not export: %1").arg(QString::fromUtf8(failure.what())));
+    }
+    QApplication::restoreOverrideCursor();
+    statusBar()->showMessage((bodies.size() == 1
+                                  ? tr("Exported 1 body to %1.")
+                                  : tr("Exported %1 bodies to %2.").arg(bodies.size()))
+                                 .arg(QFileInfo(path).fileName()),
+                             9000);
+    return true;
+}
+
+bool MainWindow::fileImport() {
+    QSettings settings;
+    QString directory = settings.value(QLatin1String(importDirectoryKey)).toString();
+    if (directory.isEmpty()) {
+        directory = settings.value(QLatin1String(directoryKey)).toString();
+    }
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Import"), directory,
+        tr("STEP and IGES files (*.step *.stp *.igs *.iges);;STEP files (*.step *.stp);;"
+           "IGES files (*.igs *.iges);;All files (*)"));
+    if (path.isEmpty()) {
+        return false;
+    }
+    settings.setValue(QLatin1String(importDirectoryKey), QFileInfo(path).absolutePath());
+    QString error;
+    QStringList notes;
+    if (!importGeometry(path, &error, &notes)) {
+        QMessageBox::critical(this, tr("Could not import the file"), error);
+        return false;
+    }
+    if (!notes.isEmpty()) {
+        QMessageBox::information(this, tr("Imported %1").arg(QFileInfo(path).fileName()),
+                                 notes.join(QStringLiteral("\n\n")));
+    }
+    return true;
+}
+
+bool MainWindow::fileExport() {
+    const std::vector<document::ObjectId> shown = exportedBodies(false);
+    const std::vector<document::ObjectId> selected = exportedBodies(true);
+    if (shown.empty() && selected.empty()) {
+        QMessageBox::information(this, tr("Export"), tr("There is no body to export."));
+        return false;
+    }
+    QSettings settings;
+    ExportOptions options;
+    options.format = static_cast<ExportFormat>(
+        settings.value(QLatin1String(exportFormatKey), static_cast<int>(ExportFormat::Step))
+            .toInt());
+    options.mesh.deviation =
+        settings.value(QLatin1String(exportDeviationKey), options.mesh.deviation).toDouble();
+    options.mesh.angle =
+        settings.value(QLatin1String(exportAngleKey), options.mesh.angle).toDouble();
+    options.stlEncoding = settings.value(QLatin1String(exportTextKey), false).toBool()
+                              ? kernel::StlEncoding::Text
+                              : kernel::StlEncoding::Binary;
+    // What is selected is what is meant, when something is.
+    options.selectedOnly = !selected.empty();
+    ExportDialog dialog(static_cast<int>(shown.size()), static_cast<int>(selected.size()), this);
+    dialog.setOptions(options);
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+    options = dialog.options();
+    settings.setValue(QLatin1String(exportFormatKey), static_cast<int>(options.format));
+    settings.setValue(QLatin1String(exportDeviationKey), options.mesh.deviation);
+    settings.setValue(QLatin1String(exportAngleKey), options.mesh.angle);
+    settings.setValue(QLatin1String(exportTextKey),
+                      options.stlEncoding == kernel::StlEncoding::Text);
+
+    QString directory = settings.value(QLatin1String(exportDirectoryKey)).toString();
+    if (directory.isEmpty()) {
+        directory = filePath().isEmpty() ? settings.value(QLatin1String(directoryKey)).toString()
+                                         : QFileInfo(filePath()).absolutePath();
+    }
+    const QString extension = extensionOf(options.format);
+    QString path = QFileDialog::getSaveFileName(
+        this, tr("Export"), QDir(directory).filePath(documentName() + QLatin1Char('.') + extension),
+        filterOf(options.format));
+    if (path.isEmpty()) {
+        return false;
+    }
+    if (QFileInfo(path).suffix().isEmpty()) {
+        path += QLatin1Char('.') + extension;
+    }
+    settings.setValue(QLatin1String(exportDirectoryKey), QFileInfo(path).absolutePath());
+    QString error;
+    if (!exportGeometry(path, options, &error)) {
+        QMessageBox::critical(this, tr("Could not export"), error);
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::checkGeometry() {
+    std::vector<document::ObjectId> ids = exportedBodies(true);
+    if (ids.empty()) {
+        for (const document::Body& body : document()->bodies()) {
+            if (!body.shape.isNull()) {
+                ids.push_back(body.id);
+            }
+        }
+    }
+    std::vector<BodyCheck> results;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    for (const document::ObjectId id : ids) {
+        const document::Body* body = document()->findBody(id);
+        BodyCheck check{id, QString::fromStdString(body->name), {}};
+        try {
+            check.problems = kernel::checkGeometry(body->shape);
+        } catch (const kernel::Error& failure) {
+            check.problems.push_back(
+                {"It could not be checked: " + failure.reason() + ".", {}, {}});
+        }
+        results.push_back(std::move(check));
+    }
+    QApplication::restoreOverrideCursor();
+    if (m_checkDialog == nullptr) {
+        m_checkDialog = new GeometryCheckDialog(this);
+        connect(m_checkDialog, &GeometryCheckDialog::problemChosen, this,
+                [this](document::ObjectId body, const std::vector<int>& faces,
+                       const std::vector<int>& edges) {
+                    if (document()->findBody(body) == nullptr) {
+                        return;
+                    }
+                    // What the problem is about, picked in the 3D view, or the whole body.
+                    std::vector<SelectedItem> items;
+                    for (const int face : faces) {
+                        items.push_back({body, SelectedItem::Kind::Face, face});
+                    }
+                    for (const int edge : edges) {
+                        items.push_back({body, SelectedItem::Kind::Edge, edge});
+                    }
+                    if (items.empty()) {
+                        items.push_back({body, SelectedItem::Kind::Body, -1});
+                    }
+                    m_viewport->setSelection(items);
+                });
+        connect(m_checkDialog, &GeometryCheckDialog::repairRequested, this,
+                [this](document::ObjectId body) {
+                    if (document()->findBody(body) == nullptr) {
+                        return;
+                    }
+                    m_checkDialog->close();
+                    m_viewport->setSelection({{body, SelectedItem::Kind::Body, -1}});
+                    startFeature(document::FeatureKind::Repair);
+                });
+    }
+    m_checkDialog->setResults(results);
+    m_checkDialog->show();
+    m_checkDialog->raise();
+    const auto faulty = std::count_if(results.begin(), results.end(), [](const BodyCheck& check) {
+        return !check.problems.empty();
+    });
+    statusBar()->showMessage(
+        faulty == 0
+            ? (results.size() == 1
+                   ? tr("Checked 1 body: no problems found.")
+                   : tr("Checked %1 bodies: no problems found.").arg(results.size()))
+            : tr("Problems found in %1 of %2 bodies checked.").arg(faulty).arg(results.size()),
+        9000);
 }
 
 bool MainWindow::fileClose(int index) {

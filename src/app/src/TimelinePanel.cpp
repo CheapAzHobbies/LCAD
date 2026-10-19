@@ -293,6 +293,14 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("hole");
         case FeatureKind::Axis:
             return QStringLiteral("axis");
+        case FeatureKind::OffsetFace:
+            return QStringLiteral("offset-face");
+        case FeatureKind::MoveFace:
+            return QStringLiteral("move-face");
+        case FeatureKind::DeleteFace:
+            return QStringLiteral("delete-face");
+        case FeatureKind::Repair:
+            return QStringLiteral("repair");
         }
     }
     return QStringLiteral("box");

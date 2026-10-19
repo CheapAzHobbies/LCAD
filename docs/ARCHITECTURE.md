@@ -5,8 +5,9 @@ the reasons for each. The product requirements are in [PROJECT_BRIEF.md](PROJECT
 
 ## What exists today
 
-Phases 0 to 2 built the desktop foundation and the sketcher, Phase 3 (in progress) the features
-and the timeline, and each decision below rests on running code:
+Phases 0 to 2 built the desktop foundation and the sketcher, Phase 3 the features and the
+timeline, Phase 4 (in progress) other programs' files and direct edits, and each decision below
+rests on running code:
 
 - `core` holds the log and LCAD's version.
 - `kernel` makes boxes, cylinders, spheres, cones, and tori, moves shapes, measures them (volume,
@@ -21,7 +22,8 @@ and the timeline, and each decision below rests on running code:
   the features in timeline order, and saves and opens `.lcad` files.
 - `kernel` also pulls and revolves outlines into solids, combines solids, rounds and bevels
   edges, hollows solids out, copies them for mirrors and patterns, and names every face it makes
-  (section 11).
+  (section 11). It offsets, moves, and deletes faces of any solid, checks and repairs geometry,
+  reads STEP and IGES, and writes STEP, STL, OBJ, and 3MF (section 12).
 - `viewport` shows a document in OCCT's viewer inside a Qt widget, with camera navigation, a
   view cube, and selection of bodies, faces, edges, vertices, and sketches. Its sketch editor
   opens one sketch for editing in place.
@@ -29,7 +31,7 @@ and the timeline, and each decision below rests on running code:
   and icons, document tabs, the toolbars, browser, the properties, sketch, feature, and measure
   panels, and the timeline.
 
-Components, imports, and everything after them are the plan the later phases build to.
+Components, assemblies, and everything after them are the plan the later phases build to.
 
 ## Modules
 
@@ -360,6 +362,44 @@ new curve has a new number. That is the honest answer, not a bug: it is a differ
 Phase 1 identified a selected face by its number within one shape (`kernel::subShape()`). That is
 still what a click in the 3D view gives, and it is turned into a name the moment a feature takes
 it.
+
+### 12. Other programs' files and direct edits
+
+**Reading.** `kernel/Exchange.h` reads STEP and IGES with OCCT's translators, in millimeters
+whatever the file's unit. Each solid becomes a body, named after its part: the name of the
+smallest STEP product whose shape contains the solid, found through the translator's transfer
+results, or else the file's name. Faces that belong to no solid are sewn together (to within
+0.001 mm), and a set that closes up is made a solid; what does not is kept as surfaces and said
+so. Nothing else is done to the geometry on the way in: a broken solid is kept as it is and
+reported, so that the user sees what the file holds, and a Repair feature puts it right where it
+can. The document therefore accepts a body that is not valid geometry, as long as it has faces.
+
+**Writing.** STEP is written AP214, in millimeters, one part per body. OCCT names parts after a
+setting with a counter added, so the writer renames each product to its body's name after the
+transfer. Meshes are cut by `BRepMesh_IncrementalMesh` on a copy of the shape (the 3D view's own
+triangles are left alone) with a deviation and an angle, and corners where faces meet are merged
+into one vertex, so the mesh of a solid is closed. STL, OBJ, and 3MF are written by LCAD itself,
+numbers in a form that does not depend on the user's language, under a temporary name that is
+then put in place. 3MF is a zip package (libzip) with the core model namespace.
+
+OCCT keeps its translators' settings in one global table that a translator fills in when it is
+first set up; a setting made before then is lost. The kernel sets them up first, and holds a lock
+while it changes them. OCCT 7.8 gathered the translators into new toolkits (`TKDESTEP`,
+`TKDEIGES`); `cmake/LcadOpenCascade.cmake` links whichever the version has.
+
+**Direct edits.** Offset Face uses OCCT's offset algorithm with no offset of its own and a
+distance set on the chosen faces only. Delete Face uses `BRepAlgoAPI_Defeaturing`; where it
+cannot take a face out, OCCT returns the solid unchanged without an error, so each face is
+checked to be gone. Move Face moves flat faces along their normals, as offsets, since a plane
+moved in any direction is the plane moved along its normal; otherwise it takes the faces out, as
+Delete Face does, and puts back, moved, the material between the two solids: what the faces added
+(a boss) is joined, what they took away (a hole) is cut. Every face keeps its name through all of
+them, so that later features still find it.
+
+**Checking.** Check Geometry runs OCCT's validity check and groups what it finds into sentences,
+counts edges that border one face (a seam, which borders one face twice, does not count), finds
+solids that face inward by their negative volume, and, for a shape whose parts are sound, looks
+for faces that cross and edges too short to work with with `BOPAlgo_ArgumentAnalyzer`.
 
 ### 13. Undo
 

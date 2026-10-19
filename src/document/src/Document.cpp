@@ -204,9 +204,10 @@ std::string Document::uniqueBodyName(std::string_view base) const {
 
 ObjectId Document::addBody(std::string name, kernel::Shape shape) {
     requireName(name, "addBody");
-    if (!kernel::isValid(shape)) {
-        throw std::invalid_argument("addBody: the shape for \"" + name +
-                                    "\" is empty or not valid geometry");
+    // Geometry read from another program may be broken; Check Geometry says how, and a Repair
+    // feature may put it right. It has to have faces, though.
+    if (shape.isNull() || kernel::countTopology(shape).faces == 0) {
+        throw std::invalid_argument("addBody: the shape for \"" + name + "\" has no faces");
     }
     Edit edit{};
     edit.kind = Edit::Kind::AddBody;
