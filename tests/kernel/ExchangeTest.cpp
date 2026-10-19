@@ -457,13 +457,16 @@ TEST_CASE("3MF files are a package with a millimeter model of named objects",
     CHECK_THAT(model, ContainsSubstring("<item objectid=\"2\"/>"));
 
     // Each object's mesh, read with patterns of the test's own.
-    const std::regex object(R"re(<object id="(\d+)"[\s\S]*?</object>)re");
     const std::regex vertex(R"re(<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"/>)re");
     const std::regex triangle(R"re(<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"/>)re");
     std::vector<ReadMesh> meshes;
-    for (auto o = std::sregex_iterator(model.begin(), model.end(), object);
-         o != std::sregex_iterator(); ++o) {
-        const std::string body = (*o)[0];
+    // Objects by plain search: a pattern spanning a whole object makes std::regex recurse once
+    // per character, which overflows the stack on a large mesh.
+    for (std::size_t from = model.find("<object "); from != std::string::npos;
+         from = model.find("<object ", from + 1)) {
+        const std::size_t to = model.find("</object>", from);
+        REQUIRE(to != std::string::npos);
+        const std::string body = model.substr(from, to - from);
         ReadMesh mesh;
         for (auto v = std::sregex_iterator(body.begin(), body.end(), vertex);
              v != std::sregex_iterator(); ++v) {

@@ -9,3 +9,10 @@ leak:libdbus-1.so
 # Same situation, when Qt loads the GTK platform theme: the accessibility bridge leaks its
 # connection setup.
 leak:libatk-bridge-2.0.so
+
+# OCCT's STEP and IGES translators register their settings, editors, and a default placement in
+# global tables the first time they are used, and never free them.
+leak:STEPControl_Controller::Init
+leak:IGESControl_Controller::Init
+leak:XSAlgo::Init
+leak:STEPConstruct_ContextTool::GetDefaultAxis
