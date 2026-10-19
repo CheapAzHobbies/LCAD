@@ -88,10 +88,10 @@ jobs:
       # tests/models/ keeps one copy of this document per Open CASCADE version, and every job
       # reads all of them. The copy written here is how a new one gets there.
       - name: Write the reference document with this job's Open CASCADE
-        # In the sanitizer build, the STEP translator's global tables count as leaks.
-        env:
-          LSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/lsan.supp:print_suppressions=0
+        # In the sanitizer build, the STEP translator's global tables count as leaks. The path is
+        # set here, inside the container: github.workspace is the host's.
         run: |
+          export LSAN_OPTIONS="suppressions=$PWD/tests/lsan.supp:print_suppressions=0"
           mkdir reference-model
           build/${{ matrix.preset }}/bin/lcad_write_reference_model \
             reference-model/primitives.lcad reference-model/bracket.step
