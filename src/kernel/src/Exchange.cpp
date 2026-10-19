@@ -2,10 +2,12 @@
 
 #include <lcad/kernel/Exchange.h>
 
+#include <lcad/core/Version.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/occt/Guard.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
 
+#include <APIHeaderSection_MakeHeader.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
@@ -499,6 +501,16 @@ void exportStep(const std::vector<NamedBody>& bodies, const std::filesystem::pat
                 }
             }
         }
+        // The header says what the file is and what wrote it; OCCT's own fills it with
+        // placeholders.
+        APIHeaderSection_MakeHeader header(writer.Model());
+        header.SetName(new TCollection_HAsciiString(path.filename().string().c_str()));
+        header.SetDescriptionValue(1, new TCollection_HAsciiString("LCAD model"));
+        header.SetAuthorValue(1, new TCollection_HAsciiString(""));
+        header.SetOrganizationValue(1, new TCollection_HAsciiString(""));
+        header.SetOriginatingSystem(
+            new TCollection_HAsciiString(("LCAD " + core::version()).c_str()));
+        header.Apply(writer.Model());
         writeReplacing(path, operation, [&](const std::filesystem::path& temporary) {
             if (writer.Write(temporary.c_str()) != IFSelect_RetDone) {
                 throw Error(operation, "the file could not be written");

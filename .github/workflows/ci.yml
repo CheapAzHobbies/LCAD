@@ -90,7 +90,8 @@ jobs:
       - name: Write the reference document with this job's Open CASCADE
         run: |
           mkdir reference-model
-          build/${{ matrix.preset }}/bin/lcad_write_reference_model reference-model/primitives.lcad
+          build/${{ matrix.preset }}/bin/lcad_write_reference_model \
+            reference-model/primitives.lcad reference-model/bracket.step
 
       - name: Keep the reference document
         uses: actions/upload-artifact@v7
