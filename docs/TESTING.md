@@ -31,10 +31,10 @@ cmake --preset asan && cmake --build --preset asan && ctest --preset asan    # s
 
 | Kind | Framework | Label | Needs a display | Covers today |
 |---|---|---|---|---|
-| Unit | Catch2 | `unit` | No | `core`: the log. `kernel`: primitives, measurement, moving, sub-shapes, serialization, errors, message routing, planes and projection onto them. `sketch`: geometry, every constraint, the solver's states, dragging, closed outlines, and the sketch tools. `document`: the model, undo, transactions, the file format, sketches as shapes |
+| Unit | Catch2 | `unit` | No | `core`: the log. `kernel`: primitives, measurement, moving, sub-shapes, serialization, errors, message routing, planes and projection onto them. `sketch`: geometry, every constraint, the solver's states, dragging, closed outlines, and the sketch tools. `document`: the model, undo, transactions, the file format, sketches as shapes. `kernel` and `document` also: STEP and IGES import, the STEP, STL, OBJ, and 3MF files written (read back by the tests' own parsers: closed meshes, volumes), direct edits, geometry checks, repair |
 | Save and reopen | Catch2 | `unit` | No | A reopened document measures the same as the one saved; damaged, foreign, and newer files are refused |
-| Reference models | Catch2 | `unit` | No | The documents in `tests/models/` open and measure correctly, whichever OCCT wrote them |
-| Interface | Qt Test | `gui` | A virtual one | Six programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen. `ModelingInterfaceTest`: features, the timeline, and measuring through the whole window |
+| Reference models | Catch2 | `unit` | No | The documents and STEP files in `tests/models/` open and measure correctly, whichever OCCT wrote them |
+| Interface | Qt Test | `gui` | A virtual one | Seven programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen. `ModelingInterfaceTest`: features, the timeline, and measuring through the whole window. `InterchangeInterfaceTest`: import, the direct edits, Check Geometry and Repair, export, and the export dialog |
 | Sanitizers | All of the above, built with ASan and UBSan | all | A virtual one | Memory errors, leaks, undefined behavior |
 | Package | A shell script, in CI | | A virtual one | The AppImage starts on another distribution and draws a document |
 
@@ -44,7 +44,6 @@ Planned, each when the code it tests arrives:
 |---|---|---|
 | Recompute | 3 | Edit an early feature or parameter, then measure the result |
 | Migration | With the first format change | Every older format version still opens |
-| Round trip | 4 | Export to STEP, import again, compare measurements |
 | Benchmarks | 3 onward | Time and memory for simple parts, long histories, large imports, dense meshes, large assemblies |
 
 ## The acceptance test of a phase

@@ -225,13 +225,31 @@ Budget time for it first, not last.
 
 Started early, on the owner's word, once Phase 3 was merged.
 
-- [ ] STEP import and export, IGES import.
-- [ ] STL, 3MF, OBJ export with resolution control.
-- [ ] Direct edits on imported solids: move face, offset face, delete face with healing.
-- [ ] Geometry validation and repair.
-- [ ] Direct edits recorded as timeline features.
+- [x] STEP import and export, IGES import. STEP (AP203, AP214, AP242) in any length unit, parts
+      named as in the file; loose faces sewn and closed into solids where they close up, open
+      surfaces kept and reported. STEP export writes AP214 in millimeters, a named part per body.
+      Tried on files other programs wrote: a Euclid screw, five Onshape parts, an IGES canopy.
+- [x] STL (binary or text), 3MF, OBJ export with resolution control: Coarse, Medium, Fine, or a
+      deviation and an angle of one's own. The meshes are closed and face outward.
+- [x] Direct edits on imported solids: Offset Face (also widens or narrows a hole), Move Face
+      (flat faces along their normals; a hole or a boss across the face it is in), Delete Face
+      with healing (a fillet, a hole, a boss goes).
+- [x] Geometry validation and repair: Check Geometry lists invalid parts, open edges, inside-out
+      solids, crossing faces, and short edges by body, and shows where; Repair sews faces (gaps
+      up to a width it is given), turns faces outward, and fixes edges and tolerances.
+- [x] Direct edits recorded as timeline features: edited, suppressed, reordered, saved, like any
+      other. The imported geometry itself is kept: suppress the edits and it is as it was read.
 
-Acceptance: import a STEP solid, offset a face, save, export STEP, and validate the result.
+Acceptance: import a STEP solid, offset a face, save, export STEP, and validate the result. Met
+in the document (`tests/document/DirectEditTest.cpp`) and through the window
+(`tests/gui/InterchangeInterfaceTest.cpp`): the STEP export is read back and checked, and its
+volume compared with the closed-form value. STEP files written with each OCCT version are read
+by every build (`tests/models/step/`).
+
+What Phase 4 leaves for later: importing meshes (STL, OBJ, 3MF) and exporting IGES; moving a
+flat face within its own plane, or faces that are not all flat in a direction that takes them
+off their neighbors' surfaces in a way defeaturing cannot undo; AP242 export (AP214 is
+written); and remembering which file a body was imported from.
 
 ## Phase 5: Components and assemblies (2027-04-01 to 2027-07-15)
 
