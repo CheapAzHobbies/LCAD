@@ -2,6 +2,7 @@
 
 add_executable(lcad_kernel_tests
     ErrorTest.cpp
+    ExchangeTest.cpp
     MeasureTest.cpp
     ModelingTest.cpp
     MessagesTest.cpp
@@ -15,6 +16,9 @@ target_link_libraries(lcad_kernel_tests PRIVATE
     lcad::core
     lcad::kernel
     lcad::kernel_occt
+    # ExchangeTest writes files in other ways than LCAD does, and opens 3MF packages.
+    lcad_occt_exchange
+    lcad_libzip
     lcad_test_support
     Catch2::Catch2WithMain)
 lcad_target_defaults(lcad_kernel_tests)

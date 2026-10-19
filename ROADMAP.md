@@ -24,7 +24,7 @@ more than writing the code, now sets the pace.
 | 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-12 | 2026-10-25 | 2026-10-12 | |
 | 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-12 | 2026-11-30 | 2026-10-13 | |
 | 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-10-13 | 2027-02-15 | 2026-10-14 | v0.1 alpha |
-| 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2027-02-16 | 2027-03-31 | | v0.2 |
+| 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2026-10-14 | 2027-03-31 | in progress | v0.2 |
 | 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-04-01 | 2027-07-15 | | v0.5 beta |
 | Port | Windows and macOS builds | 2027-07-16 | 2027-09-15 | | v0.6 |
 | 6. Drawings and manufacturing | Associative drawings, PDF/DXF, 2.5D and 3-axis CAM | 2027-09-16 | 2028-01-15 | | v1.0 |
@@ -211,7 +211,7 @@ Acceptance: build a dimensioned bracket, edit the first sketch, and verify downs
 report a specific failure. Met, at two levels: in the document (`FeatureTest`) and through the
 window with the pointer and the keyboard (`ModelingInterfaceTest`), including saving and reopening.
 
-Built on the branch `phase-3-parametric-solids` (pull request #5).
+Built on the branch `phase-3-parametric-solids` (pull request #5), merged 2026-10-14.
 
 What Phase 3 leaves for later: pulling up to a curved face (only flat faces so far), a taper on
 a pull to both sides, trimming and offsetting ellipses and splines, checking that the units of
@@ -221,7 +221,9 @@ clicking it in the 3D view (it is chosen from a list).
 Stable references are the hardest problem in this phase and the usual reason parametric CAD projects stall.
 Budget time for it first, not last.
 
-## Phase 4: Direct modeling and interchange (2027-02-16 to 2027-03-31)
+## Phase 4: Direct modeling and interchange (started 2026-10-14, in progress, target 2027-03-31)
+
+Started early, on the owner's word, once Phase 3 was merged.
 
 - [ ] STEP import and export, IGES import.
 - [ ] STL, 3MF, OBJ export with resolution control.
