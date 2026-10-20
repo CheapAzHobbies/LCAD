@@ -52,7 +52,9 @@ xvfb=$!
 sleep 2
 kill -0 "$xvfb" 2>/dev/null || fail "Xvfb did not start."
 
-flatpak run --env=DISPLAY="$display" --env=LIBGL_ALWAYS_SOFTWARE=1 "$app" "$document" \
+# DISPLAY is given to flatpak itself, which shares that display's socket with the sandbox and
+# sets DISPLAY inside to match.
+DISPLAY="$display" flatpak run --env=LIBGL_ALWAYS_SOFTWARE=1 "$app" "$document" \
     >"$work/output.txt" 2>&1 &
 started=yes
 
