@@ -6,6 +6,7 @@
 #include <lcad/app/FeaturePanel.h>
 #include <lcad/app/JointPanel.h>
 #include <lcad/app/MainWindow.h>
+#include <lcad/app/MeasurePanel.h>
 #include <lcad/app/MovePanel.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/Recovery.h>
@@ -133,6 +134,7 @@ private slots:
     void bodiesBecomeAComponent();
     void twoPartsAreJoinedInThePanelAndAnimated();
     void aComponentIsMovedByHand();
+    void componentsAreMeasuredWhereTheyAre();
     void overlapsAreFoundAndMassIsWeighed();
     void aLinkedPartIsInsertedListedAndPackaged();
     void unsavedWorkSurvivesACrash();
@@ -367,6 +369,26 @@ void AssemblyInterfaceTest::aComponentIsMovedByHand() {
     QCOMPARE(QString::fromStdString(document->undoLabel()), QStringLiteral("Move Block:1"));
 }
 
+void AssemblyInterfaceTest::componentsAreMeasuredWhereTheyAre() {
+    MainWindow window;
+    show(window);
+    lcad::document::Document* document = window.document();
+    // Two cubes, each at its component's origin, placed 30 mm apart.
+    const Part left = makePart(*document, "Left", 10.0, 10.0, 10.0);
+    const Part right =
+        makePart(*document, "Right", 10.0, 10.0, 10.0, lcad::kernel::translation({30.0, 0.0, 0.0}));
+    render(window);
+    QVERIFY(trigger(window, "inspect.measure"));
+    window.viewport()->setSelection({{left.body, SelectedItem::Kind::Body, -1, {left.occurrence}}});
+    window.viewport()->setSelection(
+        {{right.body, SelectedItem::Kind::Body, -1, {right.occurrence}}});
+    QVERIFY(window.measurePanel() != nullptr);
+    // 20 mm between them, as placed: not 0, as their bodies are in their own coordinates.
+    QVERIFY2(window.measurePanel()->rows().contains(QStringLiteral("Distance: 20 mm")),
+             qPrintable(window.measurePanel()->rows().join(QLatin1Char('|'))));
+    QVERIFY(window.measurePanel()->rows().contains(QStringLiteral("Along X: 20 mm")));
+}
+
 void AssemblyInterfaceTest::overlapsAreFoundAndMassIsWeighed() {
     MainWindow window;
     show(window);
@@ -465,6 +487,15 @@ void AssemblyInterfaceTest::aLinkedPartIsInsertedListedAndPackaged() {
     QVERIFY(problems.isEmpty());
     QVERIFY(QFileInfo::exists(folder + QStringLiteral("/car.lcad")));
     QVERIFY(QFileInfo::exists(folder + QStringLiteral("/wheel.lcad")));
+
+    // Opened without its part, the package says so, and shows the copy it kept.
+    QVERIFY(QFile::remove(folder + QStringLiteral("/wheel.lcad")));
+    QVERIFY(window.loadFrom(folder + QStringLiteral("/car.lcad"), &error));
+    QCOMPARE(window.loadWarnings().size(), 1);
+    QVERIFY2(window.loadWarnings().front().contains(QStringLiteral("cannot be found")),
+             qPrintable(window.loadWarnings().front()));
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
+    QVERIFY(!window.document()->bodies().front().shape.isNull());
 }
 
 void AssemblyInterfaceTest::unsavedWorkSurvivesACrash() {
