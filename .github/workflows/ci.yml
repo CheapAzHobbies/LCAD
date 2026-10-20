@@ -189,15 +189,24 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       # Open CASCADE takes most of an hour to build; what flatpak-builder built of it is kept
-      # until the manifest changes.
-      - name: Keep what was built of the dependencies
-        uses: actions/cache@v6
+      # until the manifest changes. Saved straight after the build, so that a failure further
+      # on does not throw it away.
+      - name: Take what was built of the dependencies before
+        id: dependencies
+        uses: actions/cache/restore@v6
         with:
           path: flatpak/state
           key: flatpak-${{ hashFiles('packaging/flatpak/*.yml') }}
 
       - name: Build the Flatpak
         run: ./scripts/build-flatpak.sh flatpak
+
+      - name: Keep what was built of the dependencies
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: flatpak/state
+          key: flatpak-${{ hashFiles('packaging/flatpak/*.yml') }}
 
       - name: Install it and start LCAD from it
         run: |
