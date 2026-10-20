@@ -223,9 +223,13 @@ void AssemblyInterfaceTest::aNewComponentIsWorkedOn() {
     QVERIFY(window.browser()->bodyItem(document->bodies().front().id, window.activePath()) !=
             nullptr);
 
-    // Double-clicking the document's entry works on the whole again.
+    // Double-clicking the document's entry works on the whole again. (The entry is looked up
+    // again: the browser lists the components afresh when the document changes.)
+    const std::vector<ObjectId> path = window.activePath();
     emit window.browser()->occurrenceActivated({});
     QVERIFY(window.activePath().empty());
+    entry = window.browser()->occurrenceItem(path);
+    QVERIFY(entry != nullptr);
     QVERIFY(!entry->font(0).bold());
 
     // Undo takes the box, and then the component; working on it ends with it.

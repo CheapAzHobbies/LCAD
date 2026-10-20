@@ -8,9 +8,10 @@ Linux comes first. Windows and macOS ports are planned once the core modeling wo
 
 ## Status
 
-Early. LCAD can sketch, turn sketches into solids, and change them through a feature timeline.
-Phases 0 to 3 of the [roadmap](ROADMAP.md) are done, and Phase 4 (other programs' files and
-direct edits) is in progress; assemblies and drawings are still to come.
+Early. LCAD can sketch, turn sketches into solids, change them through a feature timeline, read
+and write other programs' files, and put parts together into assemblies. Phases 0 to 4 of the
+[roadmap](ROADMAP.md) are done, and Phase 5 (components and assemblies) is in progress;
+drawings and manufacturing are still to come.
 
 What works today:
 
@@ -24,7 +25,8 @@ What works today:
   taper if wanted; revolve them about a
   line or an axis; holes (simple, counterbored, countersunk); fillet, chamfer, and shell; mirror and
   rectangular and circular patterns of features.
-  Each with a live preview, and editable later.
+  Each with a live preview, and editable later; a pull's distance can be dragged with an arrow
+  in the 3D view.
 - **A feature timeline.** Edit, rename, suppress, reorder, and roll back. Change a sketch and the
   solid follows; a feature that no longer fits says why, and the rest of the model carries on.
 - **Solids from primitives.** Box, cylinder, sphere, cone, and torus by their sizes, with a
@@ -38,11 +40,16 @@ What works today:
 - **Other programs' files.** Import STEP and IGES; export STEP, STL, 3MF, and OBJ. Change
   imported solids directly with Offset Face, Move Face, and Delete Face, each a timeline step;
   check geometry and repair it.
+- **Assemblies.** Components, placed by hand or held together by joints (rigid, revolute,
+  slider, cylindrical, pin-slot, planar, ball) with limits, and shown in motion; parts linked
+  from other LCAD documents, a list of linked files, and packaging a project into one folder;
+  interference checking, materials, and mass properties.
 - **The window.** A 3D view with a view cube, standard views, display styles, and a grid;
   selecting bodies, faces, edges, vertices, and sketches, with their measurements; a browser
   tree and a properties panel to rename, hide, isolate, and delete; several documents in tabs;
   undo and redo; a command search; a light and a dark theme.
-- **Files.** Saving and opening `.lcad` documents.
+- **Files.** Saving and opening `.lcad` documents, with copies of unsaved work kept every
+  minute and offered back after a crash.
 
 [docs/USING.md](docs/USING.md) shows how.
 
@@ -55,7 +62,8 @@ cmake --build --preset release
 build/release/bin/lcad
 ```
 
-Details, supported distributions, how to run the tests, and how to build the AppImage are in
+Details, supported distributions, how to run the tests, and how to build the AppImage and the
+Flatpak are in
 [docs/BUILDING.md](docs/BUILDING.md).
 
 ## Documents

@@ -2901,6 +2901,16 @@ QMenu* MainWindow::createViewportMenu(const QPoint& position) {
                 menu->addAction(action(id));
             }
         }
+        // What was clicked is part of a component: what can be done with that component.
+        if (!selectedOccurrences().empty()) {
+            menu->addSeparator();
+            for (const char* id : {"assembly.activate", "assembly.move", "assembly.ground",
+                                   "assembly.openLinked", "inspect.physical"}) {
+                if (action(id)->isEnabled()) {
+                    menu->addAction(action(id));
+                }
+            }
+        }
         if (action("edit.delete")->isEnabled()) {
             menu->addAction(action("edit.delete"));
         }

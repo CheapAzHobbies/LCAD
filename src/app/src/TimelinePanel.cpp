@@ -396,6 +396,11 @@ QString TimelineStrip::describe(document::ObjectId item) const {
         break;
     }
     }
+    // The timeline is the whole document's; an entry of a component says which.
+    if (const document::Component* component =
+            m_document->findComponent(m_document->componentOf(item))) {
+        lines.insert(1, tr("Part of %1").arg(name(component->name)));
+    }
     const auto& timeline = m_document->timeline();
     const auto place = static_cast<std::size_t>(std::find(timeline.begin(), timeline.end(), item) -
                                                 timeline.begin());

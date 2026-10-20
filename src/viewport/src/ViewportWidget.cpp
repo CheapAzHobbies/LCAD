@@ -29,6 +29,7 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
+#include <Font_NameOfFont.hxx>
 #include <Graphic3d_CView.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
@@ -528,6 +529,15 @@ public:
         return {};
     }
 
+    // Whether a component appears, shown, anywhere: what is drawn once for it is not drawn
+    // otherwise.
+    [[nodiscard]] bool isShown(document::ObjectId component) const {
+        return std::any_of(instances().begin(), instances().end(),
+                           [component](const document::Instance& instance) {
+                               return instance.component == component && instance.visible;
+                           });
+    }
+
     [[nodiscard]] kernel::Placement editPlacement() const {
         const document::Instance* edited = instanceAt(editPath);
         return edited != nullptr ? edited->placement : kernel::Placement{};
@@ -777,8 +787,11 @@ public:
             }};
             for (const auto& [part, item] : parts) {
                 axes->ShadingAspect(part)->SetColor(toOcct(ViewportWidget::originColor(item)));
-                // Each label in its axis's color, which reads on both themes' backgrounds.
+                // Each label in its axis's color, which reads on both themes' backgrounds, and in
+                // the sans-serif font the cube's sides use: the labels' own default is a Times
+                // that a desktop need not have.
                 axes->TextAspect(part)->SetColor(toOcct(ViewportWidget::originColor(item)));
+                axes->TextAspect(part)->SetFont(Font_NOF_SANS_SERIF);
             }
         }
         if (context->IsDisplayed(viewCube)) {
@@ -1015,6 +1028,9 @@ public:
             return;
         }
         for (const document::Feature& feature : document->features()) {
+            if (!isShown(feature.component)) {
+                continue;
+            }
             if (feature.kind == document::FeatureKind::Axis && feature.visible) {
                 showAxis(feature.id);
             }
@@ -1337,7 +1353,7 @@ public:
             return;
         }
         hideSketch(sketch.id);
-        if (!sketch.visible || sketch.id == activeSketch) {
+        if (!sketch.visible || sketch.id == activeSketch || !isShown(sketch.component)) {
             return;
         }
         const bool wasEmpty = bodyObjects.empty() && sketchObjects.empty();

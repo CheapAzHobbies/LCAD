@@ -155,7 +155,64 @@ and `attachedFace`, the name of the body's face (empty for a plane). Its `plane`
 was when the file was saved, and it is placed again from what it follows on opening.
 
 A body that a feature makes is written as `{"id", "name", "visible", "madeBy"}`, without
-geometry: it is built again from its feature on opening. `timeline` lists the ids of the bodies
+geometry: it is built again from its feature on opening.
+
+### Components and assemblies
+
+Added in Phase 5, still in version 1: each of the following is optional, and a file without it
+opens as it always did.
+
+A body, a sketch, and a feature may have `component`, the id of the component it is part of
+(none for the document itself; its geometry, or its plane, is then in the component's own
+coordinates). A body may have `material`, the name of what it is made of, and a body no feature
+makes, or a feature, may have `tag`, the text the names of its faces start with in place of its
+id (a copy of a component keeps its original's, so that the copy's features find their faces).
+
+`components` lists `{"id", "name"}`, and for a linked part `link`, the path of its document
+relative to this one's folder (or whole), and `linkStamp`, what identifies the content that
+file had when it was last read. Each component appears at least once in `occurrences`:
+
+```json
+{ "id": 21, "component": 20, "parent": 0,
+  "placement": { "origin": [80, 20, 15], "xAxis": [1, 0, 0], "yAxis": [0, 1, 0], "zAxis": [0, 0, 1] },
+  "grounded": false, "visible": true, "suppressed": false }
+```
+
+| Field | Meaning |
+|---|---|
+| `component` | The component that appears. |
+| `parent` | The component it appears in, 0 for the document itself. A component never appears inside itself. |
+| `placement` | Where it is in the parent's coordinates when no joint places it: its origin and its X, Y, and Z directions, of unit length, square, and right-handed. |
+| `grounded` | Joints move the other side, not this one. |
+| `visible`, `suppressed` | Shown; left out of the assembly altogether. |
+
+`joints` lists the joints:
+
+```json
+{ "id": 30, "name": "Revolute 1", "kind": "Revolute", "component": 0,
+  "moving": { "path": [23], "kind": "face", "body": 24, "name": "24/f5", "snap": "center" },
+  "fixed": { "path": [21], "kind": "face", "body": 22, "name": "22/f4", "snap": "center" },
+  "offset": 0, "angle": 0, "flipped": false,
+  "values": [30, 0, 0], "limits": [{ "minimum": -90, "maximum": 90 }, {}, {}],
+  "suppressed": false }
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` | `Rigid`, `Revolute`, `Slider`, `Cylindrical`, `Pin-Slot`, `Planar`, or `Ball`. |
+| `component` | The component the joint is part of; both sides lie in it. 0 for the document itself. |
+| `moving`, `fixed` | Where each side is: `path`, the occurrences from the joint's component down to the part (empty for the component's own bodies); `kind`, `origin`, `face`, or `edge`; the `body` and the `name` of its face or edge; and `snap`, `center`, `start`, or `end`, along a straight edge or a round face. |
+| `offset`, `angle`, `flipped` | How far the moving side stands off along the joint's axis, in millimeters, and turns about it, in degrees, and whether it faces the same way rather than against. |
+| `values`, `limits` | How far the joint has moved along each way it moves (in degrees or millimeters, in the order its kind lists them), and the least and most for each, where there are limits. |
+
+`materials` lists the document's own materials, `{"name", "density"}`, the density in grams per
+cubic centimeter. Names not among them are LCAD's own materials.
+
+A body of a linked part is stored like a body put in as it is, with `"role": "linked"` for its
+geometry, and `linkKey`, which tells it apart among the bodies of the linked document, and
+`faceNames`, the names its faces have there. It is not in the `timeline`: the linked document is
+where it is made. It is the last known shape of that body, shown when the linked file cannot be
+found. `timeline` lists the ids of the bodies
 put in as they are, the sketches, and the features in the order they are applied; `marker`, if
 present, is how many of them are applied. A feature that cannot be applied on opening does not
 stop the file from opening: it is reported, with its reason, as a warning.
@@ -171,11 +228,13 @@ Display meshes are regenerated when a document is opened.
 
 ### What is authoritative
 
-`document.json` is the model. A file in `geometry/` is one of two things, and its `role` says
+`document.json` is the model. A file in `geometry/` is one of three things, and its `role` says
 which:
 
-- **`source`: the only copy.** In version 1 every body is one of these: a solid made directly,
-  with no history that could rebuild it. Imported geometry will be the same.
+- **`source`: the only copy.** A solid made directly, with no history that could rebuild it, or
+  imported from another program's file.
+- **`linked`: a copy.** The last known shape of a body of a linked part, kept for when its file
+  cannot be found. The linked file is what is authoritative.
 - **A cached result** (not in version 1). When features arrive, the shape a feature produced
   will be stored so that a document opens without recomputing, and can still show its geometry
   in a version of LCAD whose kernel would recompute it differently. That changes what a reader
@@ -230,18 +289,23 @@ LCAD built against each OCCT series, every build reads all of them, and CI build
 - If a save fails, the existing file is untouched and no temporary file is left behind.
 - No backup copy of the previous version is kept beside the document. The atomic replacement
   covers a failed save, and keeping old versions is the job of autosave and of version control.
-- Autosave and crash recovery (Phase 5) will not write to the user's file at all. They will keep
-  a journal under `$XDG_STATE_HOME/lcad/recovery/` (by default `~/.local/state/lcad/recovery/`),
-  and after a crash LCAD will offer to restore from it.
+- Autosave never writes to the user's file. Every minute LCAD writes a copy of each document with
+  unsaved changes, as a complete `.lcad` file and in the same way as a save, into a folder of its
+  own under `$XDG_STATE_HOME/lcad/recovery/` (by default `~/.local/state/lcad/recovery/`), with
+  a note of the file it belongs to. After a crash LCAD offers to restore from it.
 - Saving a document, saving a copy, exporting geometry, and packaging a project are four separate
-  commands, as the brief requires. Only the first two write `.lcad` files. Phase 1 has the first.
+  commands, as the brief requires. Saving and packaging write `.lcad` files; a package also
+  writes copies of the files the document links to, with their links pointing at each other.
 
 ## Linked components
 
-Planned for Phase 5, and not part of version 1. A component inserted from another file is stored as a reference: the path relative to the
-referring document, plus an identifier that lets LCAD tell when the path now leads to a different
-file. A missing link is reported; the last known geometry stays visible from the cache. A dependency
-report and a command that gathers every linked file into one portable folder come with it.
+A component inserted from another file is stored as a link: the path relative to the referring
+document's folder (`link`), and a stamp of the file's content (`linkStamp`: its size and a hash
+of its bytes), which tells LCAD when the file changed. The bodies of the linked document are
+copied into this one (role `linked`, above). A missing link is reported, and the copy is shown.
+File > Linked Files is the dependency report, and Package Project gathers every linked file into
+one portable folder. When a document is saved in another folder, its links are rewritten to lead
+to the same files from there.
 
 ## Why this and not something else
 
