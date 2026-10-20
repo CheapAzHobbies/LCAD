@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# LCAD as a Flatpak: built on KDE's runtime, which has Qt, with Open CASCADE, libzip, and
-# nlohmann/json built here. scripts/build-flatpak.sh builds it; CI builds it on every pull
-# request and starts it.
+# LCAD as a Flatpak: built on KDE's runtime, which has Qt, with Open CASCADE, libzip,
+# nlohmann/json, and Eigen built here. scripts/build-flatpak.sh builds it; CI builds it on
+# every pull request and starts it.
 id: io.github.cheapazhobbies.LCAD
 runtime: org.kde.Platform
 runtime-version: '6.10'
@@ -81,6 +81,18 @@ modules:
         url: https://github.com/nlohmann/json.git
         tag: v3.12.0
         commit: 55f93686c01528224f448c19128836e7df245f72
+
+  # Header only: the sketch solver's linear algebra.
+  - name: eigen
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/include/eigen3
+      - cp -r Eigen unsupported /app/include/eigen3/
+    sources:
+      - type: git
+        url: https://gitlab.com/libeigen/eigen.git
+        tag: 3.4.0
+        commit: 3147391d946bb4b6c68edd901f2add6ac1f31f8c
 
   - name: lcad
     buildsystem: cmake-ninja

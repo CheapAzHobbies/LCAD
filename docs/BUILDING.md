@@ -99,8 +99,8 @@ runs on.
 ### The Flatpak
 
 `packaging/flatpak/io.github.cheapazhobbies.LCAD.yml` builds LCAD on KDE's runtime from
-Flathub, which brings Qt; Open CASCADE 7.9.3, libzip, and nlohmann/json are built from source on
-the way.
+Flathub, which brings Qt; Open CASCADE 7.9.3, libzip, nlohmann/json, and Eigen are built from
+source on the way.
 
 ```sh
 sudo apt install flatpak flatpak-builder   # names are Ubuntu's

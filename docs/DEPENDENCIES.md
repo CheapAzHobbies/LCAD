@@ -149,9 +149,10 @@ provides Qt, and builds these from their sources at pinned commits:
 | [Open CASCADE Technology](https://github.com/Open-Cascade-SAS/OCCT) | 7.9.3 | LGPL-2.1 with an exception |
 | [libzip](https://github.com/nih-at/libzip) | 1.11.4 | BSD-3-Clause |
 | [nlohmann/json](https://github.com/nlohmann/json) | 3.12.0 | MIT |
+| [Eigen](https://gitlab.com/libeigen/eigen) | 3.4.0 | MPL-2.0 |
 
-They are shared libraries in the Flatpak, replaceable as the LGPL asks; nlohmann/json is a
-header and is only used to build.
+Open CASCADE and libzip are shared libraries in the Flatpak, replaceable as the LGPL asks;
+nlohmann/json and Eigen are headers, only used to build.
 
 ## Later phases
 
