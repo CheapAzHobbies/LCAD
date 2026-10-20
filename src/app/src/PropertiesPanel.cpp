@@ -8,6 +8,7 @@
 #include <lcad/kernel/SubShapes.h>
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -64,6 +65,7 @@ void PropertiesPanel::clearRows() {
     m_rows.clear();
     m_name = nullptr;
     m_visible = nullptr;
+    m_material = nullptr;
 }
 
 void PropertiesPanel::addRow(const QString& label, const QString& value) {
@@ -130,6 +132,12 @@ void PropertiesPanel::refresh(document::Document* document,
         }
         m_visible->setChecked(body->visible);
         m_heading->setText(QString::fromStdString(body->name));
+        // What it is made of may have changed: its mass with it.
+        if (m_material != nullptr &&
+            m_material->currentData().toString().toStdString() != body->material) {
+            m_document = nullptr;
+            refresh(document, bodies, parts);
+        }
         return;
     }
 
@@ -202,9 +210,52 @@ void PropertiesPanel::refresh(document::Document* document,
             applyEdit([this, on] { m_document->setBodyVisible(m_body, on); });
         });
 
+        // What it is made of, for its mass.
+        m_material = new QComboBox(this);
+        m_material->setObjectName(QStringLiteral("bodyMaterial"));
+        m_material->addItem(tr("Not set"), QString());
+        for (const document::Material& material : document::materialLibrary()) {
+            m_material->addItem(QString::fromStdString(material.name),
+                                QString::fromStdString(material.name));
+        }
+        for (const document::Material& material : document->materials()) {
+            if (m_material->findData(QString::fromStdString(material.name)) < 0) {
+                m_material->addItem(QString::fromStdString(material.name),
+                                    QString::fromStdString(material.name));
+            }
+        }
+        const int chosen = m_material->findData(QString::fromStdString(body->material));
+        if (chosen < 0 && !body->material.empty()) {
+            // A material the document does not know: kept, and said so.
+            m_material->addItem(tr("%1 (unknown)").arg(QString::fromStdString(body->material)),
+                                QString::fromStdString(body->material));
+            m_material->setCurrentIndex(m_material->count() - 1);
+        } else {
+            m_material->setCurrentIndex(std::max(chosen, 0));
+        }
+        m_material->setToolTip(tr("What the body is made of. Its mass follows from it."));
+        // The panel keeps its width whatever the longest material is called.
+        m_material->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        m_material->setMinimumContentsLength(8);
+        auto* materialLabel = new QLabel(tr("Material"), this);
+        materialLabel->setObjectName(QStringLiteral("secondary"));
+        m_form->addRow(materialLabel, m_material);
+        connect(m_material, &QComboBox::activated, this, [this] {
+            const std::string material = m_material->currentData().toString().toStdString();
+            try {
+                applyEdit([this, &material] { m_document->setBodyMaterial(m_body, material); });
+            } catch (const std::invalid_argument&) {
+            }
+        });
+
         m_shape = body->shape;
         if (const document::Feature* maker = document->findFeature(body->madeBy)) {
             addRow(tr("Made by"), QString::fromStdString(maker->name));
+        }
+        if (const document::Component* component = document->findComponent(body->component)) {
+            addRow(component->link.empty() ? tr("Part of") : tr("Linked from"),
+                   component->link.empty() ? QString::fromStdString(component->name)
+                                           : QString::fromStdString(component->link));
         }
         if (body->shape.isNull()) {
             addRow(tr("Exists"), tr("Not at this point in the timeline: the feature that makes "
@@ -213,6 +264,13 @@ void PropertiesPanel::refresh(document::Document* document,
             return;
         }
         addRow(tr("Volume"), tr("%1 mm³").arg(formatNumber(kernel::volume(body->shape))));
+        if (const auto material = document->findMaterial(body->material)) {
+            if (const auto mass = kernel::massProperties(body->shape, material->density)) {
+                addRow(tr("Mass"), mass->mass >= 1000.0
+                                       ? tr("%1 kg").arg(formatNumber(mass->mass / 1000.0))
+                                       : tr("%1 g").arg(formatNumber(mass->mass)));
+            }
+        }
         addRow(tr("Surface area"),
                tr("%1 mm²").arg(formatNumber(kernel::surfaceArea(body->shape))));
         if (const auto box = kernel::boundingBox(body->shape)) {
@@ -264,6 +322,90 @@ void PropertiesPanel::refresh(document::Document* document,
         // The body changed under the selection; there is nothing to say about it.
         m_heading->setText(tr("Nothing selected"));
     }
+}
+
+void PropertiesPanel::showOccurrence(document::Document* document, document::ObjectId occurrence) {
+    clearRows();
+    m_document = document;
+    m_body = {};
+    m_shape = {};
+    const document::Occurrence* found =
+        document != nullptr ? document->findOccurrence(occurrence) : nullptr;
+    if (found == nullptr) {
+        m_heading->setText(tr("Nothing selected"));
+        return;
+    }
+    const document::Component* component = document->findComponent(found->component);
+    m_heading->setText(QString::fromStdString(document->occurrenceName(occurrence)));
+    addRow(tr("Component"), QString::fromStdString(component->name));
+    if (!component->link.empty()) {
+        addRow(tr("Linked file"), QString::fromStdString(component->link));
+    }
+    addRow(tr("Appears"), tr("%n time(s)", nullptr,
+                             static_cast<int>(document->occurrencesOf(found->component).size())));
+    const kernel::Placement where = document->placementOf(occurrence);
+    addRow(tr("Origin"), tr("%1, %2, %3 mm")
+                             .arg(formatNumber(where.origin.x), formatNumber(where.origin.y),
+                                  formatNumber(where.origin.z)));
+    QStringList holding;
+    for (const document::Joint& joint : document->joints()) {
+        for (const document::JointSide* side : {&joint.moving, &joint.fixed}) {
+            if (!side->path.empty() && side->path.front() == occurrence) {
+                holding << QString::fromStdString(joint.name);
+                break;
+            }
+        }
+    }
+    addRow(tr("Held by"), holding.isEmpty() ? tr("No joint: it stays where it is put")
+                                            : holding.join(QStringLiteral(", ")));
+    addRow(tr("Grounded"), found->grounded ? tr("Yes") : tr("No"));
+    if (found->suppressed) {
+        addRow(tr("Suppressed"), tr("Yes: left out of the assembly"));
+    }
+    int bodies = 0;
+    for (const document::Body& body : document->bodies()) {
+        bodies += body.component == found->component ? 1 : 0;
+    }
+    addRow(tr("Bodies"), QString::number(bodies));
+}
+
+void PropertiesPanel::showJoint(document::Document* document, document::ObjectId joint) {
+    clearRows();
+    m_document = document;
+    m_body = {};
+    m_shape = {};
+    const document::Joint* found = document != nullptr ? document->findJoint(joint) : nullptr;
+    if (found == nullptr) {
+        m_heading->setText(tr("Nothing selected"));
+        return;
+    }
+    m_heading->setText(QString::fromStdString(found->name));
+    addRow(tr("Type"), QString::fromLatin1(document::toString(found->kind)));
+    const auto sideName = [document](const document::JointSide& side) {
+        return side.path.empty()
+                   ? tr("The assembly itself")
+                   : QString::fromStdString(document->occurrenceName(side.path.front()));
+    };
+    addRow(tr("Moves"), sideName(found->moving));
+    addRow(tr("Onto"), sideName(found->fixed));
+    const std::vector<document::JointMotion> motions = document::motionsOf(found->kind);
+    for (std::size_t i = 0; i < motions.size(); ++i) {
+        QString value = motions[i].turns ? tr("%1°").arg(formatNumber(found->values[i]))
+                                         : tr("%1 mm").arg(formatNumber(found->values[i]));
+        const document::JointLimits& limits = found->limits[i];
+        if (limits.minimum.has_value() || limits.maximum.has_value()) {
+            value += tr(" (from %1 to %2)")
+                         .arg(limits.minimum.has_value() ? formatNumber(*limits.minimum)
+                                                         : QStringLiteral("…"),
+                              limits.maximum.has_value() ? formatNumber(*limits.maximum)
+                                                         : QStringLiteral("…"));
+        }
+        addRow(tr(motions[i].name), value);
+    }
+    const std::string error = document->jointError(joint);
+    addRow(tr("Holds"), found->suppressed ? tr("No: it is suppressed")
+                        : error.empty()   ? tr("Yes")
+                                          : tr("No. %1").arg(QString::fromStdString(error)));
 }
 
 } // namespace lcad::app

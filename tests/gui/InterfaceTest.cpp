@@ -575,9 +575,15 @@ void InterfaceTest::nothingEssentialIsClipped() {
         if (widget == nullptr || entry->isSeparator()) {
             continue;
         }
-        // The names of the groups give way in a narrow window; the buttons do not.
+        // The names of the groups give way in a narrow window, and so do the buttons for New
+        // Component and Joint, which the assembly list beside them has too; other buttons do
+        // not.
         if (widget->objectName() == QStringLiteral("groupLabel") && !widget->isVisible()) {
             QVERIFY(size.width() < 1280);
+            continue;
+        }
+        if (widget->objectName().startsWith(QStringLiteral("assembly.")) && !widget->isVisible()) {
+            QVERIFY(size.width() <= 1280);
             continue;
         }
         QVERIFY2(widget->isVisible(), qPrintable(entry->objectName()));
@@ -633,8 +639,9 @@ void InterfaceTest::nothingEssentialIsClipped() {
         }
         ++labelsShown;
     }
-    // The heading, the name's label, and a label and a value for each of the five measurements.
-    QCOMPARE(labelsShown, 12);
+    // The heading, the labels of the name and the material, and a label and a value for each
+    // of the five measurements.
+    QCOMPARE(labelsShown, 13);
     const auto* visibleBox =
         window.properties()->findChild<QCheckBox*>(QStringLiteral("bodyVisible"));
     QVERIFY(visibleBox->isVisible() && visibleBox->sizeHint().width() <= visibleBox->width());

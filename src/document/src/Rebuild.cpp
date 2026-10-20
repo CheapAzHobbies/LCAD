@@ -125,7 +125,7 @@ kernel::Axis axisNamed(const std::string& name, const kernel::NamedShape& body,
 // for a pull up to a face.
 kernel::NamedShape madeBy(const Feature& feature, const Document& document,
                           const BodyStates* bodies) {
-    const std::string tag = std::to_string(feature.id.value);
+    const std::string tag = tagOf(feature);
     const SketchItem* sketch = document.findSketch(feature.sketch);
     if (sketch == nullptr) {
         throw FeatureFailure("The sketch it was made from is gone.");
@@ -286,7 +286,7 @@ kernel::Axis axisNamed(const std::string& name, const kernel::NamedShape& body,
 // its original does.
 kernel::NamedShape copiesOf(const Feature& feature, const Document& document,
                             const kernel::NamedShape& body, const BodyStates& bodies) {
-    const std::string tag = std::to_string(feature.id.value);
+    const std::string tag = tagOf(feature);
     struct Piece {
         kernel::NamedShape shape;
         kernel::Combination how = kernel::Combination::Join;
@@ -422,7 +422,7 @@ kernel::NamedShape copiesOf(const Feature& feature, const Document& document,
 // Holes drilled into the body at the free-standing points of the feature's sketch.
 kernel::NamedShape drilled(const Feature& feature, const Document& document,
                            const kernel::NamedShape& body) {
-    const std::string tag = std::to_string(feature.id.value);
+    const std::string tag = tagOf(feature);
     const SketchItem* sketch = document.findSketch(feature.sketch);
     if (sketch == nullptr) {
         throw FeatureFailure("The sketch that says where the holes go is gone.");
@@ -704,6 +704,14 @@ kernel::Plane placeSketch(const SketchItem& sketch, const Document& document,
     return *plane;
 }
 
+std::string tagOf(const Feature& feature) {
+    return feature.tag.empty() ? std::to_string(feature.id.value) : feature.tag;
+}
+
+std::string tagOf(const Body& body) {
+    return body.tag.empty() ? std::to_string(body.id.value) : body.tag;
+}
+
 std::string describeName(const Document& document, const std::string& name) {
     // An edge is named by the faces it lies between: "a|b#0".
     const std::size_t hash = name.rfind('#');
@@ -724,7 +732,7 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
         }
         return made;
     };
-    const std::string tag = std::to_string(feature.id.value);
+    const std::string tag = tagOf(feature);
     try {
         switch (feature.kind) {
         case FeatureKind::Pull:

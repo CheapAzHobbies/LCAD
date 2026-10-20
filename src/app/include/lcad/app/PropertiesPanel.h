@@ -13,6 +13,7 @@
 #include <vector>
 
 class QCheckBox;
+class QComboBox;
 class QFormLayout;
 class QLabel;
 class QLineEdit;
@@ -33,6 +34,12 @@ public:
     /// Shows the properties of the given selection of `document`, which may be nullptr.
     void refresh(document::Document* document, const std::vector<document::ObjectId>& bodies,
                  const std::vector<viewport::SelectedItem>& parts);
+    /// Shows what an occurrence of a component is: its component, where it is, whether it is
+    /// grounded or linked, and what holds it.
+    void showOccurrence(document::Document* document, document::ObjectId occurrence);
+    /// Shows what a joint is: its kind, what it joins, how far it has moved, and whether it
+    /// holds.
+    void showJoint(document::Document* document, document::ObjectId joint);
 
     /// The line at the top: "Box", "Face of Box", "3 items selected", "Nothing selected".
     [[nodiscard]] QString heading() const;
@@ -47,6 +54,7 @@ private:
     QFormLayout* m_form;
     QLineEdit* m_name = nullptr;
     QCheckBox* m_visible = nullptr;
+    QComboBox* m_material = nullptr;
     QStringList m_rows;
     document::Document* m_document = nullptr;
     document::ObjectId m_body;

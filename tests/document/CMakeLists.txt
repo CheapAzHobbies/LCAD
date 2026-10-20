@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 add_executable(lcad_document_tests
+    AssemblyTest.cpp
     DirectEditTest.cpp
     DocumentTest.cpp
     FeatureTest.cpp
     FileTest.cpp
+    LinksTest.cpp
     MigrationTest.cpp
     ReferenceModelTest.cpp
     SketchShapesTest.cpp)

@@ -2,10 +2,12 @@
 
 #include <lcad/kernel/Measure.h>
 
+#include <lcad/kernel/occt/Guard.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
@@ -17,7 +19,9 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <gp_Dir.hxx>
+#include <gp_Mat.hxx>
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -195,6 +199,195 @@ std::optional<double> radiusOf(const Shape& part) {
         }
     }
     return std::nullopt;
+}
+
+PartKind partKind(const Shape& part) {
+    if (part.isNull()) {
+        return PartKind::Other;
+    }
+    const TopoDS_Shape& shape = occt::unwrap(part);
+    switch (shape.ShapeType()) {
+    case TopAbs_VERTEX:
+        return PartKind::Point;
+    case TopAbs_EDGE: {
+        const BRepAdaptor_Curve curve(TopoDS::Edge(shape));
+        return curve.GetType() == GeomAbs_Line     ? PartKind::Straight
+               : curve.GetType() == GeomAbs_Circle ? PartKind::Circular
+                                                   : PartKind::Bent;
+    }
+    case TopAbs_FACE: {
+        const BRepAdaptor_Surface surface(TopoDS::Face(shape));
+        switch (surface.GetType()) {
+        case GeomAbs_Plane:
+            return PartKind::Flat;
+        case GeomAbs_Cylinder:
+            return PartKind::Cylindrical;
+        case GeomAbs_Cone:
+            return PartKind::Conical;
+        case GeomAbs_Sphere:
+            return PartKind::Spherical;
+        case GeomAbs_Torus:
+            return PartKind::Toroidal;
+        default:
+            return PartKind::Curved;
+        }
+    }
+    default:
+        return PartKind::Other;
+    }
+}
+
+std::optional<MassProperties> massProperties(const Shape& shape, double density) {
+    if (!std::isfinite(density) || density <= 0.0) {
+        throw std::invalid_argument("massProperties: the density has to be more than zero");
+    }
+    if (shape.isNull()) {
+        return std::nullopt;
+    }
+    const GProp_GProps properties = volumeProperties(shape);
+    if (properties.Mass() <= 0.0) {
+        return std::nullopt;
+    }
+    // Grams per cubic centimeter are thousandths of a gram per cubic millimeter.
+    const double perCubicMillimeter = density * 1e-3;
+    MassProperties result;
+    result.volume = properties.Mass();
+    result.mass = result.volume * perCubicMillimeter;
+    const gp_Pnt center = properties.CentreOfMass();
+    result.center = {center.X(), center.Y(), center.Z()};
+    // OCCT gives the tensor about the center of mass, along the model's axes, for a density of
+    // one.
+    const gp_Mat matrix = properties.MatrixOfInertia();
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            result.inertia[static_cast<std::size_t>(row)][static_cast<std::size_t>(column)] =
+                matrix.Value(row + 1, column + 1) * perCubicMillimeter;
+        }
+    }
+    return result;
+}
+
+MassProperties combined(const std::vector<MassProperties>& parts) {
+    MassProperties total;
+    for (const MassProperties& part : parts) {
+        total.volume += part.volume;
+        total.mass += part.mass;
+        total.center.x += part.center.x * part.mass;
+        total.center.y += part.center.y * part.mass;
+        total.center.z += part.center.z * part.mass;
+    }
+    if (total.mass <= 0.0) {
+        return total;
+    }
+    total.center = {total.center.x / total.mass, total.center.y / total.mass,
+                    total.center.z / total.mass};
+    for (const MassProperties& part : parts) {
+        // Each part's inertia moved from its own center to the common one: m (|d|^2 I - d d^T).
+        const std::array<double, 3> d{part.center.x - total.center.x,
+                                      part.center.y - total.center.y,
+                                      part.center.z - total.center.z};
+        const double squared = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        for (std::size_t row = 0; row < 3; ++row) {
+            for (std::size_t column = 0; column < 3; ++column) {
+                const double shift =
+                    part.mass * ((row == column ? squared : 0.0) - d[row] * d[column]);
+                total.inertia[row][column] += part.inertia[row][column] + shift;
+            }
+        }
+    }
+    return total;
+}
+
+PrincipalInertia principalInertia(const MassProperties& properties) {
+    // Jacobi's method: turn the symmetric tensor until nothing is left off its diagonal. The
+    // turns taken together are the axes.
+    std::array<std::array<double, 3>, 3> a = properties.inertia;
+    std::array<std::array<double, 3>, 3> v{{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+    for (int sweep = 0; sweep < 50; ++sweep) {
+        const double off = a[0][1] * a[0][1] + a[0][2] * a[0][2] + a[1][2] * a[1][2];
+        const double scale = a[0][0] * a[0][0] + a[1][1] * a[1][1] + a[2][2] * a[2][2];
+        if (off <= 1e-30 * std::max(scale, 1e-300)) {
+            break;
+        }
+        for (std::size_t p = 0; p < 2; ++p) {
+            for (std::size_t q = p + 1; q < 3; ++q) {
+                if (a[p][q] == 0.0) {
+                    continue;
+                }
+                const double theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+                const double t = (theta >= 0.0 ? 1.0 : -1.0) /
+                                 (std::abs(theta) + std::sqrt(theta * theta + 1.0));
+                const double c = 1.0 / std::sqrt(t * t + 1.0);
+                const double s = t * c;
+                for (std::size_t k = 0; k < 3; ++k) {
+                    const double akp = a[k][p];
+                    const double akq = a[k][q];
+                    a[k][p] = c * akp - s * akq;
+                    a[k][q] = s * akp + c * akq;
+                }
+                for (std::size_t k = 0; k < 3; ++k) {
+                    const double apk = a[p][k];
+                    const double aqk = a[q][k];
+                    a[p][k] = c * apk - s * aqk;
+                    a[q][k] = s * apk + c * aqk;
+                }
+                for (std::size_t k = 0; k < 3; ++k) {
+                    const double vkp = v[k][p];
+                    const double vkq = v[k][q];
+                    v[k][p] = c * vkp - s * vkq;
+                    v[k][q] = s * vkp + c * vkq;
+                }
+            }
+        }
+    }
+    std::array<std::size_t, 3> order{0, 1, 2};
+    std::sort(order.begin(), order.end(),
+              [&a](std::size_t i, std::size_t j) { return a[i][i] < a[j][j]; });
+    PrincipalInertia result;
+    for (std::size_t i = 0; i < 3; ++i) {
+        const std::size_t column = order[i];
+        result.moments[i] = a[column][column];
+        result.axes[i] = {v[0][column], v[1][column], v[2][column]};
+    }
+    return result;
+}
+
+std::optional<Overlap> overlapOf(const Shape& first, const Shape& second) {
+    if (first.isNull() || second.isNull()) {
+        return std::nullopt;
+    }
+    const TopoDS_Shape& a = occt::unwrap(first);
+    const TopoDS_Shape& b = occt::unwrap(second);
+    if (countOfType(a, TopAbs_SOLID) == 0 || countOfType(b, TopAbs_SOLID) == 0) {
+        return std::nullopt;
+    }
+    // Most pairs of parts are nowhere near each other: their boxes tell so cheaply.
+    Bnd_Box boxA;
+    Bnd_Box boxB;
+    BRepBndLib::Add(a, boxA);
+    BRepBndLib::Add(b, boxB);
+    if (boxA.IsOut(boxB)) {
+        return std::nullopt;
+    }
+    return occt::guarded("find where two solids overlap", [&]() -> std::optional<Overlap> {
+        BRepAlgoAPI_Common common(a, b);
+        if (!common.IsDone()) {
+            throw Error("find where two solids overlap",
+                        "the solids could not be intersected with each other");
+        }
+        const TopoDS_Shape& shared = common.Shape();
+        if (shared.IsNull() || countOfType(shared, TopAbs_SOLID) == 0) {
+            return std::nullopt;
+        }
+        Overlap overlap{occt::wrap(shared), 0.0};
+        overlap.volume = volume(overlap.shape);
+        // Faces that touch can leave a sliver no thicker than their tolerance.
+        const double smallest = std::min(volume(first), volume(second));
+        if (overlap.volume <= std::max(1e-6, 1e-9 * smallest)) {
+            return std::nullopt;
+        }
+        return overlap;
+    });
 }
 
 } // namespace lcad::kernel

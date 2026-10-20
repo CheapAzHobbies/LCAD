@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <lcad/document/Assembly.h>
 #include <lcad/document/Feature.h>
 #include <lcad/document/ObjectId.h>
 #include <lcad/kernel/Modeling.h>
@@ -41,6 +42,18 @@ struct Body {
     kernel::Shape source;
     /// A name for each face of `shape`; see kernel::NamedShape.
     std::vector<std::string> faceNames;
+    /// The component it is part of. Not valid for the document's root.
+    ObjectId component;
+    /// The name of what it is made of (see Document::findMaterial()), or empty when not said.
+    std::string material;
+    /// For a body that no feature makes: what the names of its faces start with. Empty means
+    /// its id. A copy keeps its original's, as a copied feature does.
+    std::string tag;
+    /// For a body of a linked component: which body of the linked document it is (see
+    /// LinkedBody::key). Such a body is not in the timeline, and no feature works on it.
+    std::string linkKey;
+    /// For a body of a linked component: the names its faces have in the linked document.
+    std::vector<std::string> sourceFaceNames;
 };
 
 /// A sketch in the document: 2D geometry and constraints, and the plane they lie in.
@@ -60,6 +73,9 @@ struct SketchItem {
     /// Dimensions whose values are worked out from parameters, and the expressions they are
     /// worked out from. The values in `geometry` are what they last came to.
     std::map<sketch::ConstraintId, std::string> expressions;
+    /// The component it is part of; its plane is in that component's coordinates. Not valid for
+    /// the document's root.
+    ObjectId component;
 };
 
 /// What a construction axis is now: the line, and where on it to draw it.
@@ -115,9 +131,17 @@ struct Change {
         ParametersChanged,
         /// What undo and redo would do, or whether there are unsaved changes, may have changed.
         HistoryChanged,
+        /// A component, an occurrence, or a joint was added, removed, renamed, shown or hidden,
+        /// grounded, suppressed, or changed, or a joint now fails or holds again.
+        AssemblyChanged,
+        /// Where occurrences are, in the root's coordinates, changed.
+        PlacementsChanged,
+        /// The document's materials, or what a body (`body`) is made of, changed.
+        MaterialsChanged,
     };
     Kind kind = Kind::HistoryChanged;
-    /// The body or sketch concerned. Not valid for HistoryChanged and TimelineChanged.
+    /// The body or sketch concerned. Not valid for HistoryChanged, TimelineChanged, and the
+    /// changes to the assembly.
     ObjectId body;
 };
 
@@ -137,6 +161,11 @@ struct DocumentState {
     std::size_t marker = static_cast<std::size_t>(-1);
     /// The id the next new object gets. Larger than every id in use.
     std::uint64_t nextId = 1;
+    std::vector<Component> components;
+    std::vector<Occurrence> occurrences;
+    std::vector<Joint> joints;
+    /// The materials the document defines for itself, besides LCAD's own.
+    std::vector<Material> materials;
 };
 
 /// What a feature would give if it were applied now. See Document::tryFeature().
@@ -152,6 +181,14 @@ struct FeatureTrial {
     std::optional<PlaneState> plane;
     /// For a construction axis: where it would be.
     std::optional<AxisState> axis;
+};
+
+/// What a joint would give if it were added or changed now. See Document::tryJoint().
+struct JointTrial {
+    /// Where everything would be.
+    std::vector<Instance> instances;
+    /// Why it cannot hold, in a sentence fit to show, or empty.
+    std::string error;
 };
 
 /// What an entry of the timeline is.
@@ -202,10 +239,10 @@ public:
     // Editing. Each throws std::invalid_argument for input that cannot be applied and leaves
     // the document unchanged.
 
-    /// Adds a body and returns its id. The name must not be empty, and the shape must have
-    /// faces. It need not be valid geometry: a body read from another program may not be, and
-    /// a Repair feature can be applied to it.
-    ObjectId addBody(std::string name, kernel::Shape shape);
+    /// Adds a body to a component (the root for an invalid id) and returns its id. The name
+    /// must not be empty, and the shape must have faces. It need not be valid geometry: a body
+    /// read from another program may not be, and a Repair feature can be applied to it.
+    ObjectId addBody(std::string name, kernel::Shape shape, ObjectId component = {});
     /// Removes a body. For a body that features make or change, this removes those features.
     void removeBody(ObjectId id);
     void renameBody(ObjectId id, std::string name);
@@ -213,10 +250,11 @@ public:
 
     /// Adds an empty sketch on a plane and returns its id. A sketch can be attached to a
     /// construction plane (`attachedTo` a Plane feature, no face), or to a flat face of a body
-    /// (`attachedTo` the body, `attachedFace` the face's name): it then follows it. Throws
-    /// std::invalid_argument if what it is attached to does not exist.
+    /// (`attachedTo` the body, `attachedFace` the face's name): it then follows it, and is part
+    /// of the component that is. Otherwise it is part of `component`, in whose coordinates its
+    /// plane is. Throws std::invalid_argument if what it is attached to does not exist.
     ObjectId addSketch(std::string name, const kernel::Plane& plane, ObjectId attachedTo = {},
-                       std::string attachedFace = {});
+                       std::string attachedFace = {}, ObjectId component = {});
     void removeSketch(ObjectId id);
     void renameSketch(ObjectId id, std::string name);
     void setSketchVisible(ObjectId id, bool visible);
@@ -316,6 +354,122 @@ public:
     void setDimensionExpression(ObjectId sketch, sketch::ConstraintId dimension,
                                 std::string expression);
 
+    // Components. See Assembly.h for what they are.
+
+    [[nodiscard]] const std::vector<Component>& components() const { return m_components; }
+    /// The component with this id, or nullptr. The pointer is valid until the next edit.
+    [[nodiscard]] const Component* findComponent(ObjectId id) const;
+    [[nodiscard]] const std::vector<Occurrence>& occurrences() const { return m_occurrences; }
+    [[nodiscard]] const Occurrence* findOccurrence(ObjectId id) const;
+    /// The occurrences of a component, in the order they were made.
+    [[nodiscard]] std::vector<ObjectId> occurrencesOf(ObjectId component) const;
+    /// The occurrences directly inside a component, or inside the root for an invalid id.
+    [[nodiscard]] std::vector<ObjectId> occurrencesIn(ObjectId component) const;
+    /// What an occurrence is called: its component's name and which of its occurrences it is,
+    /// "Bracket:2".
+    [[nodiscard]] std::string occurrenceName(ObjectId occurrence) const;
+    /// The component a body, a sketch, or a feature is part of: not valid for the root.
+    [[nodiscard]] ObjectId componentOf(ObjectId item) const;
+    /// `base` followed by the lowest number no component has yet: "Component 1".
+    [[nodiscard]] std::string uniqueComponentName(std::string_view base) const;
+
+    /// Makes an empty component, with one occurrence of it in `parent` (the root for an invalid
+    /// id) at `placement`, and returns the component's id.
+    ObjectId addComponent(std::string name, ObjectId parent = {},
+                          const kernel::Placement& placement = {});
+    /// Another occurrence of a component in `parent`, and returns its id: the same component,
+    /// appearing again. Throws std::invalid_argument if that would put a component inside
+    /// itself.
+    ObjectId addOccurrence(ObjectId component, ObjectId parent, const kernel::Placement& placement);
+    /// Removes an occurrence, and the joints that hold it. The last occurrence of a component
+    /// takes the component with it, and everything in it, in the same step.
+    void removeOccurrence(ObjectId occurrence);
+    void renameComponent(ObjectId component, std::string name);
+    /// Puts an occurrence somewhere in its parent by hand. Where joints hold it, they still do;
+    /// this is where it goes back to when they are deleted.
+    void setOccurrencePlacement(ObjectId occurrence, const kernel::Placement& placement);
+    void setOccurrenceGrounded(ObjectId occurrence, bool grounded);
+    void setOccurrenceVisible(ObjectId occurrence, bool visible);
+    void setOccurrenceSuppressed(ObjectId occurrence, bool suppressed);
+    /// Moves an occurrence into another component (the root for an invalid id), keeping where it
+    /// is in the root's coordinates, as seen through the first occurrence of each. Throws
+    /// std::invalid_argument if that would put a component inside itself, or a joint holds it.
+    void moveOccurrence(ObjectId occurrence, ObjectId parent);
+    /// Makes a component of bodies of one component: they move into a new one, together with
+    /// the features that make and change them and the sketches and construction geometry those
+    /// use, and an occurrence of it takes their place, where they were. Returns the new
+    /// component. Throws std::invalid_argument, saying what stands in the way, if something
+    /// that has to move is used by something that stays.
+    ObjectId makeComponent(std::string name, const std::vector<ObjectId>& bodies);
+    /// Makes an independent copy of an occurrence's component: a new component with a copy of
+    /// each of its bodies, sketches, features, and occurrences, which is changed on its own from
+    /// now on. The copy's occurrence goes where the original's is, and its id is returned.
+    ObjectId copyComponent(ObjectId occurrence);
+
+    // Linked components
+
+    /// Adds a component that is another document: `content` is what that document holds now,
+    /// `link` where it is. One occurrence of it goes into `parent`. Returns the component.
+    ObjectId addLinkedComponent(std::string name, std::string link, LinkedContent content,
+                                ObjectId parent = {}, const kernel::Placement& placement = {});
+    /// Takes the content of a linked document as it is now. Bodies keep their ids, by key, so
+    /// that joints on them still hold.
+    void updateLinkedComponent(ObjectId component, LinkedContent content);
+    /// Where a linked component's document is to be found from now on.
+    void setComponentLink(ObjectId component, std::string link);
+
+    // Joints
+
+    [[nodiscard]] const std::vector<Joint>& joints() const { return m_joints; }
+    [[nodiscard]] const Joint* findJoint(ObjectId id) const;
+    /// `base` followed by the lowest number no joint has yet: "Revolute 1".
+    [[nodiscard]] std::string uniqueJointName(std::string_view base) const;
+    /// Adds a joint and returns its id; an empty name is filled in. Whether it holds is told by
+    /// jointError(): a joint that cannot hold is still added, to be put right. Throws
+    /// std::invalid_argument for a joint whose sides do not lie in its component.
+    ObjectId addJoint(Joint joint);
+    void changeJoint(ObjectId id, Joint definition);
+    void removeJoint(ObjectId id);
+    /// Why a joint does not hold, in a sentence fit to show, or empty.
+    [[nodiscard]] std::string jointError(ObjectId id) const;
+
+    // Where things are
+
+    /// Every occurrence that is not suppressed, put together from the root down, the root
+    /// first. See Instance.
+    [[nodiscard]] const std::vector<Instance>& instances() const { return m_instances; }
+    /// Where an occurrence is in its parent now: where joints hold it, or where it was put.
+    [[nodiscard]] kernel::Placement placementOf(ObjectId occurrence) const;
+    /// Where the end of a path of occurrences (see Instance::path) is in the root's
+    /// coordinates.
+    [[nodiscard]] kernel::Placement placementOf(const std::vector<ObjectId>& path) const;
+    /// Where everything would be if these joints had moved to these values, the rest as they
+    /// are. Changes nothing: for showing joints in motion.
+    [[nodiscard]] std::vector<Instance>
+    instancesWith(const std::map<ObjectId, std::array<double, 3>>& values) const;
+    /// What adding a joint, or changing one (one with the id of a joint the document has),
+    /// would give. Changes nothing: for previewing a joint while it is being set up.
+    [[nodiscard]] JointTrial tryJoint(const Joint& joint) const;
+
+    // Materials
+
+    /// The materials this document defines, besides those of materialLibrary().
+    [[nodiscard]] const std::vector<Material>& materials() const { return m_materials; }
+    /// The material of that name: the document's own first, then LCAD's.
+    [[nodiscard]] std::optional<Material> findMaterial(std::string_view name) const;
+    /// What a body is made of; an empty name for not said. Throws std::invalid_argument for a
+    /// material findMaterial() does not know.
+    void setBodyMaterial(ObjectId body, std::string material);
+    /// Adds a material of the document's own. Throws std::invalid_argument for an empty or
+    /// taken name, or a density that is not more than zero.
+    void addMaterial(Material material);
+    /// Changes one of the document's own materials. A new name is taken over by the bodies
+    /// made of it.
+    void changeMaterial(const std::string& name, Material material);
+    /// Removes one of the document's own materials. Bodies made of it are then not said to be
+    /// made of anything.
+    void removeMaterial(const std::string& name);
+
     // Undo
 
     [[nodiscard]] bool canUndo() const;
@@ -333,6 +487,9 @@ public:
     [[nodiscard]] bool isModified() const;
     /// Records that the current state is what is on disk.
     void markSaved();
+    /// Records that the current state is not what is on disk: for a document restored from a
+    /// copy of unsaved work.
+    void markModified();
 
     // Observation
 
@@ -365,6 +522,23 @@ private:
             RemoveParameter,
             ChangeParameter,
             SetSketchExpressions,
+            // Components, occurrences, joints, materials
+            AddComponent,
+            RemoveComponent,
+            ChangeComponent,
+            AddOccurrence,
+            RemoveOccurrence,
+            ChangeOccurrence,
+            AddJoint,
+            RemoveJoint,
+            ChangeJoint,
+            /// A body's persistent fields: its component, material, linked shape, name.
+            ChangeBody,
+            /// A sketch's component.
+            ChangeSketchComponent,
+            AddMaterial,
+            RemoveMaterial,
+            ChangeMaterial,
         };
         Kind kind;
         ObjectId id;
@@ -409,6 +583,20 @@ private:
             std::map<sketch::ConstraintId, std::string> after;
         };
         std::vector<SketchExpressions> renamedSketches;
+        // The components, occurrences, joints, and materials added, removed, or changed: before
+        // and after. ChangeBody: `body` before and `newBody` after. ChangeSketchComponent: the
+        // component before and after.
+        Component component;
+        Component newComponent;
+        Occurrence occurrence;
+        Occurrence newOccurrence;
+        Joint joint;
+        Joint newJoint;
+        Body newBody;
+        ObjectId oldComponent;
+        ObjectId newComponentId;
+        Material material;
+        Material newMaterial;
     };
 
     struct Step {
@@ -427,6 +615,28 @@ private:
     [[nodiscard]] std::size_t sketchIndexOf(ObjectId id) const;
     [[nodiscard]] std::size_t featureIndexOf(ObjectId id) const;
     [[nodiscard]] std::size_t placeOf(ObjectId item) const;
+    [[nodiscard]] std::size_t componentIndexOf(ObjectId id) const;
+    [[nodiscard]] std::size_t occurrenceIndexOf(ObjectId id) const;
+    [[nodiscard]] std::size_t jointIndexOf(ObjectId id) const;
+    [[nodiscard]] std::size_t materialIndexOf(const std::string& name) const;
+    /// Throws std::invalid_argument, naming `function`, unless `component` is the root or a
+    /// component of the document that is not linked.
+    void requireOwnComponent(ObjectId component, const char* function) const;
+    /// The component a feature is part of: that of the body it works on, or of its sketch, or
+    /// of the construction geometry it is placed on, or else the one it names.
+    [[nodiscard]] ObjectId componentForFeature(const Feature& feature) const;
+    /// Why a feature cannot use what it uses, all of which has to be part of its component and
+    /// made in this document, or empty.
+    [[nodiscard]] std::string componentProblem(const Feature& feature) const;
+    /// Whether `inner` is `outer` or appears somewhere inside it.
+    [[nodiscard]] bool contains(ObjectId outer, ObjectId inner) const;
+    /// Why a joint's sides do not lie in its component, or empty.
+    [[nodiscard]] std::string jointProblem(const Joint& joint) const;
+    /// Makes the edits one undo step named `label`, or, inside an open transaction, part of it.
+    void inOneStep(const std::string& label, const std::function<void()>& edits);
+    /// Removes a component that has no occurrences left, with everything in it.
+    void removeComponentContents(ObjectId component);
+    void applyAssembly(const Edit& edit, bool forward);
 
     // The timeline
     void insertItem(ObjectId item, std::size_t place);
@@ -449,6 +659,8 @@ private:
     [[nodiscard]] double evaluateForModel(const std::string& expression) const;
     /// Applies the features again, as far as anything changed, and tells the listeners.
     void rebuild();
+    /// Places the occurrences by their joints, and tells the listeners what moved.
+    void solveAssembly();
     [[nodiscard]] std::uint64_t currentSerial() const;
 
     void beginTransaction(std::string label);
@@ -459,6 +671,19 @@ private:
     std::vector<SketchItem> m_sketches;
     std::vector<Feature> m_features;
     std::vector<Parameter> m_parameters;
+    std::vector<Component> m_components;
+    std::vector<Occurrence> m_occurrences;
+    std::vector<Joint> m_joints;
+    std::vector<Material> m_materials;
+    /// Where each occurrence is in its parent, as the joints last placed it, and why a joint
+    /// does not hold.
+    std::unordered_map<ObjectId, kernel::Placement> m_solved;
+    std::unordered_map<ObjectId, std::string> m_jointErrors;
+    std::vector<Instance> m_instances{Instance{}};
+    /// Whether the occurrences have to be placed again, and whether the listeners are to hear
+    /// that the assembly changed once they are.
+    bool m_resolve = true;
+    bool m_assemblyChanged = false;
     /// What each parameter comes to, or why it does not.
     std::unordered_map<ObjectId, double> m_parameterValues;
     std::unordered_map<ObjectId, std::string> m_parameterErrors;

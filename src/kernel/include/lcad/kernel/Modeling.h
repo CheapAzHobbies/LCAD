@@ -87,8 +87,6 @@ struct Region {
                                  double v1, double u2, double v2, double angle,
                                  const std::string& tag);
 
-struct Axis;
-
 /// Turns regions of a plane about an axis anywhere in space, by `angle` radians,
 /// counter-clockwise seen looking against the axis's direction. Faces are named as by pull().
 [[nodiscard]] NamedShape revolve(const Plane& plane, const std::vector<Region>& regions,
@@ -186,12 +184,6 @@ struct HoleShape {
 [[nodiscard]] NamedShape holeTool(const Point& start, const Vector& direction,
                                   const HoleShape& shape, double through, const std::string& tag,
                                   const std::string& name);
-
-/// A line in space: a point on it, and its direction, of unit length.
-struct Axis {
-    Point origin;
-    Vector direction{0.0, 0.0, 1.0};
-};
 
 /// The line a part of a shape stands for: a straight edge's own line; the axis of a circular
 /// edge, or of a cylindrical, conical, spherical, or toroidal face; the normal of a flat face,

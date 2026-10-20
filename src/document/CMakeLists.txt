@@ -4,9 +4,11 @@
 # is reached through the kernel only.
 add_library(lcad_document STATIC
     src/Archive.cpp
+    src/Assembly.cpp
     src/Document.cpp
     src/File.cpp
     src/Feature.cpp
+    src/Links.cpp
     src/Migration.cpp
     src/Rebuild.cpp
     src/SketchShapes.cpp)

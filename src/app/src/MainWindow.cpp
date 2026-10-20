@@ -3,20 +3,25 @@
 #include <lcad/app/MainWindow.h>
 
 #include <lcad/app/Application.h>
+#include <lcad/app/AssemblyDialogs.h>
 #include <lcad/app/BrowserPanel.h>
 #include <lcad/app/CommandSearch.h>
 #include <lcad/app/Commands.h>
 #include <lcad/app/FeaturePanel.h>
 #include <lcad/app/GeometryCheckDialog.h>
 #include <lcad/app/Icons.h>
+#include <lcad/app/JointPanel.h>
 #include <lcad/app/MeasurePanel.h>
+#include <lcad/app/MovePanel.h>
 #include <lcad/app/ParametersDialog.h>
 #include <lcad/app/PropertiesPanel.h>
+#include <lcad/app/Recovery.h>
 #include <lcad/app/ShortcutsDialog.h>
 #include <lcad/app/SketchPanel.h>
 #include <lcad/app/Theme.h>
 #include <lcad/app/TimelinePanel.h>
 #include <lcad/document/File.h>
+#include <lcad/document/Links.h>
 #include <lcad/document/SketchShapes.h>
 #include <lcad/kernel/Check.h>
 #include <lcad/kernel/Error.h>
@@ -25,6 +30,7 @@
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/SubShapes.h>
+#include <lcad/kernel/Transform.h>
 #include <lcad/kernel/Version.h>
 #include <lcad/viewport/SketchEditor.h>
 
@@ -40,9 +46,11 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLocale>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -132,6 +140,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     createDocks();
     defineCommands();
+    defineAssemblyCommands();
     createTopBar();
     createToolbar();
     createSketchToolbar();
@@ -153,12 +162,21 @@ MainWindow::MainWindow(QWidget* parent)
     // selected must not clear it there.
     connect(m_browser, &BrowserPanel::bodySelectionChanged, this, [this] {
         m_selectionComesFromBrowser = true;
-        std::vector<SelectedItem> items;
-        for (const document::ObjectId id : m_browser->selectedBodies()) {
-            items.push_back({id, SelectedItem::Kind::Body, -1});
-        }
-        for (const document::ObjectId id : m_browser->selectedSketches()) {
-            items.push_back({id, SelectedItem::Kind::Sketch, -1});
+        // Each body where it is listed: under an occurrence, that appearance of it; and every
+        // body of an occurrence that is selected.
+        std::vector<SelectedItem> items = m_browser->selectedItems();
+        for (const auto& path : m_browser->selectedOccurrences()) {
+            for (const document::Instance& instance : document()->instances()) {
+                if (instance.path.size() < path.size() ||
+                    !std::equal(path.begin(), path.end(), instance.path.begin())) {
+                    continue;
+                }
+                for (const document::Body& body : document()->bodies()) {
+                    if (body.component == instance.component) {
+                        items.push_back({body.id, SelectedItem::Kind::Body, -1, instance.path});
+                    }
+                }
+            }
         }
         m_viewport->setSelection(items);
         m_selectionComesFromBrowser = false;
@@ -168,19 +186,35 @@ MainWindow::MainWindow(QWidget* parent)
         if (m_featurePanel != nullptr && !m_settingPicks) {
             takeFeaturePicks();
         }
+        if (m_jointPanel != nullptr && !m_settingPicks) {
+            takeJointPick();
+        }
         if (m_measurePanel != nullptr && !m_settingPicks) {
             takeMeasurePick();
         }
         if (m_planePanel != nullptr) {
-            // A new sketch is waiting for its plane: a flat face that is clicked is it.
+            // A new sketch is waiting for its plane: a flat face that is clicked is it, and the
+            // sketch follows the face.
             const std::vector<SelectedItem> picked = m_viewport->selection();
             if (picked.size() == 1 && picked.front().kind == SelectedItem::Kind::Face) {
                 if (const auto plane = selectedFacePlane()) {
                     const kernel::Plane chosen = *plane;
+                    const auto face = selectedFaceName();
+                    const document::ObjectId body =
+                        face.has_value() ? face->first : document::ObjectId{};
+                    const std::string name = face.has_value() ? face->second : std::string();
+                    const std::vector<document::ObjectId> path = picked.front().path;
                     // Later: this is the viewport telling what was clicked, which is no time to
                     // change what it shows.
                     QMetaObject::invokeMethod(
-                        this, [this, chosen] { createSketch(chosen); }, Qt::QueuedConnection);
+                        this,
+                        [this, chosen, body, name, path] {
+                            if (const document::Body* on = document()->findBody(body)) {
+                                ensureActive(on->component, path);
+                            }
+                            createSketch(chosen, body, name);
+                        },
+                        Qt::QueuedConnection);
                 } else {
                     statusBar()->showMessage(
                         tr("That face is not flat. A sketch needs a flat face or a plane."), 6000);
@@ -221,7 +255,23 @@ MainWindow::MainWindow(QWidget* parent)
                 // showing which sketch that is.
                 sketches = {m_viewport->editedSketch()};
             }
-            m_browser->setSelection(bodies, sketches);
+            // Each body under the occurrence it was picked in.
+            std::vector<SelectedItem> listed;
+            for (const SelectedItem& item : m_viewport->selection()) {
+                if (item.kind == SelectedItem::Kind::Body) {
+                    listed.push_back(item);
+                }
+            }
+            for (const document::ObjectId id : bodies) {
+                if (std::none_of(listed.begin(), listed.end(),
+                                 [id](const SelectedItem& item) { return item.body == id; })) {
+                    listed.push_back({id, SelectedItem::Kind::Body, -1});
+                }
+            }
+            for (const document::ObjectId id : sketches) {
+                listed.push_back({id, SelectedItem::Kind::Sketch, -1});
+            }
+            m_browser->setSelection(listed);
         }
         updateSelectionState();
     });
@@ -260,6 +310,25 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(m_browser, &BrowserPanel::sketchActivated, this,
             [this](document::ObjectId sketch) { editSketch(sketch); });
+    connect(m_browser, &BrowserPanel::occurrenceActivated, this,
+            [this](const std::vector<document::ObjectId>& path) {
+                if (!isSketching()) {
+                    activateOccurrence(path);
+                }
+            });
+    connect(m_browser, &BrowserPanel::jointActivated, this,
+            [this](document::ObjectId joint) { startJoint(joint); });
+    // Queued: the browser is in the middle of a drop, and the answer refills it.
+    connect(
+        m_browser, &BrowserPanel::occurrenceDropped, this,
+        [this](document::ObjectId occurrence, document::ObjectId component) {
+            try {
+                document()->moveOccurrence(occurrence, component);
+            } catch (const std::invalid_argument& failure) {
+                statusBar()->showMessage(QString::fromUtf8(failure.what()), 9000);
+            }
+        },
+        Qt::QueuedConnection);
     connect(m_browser, &BrowserPanel::planeActivated, this,
             [this](document::ObjectId plane) { editFeature(plane); });
     // A new sketch on a construction plane, clicked in the 3D view. Queued, as for the origin
@@ -284,6 +353,11 @@ MainWindow::MainWindow(QWidget* parent)
                 m_viewport->setOriginItemVisible(item, visible);
             });
     connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& where) {
+        if (!m_browser->selectedOccurrences().empty() || !m_browser->selectedJoints().empty() ||
+            (m_browser->selectedBodies().empty() && m_browser->selectedSketches().empty())) {
+            showAssemblyMenu(where);
+            return;
+        }
         m_commands->refresh();
         auto* menu = new QMenu(this);
         menu->setAttribute(Qt::WA_DeleteOnClose);
@@ -300,6 +374,35 @@ MainWindow::MainWindow(QWidget* parent)
     // A feature takes what is picked in the 3D view.
     connect(m_viewport, &viewport::ViewportWidget::profilesPicked, this,
             &MainWindow::takeFeaturePicks);
+    // A pull's distance, dragged or typed at its arrow in the 3D view.
+    connect(m_viewport, &viewport::ViewportWidget::distanceDragged, this,
+            &MainWindow::setPullDistance);
+    connect(m_viewport, &viewport::ViewportWidget::distanceEntered, this,
+            [this](const QString& text) {
+                QString number = text.trimmed();
+                number.remove(QRegularExpression(QStringLiteral("\\s*mm$")));
+                bool ok = false;
+                double value = QLocale::c().toDouble(number, &ok);
+                if (!ok) {
+                    value = QLocale().toDouble(number, &ok);
+                }
+                if (!ok) {
+                    // Not a number: an expression of parameters, such as "depth * 2".
+                    try {
+                        value = document()->evaluate(text.trimmed().toStdString());
+                        ok = true;
+                    } catch (const std::invalid_argument& failure) {
+                        statusBar()->showMessage(
+                            tr("\"%1\" is neither a distance nor an expression that can be "
+                               "worked out: %2")
+                                .arg(text, QString::fromUtf8(failure.what())),
+                            9000);
+                    }
+                }
+                if (ok) {
+                    setPullDistance(value);
+                }
+            });
     connect(m_timeline, &TimelinePanel::itemSelected, this, &MainWindow::onTimelineSelection);
     connect(m_timeline, &TimelinePanel::itemActivated, this, [this](document::ObjectId item) {
         if (document()->findFeature(item) != nullptr) {
@@ -472,6 +575,25 @@ void MainWindow::defineCommands() {
         c.shortcuts = {QKeySequence::Delete};
         c.aliases = {tr("remove"), tr("erase")};
         c.run = [this](bool) {
+            const auto joints = m_browser->selectedJoints();
+            const auto occurrences = m_browser->selectedOccurrences();
+            if (!isSketching() && (!joints.empty() || !occurrences.empty())) {
+                // Joints and occurrences chosen in the browser, as one step.
+                document::Transaction transaction(*document(), tr("Delete").toStdString());
+                for (const document::ObjectId joint : joints) {
+                    if (document()->findJoint(joint) != nullptr) {
+                        document()->removeJoint(joint);
+                    }
+                }
+                for (const auto& path : occurrences) {
+                    if (document()->findOccurrence(path.back()) != nullptr) {
+                        document()->removeOccurrence(path.back());
+                    }
+                }
+                transaction.commit();
+                updateSelectionState();
+                return;
+            }
             if (isSketching()) {
                 m_viewport->sketchEditor()->deleteSelection();
             } else if (m_timeline->selectedItem().isValid() &&
@@ -491,7 +613,8 @@ void MainWindow::defineCommands() {
                        !editor->selectedConstraints().empty();
             }
             return !selectedBodies().empty() || !selectedSketches().empty() ||
-                   m_timeline->selectedItem().isValid();
+                   m_timeline->selectedItem().isValid() || !m_browser->selectedJoints().empty() ||
+                   !m_browser->selectedOccurrences().empty();
         };
         m_commands->add(std::move(c));
 
@@ -501,20 +624,23 @@ void MainWindow::defineCommands() {
         c.aliases = {tr("escape"), tr("abort")};
         c.run = [this](bool) {
             if (m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
-                m_measurePanel != nullptr) {
+                m_measurePanel != nullptr || m_jointPanel != nullptr || m_movePanel != nullptr) {
                 cancelCommand();
+            } else if (isAnimating()) {
+                stopAnimation();
             } else if (isSketching()) {
                 m_viewport->sketchEditor()->cancel();
             }
         };
         c.isEnabled = [this] {
             return m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
-                   m_measurePanel != nullptr ||
-                   (isSketching() && m_viewport->sketchEditor()->canCancel());
+                   m_measurePanel != nullptr || m_jointPanel != nullptr || m_movePanel != nullptr ||
+                   isAnimating() || (isSketching() && m_viewport->sketchEditor()->canCancel());
         };
         m_commands->add(std::move(c));
 
-        c = make("body.rename", tr("Re&name"), edit, tr("Rename the selected body or sketch"));
+        c = make("body.rename", tr("Re&name"), edit,
+                 tr("Rename the selected body, sketch, component, or joint"));
         c.shortcuts = {QKeySequence(Qt::Key_F2)};
         c.run = [this](bool) {
             const auto bodies = selectedBodies();
@@ -523,16 +649,30 @@ void MainWindow::defineCommands() {
                 m_browser->editBody(bodies.front());
             } else if (sketches.size() == 1 && bodies.empty()) {
                 m_browser->editSketchName(sketches.front());
+            } else {
+                m_browser->editSelectedName();
             }
         };
-        c.isEnabled = [this] { return selectedBodies().size() + selectedSketches().size() == 1; };
+        c.isEnabled = [this] {
+            return selectedBodies().size() + selectedSketches().size() +
+                       m_browser->selectedOccurrences().size() +
+                       m_browser->selectedJoints().size() ==
+                   1;
+        };
         m_commands->add(std::move(c));
 
-        // Hide and Show act on bodies and sketches alike.
+        // Hide and Show act on bodies, sketches, and components alike.
         const auto anyShown = [this](bool shown) {
             const auto bodies = targetBodies();
             const auto sketches = selectedSketches();
-            return std::any_of(bodies.begin(), bodies.end(),
+            const auto occurrences = m_browser->selectedOccurrences();
+            return std::any_of(occurrences.begin(), occurrences.end(),
+                               [this, shown](const std::vector<document::ObjectId>& path) {
+                                   const document::Occurrence* occurrence =
+                                       document()->findOccurrence(path.back());
+                                   return occurrence != nullptr && occurrence->visible == shown;
+                               }) ||
+                   std::any_of(bodies.begin(), bodies.end(),
                                [this, shown](document::ObjectId id) {
                                    const document::Body* body = document()->findBody(id);
                                    return body != nullptr && body->visible == shown;
@@ -546,14 +686,34 @@ void MainWindow::defineCommands() {
         c = make("body.hide", tr("&Hide"), edit, tr("Hide the selected bodies and sketches"));
         c.iconName = QStringLiteral("eye-off");
         c.aliases = {tr("invisible")};
-        c.run = [this](bool) { setBodiesVisible(targetBodies(), false, tr("Hide")); };
+        c.run = [this](bool) {
+            if (!m_browser->selectedOccurrences().empty()) {
+                document::Transaction transaction(*document(), tr("Hide").toStdString());
+                for (const auto& path : m_browser->selectedOccurrences()) {
+                    document()->setOccurrenceVisible(path.back(), false);
+                }
+                transaction.commit();
+                return;
+            }
+            setBodiesVisible(targetBodies(), false, tr("Hide"));
+        };
         c.isEnabled = [this, anyShown] { return !isSketching() && anyShown(true); };
         m_commands->add(std::move(c));
 
         c = make("body.show", tr("&Show"), edit, tr("Show the selected bodies and sketches"));
         c.iconName = QStringLiteral("eye");
         c.aliases = {tr("visible"), tr("unhide")};
-        c.run = [this](bool) { setBodiesVisible(targetBodies(), true, tr("Show")); };
+        c.run = [this](bool) {
+            if (!m_browser->selectedOccurrences().empty()) {
+                document::Transaction transaction(*document(), tr("Show").toStdString());
+                for (const auto& path : m_browser->selectedOccurrences()) {
+                    document()->setOccurrenceVisible(path.back(), true);
+                }
+                transaction.commit();
+                return;
+            }
+            setBodiesVisible(targetBodies(), true, tr("Show"));
+        };
         c.isEnabled = [this, anyShown] { return !isSketching() && anyShown(false); };
         m_commands->add(std::move(c));
 
@@ -562,6 +722,34 @@ void MainWindow::defineCommands() {
         c.iconName = QStringLiteral("isolate");
         c.aliases = {tr("hide others"), tr("solo")};
         c.run = [this](bool) {
+            const auto occurrences = m_browser->selectedOccurrences();
+            if (!occurrences.empty()) {
+                // The chosen components, and nothing else that is a component, shown.
+                // What leads to them, and what is inside them, stays shown.
+                const auto related = [&occurrences](const std::vector<document::ObjectId>& path) {
+                    return std::any_of(
+                        occurrences.begin(), occurrences.end(),
+                        [&path](const std::vector<document::ObjectId>& chosen) {
+                            const std::size_t n = std::min(path.size(), chosen.size());
+                            return std::equal(path.begin(), path.begin() + n, chosen.begin());
+                        });
+                };
+                std::vector<document::ObjectId> kept;
+                for (const document::Instance& instance : document()->instances()) {
+                    if (!instance.path.empty() && related(instance.path)) {
+                        kept.push_back(instance.path.back());
+                    }
+                }
+                document::Transaction transaction(*document(), tr("Isolate").toStdString());
+                for (const document::Occurrence& occurrence :
+                     std::vector<document::Occurrence>(document()->occurrences())) {
+                    document()->setOccurrenceVisible(
+                        occurrence.id,
+                        std::find(kept.begin(), kept.end(), occurrence.id) != kept.end());
+                }
+                transaction.commit();
+                return;
+            }
             const auto keep = targetBodies();
             std::vector<document::ObjectId> others;
             for (const document::Body& body : document()->bodies()) {
@@ -578,7 +766,11 @@ void MainWindow::defineCommands() {
             }
             transaction.commit();
         };
-        c.isEnabled = [this] { return !targetBodies().empty() && document()->bodies().size() > 1; };
+        c.isEnabled = [this] {
+            return (!targetBodies().empty() && document()->bodies().size() > 1) ||
+                   (!m_browser->selectedOccurrences().empty() &&
+                    document()->occurrences().size() > 1);
+        };
         m_commands->add(std::move(c));
 
         c = make("body.showAll", tr("Show &All Bodies"), edit, tr("Show every hidden body"));
@@ -1438,6 +1630,8 @@ void MainWindow::createTopBar() {
     file->addSeparator();
     file->addActions({action("file.import"), action("file.export")});
     file->addSeparator();
+    file->addActions({action("file.links"), action("file.updateLinks"), action("file.package")});
+    file->addSeparator();
     file->addActions({action("file.close"), action("file.quit")});
 
     QMenu* edit = m_menuBar->addMenu(tr("&Edit"));
@@ -1447,6 +1641,15 @@ void MainWindow::createTopBar() {
                       action("body.isolate"), action("body.showAll")});
     edit->addSeparator();
     edit->addActions({action("edit.delete"), action("edit.cancel")});
+    // What a click picks: also the box in the toolbar. A menu of its own until Phase 5, when
+    // the menu bar needed its room for Assemble.
+    edit->addSeparator();
+    QMenu* select = edit->addMenu(tr("&Select"));
+    select->setObjectName(QStringLiteral("menu.select"));
+    for (const char* id : {"select.everything", "select.bodies", "select.faces", "select.edges",
+                           "select.vertices"}) {
+        select->addAction(action(id));
+    }
 
     QMenu* create = m_menuBar->addMenu(tr("&Create"));
     create->addActions({action("solid.pull"), action("solid.revolve"), action("solid.hole")});
@@ -1475,6 +1678,22 @@ void MainWindow::createTopBar() {
         {action("timeline.edit"), action("timeline.rename"), action("timeline.suppress")});
     timelineMenu->addSeparator();
     timelineMenu->addActions({action("timeline.rollBack"), action("timeline.rollToEnd")});
+
+    QMenu* assembleMenu = m_menuBar->addMenu(tr("&Assemble"));
+    assembleMenu->setObjectName(QStringLiteral("menu.assemble"));
+    assembleMenu->addActions({action("assembly.newComponent"), action("assembly.makeComponent"),
+                              action("assembly.insert")});
+    assembleMenu->addSeparator();
+    assembleMenu->addActions(
+        {action("assembly.joint"), action("assembly.editJoint"), action("assembly.animate")});
+    assembleMenu->addSeparator();
+    assembleMenu->addActions({action("assembly.move"), action("assembly.ground"),
+                              action("assembly.duplicate"), action("assembly.copy"),
+                              action("assembly.suppress")});
+    assembleMenu->addSeparator();
+    assembleMenu->addActions({action("assembly.activate"), action("assembly.activateRoot")});
+    assembleMenu->addSeparator();
+    assembleMenu->addActions({action("assembly.openLinked"), action("assembly.relink")});
 
     QMenu* sketchMenu = m_menuBar->addMenu(tr("S&ketch"));
     sketchMenu->addAction(action("sketch.new"));
@@ -1506,15 +1725,11 @@ void MainWindow::createTopBar() {
     sketchMenu->addSeparator();
     sketchMenu->addActions({action("sketch.construction"), action("sketch.inference")});
 
-    QMenu* select = m_menuBar->addMenu(tr("&Select"));
-    for (const char* id : {"select.everything", "select.bodies", "select.faces", "select.edges",
-                           "select.vertices"}) {
-        select->addAction(action(id));
-    }
-
     QMenu* view = m_menuBar->addMenu(tr("&View"));
     view->addActions({action("view.fit"), action("view.fitSelection")});
-    view->addActions({action("inspect.measure"), action("inspect.checkGeometry")});
+    view->addActions({action("inspect.measure"), action("inspect.checkGeometry"),
+                      action("inspect.interference"), action("inspect.physical"),
+                      action("inspect.materials")});
     view->addSeparator();
     for (const char* id : {"view.home", "view.front", "view.back", "view.left", "view.right",
                            "view.top", "view.bottom"}) {
@@ -1631,6 +1846,36 @@ void MainWindow::createToolbar() {
     for (const char* id : {"solid.hole", "solid.fillet", "solid.chamfer", "solid.shell"}) {
         toolbar->addAction(action(id));
     }
+    toolbar->addSeparator();
+
+    // Components, and what joins them; the rest of the assembly tools in a menu beside them.
+    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Assemble"), toolbar)));
+    // Buttons of their own, so that a narrow window can put them away without hiding the
+    // commands from the menus: see fitToolbar().
+    for (const char* id : {"assembly.newComponent", "assembly.joint"}) {
+        auto* button = new QToolButton(toolbar);
+        button->setObjectName(QLatin1String(id));
+        button->setDefaultAction(action(id));
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        m_assemblyButtons.append(toolbar->addWidget(button));
+    }
+    auto* assembly = new QToolButton(toolbar);
+    assembly->setObjectName(QStringLiteral("assemblyButton"));
+    assembly->setToolTip(tr("More assembly tools"));
+    assembly->setPopupMode(QToolButton::InstantPopup);
+    assembly->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    assembly->setIcon(icon(QStringLiteral("insert-part")));
+    auto* assemblyMenu = new QMenu(assembly);
+    // New Component and Joint lead the list, for when the window is too narrow for their own
+    // buttons.
+    assemblyMenu->addActions({action("assembly.newComponent"), action("assembly.joint")});
+    assemblyMenu->addSeparator();
+    assemblyMenu->addActions({action("assembly.insert"), action("assembly.makeComponent"),
+                              action("assembly.move"), action("assembly.ground")});
+    assemblyMenu->addSeparator();
+    assemblyMenu->addActions({action("inspect.interference"), action("inspect.physical")});
+    assembly->setMenu(assemblyMenu);
+    toolbar->addWidget(assembly);
     toolbar->addSeparator();
 
     m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Select"), toolbar)));
@@ -1755,6 +2000,14 @@ void MainWindow::fitToolbar() {
         }
     };
     setStyle(Qt::ToolButtonTextBesideIcon);
+    const auto setAssembly = [this](Qt::ToolButtonStyle style) {
+        for (QAction* entry : std::as_const(m_assemblyButtons)) {
+            if (auto* button = qobject_cast<QToolButton*>(m_modelToolbar->widgetForAction(entry))) {
+                button->setToolButtonStyle(style);
+            }
+        }
+    };
+    setAssembly(Qt::ToolButtonTextBesideIcon);
     const auto setLeading = [this](Qt::ToolButtonStyle style) {
         for (const char* id : {"sketch.new", "solid.pull", "solid.fillet"}) {
             if (auto* button = qobject_cast<QToolButton*>(
@@ -1766,6 +2019,18 @@ void MainWindow::fitToolbar() {
     setLeading(Qt::ToolButtonTextBesideIcon);
     if (wanted(m_modelToolbar) > width()) {
         setStyle(Qt::ToolButtonIconOnly);
+        setAssembly(Qt::ToolButtonIconOnly);
+    }
+    // Then New Component and Joint give their buttons up for the list beside them, which
+    // lists them first.
+    const auto foldAssembly = [this](bool folded) {
+        for (QAction* button : std::as_const(m_assemblyButtons)) {
+            button->setVisible(!folded);
+        }
+    };
+    foldAssembly(false);
+    if (wanted(m_modelToolbar) > width()) {
+        foldAssembly(true);
     }
     // The commands most used keep their labels longest.
     if (wanted(m_modelToolbar) > width()) {
@@ -1973,6 +2238,9 @@ int MainWindow::addSession(std::unique_ptr<document::Document> document, const Q
         }
         const int index = static_cast<int>(found - m_sessions.begin());
         updateTab(index);
+        if (change.kind == document::Change::Kind::HistoryChanged) {
+            raw->autosaveDue = true;
+        }
         if (index != m_current) {
             return;
         }
@@ -2042,6 +2310,11 @@ void MainWindow::activate(int index) {
     }
     m_browser->setOriginVisibility(session.origin);
     m_browser->setDocument(session.document.get(), documentName());
+    m_viewport->setEditPath(session.activePath);
+    m_browser->setActivePath(session.activePath);
+    if (m_materialsDialog != nullptr) {
+        m_materialsDialog->setDocument(session.document.get());
+    }
     m_timeline->setDocument(session.document.get());
     if (m_parametersDialog != nullptr) {
         m_parametersDialog->setDocument(session.document.get());
@@ -2082,6 +2355,15 @@ void MainWindow::updateTab(int index) {
 }
 
 void MainWindow::updateDocumentState() {
+    // The occurrence being worked on may have gone with an undo.
+    if (!current().activePath.empty()) {
+        const auto& instances = document()->instances();
+        const std::vector<document::ObjectId>& path = current().activePath;
+        if (std::none_of(instances.begin(), instances.end(),
+                         [&path](const document::Instance& i) { return i.path == path; })) {
+            activateOccurrence({});
+        }
+    }
     m_commands->refresh();
     const QString name = documentName();
     setWindowTitle(QStringLiteral("%1[*] - LCAD").arg(name));
@@ -2143,10 +2425,55 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     activate(index);
     rememberFile(absolute);
     statusBar()->showMessage(tr("Opened %1").arg(documentName()), 4000);
+    // Linked parts that changed, or cannot be found, are said; nothing is changed until the
+    // user updates them.
+    int changed = 0;
+    for (const document::LinkStatus& status : document::checkLinks(*document(), toPath(absolute))) {
+        if (status.state == document::LinkStatus::State::Changed) {
+            ++changed;
+        } else if (status.state != document::LinkStatus::State::UpToDate) {
+            m_loadWarnings.append(tr("The linked part %1 cannot be found or read; the copy kept in "
+                                     "the document is shown. %2")
+                                      .arg(QString::fromStdString(status.name),
+                                           QString::fromStdString(status.problem)));
+        }
+    }
+    if (changed > 0) {
+        statusBar()->showMessage(tr("%n linked part(s) changed since this document was saved. "
+                                    "File > Update Linked Parts takes the changes.",
+                                    nullptr, changed),
+                                 12000);
+    }
     return true;
 }
 
 bool MainWindow::saveTo(const QString& path, QString* error) {
+    // Links are kept relative to the document's folder: saved in another folder, they are
+    // written to lead to the same files from there.
+    const std::filesystem::path from = filePath().isEmpty()
+                                           ? std::filesystem::path()
+                                           : toPath(QFileInfo(filePath()).absolutePath());
+    const std::filesystem::path to = toPath(QFileInfo(path).absolutePath());
+    if (from != to) {
+        std::vector<std::pair<document::ObjectId, std::string>> moved;
+        for (const document::Component& component : document()->components()) {
+            if (component.link.empty()) {
+                continue;
+            }
+            const std::string link =
+                document::makeLink(document::resolveLink(component.link, from), to);
+            if (link != component.link) {
+                moved.emplace_back(component.id, link);
+            }
+        }
+        if (!moved.empty()) {
+            document::Transaction transaction(*document(), tr("Save As").toStdString());
+            for (const auto& [component, link] : moved) {
+                document()->setComponentLink(component, link);
+            }
+            transaction.commit();
+        }
+    }
     try {
         document::SaveOptions options;
         options.thumbnailPng = thumbnail();
@@ -2159,6 +2486,10 @@ bool MainWindow::saveTo(const QString& path, QString* error) {
     }
     current().filePath = QFileInfo(path).absoluteFilePath();
     document()->markSaved();
+    if (m_recovery != nullptr && !current().recoveryKey.isEmpty()) {
+        m_recovery->discard(current().recoveryKey);
+    }
+    current().autosaveDue = false;
     updateDocumentState();
     rememberFile(current().filePath);
     statusBar()->showMessage(tr("Saved %1").arg(documentName()), 4000);
@@ -2170,6 +2501,12 @@ void MainWindow::closeDocument(int index) {
         return;
     }
     const bool wasCurrent = index == m_current;
+    if (m_recovery != nullptr) {
+        const QString& key = m_sessions[static_cast<std::size_t>(index)]->recoveryKey;
+        if (!key.isEmpty()) {
+            m_recovery->discard(key);
+        }
+    }
     if (wasCurrent) {
         cancelCommand();
         m_viewport->setDocument(nullptr);
@@ -2363,7 +2700,7 @@ void MainWindow::updateSelectionState() {
             m_commandLabel->setText(m_viewport->sketchEditor()->hint());
         }
     } else if (m_panel == nullptr && m_planePanel == nullptr && m_featurePanel == nullptr &&
-               m_measurePanel == nullptr) {
+               m_measurePanel == nullptr && m_jointPanel == nullptr && m_movePanel == nullptr) {
         // A sketch selected in the browser while it is hidden is not in the viewport's
         // selection, and is what is selected all the same.
         std::vector<SelectedItem> parts = m_viewport->selection();
@@ -2373,7 +2710,15 @@ void MainWindow::updateSelectionState() {
                 parts.push_back(item);
             }
         }
-        m_properties->refresh(document(), selectedBodies(), parts);
+        const auto occurrences = m_browser->selectedOccurrences();
+        const auto joints = m_browser->selectedJoints();
+        if (occurrences.size() == 1 && joints.empty() && m_browser->selectedBodies().empty()) {
+            m_properties->showOccurrence(document(), occurrences.front().back());
+        } else if (joints.size() == 1 && occurrences.empty()) {
+            m_properties->showJoint(document(), joints.front());
+        } else {
+            m_properties->refresh(document(), selectedBodies(), parts);
+        }
     }
 }
 
@@ -2597,6 +2942,18 @@ void MainWindow::showInspector() {
             edited != nullptr ? tr("Edit %1").arg(QString::fromStdString(edited->name)) : name;
         m_inspectorDock->setWindowTitle(title);
         m_commandLabel->setText(title);
+    } else if (m_jointPanel != nullptr) {
+        stack->setCurrentWidget(m_jointPanel);
+        const document::Joint* edited = document()->findJoint(m_editedJoint);
+        const QString title = edited != nullptr
+                                  ? tr("Edit %1").arg(QString::fromStdString(edited->name))
+                                  : tr("Joint");
+        m_inspectorDock->setWindowTitle(title);
+        m_commandLabel->setText(title);
+    } else if (m_movePanel != nullptr) {
+        stack->setCurrentWidget(m_movePanel);
+        m_inspectorDock->setWindowTitle(tr("Move Component"));
+        m_commandLabel->setText(tr("Move Component"));
     } else if (m_measurePanel != nullptr) {
         stack->setCurrentWidget(m_measurePanel);
         m_inspectorDock->setWindowTitle(tr("Measure"));
@@ -2640,7 +2997,8 @@ void MainWindow::acceptCommand() {
     const QString name = primitiveName(m_panel->kind());
     try {
         document::Transaction transaction(*document(), tr("Create %1").arg(name).toStdString());
-        document()->addBody(document()->uniqueBodyName(name.toStdString()), m_panel->shape());
+        document()->addBody(document()->uniqueBodyName(name.toStdString()), m_panel->shape(),
+                            activeComponent());
         transaction.commit();
     } catch (const std::invalid_argument& failure) {
         // The transaction has put the document back. Leave the panel open to try other values.
@@ -2654,6 +3012,15 @@ void MainWindow::acceptCommand() {
 void MainWindow::cancelCommand() {
     if (m_featurePanel != nullptr) {
         closeFeaturePanel();
+    }
+    if (m_jointPanel != nullptr) {
+        closeJointPanel();
+    }
+    if (m_movePanel != nullptr) {
+        closeMovePanel();
+    }
+    if (isAnimating()) {
+        stopAnimation();
     }
     if (m_measurePanel != nullptr) {
         closeMeasure();
@@ -2836,6 +3203,14 @@ void MainWindow::startFeature(document::FeatureKind kind) {
     }
     cancelCommand();
     m_editedFeature = {};
+    // The feature goes into the component of what it starts from.
+    if (const document::SketchItem* sketch = document()->findSketch(from)) {
+        ensureActive(sketch->component);
+    } else if (!picked.empty() && picked.front().kind != SelectedItem::Kind::Sketch) {
+        if (const document::Body* body = document()->findBody(picked.front().body)) {
+            ensureActive(body->component, picked.front().path);
+        }
+    }
     openFeaturePanel(kind);
     if (kind == document::FeatureKind::Axis) {
         m_featurePanel->setFeature(seed);
@@ -2887,6 +3262,7 @@ bool MainWindow::editFeature(document::ObjectId id) {
     }
     cancelCommand();
     const document::Feature feature = *found;
+    ensureActive(feature.component);
     // The model as it was just before the feature: what it works on can be seen and picked.
     document()->setEditedFeature(id);
     m_editedFeature = id;
@@ -2978,6 +3354,7 @@ void MainWindow::closeFeaturePanel() {
     m_viewport->setProfileSketches({});
     m_viewport->setFeaturePreview({}, kernel::Shape());
     m_viewport->setPreview(kernel::Shape());
+    m_viewport->clearDistanceHandle();
     if (m_filterBeforeFeature.has_value()) {
         m_viewport->setSelectionFilter(*m_filterBeforeFeature);
         m_filterBeforeFeature.reset();
@@ -3117,6 +3494,7 @@ void MainWindow::updateFeaturePreview() {
     const auto clear = [this] {
         m_viewport->setFeaturePreview({}, kernel::Shape());
         m_viewport->setPreview(kernel::Shape());
+        m_viewport->clearDistanceHandle();
     };
     if (!m_featurePanel->hasInput()) {
         m_featurePanel->setError({});
@@ -3124,6 +3502,7 @@ void MainWindow::updateFeaturePreview() {
         return;
     }
     document::Feature feature = m_featurePanel->feature();
+    showPullHandle(feature);
     if (feature.kind == document::FeatureKind::Axis) {
         const document::FeatureTrial trial = document()->tryFeature(feature);
         m_featurePanel->setError(QString::fromStdString(trial.error));
@@ -3197,12 +3576,67 @@ void MainWindow::updateFeaturePreview() {
     }
 }
 
+void MainWindow::showPullHandle(const document::Feature& feature) {
+    const document::SketchItem* sketch = document()->findSketch(feature.sketch);
+    if (feature.kind != document::FeatureKind::Pull || sketch == nullptr ||
+        m_featurePanel->goesToFace() || !feature.extentFace.empty()) {
+        m_viewport->clearDistanceHandle();
+        return;
+    }
+    // From the middle of the outlines it pulls, along the sketch's normal.
+    const std::vector<sketch::Region> regions = sketch->geometry.regions();
+    const std::vector<kernel::Shape> faces = document::sketchRegionFaces(*sketch);
+    std::optional<kernel::BoundingBox> box;
+    for (std::size_t i = 0; i < regions.size() && i < faces.size(); ++i) {
+        std::vector<sketch::EntityId> outline = regions[i].outer;
+        std::sort(outline.begin(), outline.end());
+        const bool used = feature.regions.empty() ||
+                          std::find(feature.regions.begin(), feature.regions.end(), outline) !=
+                              feature.regions.end();
+        if (!used || faces[i].isNull()) {
+            continue;
+        }
+        if (const auto bounds = kernel::boundingBox(faces[i])) {
+            if (!box.has_value()) {
+                box = bounds;
+            } else {
+                box->min = {std::min(box->min.x, bounds->min.x),
+                            std::min(box->min.y, bounds->min.y),
+                            std::min(box->min.z, bounds->min.z)};
+                box->max = {std::max(box->max.x, bounds->max.x),
+                            std::max(box->max.y, bounds->max.y),
+                            std::max(box->max.z, bounds->max.z)};
+            }
+        }
+    }
+    if (!box.has_value()) {
+        m_viewport->clearDistanceHandle();
+        return;
+    }
+    const kernel::Point middle{(box->min.x + box->max.x) / 2.0, (box->min.y + box->max.y) / 2.0,
+                               (box->min.z + box->max.z) / 2.0};
+    // A pull to both sides evenly has half its distance each way; the arrow is at the front.
+    const double distance = feature.symmetric ? feature.distance / 2.0 : feature.distance;
+    m_viewport->setDistanceHandle(middle, sketch->plane.normal, distance);
+}
+
+void MainWindow::setPullDistance(double distance) {
+    if (m_featurePanel == nullptr || m_featurePanel->kind() != document::FeatureKind::Pull) {
+        return;
+    }
+    const bool symmetric = m_featurePanel->feature().symmetric;
+    // The panel reports the change, which brings the preview and the arrow along.
+    m_featurePanel->setValue(QStringLiteral("distance"), symmetric ? 2.0 * distance : distance);
+}
+
 void MainWindow::acceptFeature() {
     if (m_featurePanel == nullptr || !m_featurePanel->hasInput() ||
         !m_featurePanel->errorText().isEmpty()) {
         return;
     }
-    const document::Feature feature = m_featurePanel->feature();
+    document::Feature feature = m_featurePanel->feature();
+    // Construction geometry on an origin plane or axis goes into the component being worked on.
+    feature.component = activeComponent();
     const document::ObjectId editing = m_editedFeature;
     try {
         if (editing.isValid()) {
@@ -3379,21 +3813,37 @@ void MainWindow::takeMeasurePick() {
 kernel::Shape MainWindow::shapeOf(const SelectedItem& item) const {
     if (item.kind == SelectedItem::Kind::Sketch) {
         const document::SketchItem* sketch = document()->findSketch(item.body);
-        return sketch != nullptr ? document::sketchShape(*sketch, document::SketchPart::Ordinary)
-                                 : kernel::Shape();
+        if (sketch == nullptr) {
+            return {};
+        }
+        // Where the sketch is shown: at the first occurrence of its component.
+        kernel::Placement at;
+        for (const document::Instance& instance : document()->instances()) {
+            if (instance.component == sketch->component) {
+                at = instance.placement;
+                break;
+            }
+        }
+        return kernel::placed(document::sketchShape(*sketch, document::SketchPart::Ordinary), at);
     }
     const document::Body* body = document()->findBody(item.body);
     if (body == nullptr || body->shape.isNull()) {
         return {};
     }
+    // Where it is in the assembly, so that things of different components measure against
+    // each other.
+    const kernel::Placement at = document()->placementOf(item.path);
     try {
         switch (item.kind) {
         case SelectedItem::Kind::Face:
-            return kernel::subShape(body->shape, kernel::SubShapeKind::Face, item.index);
+            return kernel::placed(
+                kernel::subShape(body->shape, kernel::SubShapeKind::Face, item.index), at);
         case SelectedItem::Kind::Edge:
-            return kernel::subShape(body->shape, kernel::SubShapeKind::Edge, item.index);
+            return kernel::placed(
+                kernel::subShape(body->shape, kernel::SubShapeKind::Edge, item.index), at);
         case SelectedItem::Kind::Vertex:
-            return kernel::subShape(body->shape, kernel::SubShapeKind::Vertex, item.index);
+            return kernel::placed(
+                kernel::subShape(body->shape, kernel::SubShapeKind::Vertex, item.index), at);
         case SelectedItem::Kind::Body:
         case SelectedItem::Kind::Sketch:
             break;
@@ -3401,7 +3851,7 @@ kernel::Shape MainWindow::shapeOf(const SelectedItem& item) const {
     } catch (const std::out_of_range&) {
         return {};
     }
-    return body->shape;
+    return kernel::placed(body->shape, at);
 }
 
 void MainWindow::showMeasurement() {
@@ -3467,7 +3917,7 @@ void MainWindow::showMeasurement() {
                          rows);
     // The shortest distance, drawn between where it is.
     if (between.distance > 1e-9) {
-        m_viewport->setPreview(kernel::makeSegment(between.from, between.to));
+        m_viewport->setPreview(kernel::makeSegment(between.from, between.to), true);
     }
 }
 
@@ -3529,14 +3979,19 @@ document::ObjectId MainWindow::createSketch(const kernel::Plane& plane,
         finishSketch();
     }
     cancelCommand();
-    const document::ObjectId id = document()->addSketch(document()->uniqueSketchName("Sketch"),
-                                                        plane, attachedTo, attachedFace);
+    // On a plane of the component being worked on; on a face, in the face's component.
+    const document::ObjectId id = document()->addSketch(
+        document()->uniqueSketchName("Sketch"), plane, attachedTo, attachedFace, activeComponent());
     editSketch(id);
     return id;
 }
 
 bool MainWindow::editSketch(document::ObjectId sketch) {
     cancelCommand();
+    // A sketch of a component is edited where that component is being worked on.
+    if (const document::SketchItem* found = document()->findSketch(sketch)) {
+        ensureActive(found->component);
+    }
     if (!m_viewport->editSketch(sketch)) {
         return false;
     }
@@ -3714,7 +4169,7 @@ bool MainWindow::importGeometry(const QString& path, QString* error, QStringList
         document::Transaction transaction(
             *document(), tr("Import %1").arg(QFileInfo(path).fileName()).toStdString());
         for (const kernel::NamedBody& body : read.bodies) {
-            added.push_back(document()->addBody(body.name, body.shape));
+            added.push_back(document()->addBody(body.name, body.shape, activeComponent()));
         }
         transaction.commit();
     } catch (const std::invalid_argument& failure) {
@@ -3740,20 +4195,10 @@ bool MainWindow::importGeometry(const QString& path, QString* error, QStringList
 }
 
 std::vector<document::ObjectId> MainWindow::exportedBodies(bool selectedOnly) const {
+    // One for each appearance of a body: a component that appears twice is exported twice.
     std::vector<document::ObjectId> ids;
-    if (selectedOnly) {
-        for (const document::ObjectId id : targetBodies()) {
-            const document::Body* body = document()->findBody(id);
-            if (body != nullptr && !body->shape.isNull()) {
-                ids.push_back(id);
-            }
-        }
-        return ids;
-    }
-    for (const document::Body& body : document()->bodies()) {
-        if (body.visible && !body.shape.isNull()) {
-            ids.push_back(body.id);
-        }
+    for (const PlacedBody& placed : placedBodies(selectedOnly)) {
+        ids.push_back(placed.body);
     }
     return ids;
 }
@@ -3765,14 +4210,14 @@ bool MainWindow::exportGeometry(const QString& path, const ExportOptions& option
         }
         return false;
     };
-    const std::vector<document::ObjectId> ids = exportedBodies(options.selectedOnly);
-    if (ids.empty()) {
+    const std::vector<PlacedBody> placed = placedBodies(options.selectedOnly);
+    if (placed.empty()) {
         return fail(tr("There is no body to export."));
     }
+    // Each where it is in the assembly.
     std::vector<kernel::NamedBody> bodies;
-    for (const document::ObjectId id : ids) {
-        const document::Body* body = document()->findBody(id);
-        bodies.push_back({body->name, body->shape});
+    for (const PlacedBody& body : placed) {
+        bodies.push_back({body.name.toStdString(), body.shape});
     }
     QApplication::setOverrideCursor(Qt::WaitCursor);
     try {
@@ -3994,6 +4439,10 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     QSettings settings;
     settings.setValue(QLatin1String(geometryKey), saveGeometry());
     settings.setValue(QLatin1String(layoutKey), saveState(layoutVersion));
+    // A proper close: the copies of unsaved work are not needed again.
+    if (m_recovery != nullptr) {
+        m_recovery->close();
+    }
     event->accept();
 }
 

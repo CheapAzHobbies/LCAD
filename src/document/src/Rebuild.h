@@ -43,6 +43,11 @@ public:
                                         const BodyStates& bodies,
                                         const std::unordered_map<ObjectId, PlaneState>& planes);
 
+/// What the names of the faces a feature makes start with: its tag, or else its id.
+[[nodiscard]] std::string tagOf(const Feature& feature);
+/// What the names of the faces of a body no feature makes start with, before "/f".
+[[nodiscard]] std::string tagOf(const Body& body);
+
 /// What a face's or an edge's name refers to, in words: "a side of Pull 1".
 [[nodiscard]] std::string describeName(const Document& document, const std::string& name);
 

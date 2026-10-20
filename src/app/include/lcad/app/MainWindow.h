@@ -26,6 +26,7 @@ class QMenu;
 class QMenuBar;
 class QStackedWidget;
 class QTabBar;
+class QTimer;
 class QToolBar;
 class QToolButton;
 
@@ -33,6 +34,13 @@ namespace lcad::app {
 
 class BrowserPanel;
 class CommandRegistry;
+class InterferenceDialog;
+class JointPanel;
+class LinksDialog;
+class MassDialog;
+class MaterialsDialog;
+class MovePanel;
+class RecoveryStore;
 class FeaturePanel;
 class GeometryCheckDialog;
 class MeasurePanel;
@@ -202,6 +210,72 @@ public:
     /// Closes a document, asking first if it has unsaved changes. -1 means the current one.
     bool fileClose(int index = -1);
 
+    // Assemblies
+
+    /// The occurrence being worked on in the current document, by its path from the root:
+    /// empty for the document itself. New bodies and sketches go into its component.
+    [[nodiscard]] std::vector<document::ObjectId> activePath() const;
+    /// The component being worked on: not valid for the document itself.
+    [[nodiscard]] document::ObjectId activeComponent() const;
+    /// Works on an occurrence's component, or on the document itself (an empty path). A path
+    /// that leads nowhere is taken as the document's.
+    void activateOccurrence(const std::vector<document::ObjectId>& path);
+    /// Makes an empty component inside the one being worked on, as one undo step, and works on
+    /// it. Returns the component.
+    document::ObjectId newComponent();
+    /// Makes a component of the bodies selected. On failure nothing changes and `error`
+    /// receives the reason.
+    bool makeComponentFromSelection(QString* error = nullptr);
+    /// Inserts another LCAD document as a linked part into the component being worked on. On
+    /// failure nothing changes and `error` receives the reason.
+    bool insertLinkedPart(const QString& path, QString* error = nullptr);
+    /// The occurrences selected in the browser, or whose bodies are selected in the 3D view,
+    /// each by its path, as seen from the component being worked on.
+    [[nodiscard]] std::vector<std::vector<document::ObjectId>> selectedOccurrences() const;
+    /// Opens the Joint panel: to add a joint, or with `joint` valid to edit that one.
+    void startJoint(document::ObjectId joint = {});
+    [[nodiscard]] JointPanel* jointPanel() const { return m_jointPanel; }
+    /// Opens the panel that moves the selected occurrence by hand.
+    void startMoveComponent();
+    [[nodiscard]] MovePanel* movePanel() const { return m_movePanel; }
+    /// Shows a joint (one being set up in the Joint panel, for an invalid id) going through its
+    /// range in the 3D view, for a few seconds. The document is not changed.
+    void animateJoint(document::ObjectId joint = {});
+    void stopAnimation();
+    [[nodiscard]] bool isAnimating() const;
+    /// Finds where the parts shown overlap, and lists it.
+    void checkInterference();
+    [[nodiscard]] InterferenceDialog* interferenceDialog() const { return m_interferenceDialog; }
+    /// Shows the mass properties of the bodies selected, or of all that are shown.
+    void showPhysicalProperties();
+    [[nodiscard]] MassDialog* massDialog() const { return m_massDialog; }
+    /// Opens the list of materials, where the document's own are added and changed.
+    void showMaterials();
+    [[nodiscard]] MaterialsDialog* materialsDialog() const { return m_materialsDialog; }
+    /// Lists the files the document links to, and the state of each.
+    void showLinks();
+    [[nodiscard]] LinksDialog* linksDialog() const { return m_linksDialog; }
+    /// Reads the linked files that changed, as one undo step. Returns what could not be read.
+    QStringList updateLinks();
+    /// Gathers the document and the files it links to into a folder. On failure `error`
+    /// receives the reason; `problems` what could not be gathered.
+    bool packageTo(const QString& folder, QString* error = nullptr,
+                   QStringList* problems = nullptr);
+    bool filePackage();
+
+    // Autosave and recovery
+
+    /// Keeps copies of unsaved work in `folder`, every `seconds`, and offers what an LCAD that
+    /// did not close properly left there. Off until called; tests give it a folder of their
+    /// own.
+    void enableRecovery(const QString& folder, int seconds = 60);
+    /// Writes the copies of unsaved work now, as the timer would.
+    void autosave();
+    /// Offers to restore what was left behind; returns how many documents were restored.
+    /// `ask` false restores without asking.
+    int offerRecovery(bool ask = true);
+    [[nodiscard]] RecoveryStore* recovery() const { return m_recovery.get(); }
+
     // The window
 
     /// Puts the panels back where they are in a new installation.
@@ -222,6 +296,12 @@ private:
         std::unique_ptr<document::Document> document;
         document::Document::ListenerId listener = 0;
         QString filePath;
+        /// The occurrence being worked on.
+        std::vector<document::ObjectId> activePath;
+        /// What tells this document's copy of unsaved work apart, and whether it changed since
+        /// that was last written.
+        QString recoveryKey;
+        bool autosaveDue = false;
         /// The camera as it was when another document was shown instead.
         std::optional<viewport::CameraState> camera;
         std::array<bool, 6> origin{};
@@ -229,6 +309,29 @@ private:
 
     void defineCommands();
     void defineSketchCommands();
+    void defineAssemblyCommands();
+    /// Works on `component` if it is not the one being worked on: through `path` if that leads
+    /// to it, or else its first occurrence.
+    void ensureActive(document::ObjectId component,
+                      const std::vector<document::ObjectId>& path = {});
+    void closeJointPanel();
+    void acceptJoint();
+    void updateJointPreview();
+    void takeJointPick();
+    void closeMovePanel();
+    void updateMovePreview();
+    void stepAnimation();
+    /// The bodies a mesh, a weighing, or an overlap check takes: each shown appearance of each
+    /// body, placed in the root's coordinates, and what it is called.
+    struct PlacedBody {
+        document::ObjectId body;
+        std::vector<document::ObjectId> path;
+        kernel::Shape shape;
+        QString name;
+    };
+    [[nodiscard]] std::vector<PlacedBody> placedBodies(bool selectedOnly) const;
+    void showAssemblyMenu(const QPoint& where);
+    void relink(document::ObjectId component);
     void createTopBar();
     void createToolbar();
     void createSketchToolbar();
@@ -259,6 +362,11 @@ private:
     void acceptFeature();
     /// Tries the panel's feature on the model and shows the outcome.
     void updateFeaturePreview();
+    /// For a pull by a distance: the arrow in the 3D view that is dragged to set it, at the
+    /// middle of the profiles picked. Nothing for anything else.
+    void showPullHandle(const document::Feature& feature);
+    /// Takes a distance dragged or typed at the pull's arrow.
+    void setPullDistance(double distance);
     /// Hands what is picked in the 3D view to the feature panel.
     void takeFeaturePicks();
     /// The sketches whose profiles a pull or a revolve can be picked from.
@@ -314,6 +422,24 @@ private:
     MeasurePanel* m_measurePanel = nullptr;
     ParametersDialog* m_parametersDialog = nullptr;
     GeometryCheckDialog* m_checkDialog = nullptr;
+    JointPanel* m_jointPanel = nullptr;
+    /// The joint being edited in the Joint panel, or an invalid id for a new one.
+    document::ObjectId m_editedJoint;
+    MovePanel* m_movePanel = nullptr;
+    /// The occurrence the Move panel moves.
+    document::ObjectId m_movedOccurrence;
+    InterferenceDialog* m_interferenceDialog = nullptr;
+    std::vector<kernel::Shape> m_overlaps;
+    MassDialog* m_massDialog = nullptr;
+    MaterialsDialog* m_materialsDialog = nullptr;
+    LinksDialog* m_linksDialog = nullptr;
+    /// Showing a joint in motion: the timer, the joint, and how far along.
+    QTimer* m_animationTimer = nullptr;
+    document::Joint m_animatedJoint;
+    int m_animationStep = 0;
+    std::unique_ptr<RecoveryStore> m_recovery;
+    QTimer* m_autosaveTimer = nullptr;
+    int m_nextRecoveryKey = 1;
     /// The settings the last export was made with.
     ExportOptions m_exportOptions;
     /// What is being measured: the first and the second thing picked.
@@ -332,6 +458,9 @@ private:
     /// The sketch toolbar's buttons for single constraints, and the one that lists them all.
     QList<QAction*> m_constraintButtons;
     QAction* m_constraintsFolded = nullptr;
+    /// The toolbar's buttons for New Component and Joint, which a narrow window puts away: the
+    /// assembly list beside them has both.
+    QList<QAction*> m_assemblyButtons;
     /// The names of the modeling toolbar's groups, which go when the window is narrow.
     QList<QAction*> m_modelGroupLabels;
     /// The names of the sketch toolbar's groups, which go when the window is too narrow.

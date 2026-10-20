@@ -3,6 +3,7 @@
 # The user interface is a library so that tests can drive it without launching the executable.
 qt_add_library(lcad_app STATIC
     include/lcad/app/Application.h
+    include/lcad/app/AssemblyDialogs.h
     include/lcad/app/BrowserPanel.h
     include/lcad/app/CommandSearch.h
     include/lcad/app/Commands.h
@@ -11,16 +12,21 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/FeaturePanel.h
     include/lcad/app/GeometryCheckDialog.h
     include/lcad/app/Icons.h
+    include/lcad/app/JointPanel.h
     include/lcad/app/MainWindow.h
     include/lcad/app/MeasurePanel.h
+    include/lcad/app/MovePanel.h
     include/lcad/app/ParametersDialog.h
     include/lcad/app/PrimitivePanel.h
     include/lcad/app/PropertiesPanel.h
+    include/lcad/app/Recovery.h
     include/lcad/app/ShortcutsDialog.h
     include/lcad/app/SketchPanel.h
     include/lcad/app/Theme.h
     include/lcad/app/TimelinePanel.h
     src/Application.cpp
+    src/AssemblyCommands.cpp
+    src/AssemblyDialogs.cpp
     src/BrowserPanel.cpp
     src/CommandSearch.cpp
     src/Commands.cpp
@@ -29,11 +35,14 @@ qt_add_library(lcad_app STATIC
     src/FeaturePanel.cpp
     src/GeometryCheckDialog.cpp
     src/Icons.cpp
+    src/JointPanel.cpp
     src/MainWindow.cpp
     src/MeasurePanel.cpp
+    src/MovePanel.cpp
     src/ParametersDialog.cpp
     src/PrimitivePanel.cpp
     src/PropertiesPanel.cpp
+    src/Recovery.cpp
     src/ShortcutsDialog.cpp
     src/SketchPanel.cpp
     src/Theme.cpp

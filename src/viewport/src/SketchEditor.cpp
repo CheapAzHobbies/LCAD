@@ -317,7 +317,14 @@ public:
     QLineEdit* field = nullptr;
     ConstraintId editing = 0; // 0 while the value is for the tool at work
 
+    // Where the sketch's component is shown.
+    kernel::Placement placement;
+
     [[nodiscard]] bool active() const { return document != nullptr; }
+    // The sketch's plane where it is shown.
+    [[nodiscard]] kernel::Plane shownPlane(const document::SketchItem& sketch) const {
+        return kernel::apply(placement, sketch.plane);
+    }
     [[nodiscard]] const document::SketchItem* item() const {
         return document != nullptr ? document->findSketch(sketchId) : nullptr;
     }
@@ -366,7 +373,7 @@ public:
         if (found == nullptr) {
             return {};
         }
-        const kernel::Point world = kernel::toWorld(found->plane, p.x, p.y);
+        const kernel::Point world = kernel::toWorld(shownPlane(*found), p.x, p.y);
         return view->project(world.x, world.y, world.z);
     }
 
@@ -375,7 +382,7 @@ public:
         if (found == nullptr) {
             return std::nullopt;
         }
-        const auto at = view->positionOnPlane(found->plane, position);
+        const auto at = view->positionOnPlane(shownPlane(*found), position);
         if (!at.has_value()) {
             return std::nullopt;
         }
@@ -2578,7 +2585,8 @@ bool SketchEditor::projectShape(const kernel::Shape& edgeOrVertex) {
         return false;
     }
     const document::SketchItem* item = m_impl->item();
-    const std::optional<kernel::PlaneCurve> curve = kernel::projectOnto(item->plane, edgeOrVertex);
+    const std::optional<kernel::PlaneCurve> curve =
+        kernel::projectOnto(m_impl->shownPlane(*item), edgeOrVertex);
     if (!curve.has_value()) {
         emit message(tr("That cannot be projected yet. Straight edges, circles and arcs that lie "
                         "flat to the sketch, and corners can."));
@@ -2751,6 +2759,11 @@ QString SketchEditor::constraintName(sketch::ConstraintKind kind) {
     default:
         return Impl::nameOf(kind);
     }
+}
+
+void SketchEditor::setPlacement(const kernel::Placement& placement) {
+    m_impl->placement = placement;
+    m_impl->update();
 }
 
 void SketchEditor::begin(document::Document* document, document::ObjectId sketch) {
