@@ -1117,10 +1117,10 @@ void MainWindow::checkInterference() {
     m_viewport->setHighlights(m_overlaps);
     m_interferenceDialog->show();
     m_interferenceDialog->raise();
-    statusBar()->showMessage(
-        found.empty() ? tr("No parts overlap.")
-                      : tr("%n overlap(s) found.", nullptr, static_cast<int>(found.size())),
-        6000);
+    statusBar()->showMessage(found.empty()       ? tr("No parts overlap.")
+                             : found.size() == 1 ? tr("1 overlap found.")
+                                                 : tr("%1 overlaps found.").arg(found.size()),
+                             6000);
 }
 
 void MainWindow::showPhysicalProperties() {
@@ -1154,9 +1154,10 @@ void MainWindow::showPhysicalProperties() {
         m_massDialog = new MassDialog(this);
     }
     m_massDialog->setSummary(
-        summary, selection ? tr("%n body(ies) selected.", nullptr, static_cast<int>(bodies.size()))
-                           : tr("Everything shown: %n body(ies).", nullptr,
-                                static_cast<int>(bodies.size())));
+        summary, selection            ? (bodies.size() == 1 ? tr("1 body selected.")
+                                                            : tr("%1 bodies selected.").arg(bodies.size()))
+                 : bodies.size() == 1 ? tr("Everything shown: 1 body.")
+                                      : tr("Everything shown: %1 bodies.").arg(bodies.size()));
     m_massDialog->show();
     m_massDialog->raise();
 }
@@ -1425,7 +1426,9 @@ int MainWindow::offerRecovery(bool ask) {
     // Copies of what was restored are kept again, in this session, from now on.
     autosave();
     statusBar()->showMessage(
-        tr("Restored %n document(s). Save to keep the changes.", nullptr, restored), 9000);
+        restored == 1 ? tr("Restored 1 document. Save it to keep the changes.")
+                      : tr("Restored %1 documents. Save them to keep the changes.").arg(restored),
+        9000);
     return restored;
 }
 

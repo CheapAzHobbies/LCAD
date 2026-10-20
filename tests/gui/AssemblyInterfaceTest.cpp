@@ -385,6 +385,7 @@ void AssemblyInterfaceTest::overlapsAreFoundAndMassIsWeighed() {
     QVERIFY(dialog->tree()->topLevelItem(0)->text(1).startsWith(QStringLiteral("200")));
     dialog->tree()->setCurrentItem(dialog->tree()->topLevelItem(0));
     render(window);
+    keep(window, "interference");
     dialog->close();
 
     // Steel, 7.85 g/cm3: a 10 mm cube is 7.85 g.

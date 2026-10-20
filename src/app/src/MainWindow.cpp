@@ -2439,10 +2439,12 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
         }
     }
     if (changed > 0) {
-        statusBar()->showMessage(tr("%n linked part(s) changed since this document was saved. "
-                                    "File > Update Linked Parts takes the changes.",
-                                    nullptr, changed),
-                                 12000);
+        statusBar()->showMessage(
+            (changed == 1
+                 ? tr("A linked part changed since this document was saved.")
+                 : tr("%1 linked parts changed since this document was saved.").arg(changed)) +
+                QLatin1Char(' ') + tr("File > Update Linked Parts takes the changes."),
+            12000);
     }
     return true;
 }

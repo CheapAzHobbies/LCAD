@@ -341,8 +341,8 @@ void PropertiesPanel::showOccurrence(document::Document* document, document::Obj
     if (!component->link.empty()) {
         addRow(tr("Linked file"), QString::fromStdString(component->link));
     }
-    addRow(tr("Appears"), tr("%n time(s)", nullptr,
-                             static_cast<int>(document->occurrencesOf(found->component).size())));
+    const std::size_t appearances = document->occurrencesOf(found->component).size();
+    addRow(tr("Appears"), appearances == 1 ? tr("Once") : tr("%1 times").arg(appearances));
     const kernel::Placement where = document->placementOf(occurrence);
     addRow(tr("Origin"), tr("%1, %2, %3 mm")
                              .arg(formatNumber(where.origin.x), formatNumber(where.origin.y),

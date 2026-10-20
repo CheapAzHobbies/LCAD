@@ -70,12 +70,14 @@ void InterferenceDialog::setResults(const std::vector<Interference>& results, in
                                          tr("%1 mm³").arg(formatNumber(results[i].volume))});
         item->setData(0, indexRole, static_cast<int>(i));
     }
-    QString text = results.empty()
-                       ? tr("No parts overlap. %n pair(s) of bodies checked.", nullptr, pairs)
-                       : tr("%n overlap(s) found among %1 pairs of bodies checked. Choose one to "
-                            "see it in the 3D view.",
-                            nullptr, static_cast<int>(results.size()))
-                             .arg(pairs);
+    const QString checked =
+        pairs == 1 ? tr("1 pair of bodies checked.") : tr("%1 pairs of bodies checked.").arg(pairs);
+    QString text = results.empty() ? tr("No parts overlap. %1").arg(checked)
+                   : results.size() == 1
+                       ? tr("1 overlap found. %1 Choose it to see it in the 3D view.").arg(checked)
+                       : tr("%1 overlaps found. %2 Choose one to see it in the 3D view.")
+                             .arg(results.size())
+                             .arg(checked);
     if (!problems.isEmpty()) {
         text += QLatin1Char('\n') + problems.join(QLatin1Char('\n'));
     }
@@ -145,9 +147,12 @@ void MassDialog::setSummary(const MassSummary& summary, const QString& scope) {
                              formatNumber(total.inertia[2][2]));
     }
     if (summary.unknown > 0) {
-        m_totals << tr("%n body(ies) without a material are left out of the mass. Choose a "
-                       "material in the Properties panel.",
-                       nullptr, summary.unknown);
+        m_totals << (summary.unknown == 1
+                         ? tr("1 body without a material is left out of the mass. Choose a "
+                              "material in the Properties panel.")
+                         : tr("%1 bodies without a material are left out of the mass. Choose a "
+                              "material in the Properties panel.")
+                               .arg(summary.unknown));
     }
     m_totalsLabel->setText(m_totals.join(QLatin1Char('\n')));
 }
@@ -391,11 +396,15 @@ void LinksDialog::setStatuses(const std::vector<document::LinkStatus>& statuses)
     } else {
         QStringList parts;
         if (changed > 0) {
-            parts << tr("%n changed since it was last read", nullptr, changed);
+            parts << (changed == 1 ? tr("1 changed since it was last read")
+                                   : tr("%1 changed since they were last read").arg(changed));
         }
         if (missing > 0) {
-            parts << tr("%n missing or unreadable: the copy kept in the document is shown", nullptr,
-                        missing);
+            parts << (missing == 1
+                          ? tr("1 missing or unreadable: the copy kept in the document is shown")
+                          : tr("%1 missing or unreadable: the copies kept in the document are "
+                               "shown")
+                                .arg(missing));
         }
         m_summary->setText(parts.join(QStringLiteral("; ")) + QLatin1Char('.'));
     }
