@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# LCAD as a Flatpak: built on KDE's runtime, which has Qt, with Open CASCADE, libzip, and
+# nlohmann/json built here. scripts/build-flatpak.sh builds it; CI builds it on every pull
+# request and starts it.
+id: io.github.cheapazhobbies.LCAD
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+command: lcad
+finish-args:
+  # Open CASCADE's 3D view draws through GLX, so LCAD runs on X11 (XWayland on a Wayland
+  # desktop); see docs/ARCHITECTURE.md, decision 3.
+  - --socket=x11
+  - --share=ipc
+  - --device=dri
+  # Documents, and the parts they link to, are opened by their paths wherever they are.
+  - --filesystem=home
+cleanup:
+  - /include
+  - /lib/cmake
+  - /lib/pkgconfig
+  - /share/doc
+  - '*.a'
+modules:
+  - name: opencascade
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_LIBRARY_TYPE=Shared
+      - -DINSTALL_DIR_LAYOUT=Unix
+      # Exceptions stay on: LCAD catches OCCT's exceptions and reports them.
+      - -DBUILD_RELEASE_DISABLE_EXCEPTIONS=OFF
+      - -DBUILD_MODULE_Draw=OFF
+      - -DBUILD_DOC_Overview=OFF
+      - -DUSE_FREETYPE=ON
+      - -DUSE_TK=OFF
+      - -DUSE_FREEIMAGE=OFF
+      - -DUSE_RAPIDJSON=OFF
+      - -DUSE_DRACO=OFF
+      - -DUSE_TBB=OFF
+      - -DUSE_VTK=OFF
+      - -DUSE_OPENVR=OFF
+      - -DUSE_FFMPEG=OFF
+    cleanup:
+      - /bin
+      - /share/opencascade/samples
+    sources:
+      - type: git
+        url: https://github.com/Open-Cascade-SAS/OCCT.git
+        tag: V7_9_3
+        commit: a016080bf6738d6aeae020badee4e888ad1540a5
+
+  - name: libzip
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TOOLS=OFF
+      - -DBUILD_REGRESS=OFF
+      - -DBUILD_OSSFUZZ=OFF
+      - -DBUILD_EXAMPLES=OFF
+      - -DBUILD_DOC=OFF
+      - -DENABLE_GNUTLS=OFF
+      - -DENABLE_MBEDTLS=OFF
+    sources:
+      - type: git
+        url: https://github.com/nih-at/libzip.git
+        tag: v1.11.4
+        commit: 6f8a0cdd24a0dc6cce9dac4a7679da784ab124ea
+
+  - name: nlohmann-json
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DJSON_BuildTests=OFF
+      - -DJSON_Install=ON
+    sources:
+      - type: git
+        url: https://github.com/nlohmann/json.git
+        tag: v3.12.0
+        commit: 55f93686c01528224f448c19128836e7df245f72
+
+  - name: lcad
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TESTING=OFF
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - build
+          - .git

@@ -171,3 +171,47 @@ jobs:
           path: appimage-screen.png
           if-no-files-found: ignore
           retention-days: 14
+
+  # LCAD as a Flatpak, on KDE's runtime from Flathub, with Open CASCADE built for it; then
+  # installed and started, as the AppImage is.
+  flatpak:
+    name: Flatpak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Flatpak, a virtual display, and ImageMagick
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder xvfb imagemagick
+          # Ubuntu keeps unprivileged programs from making the namespaces Flatpak's sandbox
+          # is built from.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # Open CASCADE takes most of an hour to build; what flatpak-builder built of it is kept
+      # until the manifest changes.
+      - name: Keep what was built of the dependencies
+        uses: actions/cache@v6
+        with:
+          path: flatpak/state
+          key: flatpak-${{ hashFiles('packaging/flatpak/*.yml') }}
+
+      - name: Build the Flatpak
+        run: ./scripts/build-flatpak.sh flatpak
+
+      - name: Install it and start LCAD from it
+        run: |
+          flatpak install --user -y --noninteractive flatpak/LCAD-*.flatpak
+          ./scripts/smoke-test-flatpak.sh tests/models/format-1/primitives-occt-7.6.3.lcad \
+              flatpak-screen.png
+
+      - name: Keep the Flatpak and the screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LCAD-Flatpak
+          path: |
+            flatpak/LCAD-*.flatpak
+            flatpak-screen.png
+          if-no-files-found: ignore
+          retention-days: 14

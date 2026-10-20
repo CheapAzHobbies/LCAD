@@ -79,3 +79,6 @@ install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.xml"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages")
 install(FILES "${PROJECT_SOURCE_DIR}/packaging/application-x-lcad.svg"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/mimetypes")
+# What software centers show about LCAD.
+install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.metainfo.xml"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
