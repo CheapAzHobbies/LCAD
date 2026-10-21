@@ -16,6 +16,7 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/MainWindow.h
     include/lcad/app/MeasurePanel.h
     include/lcad/app/MovePanel.h
+    include/lcad/app/Paths.h
     include/lcad/app/ParametersDialog.h
     include/lcad/app/PrimitivePanel.h
     include/lcad/app/PropertiesPanel.h
@@ -39,6 +40,7 @@ qt_add_library(lcad_app STATIC
     src/MainWindow.cpp
     src/MeasurePanel.cpp
     src/MovePanel.cpp
+    src/Paths.cpp
     src/ParametersDialog.cpp
     src/PrimitivePanel.cpp
     src/PropertiesPanel.cpp

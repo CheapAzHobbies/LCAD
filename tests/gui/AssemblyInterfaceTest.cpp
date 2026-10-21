@@ -8,6 +8,7 @@
 #include <lcad/app/MainWindow.h>
 #include <lcad/app/MeasurePanel.h>
 #include <lcad/app/MovePanel.h>
+#include <lcad/app/Paths.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/Recovery.h>
 #include <lcad/app/Theme.h>
@@ -42,6 +43,10 @@
 #include <QTreeWidget>
 
 #include <cmath>
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#endif
+
 #include <csignal>
 #include <filesystem>
 #include <functional>
@@ -51,6 +56,7 @@ using lcad::app::BrowserPanel;
 using lcad::app::FeaturePanel;
 using lcad::app::JointPanel;
 using lcad::app::MainWindow;
+using lcad::app::toPath;
 using lcad::document::FeatureKind;
 using lcad::document::ObjectId;
 using lcad::viewport::SelectedItem;
@@ -59,10 +65,6 @@ namespace {
 
 bool near(double a, double b, double tolerance = 1e-6) {
     return std::abs(a - b) <= tolerance * std::max(1.0, std::abs(b));
-}
-
-std::filesystem::path toPath(const QString& path) {
-    return std::filesystem::path(path.toStdString());
 }
 
 // A part made in a component of its own: a box, placed somewhere.
@@ -180,7 +182,11 @@ private:
             store.save(QStringLiteral("1"), document, QStringLiteral("/somewhere/part.lcad"),
                        QStringLiteral("part"));
         }
+#if defined(Q_OS_WIN)
+        TerminateProcess(GetCurrentProcess(), 9);
+#else
         std::raise(SIGKILL);
+#endif
         std::abort();
     }
 

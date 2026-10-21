@@ -5,6 +5,7 @@
 add_library(lcad_core STATIC
     src/Expression.cpp
     src/Log.cpp
+    src/Path.cpp
     src/Version.cpp)
 add_library(lcad::core ALIAS lcad_core)
 target_include_directories(lcad_core PUBLIC include)

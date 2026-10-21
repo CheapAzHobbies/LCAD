@@ -2,6 +2,7 @@
 
 #include <lcad/app/Recovery.h>
 
+#include <lcad/app/Paths.h>
 #include <lcad/core/Log.h>
 #include <lcad/document/File.h>
 
@@ -23,18 +24,10 @@ namespace {
 
 const char* const lockName = "lock";
 
-std::filesystem::path toPath(const QString& path) {
-    return std::filesystem::path(path.toStdString());
-}
-
 } // namespace
 
 QString defaultRecoveryFolder() {
-    QString base = qEnvironmentVariable("XDG_STATE_HOME");
-    if (base.isEmpty()) {
-        base = QDir::homePath() + QStringLiteral("/.local/state");
-    }
-    return base + QStringLiteral("/lcad/recovery");
+    return stateFolder() + QStringLiteral("/recovery");
 }
 
 RecoveryStore::RecoveryStore(QString folder) : m_folder(std::move(folder)) {}

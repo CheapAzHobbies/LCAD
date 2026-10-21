@@ -38,7 +38,9 @@
 #include <QToolButton>
 #include <QTreeWidget>
 
+#if defined(Q_OS_LINUX)
 #include <xcb/xcb.h>
+#endif
 
 #include <cmath>
 #include <cstdlib>
@@ -74,6 +76,9 @@ QImage onScreen(const QWidget* widget) {
 // XWayland does not let X11 clients read window contents back, so the screen cannot be checked
 // there. It announces itself with an X extension of its own.
 bool isXWayland() {
+#if !defined(Q_OS_LINUX)
+    return false;
+#else
     const auto* x11 = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
     if (x11 == nullptr) {
         return false;
@@ -86,6 +91,7 @@ bool isXWayland() {
     const bool present = reply != nullptr && reply->present != 0;
     std::free(reply);
     return present;
+#endif
 }
 
 QAction* action(const MainWindow& window, const char* name) {

@@ -14,6 +14,7 @@
 #include <lcad/app/MeasurePanel.h>
 #include <lcad/app/MovePanel.h>
 #include <lcad/app/ParametersDialog.h>
+#include <lcad/app/Paths.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/Recovery.h>
 #include <lcad/app/ShortcutsDialog.h>
@@ -96,10 +97,6 @@ const char* const exportDeviationKey = "export/deviation";
 const char* const exportAngleKey = "export/angle";
 const char* const exportTextKey = "export/stlText";
 const int recentLimit = 10;
-
-std::filesystem::path toPath(const QString& path) {
-    return std::filesystem::path(QFile::encodeName(path).toStdString());
-}
 
 QLabel* groupLabel(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text.toUpper(), parent);

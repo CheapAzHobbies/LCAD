@@ -14,13 +14,14 @@ function(lcad_add_gui_test name)
         Qt6::Test lcad::app lcad::core lcad::document lcad::kernel lcad_test_support)
     lcad_target_defaults(${name})
 
-    # Force X11 so the test never lands on a developer's Wayland session, and software rendering
-    # so the result does not depend on the machine's GPU. LSAN_OPTIONS only has an effect in
-    # sanitizer builds.
+    # On Linux, force X11 so the test never lands on a developer's Wayland session, and software
+    # rendering so the result does not depend on the machine's GPU. LSAN_OPTIONS only has an
+    # effect in sanitizer builds. Windows and macOS use their own platform plugin and driver.
     set(environment
-        "QT_QPA_PLATFORM=xcb"
-        "LIBGL_ALWAYS_SOFTWARE=1"
         "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=0")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        list(APPEND environment "QT_QPA_PLATFORM=xcb" "LIBGL_ALWAYS_SOFTWARE=1")
+    endif()
 
     # Each program runs twice: at the screen's own scale, and at twice that, as on a high-DPI
     # display, where a logical pixel is two physical ones.
@@ -49,8 +50,10 @@ lcad_add_gui_test(lcad_modeling_interface_tests ModelingInterfaceTest.cpp)
 lcad_add_gui_test(lcad_interchange_interface_tests InterchangeInterfaceTest.cpp)
 lcad_add_gui_test(lcad_assembly_interface_tests AssemblyInterfaceTest.cpp)
 # ApplicationTest asks the X server which kind of server it is.
-find_package(X11 REQUIRED)
-target_link_libraries(lcad_app_tests PRIVATE X11::xcb)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(X11 REQUIRED)
+    target_link_libraries(lcad_app_tests PRIVATE X11::xcb)
+endif()
 
 # Needs no display, so it runs with the unit tests.
 qt_add_executable(lcad_viewport_setup_tests SetupTest.cpp)

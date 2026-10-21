@@ -36,7 +36,9 @@
 #include <memory>
 #include <sstream>
 
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 using namespace lcad::document;
 using Catch::Matchers::ContainsSubstring;
@@ -407,6 +409,8 @@ TEST_CASE("Saving replaces the file in one step and never writes into it", "[doc
     CHECK(filesIn(directory.path()) == std::vector<std::string>{"old-version.lcad", "part.lcad"});
 }
 
+// Windows keeps no Unix permissions: a file there is read-only or not.
+#if !defined(_WIN32)
 TEST_CASE("Saving keeps the permissions of the file it replaces", "[document][file]") {
     const TempDir directory;
     const std::filesystem::path path = directory.file("private.lcad");
@@ -422,6 +426,7 @@ TEST_CASE("Saving keeps the permissions of the file it replaces", "[document][fi
     CHECK(std::filesystem::status(path).permissions() == ownerOnly);
     CHECK(loadDocument(path).document->bodies().size() == 2);
 }
+#endif
 
 TEST_CASE("Saving through a symbolic link updates the file it points to", "[document][file]") {
     const TempDir directory;
@@ -431,7 +436,14 @@ TEST_CASE("Saving through a symbolic link updates the file it points to", "[docu
     Document document;
     document.addBody("Box", makeBox(1.0, 2.0, 3.0));
     saveDocument(document, real);
-    std::filesystem::create_symlink(real, link);
+    std::error_code ec;
+    std::filesystem::create_symlink(real, link, ec);
+    if (ec) {
+        // Windows lets only administrators and developer mode make symbolic links.
+        WARN("not checked: this system did not let a symbolic link be made (" + ec.message() +
+             ")");
+        return;
+    }
 
     document.addBody("Ball", makeSphere(1.0));
     saveDocument(document, link);
@@ -459,6 +471,8 @@ TEST_CASE("A save that cannot happen says why and leaves nothing behind", "[docu
         CHECK(filesIn(directory.path()) == std::vector<std::string>{"folder.lcad"});
     }
 
+#if !defined(_WIN32)
+    // A read-only folder on Windows still takes new files; its permissions are not Unix's.
     SECTION("into a folder that cannot be written to, keeping the existing file") {
         if (::geteuid() == 0) {
             // Not SKIP(): that marks the whole test case skipped, which older versions of
@@ -479,6 +493,7 @@ TEST_CASE("A save that cannot happen says why and leaves nothing behind", "[docu
         CHECK(readFile(path) == before);
         CHECK(filesIn(directory.path()) == std::vector<std::string>{"part.lcad"});
     }
+#endif
 }
 
 TEST_CASE("Files that are not LCAD documents are refused with a reason", "[document][file]") {

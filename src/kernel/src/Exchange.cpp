@@ -2,6 +2,7 @@
 
 #include <lcad/kernel/Exchange.h>
 
+#include <lcad/core/Path.h>
 #include <lcad/core/Version.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/occt/Guard.h>
@@ -76,7 +77,7 @@ std::mutex& translatorSettings() {
 }
 
 std::string fileName(const std::filesystem::path& path) {
-    return path.filename().string();
+    return core::toUtf8(path.filename());
 }
 
 void requireReadable(const std::filesystem::path& path, const std::string& operation) {
@@ -101,14 +102,14 @@ void writeReplacing(const std::filesystem::path& path, const std::string& operat
     const std::filesystem::path target = std::filesystem::absolute(path, ec);
     const std::filesystem::path directory = target.parent_path();
     if (!std::filesystem::is_directory(directory, ec)) {
-        throw Error(operation, "the folder " + directory.string() + " does not exist");
+        throw Error(operation, "the folder " + core::toUtf8(directory) + " does not exist");
     }
     if (std::filesystem::is_directory(target, ec)) {
         throw Error(operation, "it is a folder; choose a file name inside it");
     }
     std::random_device random;
     const std::filesystem::path temporary =
-        directory / ("." + target.filename().string() + "." + std::to_string(random()) + ".tmp");
+        directory / ("." + core::toUtf8(target.filename()) + "." + std::to_string(random()) + ".tmp");
     try {
         write(temporary);
         std::filesystem::rename(temporary, target, ec);
@@ -439,7 +440,7 @@ ImportResult importStep(const std::filesystem::path& path) {
         // Lengths in millimeters, whatever unit the file is in.
         Interface_Static::SetCVal("xstep.cascade.unit", "MM");
         STEPControl_Reader reader;
-        if (reader.ReadFile(path.c_str()) != IFSelect_RetDone) {
+        if (reader.ReadFile(core::toUtf8(path).c_str()) != IFSelect_RetDone) {
             throw Error(operation, "it is not a STEP file, or it is damaged");
         }
         reader.TransferRoots();
@@ -448,7 +449,7 @@ ImportResult importStep(const std::filesystem::path& path) {
             throw Error(operation, "it has no solids or surfaces in it");
         }
         const auto names = partNames(reader);
-        return bodiesOf(all, path.stem().string(), [&names](const TopoDS_Shape& solid) {
+        return bodiesOf(all, core::toUtf8(path.stem()), [&names](const TopoDS_Shape& solid) {
             const auto found = names.find(solid.TShape().get());
             return found == names.end() ? std::string() : found->second;
         });
@@ -462,7 +463,7 @@ ImportResult importIges(const std::filesystem::path& path) {
         const std::lock_guard lock(translatorSettings());
         Interface_Static::SetCVal("xstep.cascade.unit", "MM");
         IGESControl_Reader reader;
-        if (reader.ReadFile(path.c_str()) != IFSelect_RetDone || reader.NbRootsForTransfer() == 0) {
+        if (reader.ReadFile(core::toUtf8(path).c_str()) != IFSelect_RetDone || reader.NbRootsForTransfer() == 0) {
             throw Error(operation, "it is not an IGES file, or it has no geometry in it");
         }
         reader.TransferRoots();
@@ -470,7 +471,7 @@ ImportResult importIges(const std::filesystem::path& path) {
         if (all.IsNull() || countOf(all, TopAbs_FACE) == 0) {
             throw Error(operation, "it has no solids or surfaces in it");
         }
-        return bodiesOf(all, path.stem().string(),
+        return bodiesOf(all, core::toUtf8(path.stem()),
                         [](const TopoDS_Shape&) { return std::string(); });
     });
 }
@@ -504,7 +505,7 @@ void exportStep(const std::vector<NamedBody>& bodies, const std::filesystem::pat
         // The header says what the file is and what wrote it; OCCT's own fills it with
         // placeholders.
         APIHeaderSection_MakeHeader header(writer.Model());
-        header.SetName(new TCollection_HAsciiString(path.filename().string().c_str()));
+        header.SetName(new TCollection_HAsciiString(core::toUtf8(path.filename()).c_str()));
         header.SetDescriptionValue(1, new TCollection_HAsciiString("LCAD model"));
         header.SetAuthorValue(1, new TCollection_HAsciiString(""));
         header.SetOrganizationValue(1, new TCollection_HAsciiString(""));
@@ -512,7 +513,7 @@ void exportStep(const std::vector<NamedBody>& bodies, const std::filesystem::pat
             new TCollection_HAsciiString(("LCAD " + core::version()).c_str()));
         header.Apply(writer.Model());
         writeReplacing(path, operation, [&](const std::filesystem::path& temporary) {
-            if (writer.Write(temporary.c_str()) != IFSelect_RetDone) {
+            if (writer.Write(core::toUtf8(temporary).c_str()) != IFSelect_RetDone) {
                 throw Error(operation, "the file could not be written");
             }
         });
@@ -732,7 +733,7 @@ void export3mf(const std::vector<NamedBody>& bodies, const std::filesystem::path
     };
     writeReplacing(path, operation, [&](const std::filesystem::path& temporary) {
         int code = 0;
-        zip_t* archive = zip_open(temporary.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &code);
+        zip_t* archive = zip_open(core::toUtf8(temporary).c_str(), ZIP_CREATE | ZIP_TRUNCATE, &code);
         if (archive == nullptr) {
             throw Error(operation, "the file could not be created");
         }

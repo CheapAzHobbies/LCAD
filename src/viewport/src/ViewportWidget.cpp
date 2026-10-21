@@ -59,6 +59,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QtGlobal>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -67,6 +68,10 @@
 #include <QOpenGLFunctions>
 #include <QWheelEvent>
 #include <QWindow>
+
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -1759,7 +1764,14 @@ QSurfaceFormat ViewportWidget::surfaceFormat() {
     QSurfaceFormat format;
     format.setDepthBufferSize(24);
     format.setStencilBufferSize(8);
+#if defined(Q_OS_MACOS)
+    // macOS gives OpenGL 2.1 to a compatibility context, and 4.1 only to a core one, which OCCT
+    // draws with as well.
+    format.setVersion(4, 1);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+#else
     format.setProfile(QSurfaceFormat::CompatibilityProfile);
+#endif
     return format;
 }
 
@@ -2699,10 +2711,16 @@ void ViewportWidget::initializeGL() {
     // Let OCCT adopt the context Qt has just made current instead of creating its own.
     Handle(OpenGl_Context) glContext = new OpenGl_Context();
     if (!glContext->Init(!driver->Options().contextCompatible)) {
+#if defined(Q_OS_LINUX)
         fail(tr("The 3D viewer could not use the OpenGL context created by Qt (platform \"%1\"). "
                 "LCAD needs an X11 or XWayland connection with GLX; try starting it with "
                 "QT_QPA_PLATFORM=xcb.")
                  .arg(QGuiApplication::platformName()));
+#else
+        fail(tr("The 3D viewer could not use the OpenGL context created by Qt (platform \"%1\"). "
+                "LCAD needs OpenGL 3.3 or newer from the graphics driver.")
+                 .arg(QGuiApplication::platformName()));
+#endif
         return;
     }
 
@@ -2716,13 +2734,21 @@ void ViewportWidget::initializeGL() {
     // screen), leaving OCCT holding a window that no longer exists. And never a native window
     // of this widget's own (winId()), which breaks how Qt composes QOpenGLWidget with the
     // widgets around it.
+#if defined(Q_OS_WIN)
+    // On Windows, the window whose device context Qt made current: the widget's own offscreen
+    // surface, which has the pixel format the context needs and lives as long as the context.
+    // OCCT's own Qt sample does the same. A window of LCAD's own would have no pixel format
+    // until a context had been made current on it.
+    window->SetNativeHandle((Aspect_Drawable)WindowFromDC(wglGetCurrentDC()));
+#else
     if (!m_impl->anchorWindow) {
         m_impl->anchorWindow = std::make_unique<QWindow>();
         m_impl->anchorWindow->setSurfaceType(QSurface::OpenGLSurface);
         m_impl->anchorWindow->setFormat(context()->format());
         m_impl->anchorWindow->create();
     }
-    window->SetNativeHandle(static_cast<Aspect_Drawable>(m_impl->anchorWindow->winId()));
+    window->SetNativeHandle((Aspect_Drawable)m_impl->anchorWindow->winId());
+#endif
     window->SetSize(width(), height());
     window->setDevicePixelRatio(devicePixelRatioF());
     m_impl->view->SetWindow(window, glContext->RenderingContext());

@@ -10,6 +10,7 @@
 #include <lcad/app/Commands.h>
 #include <lcad/app/JointPanel.h>
 #include <lcad/app/MovePanel.h>
+#include <lcad/app/Paths.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/Recovery.h>
 #include <lcad/document/File.h>
@@ -49,10 +50,6 @@ using viewport::SelectedItem;
 using viewport::SelectionFilter;
 
 const char* const partDirectoryKey = "files/lastPartDirectory";
-
-std::filesystem::path toPath(const QString& path) {
-    return std::filesystem::path(QFile::encodeName(path).toStdString());
-}
 
 bool startsWith(const std::vector<document::ObjectId>& path,
                 const std::vector<document::ObjectId>& prefix) {
@@ -362,7 +359,7 @@ void MainWindow::defineAssemblyCommands() {
             component->link, filePath().isEmpty() ? std::filesystem::path()
                                                   : toPath(QFileInfo(filePath()).absolutePath()));
         QString error;
-        if (!loadFrom(QString::fromStdString(linked.string()), &error)) {
+        if (!loadFrom(fromPath(linked), &error)) {
             QMessageBox::warning(this, tr("Could not open the linked file"), error);
         }
     };
