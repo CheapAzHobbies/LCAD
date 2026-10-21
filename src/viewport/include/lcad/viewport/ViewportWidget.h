@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include <lcad/document/Assembly.h>
 #include <lcad/document/ObjectId.h>
+#include <lcad/kernel/Transform.h>
 
 #include <QColor>
 #include <QOpenGLWidget>
@@ -16,6 +18,8 @@
 #include <memory>
 #include <optional>
 #include <vector>
+
+class QLineEdit;
 
 namespace lcad::kernel {
 class Shape;
@@ -126,6 +130,9 @@ struct SelectedItem {
     /// The number kernel::subShape() knows the face, edge, or vertex by. -1 for a whole body
     /// and for a sketch.
     int index = -1;
+    /// Which appearance of the body it is: the occurrences from the root down to where it was
+    /// picked (see document::Instance). Empty for a body of the root, and for a sketch.
+    std::vector<document::ObjectId> path = {};
 
     friend bool operator==(const SelectedItem&, const SelectedItem&) = default;
 };
@@ -172,8 +179,10 @@ public:
     [[nodiscard]] document::Document* document() const;
 
     /// Shows `shape` see-through on top of the document, as a preview of what a command is
-    /// about to create. It cannot be picked. A null shape removes the preview.
-    void setPreview(const kernel::Shape& shape);
+    /// about to create. It cannot be picked. A null shape removes the preview. The shape is in
+    /// the coordinates of the component being worked on (see setEditPath()), or, with
+    /// `rootCoordinates`, of the root.
+    void setPreview(const kernel::Shape& shape, bool rootCoordinates = false);
     /// Shows what a feature would make while its values are being chosen: `result` drawn as a
     /// body, in place of the body `replaces`, which is hidden meanwhile (an invalid id hides
     /// none). The preview cannot be picked. If `pickable`, the body it replaces is not hidden
@@ -182,6 +191,41 @@ public:
     /// again.
     void setFeaturePreview(document::ObjectId replaces, const kernel::Shape& result,
                            bool pickable = false);
+
+    /// Where new things go and are previewed, and sketches are edited: the occurrence (the path
+    /// to it from the root) of the component that is being worked on. Empty for the root. A
+    /// preview, a sketch being edited, and the planes a new sketch is chosen on are shown where
+    /// that occurrence is.
+    void setEditPath(const std::vector<document::ObjectId>& path);
+    [[nodiscard]] std::vector<document::ObjectId> editPath() const;
+    /// Shows the occurrences where these say instead of where the document has them: for
+    /// joints in motion. An empty list shows them where the document has them again.
+    void showInstances(const std::vector<document::Instance>& instances);
+    /// Shows shapes, placed in the root's coordinates, in the conflict color over everything:
+    /// where parts overlap. An empty list removes them.
+    void setHighlights(const std::vector<kernel::Shape>& shapes);
+    /// Small X, Y, Z arrows at these frames, in the root's coordinates: where a joint is being
+    /// placed. An empty list removes them.
+    void setFrameMarkers(const std::vector<kernel::Placement>& frames);
+
+    // A handle that sets a distance
+
+    /// Shows an arrow that is dragged to set a distance, as a pull's: it stands `distance` from
+    /// `base` along `direction` (of unit length), in the coordinates of the component being
+    /// worked on, and points the way the distance goes. Dragging it along that line reports
+    /// distanceDragged(); a box beside it shows the distance, and what is typed there is
+    /// reported by distanceEntered(). Called again while it is dragged, it moves and the drag
+    /// goes on.
+    void setDistanceHandle(const kernel::Point& base, const kernel::Vector& direction,
+                           double distance);
+    void clearDistanceHandle();
+    [[nodiscard]] bool hasDistanceHandle() const;
+    /// Where the arrow's tip is, in the widget's coordinates. Meaningful once a frame is drawn.
+    [[nodiscard]] QPointF distanceHandlePosition() const;
+    /// A point along the arrow, on screen: where to press to drag it.
+    [[nodiscard]] QPointF distanceHandleGrip() const;
+    /// The box beside the arrow, or nullptr while there is no arrow.
+    [[nodiscard]] QLineEdit* distanceField() const;
 
     // The camera
 
@@ -330,6 +374,10 @@ signals:
     void profilesPicked();
     /// Emitted once if the viewport cannot start rendering.
     void initializationFailed(const QString& reason);
+    /// The distance handle was dragged to this distance, rounded to a tenth of a millimeter.
+    void distanceDragged(double distance);
+    /// Text was typed into the box beside the distance handle, and Enter pressed.
+    void distanceEntered(const QString& text);
 
 protected:
     void initializeGL() override;

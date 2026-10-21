@@ -4,6 +4,7 @@
 
 #include <lcad/document/Document.h>
 #include <lcad/kernel/Shape.h>
+#include <lcad/kernel/Transform.h>
 #include <lcad/sketch/Edit.h>
 #include <lcad/sketch/Sketch.h>
 
@@ -165,6 +166,9 @@ public:
 
     // For the viewport
 
+    /// Where the sketch's component is shown: the sketch is drawn, and clicks are taken, on its
+    /// plane placed so. What projectShape() is given is in the same, the root's, coordinates.
+    void setPlacement(const kernel::Placement& placement);
     void begin(document::Document* document, document::ObjectId sketch);
     void end();
     void documentChanged(const document::Change& change);

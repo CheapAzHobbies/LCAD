@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<component type="desktop-application">
+  <id>io.github.cheapazhobbies.LCAD</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>LCAD</name>
+  <summary>Parametric 3D CAD that runs offline</summary>
+  <description>
+    <p>
+      LCAD is a parametric 3D CAD program for designing mechanical parts and assemblies:
+      sketches with constraints, solids built from features in a timeline, components joined
+      into assemblies, and files for 3D printing and other CAD programs.
+    </p>
+    <p>
+      It works without an account and without the internet. Documents are files on your own
+      computer.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.cheapazhobbies.LCAD.desktop</launchable>
+  <url type="homepage">https://github.com/CheapAzHobbies/LCAD</url>
+  <url type="bugtracker">https://github.com/CheapAzHobbies/LCAD/issues</url>
+  <developer id="io.github.cheapazhobbies">
+    <name>CheapAzHobbies</name>
+  </developer>
+  <categories>
+    <category>Graphics</category>
+    <category>3DGraphics</category>
+    <category>Engineering</category>
+  </categories>
+  <keywords>
+    <keyword>CAD</keyword>
+    <keyword>3D</keyword>
+    <keyword>parametric</keyword>
+    <keyword>assembly</keyword>
+  </keywords>
+  <provides>
+    <binary>lcad</binary>
+    <mediatype>application/x-lcad</mediatype>
+  </provides>
+  <requires>
+    <display_length compare="ge">1024</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.0.1" type="development" date="2026-10-19">
+      <description>
+        <p>A development version, not yet released.</p>
+      </description>
+    </release>
+  </releases>
+</component>

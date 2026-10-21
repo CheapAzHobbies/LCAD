@@ -205,7 +205,7 @@ void ApplicationTest::windowHasItsFiveRegions() {
     QCOMPARE(
         menus,
         (QStringList{QStringLiteral("File"), QStringLiteral("Edit"), QStringLiteral("Create"),
-                     QStringLiteral("Modify"), QStringLiteral("Sketch"), QStringLiteral("Select"),
+                     QStringLiteral("Modify"), QStringLiteral("Assemble"), QStringLiteral("Sketch"),
                      QStringLiteral("View"), QStringLiteral("Window"), QStringLiteral("Help")}));
     QList<QAction*> quickActions;
     for (const QToolButton* button :
@@ -575,8 +575,11 @@ void ApplicationTest::browserListsBodiesAndEditsThem() {
     QCOMPARE(tree->topLevelItemCount(), 1);
     QTreeWidgetItem* root = tree->topLevelItem(0);
     QCOMPARE(root->text(0), QStringLiteral("Untitled"));
-    QCOMPARE(root->childCount(), 4);
+    QCOMPARE(root->childCount(), 5);
     QCOMPARE(root->child(0)->text(0), QStringLiteral("Origin"));
+    // Joints come last, hidden while there are none; components would come before them.
+    QCOMPARE(root->child(4)->text(0), QStringLiteral("Joints"));
+    QVERIFY(root->child(4)->isHidden());
     // Construction planes have a group of their own, hidden while there are none.
     QCOMPARE(root->child(3)->text(0), QStringLiteral("Construction"));
     QVERIFY(root->child(3)->isHidden());

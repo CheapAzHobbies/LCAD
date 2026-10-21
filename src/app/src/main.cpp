@@ -2,6 +2,7 @@
 
 #include <lcad/app/Application.h>
 #include <lcad/app/MainWindow.h>
+#include <lcad/app/Recovery.h>
 #include <lcad/app/Theme.h>
 #include <lcad/core/Log.h>
 #include <lcad/viewport/ViewportWidget.h>
@@ -43,6 +44,10 @@ int main(int argc, char* argv[]) {
 
     lcad::app::MainWindow window;
     window.show();
+    // Copies of unsaved work, every minute, kept apart from the user's files; and what an LCAD
+    // that did not close properly left there, offered back.
+    window.enableRecovery(lcad::app::defaultRecoveryFolder());
+    window.offerRecovery();
     const QStringList files = parser.positionalArguments();
     if (!files.isEmpty()) {
         QString error;

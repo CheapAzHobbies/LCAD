@@ -711,7 +711,7 @@ TEST_CASE("The preview image is stored and can be read on its own", "[document][
     Document document;
     document.addBody("Box", makeBox(1.0, 2.0, 3.0));
 
-    saveDocument(document, path, SaveOptions{image});
+    saveDocument(document, path, SaveOptions{image, {}, {}});
 
     CHECK(readThumbnail(path) == image);
     CHECK(loadDocument(path).document->bodies().size() == 1);

@@ -10,6 +10,8 @@
 #include <lcad/document/SketchShapes.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/SubShapes.h>
+#include <lcad/kernel/Transform.h>
+#include <lcad/kernel/occt/PlacementAccess.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
 #include <lcad/viewport/SketchEditor.h>
 
@@ -23,7 +25,11 @@
 #include <Aspect_NeutralWindow.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
+#include <Font_NameOfFont.hxx>
 #include <Graphic3d_CView.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
@@ -33,13 +39,17 @@
 #include <OpenGl_GraphicDriver.hxx>
 #include <OpenGl_View.hxx>
 #include <OpenGl_Window.hxx>
+#include <Prs3d_DatumAspect.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <Prs3d_ShadingAspect.hxx>
+#include <Prs3d_TextAspect.hxx>
 #include <Quantity_Color.hxx>
 #include <SelectMgr_IndexedMapOfOwner.hxx>
 #include <Standard_Failure.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TColStd_IndexedDataMapOfStringString.hxx>
+#include <TopoDS_Compound.hxx>
 #include <V3d_AmbientLight.hxx>
 #include <V3d_DirectionalLight.hxx>
 #include <V3d_View.hxx>
@@ -51,6 +61,7 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
@@ -60,8 +71,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
 #include <optional>
 #include <stdexcept>
+#include <tuple>
 #include <unordered_map>
 
 namespace lcad::viewport {
@@ -291,8 +304,254 @@ public:
 
     document::Document* document = nullptr;
     document::Document::ListenerId listener = 0;
-    std::unordered_map<document::ObjectId, Handle(AIS_Shape)> bodyObjects;
-    std::unordered_map<const Standard_Transient*, document::ObjectId> bodyOfObject;
+    // A body is drawn once for each appearance of its component: by the path to that, and the
+    // body.
+    struct BodyKey {
+        std::vector<document::ObjectId> path;
+        document::ObjectId body;
+        friend bool operator<(const BodyKey& a, const BodyKey& b) {
+            return std::tie(a.path, a.body) < std::tie(b.path, b.body);
+        }
+    };
+    std::map<BodyKey, Handle(AIS_Shape)> bodyObjects;
+    std::unordered_map<const Standard_Transient*, BodyKey> bodyOfObject;
+    // The occurrence of the component being worked on, and, while joints are shown in motion,
+    // where the occurrences are shown instead of where the document has them.
+    std::vector<document::ObjectId> editPath;
+    std::vector<document::Instance> shownInstances;
+    // Where parts overlap, and the frames a joint is being placed by.
+    std::vector<Handle(AIS_Shape)> highlightObjects;
+    std::vector<Handle(AIS_Shape)> markerObjects;
+
+    // An arrow dragged along a line to set a distance, the box beside it, and how it is being
+    // dragged: the distance less where along the line the pointer was when it was taken.
+    struct DistanceHandle {
+        bool shown = false;
+        kernel::Point base;
+        kernel::Vector direction{0.0, 0.0, 1.0};
+        double distance = 0.0;
+        Handle(AIS_Shape) object;
+        QLineEdit* field = nullptr;
+        bool hovered = false;
+        bool dragging = false;
+        double grab = 0.0;
+    };
+    DistanceHandle handle;
+    // How long the arrow is drawn, shaft and head, in pixels.
+    static constexpr double handleShaft = 44.0;
+    static constexpr double handleHead = 16.0;
+
+    // The line the handle moves along, in the root's coordinates.
+    [[nodiscard]] std::pair<gp_Pnt, gp_Dir> handleLine() const {
+        const kernel::Placement at = editPlacement();
+        const kernel::Point base = kernel::apply(at, handle.base);
+        const kernel::Vector along = kernel::apply(at, handle.direction);
+        return {gp_Pnt(base.x, base.y, base.z), gp_Dir(along.x, along.y, along.z)};
+    }
+
+    [[nodiscard]] gp_Pnt handleTip() const {
+        const auto [base, along] = handleLine();
+        return base.Translated(gp_Vec(along) * handle.distance);
+    }
+
+    // The way the arrow points: the way the distance goes.
+    [[nodiscard]] gp_Dir handlePointing() const {
+        const gp_Dir along = handleLine().second;
+        return handle.distance < 0.0 ? along.Reversed() : along;
+    }
+
+    void showHandle() {
+        if (context.IsNull()) {
+            return;
+        }
+        if (!handle.object.IsNull()) {
+            context->Remove(handle.object, false);
+            handle.object.Nullify();
+        }
+        if (!handle.shown) {
+            return;
+        }
+        // In pixels, from the tip, which is the anchor: a shaft and a head, the size they are
+        // on screen at any zoom.
+        const gp_Dir pointing = handlePointing();
+        const double scale = pixelRatio;
+        const gp_Pnt start(0.0, 0.0, 0.0);
+        const TopoDS_Shape shaft =
+            BRepPrimAPI_MakeCylinder(gp_Ax2(start, pointing), 2.8 * scale, handleShaft * scale)
+                .Shape();
+        const TopoDS_Shape head =
+            BRepPrimAPI_MakeCone(
+                gp_Ax2(start.Translated(gp_Vec(pointing) * handleShaft * scale), pointing),
+                8.0 * scale, 0.0, handleHead * scale)
+                .Shape();
+        TopoDS_Compound arrow;
+        BRep_Builder builder;
+        builder.MakeCompound(arrow);
+        builder.Add(arrow, shaft);
+        builder.Add(arrow, head);
+        handle.object = new AIS_Shape(arrow);
+        handle.object->SetMaterial(bodyMaterial());
+        handle.object->SetColor(
+            toOcct(handle.hovered || handle.dragging ? colors.hover : colors.selection));
+        handle.object->Attributes()->SetFaceBoundaryDraw(false);
+        handle.object->SetTransformPersistence(
+            new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, handleTip()));
+        handle.object->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        // Picked by its own test (overHandle()), never selected.
+        context->Display(handle.object, AIS_Shaded, -1, false);
+    }
+
+    // Where the arrow is on screen: from its tip, the way it points, as long as it is drawn.
+    [[nodiscard]] std::pair<QPointF, QPointF> handleOnScreen() const {
+        const gp_Pnt tip = handleTip();
+        const QPointF from = m_widget->project(tip.X(), tip.Y(), tip.Z());
+        // How many pixels a millimeter is across the view at the tip, and how many along the
+        // arrow, which is less where it points away from the viewer.
+        const gp_Dir up = view->Camera()->Up();
+        const gp_Pnt across = tip.Translated(gp_Vec(up));
+        const gp_Pnt ahead = tip.Translated(gp_Vec(handlePointing()));
+        const QPointF a = m_widget->project(across.X(), across.Y(), across.Z());
+        const QPointF b = m_widget->project(ahead.X(), ahead.Y(), ahead.Z());
+        const double perMillimeter = std::hypot(a.x() - from.x(), a.y() - from.y());
+        if (!(perMillimeter > 1e-9)) {
+            return {from, from};
+        }
+        const double length = handleShaft + handleHead;
+        return {from, from + (b - from) * (length / perMillimeter)};
+    }
+
+    [[nodiscard]] bool overHandle(const QPointF& position) const {
+        if (!handle.shown || !canRender()) {
+            return false;
+        }
+        const auto [from, to] = handleOnScreen();
+        const QPointF along = to - from;
+        const double squared = QPointF::dotProduct(along, along);
+        double t = 0.0;
+        if (squared > 1e-9) {
+            t = std::clamp(QPointF::dotProduct(position - from, along) / squared, 0.0, 1.0);
+        }
+        const QPointF nearest = from + along * t;
+        return std::hypot(position.x() - nearest.x(), position.y() - nearest.y()) <= 9.0;
+    }
+
+    // Where along the handle's line the line of sight through a position passes nearest: the
+    // distance from the base. Nothing where the line runs along the line of sight.
+    [[nodiscard]] std::optional<double> handleParameterAt(const QPointF& position) const {
+        int widthPixels = 0;
+        int heightPixels = 0;
+        view->Window()->Size(widthPixels, heightPixels);
+        if (widthPixels <= 0 || heightPixels <= 0) {
+            return std::nullopt;
+        }
+        const qreal scale = m_widget->devicePixelRatioF();
+        const double deviceX = position.x() * scale / widthPixels * 2.0 - 1.0;
+        const double deviceY = 1.0 - position.y() * scale / heightPixels * 2.0;
+        const Handle(Graphic3d_Camera)& camera = view->Camera();
+        const gp_Pnt nearer = camera->UnProject(gp_Pnt(deviceX, deviceY, -1.0));
+        const gp_Pnt farther = camera->UnProject(gp_Pnt(deviceX, deviceY, 1.0));
+        if (nearer.Distance(farther) < 1e-12) {
+            return std::nullopt;
+        }
+        const gp_Dir sight(gp_Vec(nearer, farther));
+        const auto [base, along] = handleLine();
+        // The nearest points of two lines: base + s along, and nearer + t sight.
+        const gp_Vec w(nearer, base);
+        const double b = gp_Vec(along).Dot(gp_Vec(sight));
+        const double d = gp_Vec(along).Dot(w);
+        const double e = gp_Vec(sight).Dot(w);
+        const double denominator = 1.0 - b * b;
+        if (denominator < 1e-6) {
+            return std::nullopt;
+        }
+        return (b * e - d) / denominator;
+    }
+
+    // Puts the box beside the arrow's tip, and shows the distance in it unless it is being
+    // typed in.
+    void placeHandleField() {
+        if (handle.field == nullptr) {
+            return;
+        }
+        if (!handle.field->hasFocus()) {
+            handle.field->setText(ViewportWidget::tr("%1 mm").arg(
+                QString::number(std::round(handle.distance * 1000.0) / 1000.0, 'g', 10)));
+        }
+        if (!canRender()) {
+            return;
+        }
+        const auto [from, to] = handleOnScreen();
+        const QSize size(std::max(84, handle.field->sizeHint().width()),
+                         handle.field->sizeHint().height());
+        // Beside the head of the arrow, on the side away from it.
+        QPointF at = to + QPointF(14.0, -size.height() / 2.0);
+        if (to.x() < from.x()) {
+            at = to + QPointF(-14.0 - size.width(), -size.height() / 2.0);
+        }
+        QRect place(at.toPoint(), size);
+        place.moveLeft(
+            std::clamp(place.left(), 2, std::max(2, m_widget->width() - size.width() - 2)));
+        place.moveTop(
+            std::clamp(place.top(), 2, std::max(2, m_widget->height() - size.height() - 2)));
+        handle.field->setGeometry(place);
+    }
+
+    [[nodiscard]] const std::vector<document::Instance>& instances() const {
+        static const std::vector<document::Instance> rootOnly{document::Instance{}};
+        if (!shownInstances.empty()) {
+            return shownInstances;
+        }
+        return document != nullptr ? document->instances() : rootOnly;
+    }
+
+    [[nodiscard]] const document::Instance*
+    instanceAt(const std::vector<document::ObjectId>& path) const {
+        for (const document::Instance& instance : instances()) {
+            if (instance.path == path) {
+                return &instance;
+            }
+        }
+        return nullptr;
+    }
+
+    // Where what is shown of a component only once is shown: at the occurrence being worked on
+    // if that is one of the component's, or else at its first.
+    [[nodiscard]] kernel::Placement placementFor(document::ObjectId component) const {
+        if (const document::Instance* edited = instanceAt(editPath);
+            edited != nullptr && edited->component == component) {
+            return edited->placement;
+        }
+        for (const document::Instance& instance : instances()) {
+            if (instance.component == component) {
+                return instance.placement;
+            }
+        }
+        return {};
+    }
+
+    // Whether a component appears, shown, anywhere: what is drawn once for it is not drawn
+    // otherwise.
+    [[nodiscard]] bool isShown(document::ObjectId component) const {
+        return std::any_of(instances().begin(), instances().end(),
+                           [component](const document::Instance& instance) {
+                               return instance.component == component && instance.visible;
+                           });
+    }
+
+    [[nodiscard]] kernel::Placement editPlacement() const {
+        const document::Instance* edited = instanceAt(editPath);
+        return edited != nullptr ? edited->placement : kernel::Placement{};
+    }
+
+    [[nodiscard]] document::ObjectId componentOfBody(document::ObjectId body) const {
+        const document::Body* found = document != nullptr ? document->findBody(body) : nullptr;
+        return found != nullptr ? found->component : document::ObjectId{};
+    }
+
+    static void place(const Handle(AIS_InteractiveObject)& object,
+                      const kernel::Placement& placement) {
+        object->SetLocalTransformation(kernel::occt::toTrsf(placement));
+    }
     // A sketch that is shown but not being edited is two objects: its ordinary geometry, and
     // its construction geometry drawn dashed.
     struct SketchObjects {
@@ -365,18 +624,19 @@ public:
 
     // Draws a body as it should be now: plain, or as the ghost under a preview.
     void restyle(document::ObjectId id) {
-        const auto found = bodyObjects.find(id);
-        if (found == bodyObjects.end()) {
-            return;
+        for (const auto& [key, object] : bodyObjects) {
+            if (key.body != id) {
+                continue;
+            }
+            styleBody(object);
+            if (ghosted(id)) {
+                ghost(object);
+                context->SetDisplayMode(object, AIS_Shaded, false);
+            } else {
+                context->SetDisplayMode(object, displayMode(), false);
+            }
+            context->Redisplay(object, false);
         }
-        styleBody(found->second);
-        if (ghosted(id)) {
-            ghost(found->second);
-            context->SetDisplayMode(found->second, AIS_Shaded, false);
-        } else {
-            context->SetDisplayMode(found->second, displayMode(), false);
-        }
-        context->Redisplay(found->second, false);
     }
     // Physical pixels per logical pixel of the screen the viewport is on.
     double pixelRatio = 1.0;
@@ -392,6 +652,12 @@ public:
         viewCube->SetSize(viewCubeSize * ratio);
         // Not multiplied: the resolution above already scales text.
         viewCube->SetFontHeight(viewCubeSize * 0.2);
+        // The arrows along its edges, thick enough to tell their colors apart.
+        viewCube->SetAxesRadius(1.6 * ratio);
+        viewCube->SetAxesConeRadius(4.0 * ratio);
+        viewCube->SetAxesSphereRadius(3.0 * ratio);
+        // Out past the cube, so that the arrow going away from the viewer shows behind it.
+        viewCube->SetAxesPadding(10.0 * ratio);
         const int offset = static_cast<int>(std::lround(viewCubeOffset * ratio));
         viewCube->SetTransformPersistence(new Graphic3d_TransformPers(
             Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(offset, offset)));
@@ -469,8 +735,14 @@ public:
     }
 
     void restyleBodies() {
+        std::vector<document::ObjectId> bodies;
         for (const auto& entry : bodyObjects) {
-            restyle(entry.first);
+            if (std::find(bodies.begin(), bodies.end(), entry.first.body) == bodies.end()) {
+                bodies.push_back(entry.first.body);
+            }
+        }
+        for (const document::ObjectId body : bodies) {
+            restyle(body);
         }
         if (!featureResult.IsNull()) {
             styleBody(featureResult);
@@ -505,6 +777,23 @@ public:
         viewCube->BoxEdgeStyle()->SetColor(toOcct(colors.cubeEdge));
         viewCube->BoxCornerStyle()->SetColor(toOcct(colors.cubeEdge));
         viewCube->SetTextColor(toOcct(colors.cubeText));
+        // Its arrows red, green, and blue, as the origin's axes are, and labeled.
+        const Handle(Prs3d_DatumAspect)& axes = viewCube->Attributes()->DatumAspect();
+        if (!axes.IsNull()) {
+            const std::array<std::pair<Prs3d_DatumParts, OriginItem>, 3> parts{{
+                {Prs3d_DatumParts_XAxis, OriginItem::AxisX},
+                {Prs3d_DatumParts_YAxis, OriginItem::AxisY},
+                {Prs3d_DatumParts_ZAxis, OriginItem::AxisZ},
+            }};
+            for (const auto& [part, item] : parts) {
+                axes->ShadingAspect(part)->SetColor(toOcct(ViewportWidget::originColor(item)));
+                // Each label in its axis's color, which reads on both themes' backgrounds, and in
+                // the sans-serif font the cube's sides use: the labels' own default is a Times
+                // that a desktop need not have.
+                axes->TextAspect(part)->SetColor(toOcct(ViewportWidget::originColor(item)));
+                axes->TextAspect(part)->SetFont(Font_NOF_SANS_SERIF);
+            }
+        }
         if (context->IsDisplayed(viewCube)) {
             context->Redisplay(viewCube, false);
         }
@@ -610,10 +899,10 @@ public:
     // A patch of an origin plane to click on, while a plane is being chosen: larger than the
     // guide, drawn over everything else, and lit up under the pointer.
     //
-    // The patches are solid, not see-through. Seen from most directions one patch lies in front
-    // of part of another, and see-through patches mix their colors there, so that the plane a
-    // click would get is drawn in a color that belongs to none of them. Solid, what is seen is
-    // what is clicked.
+    // The patches are only slightly see-through (the owner asked to see the model through
+    // them, 2026-10-19). Where one lay in front of another, see-through patches would mix their
+    // colors, so that the plane a click gets is drawn in a color that belongs to neither; the
+    // layout below keeps them from lying in front of each other.
     //
     // Each patch reaches from the origin along its two axes toward the side the viewer was on
     // when the choosing began (pickSides). Three patches laid out that way are the inside of a
@@ -628,14 +917,21 @@ public:
         const auto range = [this, size](std::size_t axis) {
             return pickSides[axis] > 0 ? std::pair(0.0, size) : std::pair(-size, 0.0);
         };
+        // The planes of the component being worked on, where it is: turned as it is, and drawn
+        // from the anchor below, which is where it is.
+        const kernel::Placement at = editPlacement();
+        kernel::Placement turned = at;
+        turned.origin = {};
+        gp_Ax3 axes = originPlaneAxes(item);
+        axes.Transform(kernel::occt::toTrsf(turned));
         Handle(AIS_Shape) object =
-            new AIS_Shape(BRepBuilderAPI_MakeFace(gp_Pln(originPlaneAxes(item)), range(u).first,
-                                                  range(u).second, range(v).first, range(v).second)
+            new AIS_Shape(BRepBuilderAPI_MakeFace(gp_Pln(axes), range(u).first, range(u).second,
+                                                  range(v).first, range(v).second)
                               .Shape());
         // Not marked as infinite, as the guides are: OCCT draws an infinite shape as its
         // outline only, and these are meant to be seen as planes.
-        object->SetTransformPersistence(
-            new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, gp_Pnt(0.0, 0.0, 0.0)));
+        object->SetTransformPersistence(new Graphic3d_TransformPers(
+            Graphic3d_TMF_ZoomPers, gp_Pnt(at.origin.x, at.origin.y, at.origin.z)));
         object->SetZLayer(Graphic3d_ZLayerId_Topmost);
         stylePickPlane(object, item, false);
         return object;
@@ -650,6 +946,8 @@ public:
         }
         object->SetMaterial(bodyMaterial());
         object->SetColor(toOcct(fill));
+        // Slightly see-through, so that the model behind shows; less so under the pointer.
+        object->SetTransparency(hovered ? 0.15 : 0.35);
         object->Attributes()->SetFaceBoundaryDraw(true);
         object->Attributes()->SetFaceBoundaryAspect(
             new Prs3d_LineAspect(toOcct(hovered ? colors.hover : colors.bodyEdge), Aspect_TOL_SOLID,
@@ -730,6 +1028,9 @@ public:
             return;
         }
         for (const document::Feature& feature : document->features()) {
+            if (!isShown(feature.component)) {
+                continue;
+            }
             if (feature.kind == document::FeatureKind::Axis && feature.visible) {
                 showAxis(feature.id);
             }
@@ -747,6 +1048,7 @@ public:
                 continue;
             }
             Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(shape));
+            place(object, placementFor(feature.component));
             styleConstruction(object, feature.id == hoveredConstruction);
             context->Display(object, AIS_Shaded,
                              planePicking ? AIS_Shape::SelectionMode(TopAbs_SHAPE) : -1, false);
@@ -767,6 +1069,9 @@ public:
             return;
         }
         Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(shape));
+        if (const document::Feature* feature = document->findFeature(id)) {
+            place(object, placementFor(feature->component));
+        }
         const Quantity_Color amber = toOcct(QColor(224, 160, 48));
         object->SetColor(amber);
         const Handle(Prs3d_Drawer)& drawer = object->Attributes();
@@ -856,6 +1161,7 @@ public:
                 Profile profile{id, regions[i].outer};
                 std::sort(profile.outline.begin(), profile.outline.end());
                 Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(faces[i]));
+                place(object, placementFor(sketch->component));
                 // Over a body's face that lies in the sketch's plane, but behind whatever is
                 // in front of it, such as the preview of what is being made of it. Picking
                 // ignores what hides it: nothing else can be picked meanwhile.
@@ -906,12 +1212,12 @@ public:
         if (body == bodyOfObject.end()) {
             return std::nullopt;
         }
-        SelectedItem item{body->second, SelectedItem::Kind::Body, -1};
+        SelectedItem item{body->second.body, SelectedItem::Kind::Body, -1, body->second.path};
         const Handle(StdSelect_BRepOwner) shapeOwner = Handle(StdSelect_BRepOwner)::DownCast(owner);
         if (!shapeOwner.IsNull() && shapeOwner->HasShape()) {
             const TopoDS_Shape& part = shapeOwner->Shape();
             const document::Body* source =
-                document != nullptr ? document->findBody(body->second) : nullptr;
+                document != nullptr ? document->findBody(body->second.body) : nullptr;
             const int index =
                 source != nullptr ? kernel::occt::subShapeIndex(source->shape, part) : -1;
             if (index >= 0) {
@@ -1047,7 +1353,7 @@ public:
             return;
         }
         hideSketch(sketch.id);
-        if (!sketch.visible || sketch.id == activeSketch) {
+        if (!sketch.visible || sketch.id == activeSketch || !isShown(sketch.component)) {
             return;
         }
         const bool wasEmpty = bodyObjects.empty() && sketchObjects.empty();
@@ -1059,6 +1365,7 @@ public:
                 return object;
             }
             object = new AIS_Shape(kernel::occt::unwrap(shape));
+            place(object, placementFor(sketch.component));
             styleSketch(object, part == document::SketchPart::Construction);
             context->Display(object, AIS_WireFrame, AIS_Shape::SelectionMode(TopAbs_SHAPE), false);
             applySketchFilter(object);
@@ -1082,7 +1389,8 @@ public:
         const document::SketchItem* sketch =
             document != nullptr && sketching() ? document->findSketch(activeSketch) : nullptr;
         if (sketch != nullptr) {
-            const kernel::Plane& plane = sketch->plane;
+            const kernel::Plane plane =
+                kernel::apply(placementFor(sketch->component), sketch->plane);
             axes = gp_Ax3(gp_Pnt(plane.origin.x, plane.origin.y, plane.origin.z),
                           gp_Dir(plane.normal.x, plane.normal.y, plane.normal.z),
                           gp_Dir(plane.xDirection.x, plane.xDirection.y, plane.xDirection.z));
@@ -1098,8 +1406,11 @@ public:
             document != nullptr && sketching() ? document->findSketch(activeSketch) : nullptr;
         if (sketch != nullptr) {
             if (const auto bounds = document::sketchBounds(*sketch)) {
-                box.Add(gp_Pnt(bounds->min.x, bounds->min.y, bounds->min.z));
-                box.Add(gp_Pnt(bounds->max.x, bounds->max.y, bounds->max.z));
+                const kernel::Placement at = placementFor(sketch->component);
+                for (const kernel::Point& corner : {bounds->min, bounds->max}) {
+                    const kernel::Point p = kernel::apply(at, corner);
+                    box.Add(gp_Pnt(p.x, p.y, p.z));
+                }
             }
         }
         return box;
@@ -1107,39 +1418,101 @@ public:
 
     // `reshaped` for a body that was shown before with another shape: that one leaves the
     // camera alone even if it is the only body.
+    // Shows a body at each visible appearance of its component where it is not shown yet.
     void showBody(const document::Body& body, bool reshaped = false) {
-        if (context.IsNull() || bodyObjects.contains(body.id) || body.shape.isNull() ||
+        if (context.IsNull() || body.shape.isNull() ||
             (body.id == previewReplaces && !previewGhost)) {
             // A body whose feature fails, is suppressed, or lies beyond the history marker does
             // not exist at the moment. One that a feature's preview stands in for is not shown.
             return;
         }
-        const bool wasEmpty = bodyObjects.empty() && !reshaped;
-        Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(body.shape));
-        styleBody(object);
-        if (ghosted(body.id)) {
-            ghost(object);
-        }
-        // Displaying with the whole-shape mode first prepares the owner that selecting the body
-        // as a whole needs, whichever filter is active afterwards.
-        context->Display(object, displayMode(), AIS_Shape::SelectionMode(TopAbs_SHAPE), false);
-        applyFilter(object);
-        bodyObjects.emplace(body.id, object);
-        bodyOfObject.emplace(object.get(), body.id);
-        if (wasEmpty) {
-            // The first body defines the scale of the scene. Later ones leave the camera alone.
-            fitPending = true;
+        for (const document::Instance& instance : instances()) {
+            if (instance.component != body.component || !instance.visible) {
+                continue;
+            }
+            BodyKey key{instance.path, body.id};
+            if (bodyObjects.contains(key)) {
+                continue;
+            }
+            const bool wasEmpty = bodyObjects.empty() && !reshaped;
+            Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(body.shape));
+            place(object, instance.placement);
+            styleBody(object);
+            if (ghosted(body.id)) {
+                ghost(object);
+            }
+            // Displaying with the whole-shape mode first prepares the owner that selecting the
+            // body as a whole needs, whichever filter is active afterwards.
+            context->Display(object, displayMode(), AIS_Shape::SelectionMode(TopAbs_SHAPE), false);
+            applyFilter(object);
+            bodyOfObject.emplace(object.get(), key);
+            bodyObjects.emplace(std::move(key), object);
+            if (wasEmpty) {
+                // The first body defines the scale of the scene. Later ones leave the camera
+                // alone.
+                fitPending = true;
+            }
         }
     }
 
     void hideBody(document::ObjectId id) {
-        const auto found = bodyObjects.find(id);
-        if (found == bodyObjects.end()) {
+        for (auto entry = bodyObjects.begin(); entry != bodyObjects.end();) {
+            if (entry->first.body != id) {
+                ++entry;
+                continue;
+            }
+            context->Remove(entry->second, false);
+            bodyOfObject.erase(entry->second.get());
+            entry = bodyObjects.erase(entry);
+        }
+    }
+
+    // Shows every body at every visible appearance of its component, where that now is, and
+    // nothing else.
+    void syncBodies() {
+        if (context.IsNull()) {
             return;
         }
-        context->Remove(found->second, false);
-        bodyOfObject.erase(found->second.get());
-        bodyObjects.erase(found);
+        for (auto entry = bodyObjects.begin(); entry != bodyObjects.end();) {
+            const document::Body* body =
+                document != nullptr ? document->findBody(entry->first.body) : nullptr;
+            const document::Instance* instance = instanceAt(entry->first.path);
+            if (body == nullptr || !body->visible || body->shape.isNull() || instance == nullptr ||
+                !instance->visible || instance->component != body->component) {
+                context->Remove(entry->second, false);
+                bodyOfObject.erase(entry->second.get());
+                entry = bodyObjects.erase(entry);
+                continue;
+            }
+            context->SetLocation(entry->second,
+                                 TopLoc_Location(kernel::occt::toTrsf(instance->placement)));
+            ++entry;
+        }
+        if (document != nullptr) {
+            for (const document::Body& body : document->bodies()) {
+                if (body.visible) {
+                    showBody(body, true);
+                }
+            }
+        }
+    }
+
+    // Puts what is shown once for its component (sketches, construction geometry, the sketch
+    // being edited) where its component now is.
+    void replaceSingles() {
+        if (document == nullptr) {
+            return;
+        }
+        for (const document::SketchItem& sketch : document->sketches()) {
+            showSketch(sketch);
+        }
+        showConstructionPlanes();
+        if (sketching()) {
+            if (const document::SketchItem* sketch = document->findSketch(activeSketch)) {
+                editor->setPlacement(placementFor(sketch->component));
+                applyGridPlane();
+            }
+        }
     }
 
     void hideAllBodies() {
@@ -1206,9 +1579,15 @@ public:
             // Construction planes come and go and move with the timeline.
             showConstructionPlanes();
             break;
+        case Kind::AssemblyChanged:
+        case Kind::PlacementsChanged:
+            syncBodies();
+            replaceSingles();
+            break;
         case Kind::SketchRenamed:
         case Kind::ParametersChanged:
         case Kind::HistoryChanged:
+        case Kind::MaterialsChanged:
             return;
         }
         redraw();
@@ -1322,7 +1701,8 @@ ViewportWidget::ViewportWidget(QWidget* parent)
         m_impl->viewCube = new AIS_ViewCube();
         m_impl->viewCube->SetSize(viewCubeSize);
         m_impl->viewCube->SetFontHeight(viewCubeSize * 0.2);
-        m_impl->viewCube->SetDrawAxes(false);
+        // X, Y, and Z as arrows along the cube's edges, in the colors of the origin's axes.
+        m_impl->viewCube->SetDrawAxes(true);
         m_impl->viewCube->SetTransformPersistence(
             new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
                                         Graphic3d_Vec2i(viewCubeOffset, viewCubeOffset)));
@@ -1400,9 +1780,14 @@ void ViewportWidget::setDocument(document::Document* document) {
         m_impl->listener = 0;
     }
     m_impl->document = document;
+    m_impl->editPath.clear();
+    m_impl->shownInstances.clear();
     if (m_impl->context.IsNull()) {
         return;
     }
+    setHighlights({});
+    setFrameMarkers({});
+    clearDistanceHandle();
     m_impl->hideAllBodies();
     setPreview(kernel::Shape());
     if (document != nullptr) {
@@ -1426,7 +1811,7 @@ document::Document* ViewportWidget::document() const {
     return m_impl->document;
 }
 
-void ViewportWidget::setPreview(const kernel::Shape& shape) {
+void ViewportWidget::setPreview(const kernel::Shape& shape, bool rootCoordinates) {
     if (m_impl->context.IsNull()) {
         return;
     }
@@ -1436,6 +1821,9 @@ void ViewportWidget::setPreview(const kernel::Shape& shape) {
     }
     if (!shape.isNull()) {
         m_impl->previewObject = new AIS_Shape(kernel::occt::unwrap(shape));
+        // What a command makes goes into the component being worked on.
+        Impl::place(m_impl->previewObject,
+                    rootCoordinates ? kernel::Placement{} : m_impl->editPlacement());
         m_impl->previewObject->SetMaterial(bodyMaterial());
         m_impl->previewObject->SetColor(toOcct(m_impl->colors.preview));
         m_impl->previewObject->Attributes()->SetFaceBoundaryDraw(true);
@@ -1485,12 +1873,180 @@ void ViewportWidget::setFeaturePreview(document::ObjectId replaces, const kernel
     }
     if (!result.isNull()) {
         m_impl->featureResult = new AIS_Shape(kernel::occt::unwrap(result));
+        Impl::place(m_impl->featureResult,
+                    replaces.isValid() && m_impl->document != nullptr &&
+                            m_impl->document->findBody(replaces) != nullptr
+                        ? m_impl->placementFor(m_impl->componentOfBody(replaces))
+                        : m_impl->editPlacement());
         m_impl->styleBody(m_impl->featureResult);
         // Selection mode -1: displayed, but nothing of it can be picked.
         m_impl->context->Display(m_impl->featureResult, m_impl->displayMode(), -1, false);
     }
     m_impl->redraw();
     m_impl->reportSelection();
+}
+
+void ViewportWidget::setEditPath(const std::vector<document::ObjectId>& path) {
+    if (m_impl->editPath == path) {
+        return;
+    }
+    m_impl->editPath = path;
+    if (m_impl->context.IsNull()) {
+        return;
+    }
+    if (m_impl->planePicking) {
+        m_impl->showPickPlanes();
+    }
+    m_impl->replaceSingles();
+    m_impl->redraw();
+}
+
+std::vector<document::ObjectId> ViewportWidget::editPath() const {
+    return m_impl->editPath;
+}
+
+void ViewportWidget::showInstances(const std::vector<document::Instance>& instances) {
+    m_impl->shownInstances = instances;
+    if (m_impl->context.IsNull()) {
+        return;
+    }
+    m_impl->syncBodies();
+    m_impl->replaceSingles();
+    m_impl->redraw();
+}
+
+void ViewportWidget::setHighlights(const std::vector<kernel::Shape>& shapes) {
+    if (m_impl->context.IsNull()) {
+        return;
+    }
+    for (const Handle(AIS_Shape)& object : m_impl->highlightObjects) {
+        m_impl->context->Remove(object, false);
+    }
+    m_impl->highlightObjects.clear();
+    for (const kernel::Shape& shape : shapes) {
+        if (shape.isNull()) {
+            continue;
+        }
+        Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(shape));
+        object->SetMaterial(bodyMaterial());
+        object->SetColor(toOcct(m_impl->colors.sketchConflict));
+        object->SetTransparency(0.25);
+        object->Attributes()->SetFaceBoundaryDraw(true);
+        object->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(
+            toOcct(m_impl->colors.sketchConflict.darker(150)), Aspect_TOL_SOLID, 1.5));
+        // Inside the bodies it is where they overlap: drawn over them.
+        object->SetZLayer(Graphic3d_ZLayerId_Topmost);
+        m_impl->context->Display(object, AIS_Shaded, -1, false);
+        m_impl->highlightObjects.push_back(object);
+    }
+    m_impl->redraw();
+}
+
+void ViewportWidget::setFrameMarkers(const std::vector<kernel::Placement>& frames) {
+    if (m_impl->context.IsNull()) {
+        return;
+    }
+    for (const Handle(AIS_Shape)& object : m_impl->markerObjects) {
+        m_impl->context->Remove(object, false);
+    }
+    m_impl->markerObjects.clear();
+    // As long on screen at any zoom as the origin guides.
+    const double length = 40.0 * m_impl->pixelRatio;
+    for (const kernel::Placement& frame : frames) {
+        // Drawn from the anchor, which is where the frame is, in pixels.
+        const gp_Pnt origin(frame.origin.x, frame.origin.y, frame.origin.z);
+        const std::array<std::pair<kernel::Vector, OriginItem>, 3> arrows{{
+            {frame.xAxis, OriginItem::AxisX},
+            {frame.yAxis, OriginItem::AxisY},
+            {frame.zAxis, OriginItem::AxisZ},
+        }};
+        for (const auto& [direction, item] : arrows) {
+            const gp_Pnt start(0.0, 0.0, 0.0);
+            const gp_Pnt tip =
+                start.Translated(gp_Vec(direction.x, direction.y, direction.z) * length);
+            Handle(AIS_Shape) object = new AIS_Shape(BRepBuilderAPI_MakeEdge(start, tip).Shape());
+            object->SetColor(toOcct(originColor(item)));
+            object->SetWidth(item == OriginItem::AxisZ ? 3.5 : 2.5);
+            object->SetTransformPersistence(
+                new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, origin));
+            object->SetZLayer(Graphic3d_ZLayerId_Topmost);
+            m_impl->context->Display(object, AIS_WireFrame, -1, false);
+            m_impl->markerObjects.push_back(object);
+        }
+    }
+    m_impl->redraw();
+}
+
+void ViewportWidget::setDistanceHandle(const kernel::Point& base, const kernel::Vector& direction,
+                                       double distance) {
+    const double length = std::hypot(direction.x, direction.y, direction.z);
+    if (!(length > 1e-12) || !std::isfinite(distance)) {
+        clearDistanceHandle();
+        return;
+    }
+    Impl::DistanceHandle& handle = m_impl->handle;
+    handle.shown = true;
+    handle.base = base;
+    handle.direction = {direction.x / length, direction.y / length, direction.z / length};
+    handle.distance = distance;
+    if (handle.field == nullptr) {
+        handle.field = new QLineEdit(this);
+        handle.field->setObjectName(QStringLiteral("distanceValue"));
+        handle.field->setAlignment(Qt::AlignCenter);
+        handle.field->setToolTip(tr("How far: type a distance, negative for the other way, and "
+                                    "press Enter. Or drag the arrow."));
+        connect(handle.field, &QLineEdit::returnPressed, this, [this] {
+            const QString text = m_impl->handle.field->text();
+            m_impl->handle.field->clearFocus();
+            setFocus();
+            emit distanceEntered(text);
+        });
+        handle.field->show();
+    }
+    m_impl->showHandle();
+    m_impl->placeHandleField();
+    m_impl->redraw();
+}
+
+void ViewportWidget::clearDistanceHandle() {
+    Impl::DistanceHandle& handle = m_impl->handle;
+    if (!handle.shown && handle.field == nullptr) {
+        return;
+    }
+    handle.shown = false;
+    handle.dragging = false;
+    handle.hovered = false;
+    if (handle.field != nullptr) {
+        handle.field->hide();
+        handle.field->deleteLater();
+        handle.field = nullptr;
+    }
+    m_impl->showHandle();
+    unsetCursor();
+    m_impl->redraw();
+}
+
+bool ViewportWidget::hasDistanceHandle() const {
+    return m_impl->handle.shown;
+}
+
+QPointF ViewportWidget::distanceHandlePosition() const {
+    if (!m_impl->handle.shown || !m_impl->canRender()) {
+        return {};
+    }
+    return m_impl->handleOnScreen().first;
+}
+
+QPointF ViewportWidget::distanceHandleGrip() const {
+    if (!m_impl->handle.shown || !m_impl->canRender()) {
+        return {};
+    }
+    const auto [from, to] = m_impl->handleOnScreen();
+    return from + (to - from) * 0.4;
+}
+
+QLineEdit* ViewportWidget::distanceField() const {
+    return m_impl->handle.field;
 }
 
 void ViewportWidget::fitAll() {
@@ -1649,7 +2205,10 @@ bool ViewportWidget::editSketch(document::ObjectId sketch) {
     // The editor draws the sketch from here on.
     m_impl->hideSketch(sketch);
     setProjection(Projection::Orthographic);
-    lookAt(found->plane);
+    // A sketch of a component is edited where the component is.
+    const kernel::Placement at = m_impl->placementFor(found->component);
+    m_impl->editor->setPlacement(at);
+    lookAt(kernel::apply(at, found->plane));
     m_impl->applyGridPlane();
     m_impl->editor->begin(m_impl->document, sketch);
     fitAll();
@@ -2018,10 +2577,9 @@ void ViewportWidget::setSelectedBodies(const std::vector<document::ObjectId>& bo
         return;
     }
     m_impl->context->ClearSelected(false);
-    for (const document::ObjectId id : bodies) {
-        const auto found = m_impl->bodyObjects.find(id);
-        if (found != m_impl->bodyObjects.end()) {
-            m_impl->context->AddOrRemoveSelected(found->second, false);
+    for (const auto& [key, object] : m_impl->bodyObjects) {
+        if (std::find(bodies.begin(), bodies.end(), key.body) != bodies.end()) {
+            m_impl->context->AddOrRemoveSelected(object, false);
         }
     }
     m_impl->redraw();
@@ -2045,7 +2603,13 @@ void ViewportWidget::setSelection(const std::vector<SelectedItem>& items) {
             }
             continue;
         }
-        const auto found = m_impl->bodyObjects.find(wanted.body);
+        auto found = m_impl->bodyObjects.find(Impl::BodyKey{wanted.path, wanted.body});
+        if (found == m_impl->bodyObjects.end() && wanted.path.empty()) {
+            // Where the path is not said: the first appearance of the body.
+            found = std::find_if(
+                m_impl->bodyObjects.begin(), m_impl->bodyObjects.end(),
+                [&wanted](const auto& entry) { return entry.first.body == wanted.body; });
+        }
         if (found == m_impl->bodyObjects.end()) {
             continue;
         }
@@ -2061,7 +2625,10 @@ void ViewportWidget::setSelection(const std::vector<SelectedItem>& items) {
             continue;
         }
         for (SelectMgr_IndexedMapOfOwner::Iterator it(*owners); it.More(); it.Next()) {
-            const auto item = m_impl->itemOf(it.Value());
+            auto item = m_impl->itemOf(it.Value());
+            if (item.has_value() && wanted.path.empty()) {
+                item->path.clear();
+            }
             if (item.has_value() && *item == wanted) {
                 m_impl->context->AddOrRemoveSelected(it.Value(), false);
                 break;
@@ -2244,6 +2811,8 @@ void ViewportWidget::paintGL() {
     // Apply the mouse input queued since the last frame, then redraw.
     m_impl->view->InvalidateImmediate();
     m_impl->FlushViewEvents(m_impl->context, m_impl->view, true);
+    // The box beside the distance handle follows it as the camera moves.
+    m_impl->placeHandleField();
 
     // When the pointer comes to rest on something new, draw once more. OCCT draws the hover
     // highlight on top of the frame it has kept, and the first time after the scene changed
@@ -2327,6 +2896,18 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
     if (!m_impl->canRender()) {
         return;
     }
+    if (event->button() == Qt::LeftButton && !m_impl->sketching() &&
+        m_impl->overHandle(event->position())) {
+        // The distance handle is taken: dragged, it reports distances, and selects nothing.
+        if (const auto along = m_impl->handleParameterAt(event->position())) {
+            m_impl->handle.dragging = true;
+            m_impl->handle.grab = m_impl->handle.distance - *along;
+            setCursor(Qt::ClosedHandCursor);
+            m_impl->showHandle();
+            m_impl->redraw();
+        }
+        return;
+    }
     if (event->button() == Qt::LeftButton && m_impl->isOverViewCube()) {
         // Wait and see whether this becomes a click or a drag.
         m_impl->cubePressed = true;
@@ -2368,11 +2949,15 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
                         continue;
                     }
                     try {
-                        m_impl->editor->projectShape(kernel::subShape(
-                            body->shape,
-                            wanted == SelectedItem::Kind::Edge ? kernel::SubShapeKind::Edge
-                                                               : kernel::SubShapeKind::Vertex,
-                            item.index));
+                        // Where it is in the root's coordinates, as the sketch is drawn.
+                        const document::Instance* instance = m_impl->instanceAt(item.path);
+                        m_impl->editor->projectShape(kernel::placed(
+                            kernel::subShape(body->shape,
+                                             wanted == SelectedItem::Kind::Edge
+                                                 ? kernel::SubShapeKind::Edge
+                                                 : kernel::SubShapeKind::Vertex,
+                                             item.index),
+                            instance != nullptr ? instance->placement : kernel::Placement{}));
                         return;
                     } catch (const std::out_of_range&) {
                         // The body changed under the pointer. Try what lies behind.
@@ -2395,6 +2980,13 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
     QOpenGLWidget::mouseReleaseEvent(event);
     if (!m_impl->canRender()) {
+        return;
+    }
+    if (m_impl->handle.dragging && event->button() == Qt::LeftButton) {
+        m_impl->handle.dragging = false;
+        setCursor(m_impl->overHandle(event->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        m_impl->showHandle();
+        m_impl->redraw();
         return;
     }
     if (m_impl->cubePressed && event->button() == Qt::LeftButton) {
@@ -2459,6 +3051,25 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
     QOpenGLWidget::mouseMoveEvent(event);
     if (!m_impl->canRender()) {
         return;
+    }
+    if (m_impl->handle.dragging) {
+        if (const auto along = m_impl->handleParameterAt(event->position())) {
+            // To a tenth of a millimeter: the box beside it takes any value.
+            const double distance = std::round((*along + m_impl->handle.grab) * 10.0) / 10.0;
+            if (distance != m_impl->handle.distance) {
+                emit distanceDragged(distance);
+            }
+        }
+        return;
+    }
+    if (m_impl->handle.shown && !m_impl->sketching()) {
+        const bool over = m_impl->overHandle(event->position());
+        if (over != m_impl->handle.hovered) {
+            m_impl->handle.hovered = over;
+            setCursor(over ? Qt::OpenHandCursor : Qt::ArrowCursor);
+            m_impl->showHandle();
+            m_impl->redraw();
+        }
     }
     if (m_impl->cubePressed) {
         // Dragging the view cube orbits, as the orbit buttons would from the same spot.

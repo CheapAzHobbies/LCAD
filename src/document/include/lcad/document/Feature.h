@@ -88,6 +88,13 @@ struct Feature {
     FeatureKind kind = FeatureKind::Pull;
     /// A suppressed feature stays in the timeline and is not applied.
     bool suppressed = false;
+    /// The component the feature is part of, as its sketch and its body are. Not valid for the
+    /// document's root.
+    ObjectId component;
+    /// What the names of the faces it makes start with. Empty means its id. A copy of a feature
+    /// keeps its original's, so that the faces of the copy have the names the copies of the
+    /// features after it refer to.
+    std::string tag;
 
     /// The body the feature changes. For Operation::NewBody: the body it makes.
     ObjectId body;

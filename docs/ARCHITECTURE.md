@@ -6,8 +6,8 @@ the reasons for each. The product requirements are in [PROJECT_BRIEF.md](PROJECT
 ## What exists today
 
 Phases 0 to 2 built the desktop foundation and the sketcher, Phase 3 the features and the
-timeline, Phase 4 (in progress) other programs' files and direct edits, and each decision below
-rests on running code:
+timeline, Phase 4 other programs' files and direct edits, Phase 5 (in progress) components and
+assemblies, and each decision below rests on running code:
 
 - `core` holds the log and LCAD's version.
 - `kernel` makes boxes, cylinders, spheres, cones, and tori, moves shapes, measures them (volume,
@@ -19,7 +19,9 @@ rests on running code:
   the solver that moves the geometry to meet the constraints, the finder of closed outlines,
   and what the sketch tools do (trim, extend, offset, mirror, and so on) as plain functions.
 - `document` holds bodies, sketches, and features with an undo history, builds the bodies from
-  the features in timeline order, and saves and opens `.lcad` files.
+  the features in timeline order, and saves and opens `.lcad` files. It also holds components,
+  their occurrences, the joints that place them, linked parts from other documents, and
+  materials (section 16).
 - `kernel` also pulls and revolves outlines into solids, combines solids, rounds and bevels
   edges, hollows solids out, copies them for mirrors and patterns, and names every face it makes
   (section 11). It offsets, moves, and deletes faces of any solid, checks and repairs geometry,
@@ -31,7 +33,10 @@ rests on running code:
   and icons, document tabs, the toolbars, browser, the properties, sketch, feature, and measure
   panels, and the timeline.
 
-Components, assemblies, and everything after them are the plan the later phases build to.
+- `kernel` also places shapes (`Placement`), finds the frames joints line up by, weighs solids
+  and finds where they overlap.
+
+Drawings, manufacturing, and everything after them are the plan the later phases build to.
 
 ## Modules
 
@@ -65,7 +70,7 @@ flowchart TD
 | `core` | What every module may use: the log and LCAD's version. | In place |
 | `kernel` | Exact B-rep geometry: shapes, modeling operations, measurement, validity, tessellation, import and export. A thin layer over OCCT. | Primitives, measurement, and serialization in place |
 | `sketch` | Sketch entities, constraints, the constraint solver, closed outlines, and the geometry of the sketch tools. No Qt and no OCCT. | In place; ellipse and spline to come |
-| `document` | The model: components, bodies, sketches, parameters, and the feature history. Recompute, transactions and undo, saving and loading. | Bodies, sketches, undo, and files in place; features in Phase 3 |
+| `document` | The model: components, bodies, sketches, parameters, and the feature history. Recompute, transactions and undo, saving and loading. | In place: bodies, sketches, features, components, joints, links |
 | `viewport` | Displays the document's geometry and turns pointer input into picks and camera motion. Wraps OCCT's viewer in a Qt widget. Edits a sketch in place. | In place |
 | `app` | Main window, browser, timeline, toolbars, the command system, and interactive tools. | Window, primitive commands, and sketch commands in place |
 
@@ -115,6 +120,7 @@ Each was made on 2026-10-12 unless noted.
 | 13 | Undo | Reversible edits recorded by the document, grouped by transactions (2026-10-12, Phase 1) | Phase 3, when recompute arrives |
 | 14 | Commands | Defined once in a registry; settings in a panel beside the viewport with a live preview, not a modal dialog (2026-10-12, Phases 1 and 1b) | Phase 2, when commands need parameters in the registry |
 | 15 | Appearance | Design tokens, a light and a dark theme, Qt's Fusion widget style everywhere (2026-10-12, Phase 1b) | Not expected |
+| 16 | Assemblies | Components defined once and placed by occurrences; joints solved after the timeline, one part at a time from what is fixed; linked parts kept as copies (2026-10-19, Phase 5) | Assemblies with loops of joints, or large ones |
 
 ### 1. Geometry kernel
 
@@ -460,6 +466,60 @@ are still Qt's, so keyboard access and screen-reader roles are kept.
 reads the desktop's light or dark preference through Qt, which reports it from version 6.5 on;
 with an older Qt, LCAD asks the desktop's settings directly where it can.
 
+### 16. Components and assemblies
+
+**Components and occurrences.** A component is defined once: its bodies, sketches, and features
+carry its id, and their geometry is in its own coordinates. An occurrence places a component
+inside another component, or inside the document, which is the root: a rotation and a move
+(`kernel::Placement`). The same component can have several occurrences, so a change to it shows
+in each, and occurrences can be nested. What the 3D view draws is the list of *instances*
+(`Document::instances()`): each path of occurrences from the root, with the placements along it
+multiplied together. A body is drawn once per instance of its component, with OCCT's local
+transformation, so its mesh is shared; a selection names the instance by its path.
+
+The timeline stays one for the whole document, as in other history-based programs; each entry
+belongs to a component, and a feature only uses what belongs to its own component. Using
+another component's geometry (sketching on it, projecting its edges) takes a copy of it where it
+is at the time, not a link to it: a link would make a feature depend on where the joints put the
+parts, and the joints depend on the features. An independent copy of a component copies its
+features with new ids but keeps their *tags* (`Feature::tag`, `Body::tag`), the strings the
+names of the faces they make start with, so that every face of the copy has the name its copied
+features refer to.
+
+**Joints.** A joint lives in a component and holds two of its occurrences together (or one and
+the component itself, which does not move), at frames taken from a face or an edge of each by
+name (`kernel::frameOn`). It is solved after the timeline, from the faces as they then are, so a
+joint follows its parts when they change. Within each component, innermost first, the
+occurrences that are grounded, and the component itself, are placed; then each joint whose one
+side is placed places the other, moving the side the user picked to move unless that one is the
+fixed one already. A group of parts joined to each other but to nothing fixed starts from where
+the first joint's second part was put by hand. A joint whose two sides are both placed already
+is checked, and reported if it does not fit. This handles every assembly whose joints form a
+tree, and loops that already close; it does not solve loops by moving parts until they close,
+which needs a numerical solver and is left for later.
+
+A joint's values (an angle, a distance) and its limits are part of the document. Showing a
+joint in motion asks the document where everything would be with other values
+(`instancesWith()`, `tryJoint()`) and draws that, changing nothing.
+
+**Linked parts.** A component can be another document (`Component::link`, relative to this
+document's folder where it can be). Its bodies are copies of that document's visible bodies,
+placed as they are there and keeping their face names, and they are stored in this document, so
+that it opens without the file and joints on them keep holding. A stamp of the file's bytes
+tells when the file changed; updating reads it again and keeps each body's id by a key made of
+its path and its id in the other document. Packaging writes the document and every file it
+links to into one folder, rewriting the links of the copies, not of the originals.
+
+**Materials** are names with a density: LCAD's own list, and the document's. A body names its
+material; mass properties are worked out from the exact solid (`kernel::massProperties`), and
+put together by the parallel axis theorem (`combined()`).
+
+**Recovery.** A copy of each document with unsaved changes is written every minute to a folder
+of the running LCAD's own under `$XDG_STATE_HOME/lcad/recovery/`, locked with `QLockFile` for as
+long as it runs. A folder whose lock no running LCAD holds was left by one that ended without
+closing properly, and its copies are offered back at the next start. The copies are written as
+documents are saved, whole and then renamed into place.
+
 ## Threads
 
 The interface thread never runs a long geometry operation. Recompute runs on a worker thread and
@@ -473,8 +533,9 @@ The design for recompute in Phase 3 has to respect that.
 
 ```
 cmake/              build helpers (finding OCCT and the file libraries, warning flags)
-packaging/          launcher, icon, and file type
-scripts/            install-deps.sh, build-appimage.sh, smoke-test-appimage.sh
+packaging/          launcher, icon, file type, AppStream metadata, and the Flatpak manifest
+scripts/            install-deps.sh, build-appimage.sh, build-flatpak.sh, and the smoke tests
+                    that start each package
 src/<module>/
     include/lcad/<module>/   the module's public headers
     src/                     its implementation

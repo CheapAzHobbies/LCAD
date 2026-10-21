@@ -709,6 +709,120 @@ const QHash<QString, Drawing>& drawings() {
              half.closeSubpath();
              i.p.fillPath(half, i.stroke);
          }},
+        // Assemblies
+        {QStringLiteral("component"),
+         [](const Ink& i) {
+             // A box, with a smaller one set into its top: a part of an assembly.
+             isoBox(i, false);
+             i.fill({{12, 6.5}, {15.5, 8.5}, {12, 10.5}, {8.5, 8.5}});
+         }},
+        {QStringLiteral("new-component"),
+         [](const Ink& i) {
+             // A component, and a plus.
+             i.poly({{10, 5}, {16, 8.3}, {16, 15}, {10, 18.3}, {4, 15}, {4, 8.3}});
+             i.poly({{4, 8.3}, {10, 11.6}, {16, 8.3}}, false);
+             i.line(10, 11.6, 10, 18.3);
+             i.line(19, 14, 19, 22);
+             i.line(15, 18, 23, 18);
+         }},
+        {QStringLiteral("component-linked"),
+         [](const Ink& i) {
+             // A component, and two links of a chain: it lives in another file.
+             i.poly({{10, 3}, {16, 6.3}, {16, 13}, {10, 16.3}, {4, 13}, {4, 6.3}});
+             i.poly({{4, 6.3}, {10, 9.6}, {16, 6.3}}, false);
+             i.line(10, 9.6, 10, 16.3);
+             i.p.save();
+             i.p.translate(16, 18);
+             i.p.rotate(-35);
+             i.p.drawRoundedRect(QRectF(-5.5, -2, 6, 4), 2, 2);
+             i.p.drawRoundedRect(QRectF(-0.5, -2, 6, 4), 2, 2);
+             i.p.restore();
+         }},
+        {QStringLiteral("insert-part"),
+         [](const Ink& i) {
+             // A component, and an arrow coming into it from above.
+             i.poly({{12, 9}, {19, 12.8}, {19, 18.5}, {12, 22.3}, {5, 18.5}, {5, 12.8}});
+             i.poly({{5, 12.8}, {12, 16.6}, {19, 12.8}}, false);
+             i.line(12, 16.6, 12, 22.3);
+             i.line(12, 1.5, 12, 11);
+             i.poly({{8.5, 7.5}, {12, 11}, {15.5, 7.5}}, false);
+         }},
+        {QStringLiteral("joint"),
+         [](const Ink& i) {
+             // Two parts held together by a pin.
+             i.poly({{2.5, 8}, {10, 8}, {10, 16}, {2.5, 16}});
+             i.poly({{14, 8}, {21.5, 8}, {21.5, 16}, {14, 16}});
+             QPainterPath pin;
+             pin.addEllipse(QPointF(12, 12), 3.5, 3.5);
+             i.p.fillPath(pin, i.accent);
+             i.p.drawPath(pin);
+         }},
+        {QStringLiteral("ground"),
+         [](const Ink& i) {
+             // A block standing on hatched ground.
+             i.poly({{7, 5}, {17, 5}, {17, 14}, {7, 14}});
+             i.fill({{7, 5}, {17, 5}, {17, 8}, {7, 8}});
+             i.line(3, 17, 21, 17);
+             for (int x = 5; x <= 19; x += 4) {
+                 i.line(x, 17, x - 2.5, 21);
+             }
+         }},
+        {QStringLiteral("move-component"),
+         [](const Ink& i) {
+             // Arrows four ways from a tinted middle.
+             i.fill({{9.5, 9.5}, {14.5, 9.5}, {14.5, 14.5}, {9.5, 14.5}});
+             i.line(12, 2.5, 12, 21.5);
+             i.line(2.5, 12, 21.5, 12);
+             i.poly({{9.5, 5}, {12, 2.5}, {14.5, 5}}, false);
+             i.poly({{9.5, 19}, {12, 21.5}, {14.5, 19}}, false);
+             i.poly({{5, 9.5}, {2.5, 12}, {5, 14.5}}, false);
+             i.poly({{19, 9.5}, {21.5, 12}, {19, 14.5}}, false);
+         }},
+        {QStringLiteral("interference"),
+         [](const Ink& i) {
+             // Two parts that overlap, the shared part tinted.
+             i.fill({{10, 10}, {15, 10}, {15, 15}, {10, 15}});
+             i.poly({{3, 3}, {15, 3}, {15, 15}, {3, 15}});
+             i.poly({{10, 10}, {21, 10}, {21, 21}, {10, 21}});
+         }},
+        {QStringLiteral("mass"),
+         [](const Ink& i) {
+             // A weight with its handle.
+             i.fill({{6, 20.5}, {18, 20.5}, {16, 9}, {8, 9}});
+             i.poly({{6, 20.5}, {18, 20.5}, {16, 9}, {8, 9}});
+             i.ellipse(12, 6, 2.8, 2.8);
+         }},
+        {QStringLiteral("material"),
+         [](const Ink& i) {
+             // A swatch: a sphere with its lit side tinted.
+             i.ellipse(12, 12, 8.5, 8.5);
+             QPainterPath lit;
+             lit.addEllipse(QPointF(9.5, 9.5), 3.5, 3.5);
+             i.p.fillPath(lit, i.accent);
+         }},
+        {QStringLiteral("package"),
+         [](const Ink& i) {
+             // A carton, tinted on top, with its flaps.
+             isoBox(i, true);
+             i.line(8, 6.3, 16, 10.8);
+         }},
+        {QStringLiteral("links"),
+         [](const Ink& i) {
+             // Two links of a chain.
+             i.p.save();
+             i.p.translate(12, 12);
+             i.p.rotate(-35);
+             i.p.drawRoundedRect(QRectF(-9.5, -3.5, 11, 7), 3.5, 3.5);
+             i.p.drawRoundedRect(QRectF(-1.5, -3.5, 11, 7), 3.5, 3.5);
+             i.p.restore();
+         }},
+        {QStringLiteral("animate"),
+         [](const Ink& i) {
+             // A play mark in a circle.
+             i.ellipse(12, 12, 8.5, 8.5);
+             i.fill({{10, 8}, {16, 12}, {10, 16}});
+             i.poly({{10, 8}, {16, 12}, {10, 16}});
+         }},
         {QStringLiteral("select"),
          [](const Ink& i) {
              i.poly({{6, 3.5},

@@ -5,6 +5,7 @@
 #include <lcad/document/Document.h>
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -27,6 +28,11 @@ struct SaveOptions {
     /// A preview image as PNG bytes, stored in the file for file managers and the open dialog.
     /// Empty for none.
     std::string thumbnailPng;
+    /// Links to write in place of those the linked components have, by component: for a copy
+    /// of the document that lives in another folder.
+    std::map<ObjectId, std::string> links;
+    /// Likewise the stamps of the files they lead to (see Component::linkStamp).
+    std::map<ObjectId, std::string> linkStamps;
 };
 
 /// Writes `document` to `path`, replacing any file there in one step: after a crash or power
@@ -52,6 +58,10 @@ struct LoadedDocument {
 /// Reads the document at `path`. Throws FileError when it is missing, damaged, not an LCAD
 /// document, or in a newer format than this LCAD reads. A document is never opened partially.
 [[nodiscard]] LoadedDocument loadDocument(const std::filesystem::path& path);
+
+/// The linked components of the document at `path`, as its file lists them, without reading
+/// the rest of it. Throws FileError when the file cannot be read.
+[[nodiscard]] std::vector<Component> readLinkedComponents(const std::filesystem::path& path);
 
 /// The preview image stored in the file as PNG bytes, or an empty string when it has none.
 /// Throws FileError when the file cannot be read.

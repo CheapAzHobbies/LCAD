@@ -552,7 +552,7 @@ TEST_CASE("Saved state with sketches is checked like the rest", "[document][sket
     DocumentState state;
     state.bodies.push_back(Body{ObjectId{1}, "Box", true, makeBox(1.0, 1.0, 1.0)});
     state.sketches.push_back(
-        SketchItem{ObjectId{2}, "Sketch 1", true, lcad::kernel::planeXY(), {}, {}, {}, {}});
+        SketchItem{ObjectId{2}, "Sketch 1", true, lcad::kernel::planeXY(), {}, {}, {}, {}, {}});
     state.nextId = 3;
 
     SECTION("consistent") {

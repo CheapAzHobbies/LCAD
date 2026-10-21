@@ -245,6 +245,9 @@ nlohmann::ordered_json writeSketch(const SketchItem& item) {
                      {"normal", {item.plane.normal.x, item.plane.normal.y, item.plane.normal.z}},
                      {"xDirection",
                       {item.plane.xDirection.x, item.plane.xDirection.y, item.plane.xDirection.z}}};
+    if (item.component.isValid()) {
+        out["component"] = item.component.value;
+    }
     // Only for a sketch that follows something, so that other files read as they did.
     if (item.attachedTo.isValid()) {
         out["attachedTo"] = item.attachedTo.value;
@@ -318,6 +321,9 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
     const std::string where = "sketch " + std::to_string(item.id.value);
     item.name = stringMember(entry, "name", where, path);
     item.visible = boolMember(entry, "visible", where, path);
+    if (entry.contains("component")) {
+        item.component = ObjectId{idMember(entry, "component", where, path)};
+    }
 
     const json& plane = objectMember(entry, "plane", where, path);
     const std::vector<double> origin = numbersMember(plane, "origin", 3, where, path);
@@ -505,6 +511,13 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     out["name"] = feature.name;
     out["kind"] = toString(feature.kind);
     out["suppressed"] = feature.suppressed;
+    // Only for a feature of a component, and for a copy, so that other files read as they did.
+    if (feature.component.isValid()) {
+        out["component"] = feature.component.value;
+    }
+    if (!feature.tag.empty()) {
+        out["tag"] = feature.tag;
+    }
     out["body"] = feature.body.value;
     out["sketch"] = feature.sketch.value;
     out["regions"] = ordered_json::array();
@@ -582,6 +595,12 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     }
     feature.kind = *knownKind;
     feature.suppressed = boolMember(entry, "suppressed", where, path);
+    if (entry.contains("component")) {
+        feature.component = ObjectId{idMember(entry, "component", where, path)};
+    }
+    if (entry.contains("tag")) {
+        feature.tag = stringMember(entry, "tag", where, path);
+    }
     feature.body = ObjectId{idMember(entry, "body", where, path)};
     feature.sketch = ObjectId{idMember(entry, "sketch", where, path)};
     const json& regions = member(entry, "regions", where, path);
@@ -688,6 +707,280 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     return feature;
 }
 
+// Components, occurrences, joints, and materials.
+
+nlohmann::ordered_json writePlacement(const kernel::Placement& p) {
+    using nlohmann::ordered_json;
+    return ordered_json{{"origin", {p.origin.x, p.origin.y, p.origin.z}},
+                        {"xAxis", {p.xAxis.x, p.xAxis.y, p.xAxis.z}},
+                        {"yAxis", {p.yAxis.x, p.yAxis.y, p.yAxis.z}},
+                        {"zAxis", {p.zAxis.x, p.zAxis.y, p.zAxis.z}}};
+}
+
+kernel::Placement readPlacement(const json& entry, const std::string& where,
+                                const std::filesystem::path& path) {
+    const json& value = objectMember(entry, "placement", where, path);
+    const auto point = [&](const char* key) {
+        const std::vector<double> n = numbersMember(value, key, 3, where, path);
+        return kernel::Point{n[0], n[1], n[2]};
+    };
+    const auto vector = [&](const char* key) {
+        const std::vector<double> n = numbersMember(value, key, 3, where, path);
+        return kernel::Vector{n[0], n[1], n[2]};
+    };
+    kernel::Placement placement{point("origin"), vector("xAxis"), vector("yAxis"), vector("zAxis")};
+    if (!kernel::isRigid(placement)) {
+        damaged(path, "the placement of " + where + " does not only turn and move");
+    }
+    return kernel::normalized(placement);
+}
+
+const char* snapName(kernel::FrameSnap snap) {
+    switch (snap) {
+    case kernel::FrameSnap::Center:
+        return "center";
+    case kernel::FrameSnap::Start:
+        return "start";
+    case kernel::FrameSnap::End:
+        return "end";
+    }
+    return "center";
+}
+
+const char* sideKindName(JointSide::Kind kind) {
+    switch (kind) {
+    case JointSide::Kind::Origin:
+        return "origin";
+    case JointSide::Kind::Face:
+        return "face";
+    case JointSide::Kind::Edge:
+        return "edge";
+    }
+    return "origin";
+}
+
+nlohmann::ordered_json writeSide(const JointSide& side) {
+    using nlohmann::ordered_json;
+    ordered_json out;
+    out["path"] = ordered_json::array();
+    for (const ObjectId id : side.path) {
+        out["path"].push_back(id.value);
+    }
+    out["kind"] = sideKindName(side.kind);
+    out["body"] = side.body.value;
+    out["name"] = side.name;
+    out["snap"] = snapName(side.snap);
+    return out;
+}
+
+JointSide readSide(const json& entry, const char* key, const std::string& where,
+                   const std::filesystem::path& path) {
+    const json& value = objectMember(entry, key, where, path);
+    const std::string at = std::string(key) + " side of " + where;
+    JointSide side;
+    for (const std::uint64_t id : idsMember(value, "path", at, path)) {
+        side.path.push_back(ObjectId{id});
+    }
+    const std::string kind = stringMember(value, "kind", at, path);
+    if (kind == "origin") {
+        side.kind = JointSide::Kind::Origin;
+    } else if (kind == "face") {
+        side.kind = JointSide::Kind::Face;
+    } else if (kind == "edge") {
+        side.kind = JointSide::Kind::Edge;
+    } else {
+        damaged(path, "the " + at + " is on something of the unknown kind \"" + kind + "\"");
+    }
+    side.body = ObjectId{idMember(value, "body", at, path)};
+    side.name = stringMember(value, "name", at, path);
+    const std::string snap = stringMember(value, "snap", at, path);
+    if (snap == "center") {
+        side.snap = kernel::FrameSnap::Center;
+    } else if (snap == "start") {
+        side.snap = kernel::FrameSnap::Start;
+    } else if (snap == "end") {
+        side.snap = kernel::FrameSnap::End;
+    } else {
+        damaged(path, "the " + at + " is placed at the unknown \"" + snap + "\"");
+    }
+    return side;
+}
+
+nlohmann::ordered_json writeJoint(const Joint& joint) {
+    using nlohmann::ordered_json;
+    ordered_json out;
+    out["id"] = joint.id.value;
+    out["name"] = joint.name;
+    out["kind"] = toString(joint.kind);
+    out["component"] = joint.component.value;
+    out["moving"] = writeSide(joint.moving);
+    out["fixed"] = writeSide(joint.fixed);
+    out["offset"] = joint.offset;
+    out["angle"] = joint.angle;
+    out["flipped"] = joint.flipped;
+    out["values"] = joint.values;
+    out["limits"] = ordered_json::array();
+    for (const JointLimits& limits : joint.limits) {
+        ordered_json entry = ordered_json::object();
+        if (limits.minimum.has_value()) {
+            entry["minimum"] = *limits.minimum;
+        }
+        if (limits.maximum.has_value()) {
+            entry["maximum"] = *limits.maximum;
+        }
+        out["limits"].push_back(std::move(entry));
+    }
+    out["suppressed"] = joint.suppressed;
+    return out;
+}
+
+Joint readJoint(const json& entry, const std::filesystem::path& path) {
+    if (!entry.is_object()) {
+        damaged(path, "an entry of \"joints\" is not an object");
+    }
+    Joint joint;
+    joint.id = ObjectId{idMember(entry, "id", "a joint", path)};
+    const std::string where = "joint " + std::to_string(joint.id.value);
+    joint.name = stringMember(entry, "name", where, path);
+    const std::string kind = stringMember(entry, "kind", where, path);
+    const auto known = jointKindFromString(kind);
+    if (!known.has_value()) {
+        damaged(path, where + " is of the unknown kind \"" + kind + "\"");
+    }
+    joint.kind = *known;
+    joint.component = ObjectId{idMember(entry, "component", where, path)};
+    joint.moving = readSide(entry, "moving", where, path);
+    joint.fixed = readSide(entry, "fixed", where, path);
+    joint.offset = numberMember(entry, "offset", where, path);
+    joint.angle = numberMember(entry, "angle", where, path);
+    joint.flipped = boolMember(entry, "flipped", where, path);
+    const std::vector<double> values = numbersMember(entry, "values", 3, where, path);
+    std::copy(values.begin(), values.end(), joint.values.begin());
+    const json& limits = member(entry, "limits", where, path);
+    if (!limits.is_array() || limits.size() != 3) {
+        damaged(path, "\"limits\" in " + where + " is not a list of three");
+    }
+    for (std::size_t i = 0; i < 3; ++i) {
+        const json& limit = limits[i];
+        if (!limit.is_object()) {
+            damaged(path, "a limit of " + where + " is not an object");
+        }
+        if (limit.contains("minimum")) {
+            joint.limits[i].minimum = numberMember(limit, "minimum", where, path);
+        }
+        if (limit.contains("maximum")) {
+            joint.limits[i].maximum = numberMember(limit, "maximum", where, path);
+        }
+    }
+    joint.suppressed = boolMember(entry, "suppressed", where, path);
+    return joint;
+}
+
+// The list under `key` in document.json, or nothing if the file has none.
+const json* optionalList(const json& document, const char* key, const std::filesystem::path& path) {
+    const auto found = document.find(key);
+    if (found == document.end()) {
+        return nullptr;
+    }
+    if (!found->is_array()) {
+        damaged(path, "\"" + std::string(key) + "\" in document.json is not a list");
+    }
+    for (const json& entry : *found) {
+        if (!entry.is_object()) {
+            damaged(path, "an entry of \"" + std::string(key) + "\" is not an object");
+        }
+    }
+    return &*found;
+}
+
+void readAssembly(const json& document, const std::filesystem::path& path, DocumentState& state) {
+    if (const json* components = optionalList(document, "components", path)) {
+        for (const json& entry : *components) {
+            Component component;
+            component.id = ObjectId{idMember(entry, "id", "a component", path)};
+            const std::string where = "component " + std::to_string(component.id.value);
+            component.name = stringMember(entry, "name", where, path);
+            if (entry.contains("link")) {
+                component.link = stringMember(entry, "link", where, path);
+                component.linkStamp = stringMember(entry, "linkStamp", where, path);
+            }
+            state.components.push_back(std::move(component));
+        }
+    }
+    if (const json* occurrences = optionalList(document, "occurrences", path)) {
+        for (const json& entry : *occurrences) {
+            Occurrence occurrence;
+            occurrence.id = ObjectId{idMember(entry, "id", "an occurrence", path)};
+            const std::string where = "occurrence " + std::to_string(occurrence.id.value);
+            occurrence.component = ObjectId{idMember(entry, "component", where, path)};
+            occurrence.parent = ObjectId{idMember(entry, "parent", where, path)};
+            occurrence.placement = readPlacement(entry, where, path);
+            occurrence.grounded = boolMember(entry, "grounded", where, path);
+            occurrence.visible = boolMember(entry, "visible", where, path);
+            occurrence.suppressed = boolMember(entry, "suppressed", where, path);
+            state.occurrences.push_back(occurrence);
+        }
+    }
+    if (const json* joints = optionalList(document, "joints", path)) {
+        for (const json& entry : *joints) {
+            state.joints.push_back(readJoint(entry, path));
+        }
+    }
+    if (const json* materials = optionalList(document, "materials", path)) {
+        for (const json& entry : *materials) {
+            Material material;
+            material.name = stringMember(entry, "name", "a material", path);
+            material.density =
+                numberMember(entry, "density", "the material " + material.name, path);
+            state.materials.push_back(std::move(material));
+        }
+    }
+}
+
+void writeAssembly(const Document& document, nlohmann::ordered_json& model,
+                   const SaveOptions& options) {
+    using nlohmann::ordered_json;
+    // Only for documents that have them, so that other files read as they did.
+    if (!document.components().empty()) {
+        model["components"] = ordered_json::array();
+        for (const Component& component : document.components()) {
+            ordered_json entry{{"id", component.id.value}, {"name", component.name}};
+            if (!component.link.empty()) {
+                const auto link = options.links.find(component.id);
+                const auto stamp = options.linkStamps.find(component.id);
+                entry["link"] = link != options.links.end() ? link->second : component.link;
+                entry["linkStamp"] =
+                    stamp != options.linkStamps.end() ? stamp->second : component.linkStamp;
+            }
+            model["components"].push_back(std::move(entry));
+        }
+        model["occurrences"] = ordered_json::array();
+        for (const Occurrence& occurrence : document.occurrences()) {
+            model["occurrences"].push_back(
+                ordered_json{{"id", occurrence.id.value},
+                             {"component", occurrence.component.value},
+                             {"parent", occurrence.parent.value},
+                             {"placement", writePlacement(occurrence.placement)},
+                             {"grounded", occurrence.grounded},
+                             {"visible", occurrence.visible},
+                             {"suppressed", occurrence.suppressed}});
+        }
+    }
+    if (!document.joints().empty()) {
+        model["joints"] = ordered_json::array();
+        for (const Joint& joint : document.joints()) {
+            model["joints"].push_back(writeJoint(joint));
+        }
+    }
+    if (!document.materials().empty()) {
+        model["materials"] = ordered_json::array();
+        for (const Material& material : document.materials()) {
+            model["materials"].push_back(
+                ordered_json{{"name", material.name}, {"density", material.density}});
+        }
+    }
+}
+
 DocumentState interpret(const ArchiveContents& contents, const std::filesystem::path& path,
                         std::vector<std::string>& warnings) {
     const json& units = objectMember(contents.manifest, "units", manifestName, path);
@@ -712,6 +1005,15 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
         const std::string where = "body " + std::to_string(body.id.value);
         body.name = stringMember(entry, "name", where, path);
         body.visible = boolMember(entry, "visible", where, path);
+        if (entry.contains("component")) {
+            body.component = ObjectId{idMember(entry, "component", where, path)};
+        }
+        if (entry.contains("material")) {
+            body.material = stringMember(entry, "material", where, path);
+        }
+        if (entry.contains("tag")) {
+            body.tag = stringMember(entry, "tag", where, path);
+        }
         if (entry.contains("madeBy")) {
             // A body that a feature makes has no geometry in the file: it is built again.
             body.madeBy = ObjectId{idMember(entry, "madeBy", where, path)};
@@ -721,7 +1023,11 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
 
         const json& geometry = objectMember(entry, "geometry", where, path);
         const std::string role = stringMember(geometry, "role", where, path);
-        if (role != "source") {
+        if (role == "linked") {
+            // A copy of a body of a linked document, kept for when that cannot be found.
+            body.linkKey = stringMember(entry, "linkKey", where, path);
+            body.sourceFaceNames = stringsMember(entry, "faceNames", where, path);
+        } else if (role != "source") {
             damaged(path, where + " has geometry of the unknown kind \"" + role + "\"");
         }
         const std::string file = stringMember(geometry, "file", where, path);
@@ -793,6 +1099,8 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
         state.marker =
             static_cast<std::size_t>(idMember(contents.document, "marker", documentName, path));
     }
+    // And, in Phase 5, components, occurrences, joints, and materials.
+    readAssembly(contents.document, path, state);
     return state;
 }
 
@@ -820,6 +1128,15 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
         entry["id"] = body.id.value;
         entry["name"] = body.name;
         entry["visible"] = body.visible;
+        if (body.component.isValid()) {
+            entry["component"] = body.component.value;
+        }
+        if (!body.material.empty()) {
+            entry["material"] = body.material;
+        }
+        if (!body.tag.empty()) {
+            entry["tag"] = body.tag;
+        }
         if (body.madeBy.isValid()) {
             // What features make is not stored. The features are, and it is built from them.
             entry["madeBy"] = body.madeBy.value;
@@ -834,7 +1151,13 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
             throw FileError("Could not save " + path.string() + ": the geometry of \"" + body.name +
                             "\" cannot be written (" + error.reason() + ").");
         }
-        entry["geometry"] = ordered_json{{"file", file}, {"role", "source"}};
+        if (!body.linkKey.empty()) {
+            entry["geometry"] = ordered_json{{"file", file}, {"role", "linked"}};
+            entry["linkKey"] = body.linkKey;
+            entry["faceNames"] = body.sourceFaceNames;
+        } else {
+            entry["geometry"] = ordered_json{{"file", file}, {"role", "source"}};
+        }
         model["bodies"].push_back(std::move(entry));
     }
 
@@ -862,6 +1185,7 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
     if (document.historyMarker() < document.timeline().size()) {
         model["marker"] = document.historyMarker();
     }
+    writeAssembly(document, model, options);
 
     std::vector<std::pair<std::string, std::string>> entries;
     entries.emplace_back(manifestName, manifest.dump(2) + "\n");
@@ -932,6 +1256,27 @@ LoadedDocument loadDocument(const std::filesystem::path& path) {
         core::log(core::LogLevel::Warning, "document", path.string() + ": " + warning);
     }
     return loaded;
+}
+
+std::vector<Component> readLinkedComponents(const std::filesystem::path& path) {
+    const std::optional<std::string> text = detail::readArchiveEntry(path, documentName);
+    if (!text.has_value()) {
+        throw FileError(path.string() + " is not an LCAD document (it has no " + documentName +
+                        ").");
+    }
+    const json document = json::parse(*text, nullptr, /*allow_exceptions=*/false);
+    if (document.is_discarded() || !document.is_object()) {
+        damaged(path, std::string(documentName) + " is not valid JSON");
+    }
+    DocumentState state;
+    readAssembly(document, path, state);
+    std::vector<Component> linked;
+    for (Component& component : state.components) {
+        if (!component.link.empty()) {
+            linked.push_back(std::move(component));
+        }
+    }
+    return linked;
 }
 
 std::string readThumbnail(const std::filesystem::path& path) {

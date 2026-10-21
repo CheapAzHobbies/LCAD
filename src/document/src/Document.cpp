@@ -81,6 +81,8 @@ Document::Document() = default;
 Document::Document(DocumentState state)
     : m_bodies(std::move(state.bodies)), m_sketches(std::move(state.sketches)),
       m_features(std::move(state.features)), m_parameters(std::move(state.parameters)),
+      m_components(std::move(state.components)), m_occurrences(std::move(state.occurrences)),
+      m_joints(std::move(state.joints)), m_materials(std::move(state.materials)),
       m_timeline(std::move(state.timeline)), m_marker(state.marker), m_nextId(state.nextId) {
     std::unordered_set<ObjectId> seen;
     const auto claim = [this, &seen](ObjectId id, const char* what) {
@@ -110,9 +112,91 @@ Document::Document(DocumentState state)
                                         "\" cannot be the name of a parameter, or is taken twice");
         }
     }
+    for (const Component& component : m_components) {
+        claim(component.id, "component");
+        requireName(component.name, "Document");
+    }
+    for (const Occurrence& occurrence : m_occurrences) {
+        claim(occurrence.id, "occurrence");
+        if (findComponent(occurrence.component) == nullptr ||
+            (occurrence.parent.isValid() && findComponent(occurrence.parent) == nullptr)) {
+            throw std::invalid_argument("Document: an occurrence names a component the document "
+                                        "does not have");
+        }
+        if (!kernel::isRigid(occurrence.placement)) {
+            throw std::invalid_argument("Document: an occurrence of \"" +
+                                        findComponent(occurrence.component)->name +
+                                        "\" is not placed by a turn and a move");
+        }
+    }
+    for (const Component& component : m_components) {
+        if (occurrencesOf(component.id).empty()) {
+            throw std::invalid_argument("Document: the component \"" + component.name +
+                                        "\" appears nowhere");
+        }
+    }
+    for (const Occurrence& occurrence : m_occurrences) {
+        if (occurrence.component == occurrence.parent) {
+            throw std::invalid_argument("Document: a component appears inside itself");
+        }
+        const Component* parent = findComponent(occurrence.parent);
+        if (parent != nullptr && !parent->link.empty()) {
+            throw std::invalid_argument("Document: the linked component \"" + parent->name +
+                                        "\" cannot hold occurrences of its own");
+        }
+    }
+    // A component inside itself, through others: walk up from each occurrence.
+    for (const Occurrence& occurrence : m_occurrences) {
+        if (occurrence.parent.isValid() && contains(occurrence.component, occurrence.parent)) {
+            throw std::invalid_argument("Document: the component \"" +
+                                        findComponent(occurrence.component)->name +
+                                        "\" is inside itself");
+        }
+    }
+    const auto inComponent = [this](ObjectId component, const std::string& what) {
+        if (!component.isValid()) {
+            return;
+        }
+        const Component* found = findComponent(component);
+        if (found == nullptr) {
+            throw std::invalid_argument("Document: " + what +
+                                        " is part of a component the document does not have");
+        }
+        if (!found->link.empty()) {
+            throw std::invalid_argument("Document: " + what +
+                                        " is part of the linked component \"" + found->name +
+                                        "\", which holds only bodies");
+        }
+    };
+    for (const SketchItem& sketch : m_sketches) {
+        inComponent(sketch.component, "the sketch \"" + sketch.name + "\"");
+    }
+    for (const Feature& feature : m_features) {
+        inComponent(feature.component, "the feature \"" + feature.name + "\"");
+    }
+    std::unordered_set<std::string> materialNames;
+    for (const Material& material : m_materials) {
+        if (isBlank(material.name) || !materialNames.insert(material.name).second ||
+            !std::isfinite(material.density) || material.density <= 0.0) {
+            throw std::invalid_argument("Document: the material \"" + material.name +
+                                        "\" has no name, a name taken twice, or no density");
+        }
+    }
     for (Body& body : m_bodies) {
         claim(body.id, "body");
         requireName(body.name, "Document");
+        if (!body.linkKey.empty()) {
+            const Component* linked = findComponent(body.component);
+            if (linked == nullptr || linked->link.empty() || body.madeBy.isValid() ||
+                body.shape.isNull()) {
+                throw std::invalid_argument("Document: the linked body \"" + body.name +
+                                            "\" is not part of a linked component, or has no "
+                                            "geometry");
+            }
+            body.source = body.shape;
+            continue;
+        }
+        inComponent(body.component, "the body \"" + body.name + "\"");
         if (body.madeBy.isValid()) {
             const Feature* maker = findFeature(body.madeBy);
             if (maker == nullptr || !makesBody(*maker) || maker->body != body.id) {
@@ -152,10 +236,19 @@ Document::Document(DocumentState state)
         }
     }
 
+    for (const Joint& joint : m_joints) {
+        claim(joint.id, "joint");
+        requireName(joint.name, "Document");
+        if (const std::string problem = jointProblem(joint); !problem.empty()) {
+            throw std::invalid_argument("Document: " + joint.name + ": " + problem);
+        }
+    }
+
     // The timeline holds every body no feature makes, every sketch, and every feature, once.
+    // Linked bodies are not in it: they are made in another document.
     std::vector<ObjectId> everything;
     for (const Body& body : m_bodies) {
-        if (!body.madeBy.isValid()) {
+        if (!body.madeBy.isValid() && body.linkKey.empty()) {
             everything.push_back(body.id);
         }
     }
@@ -202,19 +295,21 @@ std::string Document::uniqueBodyName(std::string_view base) const {
     return candidate;
 }
 
-ObjectId Document::addBody(std::string name, kernel::Shape shape) {
+ObjectId Document::addBody(std::string name, kernel::Shape shape, ObjectId component) {
     requireName(name, "addBody");
     // Geometry read from another program may be broken; Check Geometry says how, and a Repair
     // feature may put it right. It has to have faces, though.
     if (shape.isNull() || kernel::countTopology(shape).faces == 0) {
         throw std::invalid_argument("addBody: the shape for \"" + name + "\" has no faces");
     }
+    requireOwnComponent(component, "addBody");
     Edit edit{};
     edit.kind = Edit::Kind::AddBody;
     edit.id = ObjectId{m_nextId};
     edit.index = m_bodies.size();
     edit.body = Body{edit.id, std::move(name), true, shape};
     edit.body.source = std::move(shape);
+    edit.body.component = component;
     edit.place = placeForNew();
     markersForAdding(edit);
     const ObjectId id = edit.id;
@@ -253,8 +348,10 @@ void Document::removeBody(ObjectId id) {
             edit.id = id;
             edit.body = m_bodies[indexOf(id)];
             edit.index = indexOf(id);
-            edit.place = placeOf(id);
-            markersForRemoving(edit, edit.place);
+            if (edit.body.linkKey.empty()) {
+                edit.place = placeOf(id);
+                markersForRemoving(edit, edit.place);
+            }
             record(std::move(edit), "Delete Body");
         }
     } catch (...) {
@@ -323,24 +420,33 @@ std::string Document::uniqueSketchName(std::string_view base) const {
 }
 
 ObjectId Document::addSketch(std::string name, const kernel::Plane& plane, ObjectId attachedTo,
-                             std::string attachedFace) {
+                             std::string attachedFace, ObjectId component) {
     requireName(name, "addSketch");
     if (attachedTo.isValid()) {
         const Feature* onPlane = findFeature(attachedTo);
         const bool toPlane =
             onPlane != nullptr && onPlane->kind == FeatureKind::Plane && attachedFace.empty();
-        const bool toFace = findBody(attachedTo) != nullptr && !attachedFace.empty();
+        const Body* onBody = findBody(attachedTo);
+        const bool toFace = onBody != nullptr && !attachedFace.empty();
         if (!toPlane && !toFace) {
             throw std::invalid_argument("addSketch: it is attached to something the document "
                                         "does not have");
         }
+        if (toFace && !onBody->linkKey.empty()) {
+            throw std::invalid_argument("addSketch: " + onBody->name +
+                                        " is linked from another document; a sketch on it "
+                                        "cannot follow it");
+        }
+        // It follows what it is drawn on, so it is part of the same component.
+        component = toPlane ? onPlane->component : onBody->component;
     }
+    requireOwnComponent(component, "addSketch");
     Edit edit{};
     edit.kind = Edit::Kind::AddSketch;
     edit.id = ObjectId{m_nextId};
     edit.index = m_sketches.size();
-    edit.sketch = SketchItem{edit.id,    std::move(name),         true, plane, sketch::Sketch(),
-                             attachedTo, std::move(attachedFace), {}};
+    edit.sketch = SketchItem{edit.id,    std::move(name),         true, plane,    sketch::Sketch(),
+                             attachedTo, std::move(attachedFace), {},   component};
     edit.place = placeForNew();
     markersForAdding(edit);
     const ObjectId id = edit.id;
@@ -444,6 +550,11 @@ ObjectId Document::addFeature(Feature feature) {
         throw std::invalid_argument("addFeature: there is no body with id " +
                                     std::to_string(feature.body.value));
     }
+    feature.component = componentForFeature(feature);
+    requireOwnComponent(feature.component, "addFeature");
+    if (const std::string problem = componentProblem(feature); !problem.empty()) {
+        throw std::invalid_argument("addFeature: " + problem);
+    }
     Edit edit{};
     edit.kind = Edit::Kind::AddFeature;
     feature.id = ObjectId{m_nextId++};
@@ -458,6 +569,7 @@ ObjectId Document::addFeature(Feature feature) {
         edit.hasBody = true;
         edit.body = Body{feature.body, uniqueBodyName("Body"), true, {}};
         edit.body.madeBy = feature.id;
+        edit.body.component = feature.component;
         edit.index = m_bodies.size();
     }
     edit.id = feature.id;
@@ -488,6 +600,12 @@ void Document::changeFeature(ObjectId id, Feature definition) {
     for (std::vector<sketch::EntityId>& outline : definition.regions) {
         std::sort(outline.begin(), outline.end());
     }
+    // A feature stays in its component, and keeps the names its faces have.
+    definition.component = old.component;
+    definition.tag = old.tag;
+    if (const std::string problem = componentProblem(definition); !problem.empty()) {
+        throw std::invalid_argument("changeFeature: " + problem);
+    }
     Edit edit{};
     edit.kind = Edit::Kind::ChangeFeature;
     edit.id = id;
@@ -509,6 +627,7 @@ void Document::changeFeature(ObjectId id, Feature definition) {
         edit.index = m_bodies.size();
         edit.body = Body{definition.body, uniqueBodyName("Body"), true, {}};
         edit.body.madeBy = id;
+        edit.body.component = definition.component;
     } else if (needsBody(definition) && findBody(definition.body) == nullptr) {
         throw std::invalid_argument("changeFeature: there is no body with id " +
                                     std::to_string(definition.body.value));
@@ -1098,6 +1217,12 @@ void Document::redo() {
     notify(Change::Kind::HistoryChanged);
 }
 
+void Document::markModified() {
+    // No state of the document has this serial.
+    m_savedSerial = static_cast<std::uint64_t>(-1);
+    notify(Change::Kind::HistoryChanged);
+}
+
 bool Document::isModified() const {
     return currentSerial() != m_savedSerial;
 }
@@ -1146,15 +1271,19 @@ void Document::apply(const Edit& edit) {
     switch (edit.kind) {
     case Edit::Kind::AddBody:
         m_bodies.insert(m_bodies.begin() + static_cast<std::ptrdiff_t>(edit.index), edit.body);
-        insertItem(edit.id, edit.place);
-        m_marker = edit.newMarker;
+        if (edit.body.linkKey.empty()) {
+            insertItem(edit.id, edit.place);
+            m_marker = edit.newMarker;
+        }
         touch(edit.id);
         notify(Change::Kind::BodyAdded, edit.id);
         break;
     case Edit::Kind::RemoveBody:
         m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(edit.index));
-        eraseItem(edit.id);
-        m_marker = edit.newMarker;
+        if (edit.body.linkKey.empty()) {
+            eraseItem(edit.id);
+            m_marker = edit.newMarker;
+        }
         touch(edit.id);
         notify(Change::Kind::BodyRemoved, edit.id);
         break;
@@ -1264,6 +1393,22 @@ void Document::apply(const Edit& edit) {
     case Edit::Kind::SetSketchExpressions:
         applyExpressions(edit, true);
         break;
+    case Edit::Kind::AddComponent:
+    case Edit::Kind::RemoveComponent:
+    case Edit::Kind::ChangeComponent:
+    case Edit::Kind::AddOccurrence:
+    case Edit::Kind::RemoveOccurrence:
+    case Edit::Kind::ChangeOccurrence:
+    case Edit::Kind::AddJoint:
+    case Edit::Kind::RemoveJoint:
+    case Edit::Kind::ChangeJoint:
+    case Edit::Kind::ChangeBody:
+    case Edit::Kind::ChangeSketchComponent:
+    case Edit::Kind::AddMaterial:
+    case Edit::Kind::RemoveMaterial:
+    case Edit::Kind::ChangeMaterial:
+        applyAssembly(edit, true);
+        break;
     }
 }
 
@@ -1309,8 +1454,10 @@ void Document::revert(const Edit& edit) {
     switch (edit.kind) {
     case Edit::Kind::AddBody:
         m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(indexOf(edit.id)));
-        eraseItem(edit.id);
-        m_marker = edit.oldMarker;
+        if (edit.body.linkKey.empty()) {
+            eraseItem(edit.id);
+            m_marker = edit.oldMarker;
+        }
         touch(edit.id);
         notify(Change::Kind::BodyRemoved, edit.id);
         break;
@@ -1318,8 +1465,10 @@ void Document::revert(const Edit& edit) {
         // Back where it was, with the name and visibility it had when it was removed.
         const std::size_t index = std::min(edit.index, m_bodies.size());
         m_bodies.insert(m_bodies.begin() + static_cast<std::ptrdiff_t>(index), edit.body);
-        insertItem(edit.id, edit.place);
-        m_marker = edit.oldMarker;
+        if (edit.body.linkKey.empty()) {
+            insertItem(edit.id, edit.place);
+            m_marker = edit.oldMarker;
+        }
         touch(edit.id);
         notify(Change::Kind::BodyAdded, edit.id);
         break;
@@ -1432,6 +1581,22 @@ void Document::revert(const Edit& edit) {
     case Edit::Kind::ChangeParameter:
     case Edit::Kind::SetSketchExpressions:
         applyExpressions(edit, false);
+        break;
+    case Edit::Kind::AddComponent:
+    case Edit::Kind::RemoveComponent:
+    case Edit::Kind::ChangeComponent:
+    case Edit::Kind::AddOccurrence:
+    case Edit::Kind::RemoveOccurrence:
+    case Edit::Kind::ChangeOccurrence:
+    case Edit::Kind::AddJoint:
+    case Edit::Kind::RemoveJoint:
+    case Edit::Kind::ChangeJoint:
+    case Edit::Kind::ChangeBody:
+    case Edit::Kind::ChangeSketchComponent:
+    case Edit::Kind::AddMaterial:
+    case Edit::Kind::RemoveMaterial:
+    case Edit::Kind::ChangeMaterial:
+        applyAssembly(edit, false);
         break;
     }
 }
@@ -1596,6 +1761,9 @@ void Document::rebuild() {
         return;
     }
     if (!m_rebuildAll && m_touched.empty()) {
+        if (m_resolve) {
+            solveAssembly();
+        }
         return;
     }
     // How far the timeline is applied: to the marker, and no further than the feature that is
@@ -1615,6 +1783,15 @@ void Document::rebuild() {
     detail::BodyStates state;
     // Bodies whose state, at this point in the timeline, is not what it was last time.
     std::unordered_set<ObjectId> changed;
+    // Linked bodies are made in their own document, and are what they are from the start.
+    for (const Body& body : m_bodies) {
+        if (!body.linkKey.empty()) {
+            state[body.id] = kernel::NamedShape{body.source, body.sourceFaceNames};
+            if (m_rebuildAll || m_touched.contains(body.id)) {
+                changed.insert(body.id);
+            }
+        }
+    }
     // Sketches that have moved with what they are attached to.
     std::unordered_set<ObjectId> moved;
     // Construction planes and axes that have moved, or come or gone.
@@ -1766,8 +1943,7 @@ void Document::rebuild() {
             if (const Body* body = findBody(item)) {
                 // A body no feature makes starts from the shape it was given.
                 if (reached) {
-                    state[item] =
-                        kernel::nameFaces(body->source, std::to_string(item.value) + "/f");
+                    state[item] = kernel::nameFaces(body->source, detail::tagOf(*body) + "/f");
                 }
                 if (m_rebuildAll || m_touched.contains(item)) {
                     changed.insert(item);
@@ -1845,6 +2021,8 @@ void Document::rebuild() {
     if (statusChanged || !reshaped.empty()) {
         notify(Change::Kind::TimelineChanged);
     }
+    // Joints are placed on the faces as they now are.
+    solveAssembly();
 }
 
 std::uint64_t Document::currentSerial() const {

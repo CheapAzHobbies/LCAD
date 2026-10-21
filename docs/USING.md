@@ -3,21 +3,21 @@
 What LCAD can do today, and how to do it. This grows with each phase; the
 [roadmap](../ROADMAP.md) says what comes next.
 
-LCAD can sketch, and cannot extrude yet. A sketch is drawn, constrained, and dimensioned, and
-then waits: turning it into a solid (extrude, revolve) arrives in Phase 3, with fillet and the
-timeline. Until then a solid is made from a primitive: a box, cylinder, sphere, cone, or torus,
-by its sizes.
+LCAD sketches, pulls and revolves sketches into solids, rounds, bevels, hollows, patterns, and
+drills them, keeps the steps in a timeline that can be edited, changes imported solids directly,
+reads and writes other programs' files, and puts parts together into assemblies: components,
+joints between them, linked parts from other documents, and their weight and overlaps.
 
 ## The window
 
 | Region | What it is for |
 |---|---|
 | Top bar | Menus; buttons for new, open, save, undo, and redo; a tab for each open document; command search. |
-| Toolbar | The modeling tools. **Create** starts a sketch or makes a primitive. **Select** sets what a click picks. **View** fits the view, shows the grid, and sets how bodies are drawn. While a sketch is open, the sketch tools are here instead. |
-| Browser (left) | The document as a tree. Tick a body or a sketch to show it, untick to hide it, right-click for more. Double-click a body to rename it, or a sketch to open it. The box above the tree filters by name. Under **Origin** are the reference planes and axes, which can be ticked to show them as guides. |
+| Toolbar | The modeling tools. **Create** starts a sketch, pulls and revolves it, or makes a primitive. **Modify** changes solids. **Assemble** makes components and joins them. **Select** sets what a click picks. **View** fits the view, shows the grid, and sets how bodies are drawn. While a sketch is open, the sketch tools are here instead. |
+| Browser (left) | The document as a tree. Tick a body or a sketch to show it, untick to hide it, right-click for more. Double-click a body to rename it, or a sketch to open it. The box above the tree filters by name. Under **Origin** are the reference planes and axes, which can be ticked to show them as guides. After the document's own bodies and sketches come its components, each with its own, and its joints. |
 | 3D view | The model. |
 | Properties (right) | While a command runs, its settings. While a sketch is open, the sketch: whether it is fully constrained, and the constraints on what is selected. Otherwise, what is selected: a body's name, visibility, and measurements, or the area, length, or position of a face, edge, or vertex. |
-| Timeline (bottom) | The feature history. Empty until LCAD has parametric features. |
+| Timeline (bottom) | The sketches and features in the order they are applied. |
 | Status bar | What is selected and its measurement, the command in progress, short messages such as "Saved". |
 
 ## Finding a command
@@ -47,8 +47,9 @@ programs call extrude).
 2. Press **E**, or click **Pull** under **Create**. If the sketch has one closed area, it is
    picked already; otherwise click the areas you want in the 3D view (they light up under the
    pointer; a second click lets one go).
-3. Type the distance on the right. A negative distance, or **Flip Direction**, pulls the other
-   way. **Direction** pulls to one side, by the same amount to both sides (**Symmetric**), by
+3. Type the distance on the right, or drag the arrow in the 3D view up or down, or type the
+   distance into the box beside the arrow and press Enter. A negative distance, or **Flip
+   Direction**, pulls the other way. **Direction** pulls to one side, by the same amount to both sides (**Symmetric**), by
    different amounts (**Two Sides**), or up to a flat face you click in the 3D view (**To
    Face**), which it then follows. **Taper** leans the sides in as the pull goes out (negative
    leans them out); it works on a pull to one side.
@@ -125,6 +126,85 @@ LCAD remembers the folder and the settings you used last.
 with each: edges that border only one face (it is not closed), faces that face inward, faces that
 cross each other, broken outlines, edges too short to work with. Click a problem to see where it
 is in the 3D view. **Repair Body** in that list adds a Repair of the body to the timeline.
+
+## Components and assemblies
+
+A **component** is a part, or a group of parts, with bodies, sketches, and features of its own.
+The document itself is the top of the assembly; components go inside it, and inside each other.
+
+- **Assemble > New Component** makes an empty one and starts working on it: new sketches and
+  bodies go into it, and its name is in bold in the browser. Double-click another component in
+  the browser to work on that one, or the document's own entry at the top to work on the whole
+  again. A sketch drawn on a face belongs to that face's component, whichever one is being
+  worked on.
+- **Assemble > Component from Bodies** makes a component of the bodies selected, together with
+  the features that made them and the sketches those use. If a sketch is also used by a body
+  that is not selected, LCAD says so: select that body too.
+- A component can appear more than once. **Duplicate** (right-click it in the browser) adds
+  another appearance of the same component: change one and every one changes. **Make
+  Independent Copy** makes a new component that starts the same and is changed on its own.
+- **Move Component** moves or turns a component by typed amounts. **Ground** holds one where it
+  is, so that joints move the other side instead. **Suppress Component** leaves one out of the
+  assembly without deleting it.
+- Hide, show, isolate, rename (F2), and delete components as you do bodies. Drag a component
+  onto another in the browser to move it inside that one, or onto the document's entry to move
+  it back to the top.
+
+### Joints
+
+A joint holds two parts together where you say, and lets one move against the other in the
+ways its kind allows.
+
+1. **Assemble > Joint** (J).
+2. Click a face or an edge of the part that is to move, then a face or an edge of the part it
+   goes onto. A flat face joins at its middle, a round face or a circular edge at its axis, a
+   straight edge along its length (**At** says where along it). The part moves there in the
+   preview, face to face.
+3. **Type** is what LCAD suggests from what you clicked; choose another to change it:
+   **Rigid** (does not move), **Revolute** (turns), **Slider** (slides), **Cylindrical** (turns
+   and slides), **Pin-Slot** (turns, and slides across), **Planar** (slides in a plane and turns
+   in it), **Ball** (turns any way).
+4. **Offset** stands it off along the joint's axis, **Angle** turns it, **Flip** turns it over.
+   Below them, how far the joint has moved now, and with **Limits**, how far it may move.
+   **Animate** shows it moving through its range.
+5. Click **OK**. The joint is listed under **Joints** in the browser; double-click it to change
+   it, untick it to suppress it, right-click it to animate it.
+
+Joints start from the part that is grounded (or from the document's own bodies) and place the
+others one after another. A joint that cannot hold together with the others, because both
+parts are already placed, says so in the browser and in its properties, and leaves its part
+where it was.
+
+### Linked parts
+
+**Assemble > Insert Part** puts another LCAD document into this one as a **linked part**: it is
+changed in its own file, and this document follows. Inserting the same file again adds another
+appearance of it.
+
+- **File > Linked Files** lists every file the document links to, and the files those link to,
+  with whether each is found and whether it changed since it was last read. **Update All** (or
+  **File > Update Linked Parts**) takes the changes. When a document is opened, LCAD says if a
+  linked part changed or cannot be found.
+- A copy of every linked part is kept in the document, so it still opens and shows the part when
+  the file is missing. **Find Linked File** (right-click the part) says where the file is now.
+- **Open Linked File** opens the part's own document to change it.
+- **File > Package Project** gathers the document and every file it links to into one folder,
+  with the links pointing at each other there: the folder can be moved to another computer, or
+  shared, as it is.
+
+Links are kept relative to the document's folder, so a project moved together keeps working.
+
+### Weight, materials, and overlaps
+
+- Choose what a body is made of under **Material** in its properties: plastics for printing,
+  metals, and woods, with their densities. Its mass is shown below. **View > Materials** lists
+  them, and adds materials of the document's own with a density you give.
+- **View > Physical Properties** shows the mass, volume, center of mass, and moments of inertia of
+  the bodies selected, or of everything shown. Bodies without a material are left out of the
+  mass and counted.
+- **View > Check Interference** finds where parts that are shown overlap, lists each pair with
+  the volume they share, and shows that volume in red in the 3D view. Parts that only touch do
+  not count.
 
 ## Parameters
 
@@ -366,6 +446,12 @@ A document is one `.lcad` file. LCAD asks before closing a document with unsaved
 Saving replaces the file in one step, so a crash or power cut during a save leaves you with
 either the old version or the new one, never half of each.
 
+Every minute LCAD keeps a copy of each document with unsaved changes, apart from your files, in
+`~/.local/state/lcad/recovery/`. If LCAD did not close properly (a crash, a power cut), it
+offers to restore that work the next time it starts: each document opens in a tab with its
+changes not yet saved, and saving it writes to its own file as usual. The copies go away when
+the work is saved, or closed without its changes.
+
 To open a document from a terminal or a file manager, give its name to LCAD: `lcad part.lcad`.
 
 ## The window itself
@@ -389,7 +475,7 @@ These are the shortcuts LCAD starts with.
 | Ctrl + Z | Undo |
 | Ctrl + Shift + Z, or Ctrl + Y | Redo |
 | Delete | Delete what is selected |
-| F2 | Rename the selected body or sketch |
+| F2 | Rename the selected body, sketch, component, or joint |
 | Esc | Leave the command in progress; in a sketch, step back from the tool in use |
 | Ctrl + Enter | Finish the sketch |
 | L, R, C, A | In a sketch: line, rectangle, circle, arc |
@@ -398,14 +484,17 @@ These are the shortcuts LCAD starts with.
 | F | Fillet |
 | H | Hole |
 | Q | Offset Face |
+| J | Joint |
 | M | Measure |
 | Ctrl + I, Ctrl + Shift + E | Import a STEP or IGES file, export bodies |
 | F6, Shift + F6, Home | Fit the view, zoom to the selection, go to the home view |
 | F11 | Give the window to the 3D view, and back |
 | Ctrl + Q | Quit |
 
-Not there yet: autosave and crash recovery, inches as a display unit, importing meshes (STL,
-OBJ, 3MF) or exporting IGES, and pulling up to a curved face. Construction axes are not picked by clicking them in the
+Not there yet: inches as a display unit, importing meshes (STL, OBJ, 3MF) or exporting IGES,
+pulling up to a curved face, dragging a component or a joint in the 3D view (they are moved by
+typed values), joints that close a loop (each part is placed by one joint at a time), exploded
+views, and a bill of materials. Construction axes are not picked by clicking them in the
 3D view: choose them from the list in the panel.
 The origin guides that are shown are not saved with the document.
 

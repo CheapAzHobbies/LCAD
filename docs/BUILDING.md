@@ -96,6 +96,25 @@ on, so CI builds it on Ubuntu 24.04; that one needs glibc 2.39 or newer, which r
 22.04 and Debian 12. It uses the graphics driver, X11 libraries, and fonts of the system it
 runs on.
 
+### The Flatpak
+
+`packaging/flatpak/io.github.cheapazhobbies.LCAD.yml` builds LCAD on KDE's runtime from
+Flathub, which brings Qt; Open CASCADE 7.9.3, libzip, nlohmann/json, and Eigen are built from
+source on the way.
+
+```sh
+sudo apt install flatpak flatpak-builder   # names are Ubuntu's
+scripts/build-flatpak.sh                   # writes build/flatpak/LCAD-<version>.flatpak
+flatpak install --user build/flatpak/LCAD-<version>.flatpak
+flatpak run io.github.cheapazhobbies.LCAD
+```
+
+The first build takes most of an hour, nearly all of it Open CASCADE; flatpak-builder keeps what
+it built for the next time. The Flatpak runs on X11 or XWayland (`--socket=x11`; see Wayland
+below) and may read and write the home folder, where documents and the parts they link to are
+opened by their paths. Its log and its copies of unsaved work are under
+`~/.var/app/io.github.cheapazhobbies.LCAD/.local/state/lcad/`.
+
 ## Wayland
 
 LCAD runs on Wayland desktops through XWayland, and selects this itself. The Open CASCADE

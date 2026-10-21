@@ -221,9 +221,10 @@ clicking it in the 3D view (it is chosen from a list).
 Stable references are the hardest problem in this phase and the usual reason parametric CAD projects stall.
 Budget time for it first, not last.
 
-## Phase 4: Direct modeling and interchange (started 2026-10-14, in progress, target 2027-03-31)
+## Phase 4: Direct modeling and interchange (finished 2026-10-19)
 
-Started early, on the owner's word, once Phase 3 was merged.
+Started early, on the owner's word, once Phase 3 was merged. Built on the branch
+`phase-4-direct-modeling-interchange` (pull request #6), merged 2026-10-19.
 
 - [x] STEP import and export, IGES import. STEP (AP203, AP214, AP242) in any length unit, parts
       named as in the file; loose faces sewn and closed into solids where they close up, open
@@ -251,18 +252,52 @@ flat face within its own plane, or faces that are not all flat in a direction th
 off their neighbors' surfaces in a way defeaturing cannot undo; AP242 export (AP214 is
 written); and remembering which file a body was imported from.
 
-## Phase 5: Components and assemblies (2027-04-01 to 2027-07-15)
+## Phase 5: Components and assemblies (started 2026-10-19, in progress, target 2027-07-15)
 
-- [ ] Components, bodies inside components, subassemblies.
-- [ ] Linked external parts with dependency tracking and project packaging.
-- [ ] Joints: rigid and revolute first, then slider, cylindrical, planar, ball, pin-slot.
-- [ ] Joint limits and motion preview.
-- [ ] Interference checking, mass properties, materials.
-- [ ] Autosave and crash recovery hardened for release.
-- [ ] Flatpak package.
+Started on the owner's word once Phase 4 was merged, on the branch
+`phase-5-components-assemblies` (pull request #7).
 
-Acceptance: assemble two independently editable parts, constrain them, reopen the project, and verify the
-placement survives.
+- [x] Components, bodies inside components, subassemblies. A component is defined once and
+      appears as often as it has occurrences, nested as deep as wanted. New Component,
+      Component from Bodies (with the features and sketches that made them), working on a
+      component, Duplicate (another occurrence of the same component), Make Independent Copy,
+      Move Component, Ground, Suppress, hide, isolate, rename, and moving a component into
+      another by dragging it in the browser.
+- [x] Linked external parts with dependency tracking and project packaging. Insert Part links
+      another LCAD document; a copy of its bodies is kept in the document for when the file is
+      missing. Linked Files lists every link, and the links of linked files, with their state;
+      Update Linked Parts takes changes and keeps what is joined to the parts; Package Project
+      gathers the document and its linked files into one folder that can be moved as it is.
+- [x] Joints: rigid, revolute, slider, cylindrical, pin-slot, planar, and ball, placed on faces
+      and edges, with a suggested kind, an offset, an angle, and a flip. They follow the faces
+      when the parts change.
+- [x] Joint limits and motion preview: values and limits for each way a joint moves, and
+      Animate, which shows a joint going through its range without changing the document.
+- [x] Interference checking (the overlapping volume, listed and shown), mass properties (mass,
+      center of mass, inertia, principal moments) of a selection or of everything, and materials
+      (a library for printing, metals, and woods, and the document's own).
+- [x] Autosave and crash recovery: a copy of each document with unsaved changes every minute,
+      apart from the user's files, and an offer to restore after a crash. Tested with a process
+      that is killed on purpose.
+- [x] Flatpak package, on KDE's runtime, built and started in CI.
+
+Acceptance: assemble two independently editable parts, constrain them, reopen the project, and
+verify the placement survives. Met in the document (`tests/document/AssemblyTest.cpp`: two
+parts in components, a revolute joint at 30° with limits, saved, opened again, in the same
+place, and each part still changed on its own with the joint following), and through the window
+(`tests/gui/AssemblyInterfaceTest.cpp`: the joint set up in its panel, by clicks in the 3D view).
+
+Asked for by the owner along the way, and done: an arrow in the 3D view that is dragged to set a
+pull's distance, with a box beside it for typing one; slightly see-through sketch planes; and
+colored X, Y, Z arrows on the view cube.
+
+What Phase 5 leaves for later: joints in loops that have to be solved together (each part is
+placed by one joint after another; a loop that already closes is accepted), dragging a part
+along its joint in the 3D view (values are typed), contact between parts in motion, exploded
+views, a bill of materials, joint origins on construction geometry or a component's origin
+picked in the 3D view, materials that change how a body looks, the materials of a linked
+document's own list (only LCAD's are known in the document it is linked into), and the
+large-assembly benchmarks decision 3 asks for.
 
 ## Port: Windows and macOS (2027-07-16 to 2027-09-15)
 

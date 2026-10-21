@@ -141,6 +141,19 @@ Qt and OCCT are LGPL: they are bundled as separate shared libraries that a user 
 which is what the LGPL asks for. The license texts still have to be added to the bundle before
 an AppImage is published; that is on the list for the first release.
 
+The Flatpak (`packaging/flatpak/`) builds on KDE's runtime from Flathub, version 6.10, which
+provides Qt, and builds these from their sources at pinned commits:
+
+| Library | Version | License |
+|---|---|---|
+| [Open CASCADE Technology](https://github.com/Open-Cascade-SAS/OCCT) | 7.9.3 | LGPL-2.1 with an exception |
+| [libzip](https://github.com/nih-at/libzip) | 1.11.4 | BSD-3-Clause |
+| [nlohmann/json](https://github.com/nlohmann/json) | 3.12.0 | MIT |
+| [Eigen](https://gitlab.com/libeigen/eigen) | 3.4.0 | MPL-2.0 |
+
+Open CASCADE and libzip are shared libraries in the Flatpak, replaceable as the LGPL asks;
+nlohmann/json and Eigen are headers, only used to build.
+
 ## Later phases
 
 Noted now because they affect planning; each gets a full assessment when its phase starts.

@@ -34,9 +34,9 @@ cmake --preset asan && cmake --build --preset asan && ctest --preset asan    # s
 | Unit | Catch2 | `unit` | No | `core`: the log. `kernel`: primitives, measurement, moving, sub-shapes, serialization, errors, message routing, planes and projection onto them. `sketch`: geometry, every constraint, the solver's states, dragging, closed outlines, and the sketch tools. `document`: the model, undo, transactions, the file format, sketches as shapes. `kernel` and `document` also: STEP and IGES import, the STEP, STL, OBJ, and 3MF files written (read back by the tests' own parsers: closed meshes, volumes), direct edits, geometry checks, repair |
 | Save and reopen | Catch2 | `unit` | No | A reopened document measures the same as the one saved; damaged, foreign, and newer files are refused |
 | Reference models | Catch2 | `unit` | No | The documents and STEP files in `tests/models/` open and measure correctly, whichever OCCT wrote them |
-| Interface | Qt Test | `gui` | A virtual one | Seven programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen. `ModelingInterfaceTest`: features, the timeline, and measuring through the whole window. `InterchangeInterfaceTest`: import, the direct edits, Check Geometry and Repair, export, and the export dialog |
+| Interface | Qt Test | `gui` | A virtual one | Eight programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen. `ModelingInterfaceTest`: features, the timeline, and measuring through the whole window. `InterchangeInterfaceTest`: import, the direct edits, Check Geometry and Repair, export, and the export dialog. `AssemblyInterfaceTest`: components and working on one, joints set up by clicks and animated, moving a component, interference, mass and materials, linked parts and packaging, recovery after a real crash (the test runs itself again as a process that keeps unsaved work and is killed), and the arrow a pull is dragged by |
 | Sanitizers | All of the above, built with ASan and UBSan | all | A virtual one | Memory errors, leaks, undefined behavior |
-| Package | A shell script, in CI | | A virtual one | The AppImage starts on another distribution and draws a document |
+| Package | A shell script, in CI | | A virtual one | The AppImage starts on another distribution and draws a document; the Flatpak is built, installed, and does the same |
 
 Planned, each when the code it tests arrives:
 
@@ -93,6 +93,24 @@ so every check is a measurement against a formula:
   the pointer (dragging the marker, dragging an entry, refused moves), patterns, mirror,
   measure, construction planes and axes, holes, taper and up-to-face pulls, parameters, and
   saving and reopening.
+
+Phase 4's is "import a STEP solid, offset a face, save, export STEP, and validate the result":
+
+- `tests/document/DirectEditTest.cpp` does it from the document's API, and
+  `tests/gui/InterchangeInterfaceTest.cpp` through the window; the exported STEP is read back,
+  checked, and its volume compared with the closed-form value.
+
+Phase 5's is "assemble two independently editable parts, constrain them, reopen the project,
+and verify the placement survives":
+
+- `tests/document/AssemblyTest.cpp` makes two parts in components, holds one on the other with a
+  revolute joint turned 30° with limits, saves, opens the file again, and checks the joint, its
+  values and limits, and where the part is; then makes the other part thicker and checks that
+  the joint follows. The same file tests occurrences, copies, the other kinds of joint, joints
+  that cannot hold, linked parts, and materials; `tests/document/LinksTest.cpp` tests linked
+  files, their stamps, updating, and packaging.
+- `tests/gui/AssemblyInterfaceTest.cpp` sets the joint up through the window, picking the faces
+  as clicks in the 3D view would, and animates it.
 
 ## Sketch assertions
 

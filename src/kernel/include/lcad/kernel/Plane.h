@@ -11,11 +11,10 @@
 
 namespace lcad::kernel {
 
-/// A direction in model space.
-struct Vector {
-    double x = 0.0;
-    double y = 0.0;
-    double z = 0.0;
+/// A line in space: a point on it, and its direction, of unit length.
+struct Axis {
+    Point origin;
+    Vector direction{0.0, 0.0, 1.0};
 };
 
 /// A plane with a coordinate system on it: where a sketch lives in space. A point of the plane
