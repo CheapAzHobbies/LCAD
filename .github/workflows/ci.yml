@@ -159,6 +159,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # The program with its libraries and Qt's plugins, gathered by `cmake --install`, made into
+      # an installer by Inno Setup.
+      - name: Build the installer
+        run: |
+          cmake --install build/ci --prefix stage
+          $version = (Select-String -Path build/ci/CMakeCache.txt `
+            -Pattern '^CMAKE_PROJECT_VERSION:STATIC=(.+)$').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=$version" "/DStageDir=$PWD\stage" "/DOutputDir=$PWD\installer" `
+            packaging/windows/LCAD.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: LCAD-Windows-installer
+          path: installer/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
   macos:
     name: macOS
     runs-on: macos-15
@@ -194,6 +215,28 @@ jobs:
           name: frames-macOS
           path: test-frames
           if-no-files-found: ignore
+          retention-days: 14
+
+      # LCAD.app with every library it uses inside it, put by `cmake --install` and macdeployqt,
+      # signed for this computer only (ad hoc: there is no Apple developer identity), on a disk
+      # image beside a link to Applications.
+      - name: Build the disk image
+        run: |
+          cmake --install build/ci --prefix stage
+          codesign --force --deep --sign - stage/LCAD.app
+          version=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build/ci/CMakeCache.txt)
+          mkdir -p dmg/contents
+          cp -R stage/LCAD.app dmg/contents/
+          ln -s /Applications dmg/contents/Applications
+          hdiutil create -volname LCAD -srcfolder dmg/contents -ov -format UDZO \
+            "dmg/LCAD-$version-macos-$(uname -m).dmg"
+
+      - name: Keep the disk image
+        uses: actions/upload-artifact@v7
+        with:
+          name: LCAD-macOS-disk-image
+          path: dmg/*.dmg
+          if-no-files-found: error
           retention-days: 14
 
   # One file that runs without installing anything. Built on the oldest supported distribution,

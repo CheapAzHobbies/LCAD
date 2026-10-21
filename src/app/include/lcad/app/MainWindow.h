@@ -113,6 +113,12 @@ public:
     bool saveTo(const QString& path, QString* error = nullptr);
     /// Closes a document without asking. Closing the last one leaves a new, empty document.
     void closeDocument(int index);
+    /// Opens a file the system hands LCAD, named on the command line or opened from the desktop,
+    /// and says in a dialog why when it cannot, or what went wrong when it opened with problems.
+    void openFromSystem(const QString& path);
+    /// Opens with openFromSystem() the files the desktop asks the running LCAD to open. On macOS
+    /// a document opened in the Finder arrives this way, not on the command line.
+    void acceptFileOpenRequests();
     /// Problems the last loadFrom() reported that did not prevent loading.
     [[nodiscard]] QStringList loadWarnings() const { return m_loadWarnings; }
     /// The files opened or saved most recently, newest first.
@@ -285,6 +291,8 @@ public:
     [[nodiscard]] bool isViewportFocused() const { return m_focusState.has_value(); }
     /// The menu a right-click at this spot of the 3D view opens. The caller owns it.
     [[nodiscard]] QMenu* createViewportMenu(const QPoint& position);
+
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 protected:
     void closeEvent(QCloseEvent* event) override;

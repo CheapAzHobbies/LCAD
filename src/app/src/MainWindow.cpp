@@ -44,6 +44,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileOpenEvent>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
@@ -2373,6 +2374,33 @@ void MainWindow::newDocument() {
     m_loadWarnings.clear();
     storeViewOf(m_current);
     activate(addSession(std::make_unique<document::Document>(), QString()));
+}
+
+void MainWindow::openFromSystem(const QString& path) {
+    QString error;
+    if (!loadFrom(path, &error)) {
+        QMessageBox::critical(this, tr("Could not open the document"), error);
+    } else if (!m_loadWarnings.isEmpty()) {
+        QMessageBox::warning(this, tr("The document was opened with problems"),
+                             m_loadWarnings.join(QLatin1Char('\n')));
+    }
+}
+
+void MainWindow::acceptFileOpenRequests() {
+    qApp->installEventFilter(this);
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == qApp && event->type() == QEvent::FileOpen) {
+        const QString file = static_cast<QFileOpenEvent*>(event)->file();
+        if (!file.isEmpty()) {
+            openFromSystem(file);
+            raise();
+            activateWindow();
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 bool MainWindow::loadFrom(const QString& path, QString* error) {

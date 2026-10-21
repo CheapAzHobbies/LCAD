@@ -66,21 +66,77 @@ qt_add_executable(lcad src/main.cpp)
 target_link_libraries(lcad PRIVATE lcad::app lcad::core)
 lcad_target_defaults(lcad)
 
-# What a package of LCAD contains: the program, its launcher, its icon, and the file type of
-# its documents.
-include(GNUInstallDirs)
 set(LCAD_APP_ID io.github.cheapazhobbies.LCAD)
-install(TARGETS lcad RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.desktop"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.svg"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.png"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps")
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.xml"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages")
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/application-x-lcad.svg"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/mimetypes")
-# What software centers show about LCAD.
-install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.metainfo.xml"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
+include(GNUInstallDirs)
+
+if(WIN32)
+    # A program with a window and no console, with LCAD's icon, and its version in its
+    # properties.
+    set(LCAD_WINDOWS_ICON "${PROJECT_SOURCE_DIR}/packaging/windows/LCAD.ico")
+    configure_file("${PROJECT_SOURCE_DIR}/packaging/windows/lcad.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/lcad.rc" @ONLY)
+    target_sources(lcad PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/lcad.rc")
+    set_target_properties(lcad PROPERTIES WIN32_EXECUTABLE ON)
+
+    # What the installer installs: the program in bin, beside the libraries it uses and Visual
+    # C++'s runtime, which Windows does not always have. Qt's plugins are added by windeployqt.
+    install(TARGETS lcad
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        RUNTIME_DEPENDENCY_SET lcad_runtime)
+    # The libraries are found beside Qt's, and in the bin folder next to Open CASCADE's lib.
+    get_target_property(_lcad_qt_core Qt6::Core IMPORTED_LOCATION_RELEASE)
+    get_filename_component(_lcad_qt_bin "${_lcad_qt_core}" DIRECTORY)
+    get_filename_component(_lcad_occt_lib "${LCAD_OCCT_TKernel_LIBRARY}" DIRECTORY)
+    install(RUNTIME_DEPENDENCY_SET lcad_runtime
+        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-"
+        POST_EXCLUDE_REGEXES "[Ss]ystem32"
+        DIRECTORIES "${_lcad_qt_bin}" "${_lcad_occt_lib}/../bin")
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    include(InstallRequiredSystemLibraries)
+elseif(APPLE)
+    # LCAD.app, which says that it opens LCAD documents.
+    set(_lcad_icon "${PROJECT_SOURCE_DIR}/packaging/macos/LCAD.icns")
+    target_sources(lcad PRIVATE "${_lcad_icon}")
+    set_source_files_properties("${_lcad_icon}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(lcad PROPERTIES
+        OUTPUT_NAME LCAD
+        MACOSX_BUNDLE ON
+        MACOSX_BUNDLE_INFO_PLIST "${PROJECT_SOURCE_DIR}/packaging/macos/Info.plist.in"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${LCAD_APP_ID}"
+        MACOSX_BUNDLE_BUNDLE_NAME LCAD
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_COPYRIGHT "GNU General Public License, version 3 or later"
+        MACOSX_BUNDLE_ICON_FILE LCAD.icns)
+    # macdeployqt, run by the deploy script below, copies into the bundle every library the
+    # program uses that macOS does not have, Qt's and the others.
+    install(TARGETS lcad BUNDLE DESTINATION .)
+else()
+    # What a package of LCAD contains: the program, its launcher, its icon, and the file type
+    # of its documents.
+    install(TARGETS lcad RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.desktop"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.svg"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.png"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps")
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.xml"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages")
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/application-x-lcad.svg"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/mimetypes")
+    # What software centers show about LCAD.
+    install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.metainfo.xml"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
+endif()
+
+# On Windows and macOS, Qt's own libraries and plugins go with the program, by windeployqt and
+# macdeployqt. On Linux the distribution provides them, and the AppImage and Flatpak bundle
+# them their own way.
+if(WIN32 OR APPLE)
+    qt_generate_deploy_app_script(TARGET lcad
+        OUTPUT_SCRIPT _lcad_deploy_script
+        NO_TRANSLATIONS)
+    install(SCRIPT "${_lcad_deploy_script}")
+endif()
