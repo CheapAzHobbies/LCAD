@@ -471,15 +471,15 @@ void ViewportTest::fitSelectionFramesWhatIsSelected() {
         return QLineF(m_viewport->project(300.0, 0.0, 0.0), m_viewport->project(304.0, 0.0, 0.0))
             .length();
     };
-    const double small = pegWidth();
+    const double narrowWidth = pegWidth();
 
     m_viewport->setSelectedBodies({peg});
     m_viewport->fitSelection();
     render();
 
     // The 4 mm peg now fills a good part of the view, and sits in its middle.
-    QVERIFY2(pegWidth() > small * 10.0,
-             qPrintable(QStringLiteral("%1 -> %2").arg(small).arg(pegWidth())));
+    QVERIFY2(pegWidth() > narrowWidth * 10.0,
+             qPrintable(QStringLiteral("%1 -> %2").arg(narrowWidth).arg(pegWidth())));
     const QPointF center = m_viewport->project(302.0, 2.0, 2.0);
     QVERIFY(QLineF(center, QPointF(m_viewport->rect().center())).length() < 20.0);
 
@@ -487,7 +487,7 @@ void ViewportTest::fitSelectionFramesWhatIsSelected() {
     m_viewport->clearSelection();
     m_viewport->fitSelection();
     render();
-    QVERIFY(qAbs(pegWidth() - small) < small * 0.05);
+    QVERIFY(qAbs(pegWidth() - narrowWidth) < narrowWidth * 0.05);
 }
 
 void ViewportTest::cameraStateCanBePutBack() {

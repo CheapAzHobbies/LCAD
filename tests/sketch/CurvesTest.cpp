@@ -71,9 +71,9 @@ TEST_CASE("An ellipse has a center, the end of its major axis, and a minor radiu
           Refusal::Conflicting);
 
     // Its nearest point to something outside is on it.
-    const Point2 near = nearestOn(s, e, {0.0, 40.0});
-    CHECK_THAT(near.x, WithinAbs(0.0, 0.05));
-    CHECK_THAT(near.y, WithinAbs(12.0, 0.05));
+    const Point2 nearest = nearestOn(s, e, {0.0, 40.0});
+    CHECK_THAT(nearest.x, WithinAbs(0.0, 0.05));
+    CHECK_THAT(nearest.y, WithinAbs(12.0, 0.05));
     CHECK_THAT(distanceTo(s, e, {0.0, 40.0}), WithinAbs(28.0, 0.05));
 }
 

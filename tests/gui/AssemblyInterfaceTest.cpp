@@ -63,7 +63,7 @@ using lcad::viewport::SelectedItem;
 
 namespace {
 
-bool near(double a, double b, double tolerance = 1e-6) {
+bool nearly(double a, double b, double tolerance = 1e-6) {
     return std::abs(a - b) <= tolerance * std::max(1.0, std::abs(b));
 }
 
@@ -317,10 +317,10 @@ void AssemblyInterfaceTest::twoPartsAreJoinedInThePanelAndAnimated() {
     const lcad::document::Joint joint = document->joints().front();
     QVERIFY(document->jointError(joint.id).empty());
     const lcad::kernel::BoundingBox placed = boundsOf(*document, arm);
-    QVERIFY(near(placed.min.z, 10.0));
+    QVERIFY(nearly(placed.min.z, 10.0));
     // Turned a quarter: it lies along Y now, over the middle of the base.
-    QVERIFY(near(placed.max.y - placed.min.y, 30.0));
-    QVERIFY(near((placed.min.x + placed.max.x) / 2.0, 20.0));
+    QVERIFY(nearly(placed.max.y - placed.min.y, 30.0));
+    QVERIFY(nearly((placed.min.x + placed.max.x) / 2.0, 20.0));
     // Listed under Joints, with the document's own joints.
     QVERIFY(window.browser()->jointItem(joint.id) != nullptr);
 
@@ -365,13 +365,13 @@ void AssemblyInterfaceTest::aComponentIsMovedByHand() {
     panel->setValue(5, 90.0);
     render(window);
     // A preview only, so far.
-    QVERIFY(near(boundsOf(*document, part).min.x, 0.0));
+    QVERIFY(nearly(boundsOf(*document, part).min.x, 0.0));
     QTest::mouseClick(okButton(panel), Qt::LeftButton);
     QVERIFY(window.movePanel() == nullptr);
     const lcad::kernel::BoundingBox moved = boundsOf(*document, part);
     // Turned a quarter about Z at its origin, then moved 25 along X: from 15 to 25.
-    QVERIFY(near(moved.min.x, 15.0));
-    QVERIFY(near(moved.max.x, 25.0));
+    QVERIFY(nearly(moved.min.x, 15.0));
+    QVERIFY(nearly(moved.max.x, 25.0));
     QCOMPARE(QString::fromStdString(document->undoLabel()), QStringLiteral("Move Block:1"));
 }
 

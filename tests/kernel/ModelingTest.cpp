@@ -108,10 +108,10 @@ TEST_CASE("Pull makes a solid of an outline, and names its faces", "[kernel][mod
 }
 
 TEST_CASE("The names do not change when the outline is given another size", "[kernel][modeling]") {
-    const NamedShape small = plate(40.0, 25.0, 10.0);
+    const NamedShape smallPlate = plate(40.0, 25.0, 10.0);
     const NamedShape large = plate(95.5, 31.0, 4.0);
-    CHECK(asSet(small.faceNames) == asSet(large.faceNames));
-    CHECK(asSet(edgeNames(small)) == asSet(edgeNames(large)));
+    CHECK(asSet(smallPlate.faceNames) == asSet(large.faceNames));
+    CHECK(asSet(edgeNames(smallPlate)) == asSet(edgeNames(large)));
     // And a name still means the same face: the side made from the rectangle's right side.
     const Shape right = subShape(large.shape, SubShapeKind::Face, findFace(large, "7/side/2"));
     CHECK_THAT(boundingBox(right)->min.x, WithinAbs(95.5, 1e-9));
@@ -232,16 +232,16 @@ TEST_CASE("Combining solids keeps the names of the faces that survive", "[kernel
         } catch (const Error& failure) {
             CHECK(failure.reason() == "the cut leaves nothing of the body");
         }
-        const NamedShape far = pull(
+        const NamedShape distant = pull(
             planeXY(), {Region{rectangle(planeXY(), 100.0, 0.0, 5.0, 5.0), {}}}, 0.0, 5.0, "9");
         try {
-            (void)combine(body, far, Combination::Intersect);
+            (void)combine(body, distant, Combination::Intersect);
             FAIL("the intersection should have been refused");
         } catch (const Error& failure) {
             CHECK(failure.reason() == "the two do not overlap");
         }
         // Joined, they are two solids in one body.
-        const NamedShape both = combine(body, far, Combination::Join);
+        const NamedShape both = combine(body, distant, Combination::Join);
         CHECK(countTopology(both.shape).solids == 2);
         CHECK_THAT(volume(both.shape), WithinRel(10125.0, 1e-9));
     }

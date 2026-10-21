@@ -134,13 +134,13 @@ std::vector<EntityId> mirror(Sketch& sketch, const std::vector<EntityId>& entiti
 std::vector<EntityId> offset(Sketch& sketch, const std::vector<EntityId>& curves, double distance,
                              Point2 side);
 
-/// Removes the part of a curve that `near` is on, up to where other curves cross it. A curve
+/// Removes the part of a curve that `nearPoint` is on, up to where other curves cross it. A curve
 /// that nothing crosses is removed whole. The cut ends are held on the curves that cut them.
 /// Returns false, changing nothing, if there is nothing to trim.
-bool trim(Sketch& sketch, EntityId curve, Point2 near);
+bool trim(Sketch& sketch, EntityId curve, Point2 nearPoint);
 
-/// Lengthens a line or an arc at the end nearer to `near` until it meets another curve, and
+/// Lengthens a line or an arc at the end nearer to `nearPoint` until it meets another curve, and
 /// holds that end on the curve. Returns false, changing nothing, if it meets none.
-bool extend(Sketch& sketch, EntityId curve, Point2 near);
+bool extend(Sketch& sketch, EntityId curve, Point2 nearPoint);
 
 } // namespace lcad::sketch

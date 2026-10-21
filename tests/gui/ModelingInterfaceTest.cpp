@@ -63,7 +63,7 @@ namespace {
 
 const double pi = 3.14159265358979323846;
 
-bool near(double a, double b, double tolerance = 1e-6) {
+bool nearly(double a, double b, double tolerance = 1e-6) {
     return std::abs(a - b) <= tolerance * std::max(1.0, std::abs(b));
 }
 
@@ -305,7 +305,7 @@ void ModelingInterfaceTest::pullMakesASolidFromTheSketchJustDrawn() {
     const Feature& made = window.document()->features().front();
     QCOMPARE(QString::fromStdString(made.name), QStringLiteral("Pull 1"));
     QVERIFY(window.document()->featureError(made.id).empty());
-    QVERIFY(near(volumeOf(window, made.id), 60.0 * 40.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, made.id), 60.0 * 40.0 * 8.0));
     // The body is listed, and the sketch has done its work and is hidden.
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
     QVERIFY(window.browser()->bodyItem(made.body) != nullptr);
@@ -326,7 +326,7 @@ void ModelingInterfaceTest::pullMakesASolidFromTheSketchJustDrawn() {
     QVERIFY(window.document()->bodies().empty());
     QVERIFY(window.document()->findSketch(sketch)->visible);
     QVERIFY(trigger(window, "edit.redo"));
-    QVERIFY(near(volumeOf(window, made.id), 60.0 * 40.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, made.id), 60.0 * 40.0 * 8.0));
 
     // Esc gives up a pull without a trace.
     QVERIFY(trigger(window, "solid.pull"));
@@ -389,7 +389,7 @@ void ModelingInterfaceTest::profilesArePickedByClickingThem() {
     QTest::keyClick(pull, Qt::Key_Return);
     QTRY_VERIFY(panel(window) == nullptr);
     const Feature& plate = window.document()->features().back();
-    QVERIFY(near(volumeOf(window, plate.id), (60.0 * 40.0 - pi * 36.0) * 5.0));
+    QVERIFY(nearly(volumeOf(window, plate.id), (60.0 * 40.0 - pi * 36.0) * 5.0));
 }
 
 void ModelingInterfaceTest::aBracketFollowsTheSketchItWasBuiltOn() {
@@ -417,7 +417,7 @@ void ModelingInterfaceTest::aBracketFollowsTheSketchItWasBuiltOn() {
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId hole = window.document()->features().back().id;
     QVERIFY(window.document()->featureError(hole).empty());
-    QVERIFY(near(volumeOf(window, plate), (60.0 * 40.0 - pi * 36.0) * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), (60.0 * 40.0 - pi * 36.0) * 8.0));
 
     // 9. Fillet the four upright edges, picked before the command.
     QVERIFY(action(window, "solid.fillet")->isEnabled());
@@ -441,7 +441,7 @@ void ModelingInterfaceTest::aBracketFollowsTheSketchItWasBuiltOn() {
     QTest::mouseClick(okButton(fillet), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId rounds = window.document()->features().back().id;
-    QVERIFY(near(volumeOf(window, plate), bracketVolume(60.0, 40.0)));
+    QVERIFY(nearly(volumeOf(window, plate), bracketVolume(60.0, 40.0)));
     // The selection filter is what it was before the fillet.
     QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Edges);
     render(window);
@@ -468,11 +468,11 @@ void ModelingInterfaceTest::aBracketFollowsTheSketchItWasBuiltOn() {
     QTest::keyClicks(field, QStringLiteral("85"));
     QTest::keyClick(field, Qt::Key_Return);
     // While the sketch is open, the model waits for it.
-    QVERIFY(near(volumeOf(window, plate), bracketVolume(60.0, 40.0)));
+    QVERIFY(nearly(volumeOf(window, plate), bracketVolume(60.0, 40.0)));
     QVERIFY(trigger(window, "sketch.finish"));
     QVERIFY(!window.isSketching());
     // 12. The model has followed.
-    QVERIFY(near(volumeOf(window, plate), bracketVolume(85.0, 40.0)));
+    QVERIFY(nearly(volumeOf(window, plate), bracketVolume(85.0, 40.0)));
     for (const ObjectId id : {plate, hole, rounds}) {
         QVERIFY(window.document()->featureError(id).empty());
     }
@@ -504,10 +504,10 @@ void ModelingInterfaceTest::aBracketFollowsTheSketchItWasBuiltOn() {
     QVERIFY(!window.editedFeature().isValid());
     // The hole was pulled 8 deep, which no longer reaches through a plate 10 thick.
     const double thicker = (85.0 * 40.0 - (4.0 - pi) * 25.0) * 10.0 - pi * 36.0 * 8.0;
-    QVERIFY(near(volumeOf(window, plate), thicker));
+    QVERIFY(nearly(volumeOf(window, plate), thicker));
     QCOMPARE(QString::fromStdString(window.document()->undoLabel()), QStringLiteral("Edit Pull 1"));
     QVERIFY(trigger(window, "edit.undo"));
-    QVERIFY(near(volumeOf(window, plate), bracketVolume(85.0, 40.0)));
+    QVERIFY(nearly(volumeOf(window, plate), bracketVolume(85.0, 40.0)));
 }
 
 void ModelingInterfaceTest::theTimelineEditsSuppressesRollsBackAndReorders() {
@@ -525,7 +525,7 @@ void ModelingInterfaceTest::theTimelineEditsSuppressesRollsBackAndReorders() {
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId rounds = window.document()->features().back().id;
     const double rounded = (60.0 * 40.0 - (4.0 - pi) * 25.0) * 8.0;
-    QVERIFY(near(volumeOf(window, plate), rounded));
+    QVERIFY(nearly(volumeOf(window, plate), rounded));
 
     // Suppress the fillet from the timeline: the corners are square again, and the entry says
     // so.
@@ -534,13 +534,13 @@ void ModelingInterfaceTest::theTimelineEditsSuppressesRollsBackAndReorders() {
     QCOMPARE(action(window, "timeline.suppress")->text().remove(QLatin1Char('&')),
              QStringLiteral("Suppress Feature"));
     QVERIFY(trigger(window, "timeline.suppress"));
-    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
     QVERIFY(window.timeline()->describe(rounds).contains(QStringLiteral("Suppressed")));
 
     QCOMPARE(action(window, "timeline.suppress")->text().remove(QLatin1Char('&')),
              QStringLiteral("Restore Feature"));
     QVERIFY(trigger(window, "timeline.suppress"));
-    QVERIFY(near(volumeOf(window, plate), rounded));
+    QVERIFY(nearly(volumeOf(window, plate), rounded));
 
     // Drag the history marker back past the fillet: the model is as it was before it.
     TimelinePanel* timeline = window.timeline();
@@ -555,14 +555,14 @@ void ModelingInterfaceTest::theTimelineEditsSuppressesRollsBackAndReorders() {
     QTest::mouseMove(strip, to);
     QTest::mouseRelease(strip, Qt::LeftButton, Qt::NoModifier, to);
     QCOMPARE(window.document()->historyMarker(), std::size_t{2});
-    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
     QVERIFY(timeline->describe(rounds).contains(QStringLiteral("After the history marker")));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-rolled-back");
     QVERIFY(action(window, "timeline.rollToEnd")->isEnabled());
     QVERIFY(trigger(window, "timeline.rollToEnd"));
     QCOMPARE(window.document()->historyMarker(), std::size_t{3});
-    QVERIFY(near(volumeOf(window, plate), rounded));
+    QVERIFY(nearly(volumeOf(window, plate), rounded));
     // Roll Back to Here does it from a menu.
     clickTimeline(window, plate);
     QVERIFY(trigger(window, "timeline.rollBack"));
@@ -593,7 +593,7 @@ void ModelingInterfaceTest::theTimelineEditsSuppressesRollsBackAndReorders() {
     QTest::mouseMove(strip, first);
     QTest::mouseRelease(strip, Qt::LeftButton, Qt::NoModifier, first);
     QCOMPARE(window.document()->timeline().front(), spare);
-    QVERIFY(near(volumeOf(window, plate), rounded));
+    QVERIFY(nearly(volumeOf(window, plate), rounded));
 
     // Rename and delete, from the timeline.
     window.document()->renameFeature(rounds, "Corner rounds");
@@ -602,7 +602,7 @@ void ModelingInterfaceTest::theTimelineEditsSuppressesRollsBackAndReorders() {
     window.timeline()->findChild<QWidget*>(QStringLiteral("timeline"))->setFocus();
     QVERIFY(trigger(window, "edit.delete"));
     QVERIFY(window.document()->findFeature(rounds) == nullptr);
-    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
     QVERIFY(timeline->itemRect(rounds).isEmpty());
     QVERIFY(!timeline->selectedItem().isValid());
 
@@ -638,7 +638,7 @@ void ModelingInterfaceTest::aFailingFeatureSaysWhy() {
     }
     window.document()->setSketchGeometry(holes, s, "Move Circle");
     QVERIFY(!window.document()->featureError(hole).empty());
-    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), 60.0 * 40.0 * 8.0));
     QVERIFY(window.timeline()->describe(hole).contains(QStringLiteral("Fails: It does not reach")));
     clickTimeline(window, hole);
     QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Pull 2 fails")));
@@ -655,7 +655,7 @@ void ModelingInterfaceTest::aFailingFeatureSaysWhy() {
     // Put right, it works again.
     QVERIFY(trigger(window, "edit.undo"));
     QVERIFY(window.document()->featureError(hole).empty());
-    QVERIFY(near(volumeOf(window, plate), (60.0 * 40.0 - pi * 36.0) * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), (60.0 * 40.0 - pi * 36.0) * 8.0));
     Q_UNUSED(body);
 }
 
@@ -687,7 +687,7 @@ void ModelingInterfaceTest::edgesArePickedInTheViewForAFilletOrChamfer() {
     QTest::mouseClick(okButton(chamfer), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
     // Two corners lose a right triangle with legs of 2, all the way up.
-    QVERIFY(near(volumeOf(window, plate), (60.0 * 40.0 - 2.0 * 2.0) * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), (60.0 * 40.0 - 2.0 * 2.0) * 8.0));
     // The filter is back to what it was.
     QCOMPARE(window.viewport()->selectionFilter(),
              lcad::viewport::SelectionFilter::FacesEdgesVertices);
@@ -715,7 +715,7 @@ void ModelingInterfaceTest::shellAndRevolveWork() {
     QVERIFY(shell->errorText().isEmpty());
     QTest::mouseClick(okButton(shell), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
-    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 8.0 - 56.0 * 36.0 * 6.0));
+    QVERIFY(nearly(volumeOf(window, plate), 60.0 * 40.0 * 8.0 - 56.0 * 36.0 * 6.0));
 
     // Revolve: a rectangle beside a construction line, turned all the way round.
     const ObjectId id = window.createSketch(lcad::kernel::planeXZ());
@@ -742,7 +742,7 @@ void ModelingInterfaceTest::shellAndRevolveWork() {
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId ring = window.document()->features().back().id;
     // A ring from radius 10 to 20, 20 high.
-    QVERIFY(near(volumeOf(window, ring), pi * (400.0 - 100.0) * 20.0, 1e-5));
+    QVERIFY(nearly(volumeOf(window, ring), pi * (400.0 - 100.0) * 20.0, 1e-5));
     QCOMPARE(window.document()->bodies().size(), std::size_t{2});
     Q_UNUSED(body);
 }
@@ -773,7 +773,7 @@ void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {
     QVERIFY2(window.loadFrom(path, &error), qPrintable(error));
     QVERIFY(window.loadWarnings().isEmpty());
     QCOMPARE(window.document()->features().size(), std::size_t{2});
-    QVERIFY(near(volumeOf(window, window.document()->features().front().id), volume));
+    QVERIFY(nearly(volumeOf(window, window.document()->features().front().id), volume));
     // The timeline shows what was saved.
     for (const ObjectId id : window.document()->timeline()) {
         QVERIFY(!window.timeline()->itemRect(id).isEmpty());
@@ -796,7 +796,7 @@ void ModelingInterfaceTest::patternsAndMirrorsRepeatFeatures() {
     const ObjectId hole = window.document()->features().back().id;
     const double solid = 60.0 * 40.0 * 8.0;
     const double one = pi * 9.0 * 8.0;
-    QVERIFY(near(volumeOf(window, plate), solid - one));
+    QVERIFY(nearly(volumeOf(window, plate), solid - one));
 
     // The hole selected in the timeline is what a pattern repeats.
     clickTimeline(window, hole);
@@ -829,7 +829,7 @@ void ModelingInterfaceTest::patternsAndMirrorsRepeatFeatures() {
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId pattern = window.document()->features().back().id;
     QVERIFY(window.document()->featureError(pattern).empty());
-    QVERIFY(near(volumeOf(window, plate), solid - 8.0 * one));
+    QVERIFY(nearly(volumeOf(window, plate), solid - 8.0 * one));
     QVERIFY(window.timeline()->describe(pattern).contains(QStringLiteral("Copies Pull 2")));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-pattern");
@@ -879,7 +879,7 @@ void ModelingInterfaceTest::patternsAndMirrorsRepeatFeatures() {
                 .contains(QStringLiteral("All of Body")));
     QTest::mouseClick(okButton(mirror), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
-    QVERIFY(near(volumeOf(window, plate), 2.0 * before));
+    QVERIFY(nearly(volumeOf(window, plate), 2.0 * before));
 }
 
 void ModelingInterfaceTest::measureGivesDistancesAndAngles() {
@@ -1003,7 +1003,7 @@ void ModelingInterfaceTest::sketchesFollowConstructionPlanesAndFaces() {
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId cap = window.document()->features().back().id;
     QCOMPARE(window.document()->findFeature(cap)->operation, Operation::NewBody);
-    QVERIFY(near(lcad::kernel::boundingBox(bodyOf(window, cap).shape)->min.z, 20.0));
+    QVERIFY(nearly(lcad::kernel::boundingBox(bodyOf(window, cap).shape)->min.z, 20.0));
 
     // Double-click the plane in the browser, and move it to 30: the disc goes with it.
     QTreeWidget* tree = window.browser()->tree();
@@ -1018,7 +1018,7 @@ void ModelingInterfaceTest::sketchesFollowConstructionPlanesAndFaces() {
     QTest::mouseClick(okButton(panel(window)), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
     QCOMPARE(window.document()->findSketch(raised)->plane.origin.z, 30.0);
-    QVERIFY(near(lcad::kernel::boundingBox(bodyOf(window, cap).shape)->min.z, 30.0));
+    QVERIFY(nearly(lcad::kernel::boundingBox(bodyOf(window, cap).shape)->min.z, 30.0));
 
     // A sketch started on the plate's top face is attached to it.
     std::string topName;
@@ -1102,7 +1102,7 @@ void ModelingInterfaceTest::holesAreDrilledAtSketchPoints() {
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId holes = window.document()->features().back().id;
     QVERIFY(window.document()->featureError(holes).empty());
-    QVERIFY(near(volumeOf(window, plate), solid - 2.0 * pi * 9.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), solid - 2.0 * pi * 9.0 * 8.0));
     // Its sketch is hidden, as after a pull.
     QVERIFY(!window.document()->findSketch(marks)->visible);
 
@@ -1118,7 +1118,7 @@ void ModelingInterfaceTest::holesAreDrilledAtSketchPoints() {
     QVERIFY(hole->errorText().isEmpty());
     QTest::mouseClick(okButton(hole), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
-    QVERIFY(near(volumeOf(window, plate), solid - 2.0 * (pi * 25.0 * 3.0 + pi * 9.0 * 5.0)));
+    QVERIFY(nearly(volumeOf(window, plate), solid - 2.0 * (pi * 25.0 * 3.0 + pi * 9.0 * 5.0)));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-holes");
 }
@@ -1154,7 +1154,7 @@ void ModelingInterfaceTest::aPullTapersOrGoesUpToAFace() {
     QTest::mouseClick(okButton(pull), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId rise = window.document()->features().back().id;
-    QVERIFY(near(volumeOf(window, rise), pi * 25.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, rise), pi * 25.0 * 8.0));
 
     // The plate, edited from the timeline, gets a taper of 3 degrees. Its top stays at 8, and
     // the post with it.
@@ -1166,8 +1166,9 @@ void ModelingInterfaceTest::aPullTapersOrGoesUpToAFace() {
     QTRY_VERIFY(panel(window) == nullptr);
     const double s = 8.0 * std::tan(3.0 * pi / 180.0);
     const auto area = [](double shrink) { return (60.0 - 2.0 * shrink) * (40.0 - 2.0 * shrink); };
-    QVERIFY(near(volumeOf(window, plate), 8.0 / 6.0 * (area(0.0) + 4.0 * area(s / 2.0) + area(s))));
-    QVERIFY(near(volumeOf(window, rise), pi * 25.0 * 8.0));
+    QVERIFY(
+        nearly(volumeOf(window, plate), 8.0 / 6.0 * (area(0.0) + 4.0 * area(s / 2.0) + area(s))));
+    QVERIFY(nearly(volumeOf(window, rise), pi * 25.0 * 8.0));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-taper-to-face");
 }
@@ -1250,18 +1251,18 @@ void ModelingInterfaceTest::parametersDriveTheModel() {
     QTest::mouseClick(okButton(pull), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId plate = window.document()->features().back().id;
-    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 6.0));
+    QVERIFY(nearly(volumeOf(window, plate), 60.0 * 40.0 * 6.0));
 
     // One change in the table: the sketch and the thickness follow.
     window.showParameters();
     table->item(0, 1)->setText(QStringLiteral("80 mm"));
     QTRY_COMPARE(table->item(1, 2)->text(), QStringLiteral("8"));
-    QVERIFY(near(volumeOf(window, plate), 80.0 * 40.0 * 8.0));
+    QVERIFY(nearly(volumeOf(window, plate), 80.0 * 40.0 * 8.0));
     // Undone from the window, as any edit.
     window.activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(&window));
     QVERIFY(trigger(window, "edit.undo"));
-    QVERIFY(near(volumeOf(window, plate), 60.0 * 40.0 * 6.0));
+    QVERIFY(nearly(volumeOf(window, plate), 60.0 * 40.0 * 6.0));
     QTRY_COMPARE(table->item(0, 1)->text(), QStringLiteral("60 mm"));
 
     // Edited again, the pull's box shows its expression.
@@ -1321,9 +1322,9 @@ void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
              QStringLiteral("Axis 1"));
     const auto state = window.document()->axisState(axis);
     QVERIFY(state.has_value());
-    QVERIFY(near(state->axis.origin.x, 30.0));
-    QVERIFY(near(state->axis.origin.y, 20.0));
-    QVERIFY(near(std::abs(state->axis.direction.z), 1.0));
+    QVERIFY(nearly(state->axis.origin.x, 30.0));
+    QVERIFY(nearly(state->axis.origin.y, 20.0));
+    QVERIFY(nearly(std::abs(state->axis.direction.z), 1.0));
     // It is listed under Construction, and makes no body.
     QVERIFY(window.browser()->planeItem(axis) != nullptr);
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
@@ -1349,7 +1350,7 @@ void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
     QTest::mouseClick(okButton(revolve), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
     const ObjectId ring = window.document()->features().back().id;
-    QVERIFY(near(volumeOf(window, ring), pi * (110.0 * 110.0 - 100.0 * 100.0) * 20.0, 1e-5));
+    QVERIFY(nearly(volumeOf(window, ring), pi * (110.0 * 110.0 - 100.0 * 100.0) * 20.0, 1e-5));
     const ObjectId ringBody = bodyOf(window, ring).id;
 
     // Two of the ring around Axis 1: the copy, half a turn about (30, 20), is centered on
@@ -1376,8 +1377,8 @@ void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
     QTRY_VERIFY(panel(window) == nullptr);
     const auto box = lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
     QVERIFY(box.has_value());
-    QVERIFY(near(box->max.x, 170.0, 1e-6));
-    QVERIFY(near(box->max.y, 150.0, 1e-6));
+    QVERIFY(nearly(box->max.x, 170.0, 1e-6));
+    QVERIFY(nearly(box->max.y, 150.0, 1e-6));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-axes");
 
@@ -1403,7 +1404,7 @@ void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
     QTRY_VERIFY(panel(window) == nullptr);
     // About the ring's own axis now, the copy lands on the ring.
     const auto same = lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
-    QVERIFY(near(same->max.x, 110.0, 1e-6));
+    QVERIFY(nearly(same->max.x, 110.0, 1e-6));
     QVERIFY(window.document()->featureError(window.document()->features().back().id).empty());
 
     // Hidden from the browser, it stays in the model.

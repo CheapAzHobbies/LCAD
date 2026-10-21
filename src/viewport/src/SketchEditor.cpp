@@ -2080,12 +2080,12 @@ public:
                     const QPolygonF following =
                         next != nullptr ? pathOf(strokeOf(g, *next)).toSubpathPolygons().value(0)
                                         : QPolygonF();
-                    const auto near = [&following](const QPointF& p) {
+                    const auto nearly = [&following](const QPointF& p) {
                         return !following.isEmpty() &&
                                (QLineF(p, following.first()).length() < 0.5 ||
                                 QLineF(p, following.last()).length() < 0.5);
                     };
-                    if (near(points.first()) && !near(points.last())) {
+                    if (nearly(points.first()) && !nearly(points.last())) {
                         std::reverse(points.begin(), points.end());
                     }
                 } else if (last.has_value() && QLineF(*last, points.last()).length() <

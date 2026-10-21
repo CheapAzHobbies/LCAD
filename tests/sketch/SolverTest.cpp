@@ -198,7 +198,7 @@ TEST_CASE("The solver says which geometry can still move", "[sketch][solver]") {
 TEST_CASE("Geometry that does not have to move stays where it is", "[sketch][solver]") {
     Sketch sketch;
     const EntityId line = sketch.addLine({0.0, 0.0}, {10.0, 1.0});
-    const EntityId far = sketch.addLine({100.0, 50.0}, {120.0, 70.0});
+    const EntityId distant = sketch.addLine({100.0, 50.0}, {120.0, 70.0});
     const EntityId circle = sketch.addCircle({-30.0, 4.0}, 6.0);
     sketch.addConstraint(ConstraintKind::Horizontal, line);
 
@@ -209,8 +209,8 @@ TEST_CASE("Geometry that does not have to move stays where it is", "[sketch][sol
     CHECK_THAT(startOf(sketch, line).y, WithinAbs(0.5, lengthTolerance));
     CHECK_THAT(startOf(sketch, line).x, WithinAbs(0.0, lengthTolerance));
     // And nothing else moved at all.
-    CHECK(startOf(sketch, far).x == 100.0);
-    CHECK(endOf(sketch, far).y == 70.0);
+    CHECK(startOf(sketch, distant).x == 100.0);
+    CHECK(endOf(sketch, distant).y == 70.0);
     CHECK(centerOf(sketch, circle).x == -30.0);
     CHECK(sketch.radiusOf(circle) == 6.0);
 

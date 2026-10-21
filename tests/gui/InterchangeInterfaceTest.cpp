@@ -55,7 +55,7 @@ namespace {
 
 const double pi = 3.14159265358979323846;
 
-bool near(double a, double b, double tolerance = 1e-6) {
+bool nearly(double a, double b, double tolerance = 1e-6) {
     return std::abs(a - b) <= tolerance * std::max(1.0, std::abs(b));
 }
 
@@ -205,7 +205,7 @@ void InterchangeInterfaceTest::aStepSolidIsImportedOffsetSavedAndExported() {
     const ObjectId body = window.document()->bodies().front().id;
     QCOMPARE(QString::fromStdString(window.document()->findBody(body)->name),
              QStringLiteral("Bracket"));
-    QVERIFY(near(volumeOf(window, body), plateVolume(10.0)));
+    QVERIFY(nearly(volumeOf(window, body), plateVolume(10.0)));
     QVERIFY(window.statusBar()->currentMessage().contains(
         QStringLiteral("Imported 1 body from bracket.step")));
     QCOMPARE(window.browser()->selectedBodies(), (std::vector<ObjectId>{body}));
@@ -253,7 +253,7 @@ void InterchangeInterfaceTest::aStepSolidIsImportedOffsetSavedAndExported() {
     const ObjectId raised = window.document()->features().back().id;
     QCOMPARE(QString::fromStdString(window.document()->findFeature(raised)->name),
              QStringLiteral("Offset Face 1"));
-    QVERIFY(near(volumeOf(window, body), plateVolume(15.0)));
+    QVERIFY(nearly(volumeOf(window, body), plateVolume(15.0)));
 
     // Saved and opened again in a new window.
     const QString saved = m_directory.filePath(QStringLiteral("bracket.lcad"));
@@ -261,7 +261,7 @@ void InterchangeInterfaceTest::aStepSolidIsImportedOffsetSavedAndExported() {
     MainWindow reopened;
     QVERIFY2(reopened.loadFrom(saved, &error), qPrintable(error));
     QVERIFY(reopened.loadWarnings().isEmpty());
-    QVERIFY(near(volumeOf(reopened, body), plateVolume(15.0)));
+    QVERIFY(nearly(volumeOf(reopened, body), plateVolume(15.0)));
 
     // Exported to STEP from there, read back, and checked.
     const QString exported = m_directory.filePath(QStringLiteral("thicker.step"));
@@ -275,7 +275,7 @@ void InterchangeInterfaceTest::aStepSolidIsImportedOffsetSavedAndExported() {
     QCOMPARE(back.bodies.size(), std::size_t{1});
     QCOMPARE(back.bodies[0].name, std::string("Bracket"));
     QVERIFY(lcad::kernel::checkGeometry(back.bodies[0].shape).empty());
-    QVERIFY(near(lcad::kernel::volume(back.bodies[0].shape), plateVolume(15.0)));
+    QVERIFY(nearly(lcad::kernel::volume(back.bodies[0].shape), plateVolume(15.0)));
 
     // And to STL, 3MF, and OBJ.
     for (const auto& [format, name] : {std::pair{ExportFormat::Stl, "thicker.stl"},
@@ -320,8 +320,8 @@ void InterchangeInterfaceTest::facesAreMovedAndDeleted() {
     const auto axis = lcad::kernel::axisOf(
         lcad::kernel::subShape(moved.shape, lcad::kernel::SubShapeKind::Face, movedWall));
     QVERIFY(axis.has_value());
-    QVERIFY(near(axis->origin.x, 40.0));
-    QVERIFY(near(volumeOf(window, body), plateVolume(10.0)));
+    QVERIFY(nearly(axis->origin.x, 40.0));
+    QVERIFY(nearly(volumeOf(window, body), plateVolume(10.0)));
 
     // Move Face on the top: the guess is square to it.
     const int top = faceWhere(window, body, [](const lcad::kernel::Shape& face) {
@@ -337,7 +337,7 @@ void InterchangeInterfaceTest::facesAreMovedAndDeleted() {
     typeInto(move, "distance", 2.0);
     QTest::mouseClick(okButton(move), Qt::LeftButton);
     QTRY_VERIFY(window.featurePanel() == nullptr);
-    QVERIFY(near(volumeOf(window, body), plateVolume(12.0)));
+    QVERIFY(nearly(volumeOf(window, body), plateVolume(12.0)));
 
     // Delete Face on the hole: the plate is whole.
     window.viewport()->setSelection(
@@ -348,7 +348,7 @@ void InterchangeInterfaceTest::facesAreMovedAndDeleted() {
     QVERIFY(okButton(remove)->isEnabled());
     QTest::mouseClick(okButton(remove), Qt::LeftButton);
     QTRY_VERIFY(window.featurePanel() == nullptr);
-    QVERIFY(near(volumeOf(window, body), 60.0 * 40.0 * 12.0));
+    QVERIFY(nearly(volumeOf(window, body), 60.0 * 40.0 * 12.0));
 
     // Edited from the timeline: the move goes back to 5, and everything after follows.
     const ObjectId first = window.document()->features().front().id;
@@ -363,7 +363,7 @@ void InterchangeInterfaceTest::facesAreMovedAndDeleted() {
         QVERIFY2(window.document()->featureError(feature.id).empty(),
                  window.document()->featureError(feature.id).c_str());
     }
-    QVERIFY(near(volumeOf(window, body), 60.0 * 40.0 * 12.0));
+    QVERIFY(nearly(volumeOf(window, body), 60.0 * 40.0 * 12.0));
     QCOMPARE(window.timeline()->describe(first).isEmpty(), false);
 }
 
@@ -418,7 +418,7 @@ void InterchangeInterfaceTest::checkGeometryFindsProblemsAndRepairFixesThem() {
     QTest::mouseClick(okButton(window.featurePanel()), Qt::LeftButton);
     QTRY_VERIFY(window.featurePanel() == nullptr);
     QCOMPARE(lcad::kernel::countTopology(window.document()->findBody(loose)->shape).solids, 1);
-    QVERIFY(near(volumeOf(window, loose), 6000.0));
+    QVERIFY(nearly(volumeOf(window, loose), 6000.0));
 
     // Checked again: both are sound now.
     QVERIFY(trigger(window, "inspect.checkGeometry"));

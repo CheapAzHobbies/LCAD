@@ -4,6 +4,15 @@
 // and OCCT adopts both. The technique follows the QOpenGLWidget sample maintained for OCCT at
 // https://github.com/gkv311/occt-samples-qt (MIT license, see THIRD_PARTY_NOTICES.md).
 
+// OCCT's OpenGL headers come first. They define every OpenGL version and function type
+// themselves, and on macOS clash with Apple's gl3.h when Qt's OpenGL headers have included it
+// first; the other way round, gl3.h finds the versions defined and leaves them alone.
+#include <OpenGl_Context.hxx>
+#include <OpenGl_FrameBuffer.hxx>
+#include <OpenGl_GraphicDriver.hxx>
+#include <OpenGl_View.hxx>
+#include <OpenGl_Window.hxx>
+
 #include <lcad/viewport/ViewportWidget.h>
 
 #include <lcad/document/Document.h>
@@ -34,11 +43,6 @@
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
 #include <Graphic3d_TransformPers.hxx>
-#include <OpenGl_Context.hxx>
-#include <OpenGl_FrameBuffer.hxx>
-#include <OpenGl_GraphicDriver.hxx>
-#include <OpenGl_View.hxx>
-#include <OpenGl_Window.hxx>
 #include <Prs3d_DatumAspect.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>

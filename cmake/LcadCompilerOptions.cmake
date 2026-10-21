@@ -11,8 +11,9 @@ function(lcad_target_defaults target)
             /Zc:__cplusplus
             /W4)
         # windows.h, which OCCT's headers and LCAD's include, would otherwise define min and
-        # max as macros.
-        target_compile_definitions(${target} PRIVATE NOMINMAX)
+        # max as macros, and with all of it, more such as small. (It still defines near and far,
+        # which LCAD's code therefore does not use as names.)
+        target_compile_definitions(${target} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
         if(LCAD_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE /WX)
         endif()

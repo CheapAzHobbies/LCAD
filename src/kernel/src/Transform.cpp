@@ -186,11 +186,12 @@ bool isRigid(const Placement& placement) {
         return false;
     }
     constexpr double tolerance = 1e-6;
-    const auto near = [](double value, double expected) {
+    const auto nearly = [](double value, double expected) {
         return std::abs(value - expected) <= tolerance;
     };
-    return near(norm(x), 1.0) && near(norm(y), 1.0) && near(norm(z), 1.0) && near(dot(x, y), 0.0) &&
-           near(dot(y, z), 0.0) && near(dot(z, x), 0.0) && near(dot(cross(x, y), z), 1.0);
+    return nearly(norm(x), 1.0) && nearly(norm(y), 1.0) && nearly(norm(z), 1.0) &&
+           nearly(dot(x, y), 0.0) && nearly(dot(y, z), 0.0) && nearly(dot(z, x), 0.0) &&
+           nearly(dot(cross(x, y), z), 1.0);
 }
 
 Placement normalized(const Placement& placement) {
