@@ -2,6 +2,7 @@
 
 #include <lcad/app/AssemblyDialogs.h>
 
+#include <lcad/app/Paths.h>
 #include <lcad/app/PropertiesPanel.h>
 
 #include <QDialogButtonBox>
@@ -367,14 +368,14 @@ void LinksDialog::setStatuses(const std::vector<document::LinkStatus>& statuses)
     int missing = 0;
     std::function<void(QTreeWidgetItem*, const document::LinkStatus&)> add =
         [&](QTreeWidgetItem* parent, const document::LinkStatus& status) {
-            const QStringList columns{
-                QString::fromStdString(status.name), linkStateName(status.state),
-                QDir::toNativeSeparators(QString::fromStdString(status.file.string()))};
+            const QStringList columns{QString::fromStdString(status.name),
+                                      linkStateName(status.state),
+                                      QDir::toNativeSeparators(fromPath(status.file))};
             auto* item = parent == nullptr ? new QTreeWidgetItem(m_tree, columns)
                                            : new QTreeWidgetItem(parent, columns);
             item->setData(0, componentRole,
                           QVariant::fromValue<qulonglong>(status.component.value));
-            item->setData(0, fileRole, QString::fromStdString(status.file.string()));
+            item->setData(0, fileRole, fromPath(status.file));
             item->setToolTip(1, QString::fromStdString(status.problem));
             changed += status.state == document::LinkStatus::State::Changed ? 1 : 0;
             missing += status.state == document::LinkStatus::State::Missing ||

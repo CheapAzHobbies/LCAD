@@ -10,7 +10,6 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
-#include <QMessageBox>
 
 #include <string>
 
@@ -48,15 +47,10 @@ int main(int argc, char* argv[]) {
     // that did not close properly left there, offered back.
     window.enableRecovery(lcad::app::defaultRecoveryFolder());
     window.offerRecovery();
+    window.acceptFileOpenRequests();
     const QStringList files = parser.positionalArguments();
     if (!files.isEmpty()) {
-        QString error;
-        if (!window.loadFrom(files.first(), &error)) {
-            QMessageBox::critical(&window, QStringLiteral("Could not open the document"), error);
-        } else if (!window.loadWarnings().isEmpty()) {
-            QMessageBox::warning(&window, QStringLiteral("The document was opened with problems"),
-                                 window.loadWarnings().join(QLatin1Char('\n')));
-        }
+        window.openFromSystem(files.first());
     }
     const int result = QApplication::exec();
     lcad::app::stopLogging();

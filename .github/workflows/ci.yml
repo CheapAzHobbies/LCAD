@@ -103,6 +103,142 @@ jobs:
           path: reference-model
           retention-days: 14
 
+  # Windows and macOS build against conda-forge's Qt and Open CASCADE, which come built for
+  # both: the same libraries, in the same versions, on the two.
+  windows:
+    name: Windows
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Visual Studio's compiler
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install dependencies
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: packaging/conda/environment.yml
+          init-shell: powershell
+          cache-environment: true
+
+      - name: Configure
+        run: >
+          cmake --preset ci -DLCAD_WARNINGS_AS_ERRORS=OFF
+          "-DCMAKE_PREFIX_PATH=$env:CONDA_PREFIX/Library"
+
+      - name: Build
+        run: cmake --build --preset ci
+
+      # The runner has no graphics card, and Windows' own OpenGL stops at version 1.1. Mesa's
+      # software renderer, put beside the tests, takes its place for them.
+      - name: Put Mesa's OpenGL beside the tests
+        run: |
+          $version = "26.2.3"
+          Invoke-WebRequest -OutFile mesa.7z `
+            "https://github.com/pal1000/mesa-dist-win/releases/download/$version/mesa3d-$version-release-msvc.7z"
+          7z x mesa.7z -omesa | Out-Null
+          Copy-Item mesa/x64/opengl32.dll, mesa/x64/libgallium_wgl.dll build/ci/bin/
+
+      - name: Test
+        env:
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          New-Item -ItemType Directory test-frames | Out-Null
+          $env:LCAD_TEST_ARTIFACTS = "$PWD/test-frames"
+          ctest --preset ci
+
+      - name: Keep the frames the GUI tests rendered
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frames-Windows
+          path: test-frames
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # The program with its libraries and Qt's plugins, gathered by `cmake --install`, made into
+      # an installer by Inno Setup.
+      - name: Build the installer
+        run: |
+          cmake --install build/ci --prefix stage
+          $version = (Select-String -Path build/ci/CMakeCache.txt `
+            -Pattern '^CMAKE_PROJECT_VERSION:STATIC=(.+)$').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=$version" "/DStageDir=$PWD\stage" "/DOutputDir=$PWD\installer" `
+            packaging/windows/LCAD.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: LCAD-Windows-installer
+          path: installer/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v7
+
+      # With conda-forge's compiler, so that LCAD and the libraries share one C++ library.
+      - name: Install dependencies
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: packaging/conda/environment.yml
+          create-args: cxx-compiler
+          cache-environment: true
+
+      - name: Configure
+        run: cmake --preset ci -DLCAD_WARNINGS_AS_ERRORS=OFF "-DCMAKE_PREFIX_PATH=$CONDA_PREFIX"
+
+      - name: Build
+        run: cmake --build --preset ci
+
+      - name: Test
+        run: |
+          mkdir test-frames
+          LCAD_TEST_ARTIFACTS="$PWD/test-frames" ctest --preset ci
+
+      - name: Keep the frames the GUI tests rendered
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frames-macOS
+          path: test-frames
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # LCAD.app with every library it uses inside it, put by `cmake --install` and macdeployqt,
+      # signed for this computer only (ad hoc: there is no Apple developer identity), on a disk
+      # image beside a link to Applications.
+      - name: Build the disk image
+        run: |
+          cmake --install build/ci --prefix stage
+          codesign --force --deep --sign - stage/LCAD.app
+          version=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build/ci/CMakeCache.txt)
+          mkdir -p dmg/contents
+          cp -R stage/LCAD.app dmg/contents/
+          ln -s /Applications dmg/contents/Applications
+          hdiutil create -volname LCAD -srcfolder dmg/contents -ov -format UDZO \
+            "dmg/LCAD-$version-macos-$(uname -m).dmg"
+
+      - name: Keep the disk image
+        uses: actions/upload-artifact@v7
+        with:
+          name: LCAD-macOS-disk-image
+          path: dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
   # One file that runs without installing anything. Built on the oldest supported distribution,
   # because an AppImage runs on distributions at least as new as the one it was built on.
   appimage:

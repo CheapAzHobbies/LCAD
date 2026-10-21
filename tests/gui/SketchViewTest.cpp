@@ -99,6 +99,7 @@ private slots:
     void aConstraintWithoutAFittingSelectionBecomesTheTool();
     void redundantAndConflictingConstraintsAreRefused();
     void aFullyConstrainedRectangleFollowsItsDimensions();
+    void aLineIsDimensionedByClickingIt();
     void anImpossibleOrMeaninglessValueIsKeptForCorrection();
     void markersAndValuesCanBePickedAndDeleted();
 
@@ -1624,6 +1625,81 @@ void SketchViewTest::projectBringsEdgesOfABodyIntoTheSketch() {
     editor()->setSelection({lines[0].id});
     QVERIFY(editor()->deleteSelection());
     QVERIFY(curves(EntityKind::Line).empty());
+}
+
+// With the Dimension tool, a line takes one click: its dimension then follows the pointer, and
+// typing a number places it there with that value. Enter places it as it measures.
+void SketchViewTest::aLineIsDimensionedByClickingIt() {
+    openSketch();
+    m_viewport->setFocus();
+    editor()->setInference(false);
+    editor()->setTool(SketchTool::Line);
+    for (const double y : {0.0, 40.0}) {
+        click(at(10.0, y));
+        click(at(70.0, y));
+        editor()->cancel();
+    }
+    const std::vector<Entity> lines = curves(EntityKind::Line);
+    QCOMPARE(lines.size(), std::size_t{2});
+    editor()->setTool(SketchTool::Dimension);
+    QVERIFY2(editor()->hint().contains(QStringLiteral("click a line")),
+             qPrintable(editor()->hint()));
+
+    // Anything drawn near a place of the sketch.
+    const auto drawnNear = [this](const QImage& image, Point2 where) {
+        const QPoint pixel = (editor()->toWidget(where) * image.devicePixelRatio()).toPoint();
+        const int reach = qRound(4 * image.devicePixelRatio());
+        for (int dy = -reach; dy <= reach; ++dy) {
+            for (int dx = -reach; dx <= reach; ++dx) {
+                const QPoint p = pixel + QPoint(dx, dy);
+                if (image.rect().contains(p) && qAlpha(image.pixel(p)) > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    // The value of a length goes 38 pixels below the line, which is 12.7 mm at 3 pixels to the
+    // millimeter.
+    const Point2 label{40.0, -38.0 / 3.0};
+    move(at(40.0, -12.0));
+    QVERIFY(!drawnNear(overlayImage(), label));
+
+    click(at(40.0, 0.0));
+    QVERIFY(editor()->valueField() == nullptr);
+    QVERIFY2(editor()->hint().contains(QStringLiteral("type the length")),
+             qPrintable(editor()->hint()));
+    move(at(40.0, -12.0));
+    QImage image = overlayImage();
+    keepFrame(image, "sketch-dimension-preview");
+    QVERIFY(drawnNear(image, label));
+    QCOMPARE(count(ConstraintKind::Distance), 0);
+
+    // Typing places it and starts its value.
+    type(QStringLiteral("5"));
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(editor()->valueField()->text(), QStringLiteral("5"));
+    type(QStringLiteral("0"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    QVERIFY(editor()->valueField() == nullptr);
+    QCOMPARE(count(ConstraintKind::Distance), 1);
+    QVERIFY(qAbs(apart(startOf(lines[0].id), endOf(lines[0].id)) - 50.0) < 1e-6);
+    QCOMPARE(editor()->tool(), SketchTool::Dimension);
+
+    // Enter places it as it measures, ready to be typed over.
+    click(at(40.0, 40.0));
+    QTest::keyClick(m_viewport, Qt::Key_Return);
+    QVERIFY(editor()->valueField() != nullptr);
+    QVERIFY(qAbs(editor()->valueField()->text().toDouble() - 60.0) < 0.4);
+    type(QStringLiteral("45"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    QCOMPARE(count(ConstraintKind::Distance), 2);
+    QVERIFY(qAbs(apart(startOf(lines[1].id), endOf(lines[1].id)) - 45.0) < 1e-6);
+
+    // With nothing picked, a number is not a value for anything.
+    type(QStringLiteral("7"));
+    QVERIFY(editor()->valueField() == nullptr);
+    QCOMPARE(count(ConstraintKind::Distance), 2);
 }
 
 void SketchViewTest::aDimensionIsHorizontalOrVerticalByWhereItIsPut() {

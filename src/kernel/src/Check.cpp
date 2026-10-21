@@ -251,12 +251,12 @@ std::vector<GeometryProblem> checkGeometry(const Shape& shape) {
             analyzer2.Perform();
             if (analyzer2.HasFaulty()) {
                 Found crossing;
-                Found small;
+                Found tooSmall;
                 for (BOPAlgo_ListOfCheckResult::Iterator it(analyzer2.GetCheckResult()); it.More();
                      it.Next()) {
                     const BOPAlgo_CheckResult& result = it.Value();
                     Found* entry = result.GetCheckStatus() == BOPAlgo_SelfIntersect  ? &crossing
-                                   : result.GetCheckStatus() == BOPAlgo_TooSmallEdge ? &small
+                                   : result.GetCheckStatus() == BOPAlgo_TooSmallEdge ? &tooSmall
                                                                                      : nullptr;
                     if (entry == nullptr) {
                         continue;
@@ -278,11 +278,11 @@ std::vector<GeometryProblem> checkGeometry(const Shape& shape) {
                             " another part of the solid, or itself.",
                         crossing.faces, crossing.edges);
                 }
-                if (small.count > 0) {
-                    add(countOf(static_cast<int>(std::max<std::size_t>(small.edges.size(), 1)),
+                if (tooSmall.count > 0) {
+                    add(countOf(static_cast<int>(std::max<std::size_t>(tooSmall.edges.size(), 1)),
                                 "edge is", "edges are") +
                             " too short to work with.",
-                        small.faces, small.edges);
+                        tooSmall.faces, tooSmall.edges);
                 }
             }
         }

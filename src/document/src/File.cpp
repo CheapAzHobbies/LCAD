@@ -6,6 +6,7 @@
 #include "Migration.h"
 
 #include <lcad/core/Log.h>
+#include <lcad/core/Path.h>
 #include <lcad/core/Version.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/Measure.h>
@@ -25,6 +26,8 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#include <windows.h>
 #endif
 
 namespace lcad::document {
@@ -45,16 +48,32 @@ void flushToDisk(const std::filesystem::path& path, bool isDirectory) {
 #if defined(__unix__) || defined(__APPLE__)
     const int fd = ::open(path.c_str(), isDirectory ? O_RDONLY | O_DIRECTORY : O_RDONLY);
     if (fd < 0) {
-        throw FileError("Could not flush " + path.string() + " to disk.");
+        throw FileError("Could not flush " + core::toUtf8(path) + " to disk.");
     }
     const int result = ::fsync(fd);
     ::close(fd);
     // Some file systems cannot flush a directory; that is not a failed save.
     if (result != 0 && !isDirectory) {
-        throw FileError("Could not flush " + path.string() + " to disk.");
+        throw FileError("Could not flush " + core::toUtf8(path) + " to disk.");
+    }
+#elif defined(_WIN32)
+    // Windows flushes a file through a handle to it, and has no way to flush a folder: a rename
+    // there is recorded by the file system's own journal.
+    if (isDirectory) {
+        return;
+    }
+    const HANDLE handle =
+        CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        throw FileError("Could not flush " + core::toUtf8(path) + " to disk.");
+    }
+    const BOOL flushed = FlushFileBuffers(handle);
+    CloseHandle(handle);
+    if (!flushed) {
+        throw FileError("Could not flush " + core::toUtf8(path) + " to disk.");
     }
 #else
-    // The Windows port needs FlushFileBuffers here.
     (void)path;
     (void)isDirectory;
 #endif
@@ -83,12 +102,12 @@ void writeAtomically(const std::filesystem::path& requested,
     }
     const std::filesystem::path directory = target.parent_path();
     if (!std::filesystem::is_directory(directory, ec)) {
-        throw FileError("The folder " + directory.string() + " does not exist.");
+        throw FileError("The folder " + core::toUtf8(directory) + " does not exist.");
     }
 
     // In the same folder as the target, so that the rename below stays within one file system.
     const std::filesystem::path temporary =
-        directory / ("." + target.filename().string() + "." + randomSuffix() + ".tmp");
+        directory / ("." + core::toUtf8(target.filename()) + "." + randomSuffix() + ".tmp");
     try {
         detail::writeArchive(temporary, entries);
         if (std::filesystem::exists(target, ec)) {
@@ -101,9 +120,10 @@ void writeAtomically(const std::filesystem::path& requested,
         if (ec) {
             const std::string reason = ec.message();
             if (std::filesystem::is_directory(target, ec)) {
-                throw FileError(target.string() + " is a folder. Choose a file name inside it.");
+                throw FileError(core::toUtf8(target) +
+                                " is a folder. Choose a file name inside it.");
             }
-            throw FileError("Could not save " + target.string() + ": " + reason + ".");
+            throw FileError("Could not save " + core::toUtf8(target) + ": " + reason + ".");
         }
     } catch (...) {
         std::filesystem::remove(temporary, ec);
@@ -115,13 +135,13 @@ void writeAtomically(const std::filesystem::path& requested,
 // Reading document.json: every wrong or missing value is reported, never guessed.
 
 [[noreturn]] void damaged(const std::filesystem::path& path, const std::string& problem) {
-    throw FileError(path.string() + " is damaged: " + problem + ".");
+    throw FileError(core::toUtf8(path) + " is damaged: " + problem + ".");
 }
 
 json parse(const detail::Entries& entries, const char* name, const std::filesystem::path& path) {
     const auto entry = entries.find(name);
     if (entry == entries.end()) {
-        throw FileError(path.string() + " is not an LCAD document (it has no " + name + ").");
+        throw FileError(core::toUtf8(path) + " is not an LCAD document (it has no " + name + ").");
     }
     json value = json::parse(entry->second, nullptr, /*allow_exceptions=*/false);
     if (value.is_discarded() || !value.is_object()) {
@@ -986,7 +1006,7 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
     const json& units = objectMember(contents.manifest, "units", manifestName, path);
     const std::string lengthUnit = stringMember(units, "length", "the units", path);
     if (lengthUnit != "mm") {
-        throw FileError(path.string() + " uses the length unit \"" + lengthUnit +
+        throw FileError(core::toUtf8(path) + " uses the length unit \"" + lengthUnit +
                         "\", which this version of LCAD does not support.");
     }
 
@@ -1148,8 +1168,8 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
         try {
             geometry.emplace_back(file, kernel::toBrep(body.source));
         } catch (const kernel::Error& error) {
-            throw FileError("Could not save " + path.string() + ": the geometry of \"" + body.name +
-                            "\" cannot be written (" + error.reason() + ").");
+            throw FileError("Could not save " + core::toUtf8(path) + ": the geometry of \"" +
+                            body.name + "\" cannot be written (" + error.reason() + ").");
         }
         if (!body.linkKey.empty()) {
             entry["geometry"] = ordered_json{{"file", file}, {"role", "linked"}};
@@ -1206,7 +1226,7 @@ LoadedDocument loadDocument(const std::filesystem::path& path) {
 
     const auto format = contents.manifest.find("format");
     if (format == contents.manifest.end() || *format != formatName) {
-        throw FileError(path.string() + " is not an LCAD document.");
+        throw FileError(core::toUtf8(path) + " is not an LCAD document.");
     }
     const json& versionValue = member(contents.manifest, "formatVersion", manifestName, path);
     if (!versionValue.is_number_integer()) {
@@ -1215,7 +1235,7 @@ LoadedDocument loadDocument(const std::filesystem::path& path) {
     const auto version = versionValue.get<std::int64_t>();
     const std::string writer = describeWriter(contents.manifest);
     if (version > currentFormatVersion) {
-        throw FileError(path.string() + " was saved by " + writer + " in format version " +
+        throw FileError(core::toUtf8(path) + " was saved by " + writer + " in format version " +
                         std::to_string(version) + ". This is LCAD " + core::version() +
                         ", which reads up to version " + std::to_string(currentFormatVersion) +
                         ". Open the file with " + writer + " or newer.");
@@ -1253,7 +1273,7 @@ LoadedDocument loadDocument(const std::filesystem::path& path) {
         }
     }
     for (const std::string& warning : loaded.warnings) {
-        core::log(core::LogLevel::Warning, "document", path.string() + ": " + warning);
+        core::log(core::LogLevel::Warning, "document", core::toUtf8(path) + ": " + warning);
     }
     return loaded;
 }
@@ -1261,7 +1281,7 @@ LoadedDocument loadDocument(const std::filesystem::path& path) {
 std::vector<Component> readLinkedComponents(const std::filesystem::path& path) {
     const std::optional<std::string> text = detail::readArchiveEntry(path, documentName);
     if (!text.has_value()) {
-        throw FileError(path.string() + " is not an LCAD document (it has no " + documentName +
+        throw FileError(core::toUtf8(path) + " is not an LCAD document (it has no " + documentName +
                         ").");
     }
     const json document = json::parse(*text, nullptr, /*allow_exceptions=*/false);

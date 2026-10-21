@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# What LCAD builds with on Windows and macOS: Qt, Open CASCADE, and the smaller libraries, all
+# from conda-forge, where they come built for both. See docs/BUILDING.md.
+#
+#   micromamba create -f packaging/conda/environment.yml
+#
+# The compiler is not in it: on Windows it is Visual Studio's, and on macOS it is added as
+# cxx-compiler, so that LCAD uses the same C++ library as the libraries it links.
+name: lcad
+channels:
+  - conda-forge
+dependencies:
+  - cmake >=3.28
+  - ninja
+  - qt6-main >=6.4
+  # LCAD is developed and tested against 7.6 to 7.9.
+  - occt 7.9.*
+  - libzip
+  - nlohmann_json
+  - eigen 3.4.*
+  - catch2 >=3

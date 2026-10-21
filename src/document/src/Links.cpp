@@ -2,6 +2,7 @@
 
 #include <lcad/document/Links.h>
 
+#include <lcad/core/Path.h>
 #include <lcad/document/File.h>
 #include <lcad/kernel/Transform.h>
 
@@ -46,7 +47,7 @@ std::vector<LinkStatus> check(const std::vector<Component>& components,
         std::error_code ec;
         if (!std::filesystem::is_regular_file(status.file, ec)) {
             status.state = LinkStatus::State::Missing;
-            status.problem = "There is no file at " + status.file.string() + ".";
+            status.problem = "There is no file at " + core::toUtf8(status.file) + ".";
             statuses.push_back(std::move(status));
             continue;
         }
@@ -71,8 +72,8 @@ std::vector<LinkStatus> check(const std::vector<Component>& components,
 
 // A name for a file in the package that no other file there has: "wheel.lcad", "wheel 2.lcad".
 std::string freeName(const std::filesystem::path& wanted, std::set<std::string>& taken) {
-    const std::string stem = wanted.stem().string();
-    const std::string extension = wanted.extension().string();
+    const std::string stem = core::toUtf8(wanted.stem());
+    const std::string extension = core::toUtf8(wanted.extension());
     std::string name = stem + extension;
     for (int number = 2; taken.contains(name); ++number) {
         name = stem + " " + std::to_string(number) + extension;
@@ -86,7 +87,7 @@ std::string freeName(const std::filesystem::path& wanted, std::set<std::string>&
 std::string stampOf(const std::filesystem::path& file) {
     std::ifstream in(file, std::ios::binary);
     if (!in) {
-        throw FileError("Could not read " + file.string() + ".");
+        throw FileError("Could not read " + core::toUtf8(file) + ".");
     }
     // FNV-1a over the bytes: enough to tell one version of a file from another.
     std::uint64_t hash = 14695981039346656037ULL;
@@ -102,7 +103,7 @@ std::string stampOf(const std::filesystem::path& file) {
         size += static_cast<std::uint64_t>(count);
     }
     if (in.bad()) {
-        throw FileError("Could not read " + file.string() + ".");
+        throw FileError("Could not read " + core::toUtf8(file) + ".");
     }
     char text[17];
     std::snprintf(text, sizeof text, "%016llx", static_cast<unsigned long long>(hash));
@@ -143,7 +144,7 @@ LinkedContent readLinkedContent(const std::filesystem::path& file) {
 }
 
 std::filesystem::path resolveLink(const std::string& link, const std::filesystem::path& folder) {
-    const std::filesystem::path given(link);
+    const std::filesystem::path given = core::pathFromUtf8(link);
     if (given.is_absolute() || folder.empty()) {
         return given.lexically_normal();
     }
@@ -153,11 +154,11 @@ std::filesystem::path resolveLink(const std::string& link, const std::filesystem
 std::string makeLink(const std::filesystem::path& file, const std::filesystem::path& folder) {
     const std::filesystem::path whole = std::filesystem::absolute(file).lexically_normal();
     if (folder.empty()) {
-        return whole.generic_string();
+        return core::toGenericUtf8(whole);
     }
     const std::filesystem::path relative =
         whole.lexically_relative(std::filesystem::absolute(folder).lexically_normal());
-    return relative.empty() ? whole.generic_string() : relative.generic_string();
+    return relative.empty() ? core::toGenericUtf8(whole) : core::toGenericUtf8(relative);
 }
 
 std::vector<LinkStatus> checkLinks(const Document& document, const std::filesystem::path& path) {
@@ -198,7 +199,7 @@ PackageResult packageProject(const Document& document, const std::filesystem::pa
     std::error_code ec;
     std::filesystem::create_directories(folder, ec);
     if (!std::filesystem::is_directory(folder, ec)) {
-        throw FileError("The folder " + folder.string() + " cannot be made.");
+        throw FileError("The folder " + core::toUtf8(folder) + " cannot be made.");
     }
     PackageResult result;
     std::set<std::string> taken;
@@ -235,10 +236,10 @@ PackageResult packageProject(const Document& document, const std::filesystem::pa
             }
             const std::filesystem::path file = resolveLink(component.link, from);
             if (!std::filesystem::is_regular_file(file, ec)) {
-                result.problems.push_back(component.name + " links to " + file.string() +
+                result.problems.push_back(component.name + " links to " + core::toUtf8(file) +
                                           ", which is missing. The copy of it kept in the "
                                           "document stands in for it.");
-                links[component.id] = std::filesystem::absolute(file).generic_string();
+                links[component.id] = core::toGenericUtf8(std::filesystem::absolute(file));
                 continue;
             }
             const std::filesystem::path same = identity(file);
@@ -258,8 +259,8 @@ PackageResult packageProject(const Document& document, const std::filesystem::pa
                     std::filesystem::copy_file(
                         file, target, std::filesystem::copy_options::overwrite_existing, ec);
                     if (ec) {
-                        throw FileError("Could not copy " + file.string() + " to " +
-                                        target.string() + ": " + ec.message() + ".");
+                        throw FileError("Could not copy " + core::toUtf8(file) + " to " +
+                                        core::toUtf8(target) + ": " + ec.message() + ".");
                     }
                 } else {
                     // A document that links to others is written again, its links leading to

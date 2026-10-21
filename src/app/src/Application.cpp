@@ -2,6 +2,7 @@
 
 #include <lcad/app/Application.h>
 
+#include <lcad/app/Paths.h>
 #include <lcad/core/Log.h>
 #include <lcad/core/Version.h>
 #include <lcad/kernel/Messages.h>
@@ -79,11 +80,7 @@ QString versionString() {
 }
 
 QString defaultLogFilePath() {
-    QString base = qEnvironmentVariable("XDG_STATE_HOME");
-    if (base.isEmpty()) {
-        base = QDir::homePath() + QStringLiteral("/.local/state");
-    }
-    return base + QStringLiteral("/lcad/lcad.log");
+    return stateFolder() + QStringLiteral("/lcad.log");
 }
 
 void startLogging(const QString& filePath) {
