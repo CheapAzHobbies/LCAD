@@ -743,14 +743,32 @@ void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
     QVERIFY(trigger(window, "edit.undo"));
     QCOMPARE(panel->stateText(), QStringLiteral("4 degrees of freedom"));
 
-    // A dimension is listed with its value.
+    // A line selected says what D does with it, and D, pressed for real, does it: the line's
+    // length opens for typing in the view.
     editor(window)->setSelection({lines(geometry())[0].id});
-    QVERIFY(editor(window)->addDimension());
+    QCOMPARE(panel->promptText(), QStringLiteral("Press D to give it a length"));
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    window.viewport()->setFocus();
+    QTest::keyClick(&window, Qt::Key_D);
+    QVERIFY(editor(window)->valueField() != nullptr);
+    QCOMPARE(editor(window)->tool(), SketchTool::Select);
+    // A dimension is listed with its value.
     QTest::keyClicks(editor(window)->valueField(), QStringLiteral("64"));
     QTest::keyClick(editor(window)->valueField(), Qt::Key_Return);
     editor(window)->setSelection({lines(geometry())[0].id});
     QVERIFY2(panel->constraintRows().contains(QStringLiteral("Distance 64 mm")),
              qPrintable(panel->constraintRows().join(QStringLiteral(", "))));
+    // With nothing selected, Dimension becomes the tool, and the panel says what it waits for.
+    editor(window)->clearSelection();
+    QVERIFY(panel->promptText().isEmpty());
+    QVERIFY(trigger(window, "sketch.dimension"));
+    QCOMPARE(editor(window)->tool(), SketchTool::Dimension);
+    QVERIFY2(panel->promptText().startsWith(QStringLiteral("Dimension: click a line")),
+             qPrintable(panel->promptText()));
+    keepFrame(window.grab().toImage(), "sketch-window-dimension-tool");
+    editor(window)->cancel();
+    QVERIFY(panel->promptText().isEmpty());
 
     // The tool options are the editor's.
     QVERIFY(panel->inferenceBox()->isChecked());

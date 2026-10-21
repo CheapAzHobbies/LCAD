@@ -120,7 +120,8 @@ void writeAtomically(const std::filesystem::path& requested,
         if (ec) {
             const std::string reason = ec.message();
             if (std::filesystem::is_directory(target, ec)) {
-                throw FileError(core::toUtf8(target) + " is a folder. Choose a file name inside it.");
+                throw FileError(core::toUtf8(target) +
+                                " is a folder. Choose a file name inside it.");
             }
             throw FileError("Could not save " + core::toUtf8(target) + ": " + reason + ".");
         }
@@ -1167,8 +1168,8 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
         try {
             geometry.emplace_back(file, kernel::toBrep(body.source));
         } catch (const kernel::Error& error) {
-            throw FileError("Could not save " + core::toUtf8(path) + ": the geometry of \"" + body.name +
-                            "\" cannot be written (" + error.reason() + ").");
+            throw FileError("Could not save " + core::toUtf8(path) + ": the geometry of \"" +
+                            body.name + "\" cannot be written (" + error.reason() + ").");
         }
         if (!body.linkKey.empty()) {
             entry["geometry"] = ordered_json{{"file", file}, {"role", "linked"}};

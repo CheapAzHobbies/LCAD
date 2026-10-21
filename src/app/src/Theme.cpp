@@ -259,6 +259,8 @@ void Theme::apply() {
         QLineEdit#sketchValue[invalid="true"] { border: 2px solid %13; }
         QPushButton[planeHovered="true"] { border: 2px solid %5; border-radius: %9px;
                                            padding: 3px 10px; }
+        QLabel#sketchPrompt { background: %7; border-left: 3px solid %5; border-radius: %9px;
+                              padding: 6px 8px; }
         QLabel#sketchState { font-weight: 600; }
         QLabel#sketchState[state="free"] { color: %5; }
         QLabel#sketchState[state="conflict"] { color: %13; }

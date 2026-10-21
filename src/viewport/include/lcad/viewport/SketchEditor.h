@@ -42,7 +42,8 @@ enum class SketchTool {
     /// Through the first and the last of the points clicked, drawn toward the others. Enter, a
     /// double-click, or Esc ends it.
     Spline,
-    /// Click what to measure, then empty space, and type the value.
+    /// Click a line and type its length, or click where to put it first. A circle or an arc
+    /// takes one click; two points or lines, a click on each.
     Dimension,
     /// Applies one kind of geometric constraint to whatever is clicked.
     Constraint,

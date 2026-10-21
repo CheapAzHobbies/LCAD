@@ -108,8 +108,8 @@ void writeReplacing(const std::filesystem::path& path, const std::string& operat
         throw Error(operation, "it is a folder; choose a file name inside it");
     }
     std::random_device random;
-    const std::filesystem::path temporary =
-        directory / ("." + core::toUtf8(target.filename()) + "." + std::to_string(random()) + ".tmp");
+    const std::filesystem::path temporary = directory / ("." + core::toUtf8(target.filename()) +
+                                                         "." + std::to_string(random()) + ".tmp");
     try {
         write(temporary);
         std::filesystem::rename(temporary, target, ec);
@@ -463,7 +463,8 @@ ImportResult importIges(const std::filesystem::path& path) {
         const std::lock_guard lock(translatorSettings());
         Interface_Static::SetCVal("xstep.cascade.unit", "MM");
         IGESControl_Reader reader;
-        if (reader.ReadFile(core::toUtf8(path).c_str()) != IFSelect_RetDone || reader.NbRootsForTransfer() == 0) {
+        if (reader.ReadFile(core::toUtf8(path).c_str()) != IFSelect_RetDone ||
+            reader.NbRootsForTransfer() == 0) {
             throw Error(operation, "it is not an IGES file, or it has no geometry in it");
         }
         reader.TransferRoots();
@@ -733,7 +734,8 @@ void export3mf(const std::vector<NamedBody>& bodies, const std::filesystem::path
     };
     writeReplacing(path, operation, [&](const std::filesystem::path& temporary) {
         int code = 0;
-        zip_t* archive = zip_open(core::toUtf8(temporary).c_str(), ZIP_CREATE | ZIP_TRUNCATE, &code);
+        zip_t* archive =
+            zip_open(core::toUtf8(temporary).c_str(), ZIP_CREATE | ZIP_TRUNCATE, &code);
         if (archive == nullptr) {
             throw Error(operation, "the file could not be created");
         }

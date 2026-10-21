@@ -478,6 +478,60 @@ public:
         return QPolygonF({tip, tip - d * arrowLength + n * 3.0, tip - d * arrowLength - n * 3.0});
     }
 
+    // Adds the lines and arrows of a distance between the points at `p1` and `p2` to `a`, and
+    // returns where its value goes.
+    QPointF drawDistance(Annotation& a, ConstraintKind kind, Point2 p1, Point2 p2) const {
+        const double mm = millimetersPerPixel();
+        const double off = dimensionOffset * mm;
+        Point2 q1;
+        Point2 q2;
+        if (kind == ConstraintKind::Distance) {
+            // To the right of the way from the first point to the second, which is the outside
+            // of an outline drawn counter-clockwise.
+            const Point2 d = unit(p2 - p1);
+            const Point2 n{d.y, -d.x};
+            q1 = p1 + n * off;
+            q2 = p2 + n * off;
+        } else if (kind == ConstraintKind::DistanceX) {
+            const double level = std::min(p1.y, p2.y) - off;
+            q1 = {p1.x, level};
+            q2 = {p2.x, level};
+        } else {
+            const double level = std::max(p1.x, p2.x) + off;
+            q1 = {level, p1.y};
+            q2 = {level, p2.y};
+        }
+        const auto line = [this, &a](Point2 from, Point2 to) {
+            a.lines.moveTo(toWidget(from));
+            a.lines.lineTo(toWidget(to));
+        };
+        line(p1, q1 + unit(q1 - p1) * (5.0 * mm));
+        line(p2, q2 + unit(q2 - p2) * (5.0 * mm));
+        line(q1, q2);
+        a.arrows.push_back(arrowAt(toWidget(q1), toWidget(q2)));
+        a.arrows.push_back(arrowAt(toWidget(q2), toWidget(q1)));
+        return (toWidget(q1) + toWidget(q2)) / 2.0;
+    }
+
+    // Which distance a value put at `placedAt` asks for between the points at `a` and `b`:
+    // between the two sideways, and above or below both, their horizontal distance; beside
+    // them, the vertical one; anywhere else, the distance straight across.
+    [[nodiscard]] static ConstraintKind distanceKindAt(Point2 a, Point2 b, Point2 placedAt) {
+        const double least = 1e-6;
+        if (std::abs(a.x - b.x) <= least || std::abs(a.y - b.y) <= least) {
+            return ConstraintKind::Distance;
+        }
+        const bool betweenX = placedAt.x > std::min(a.x, b.x) && placedAt.x < std::max(a.x, b.x);
+        const bool betweenY = placedAt.y > std::min(a.y, b.y) && placedAt.y < std::max(a.y, b.y);
+        if (betweenX && !betweenY) {
+            return ConstraintKind::DistanceX;
+        }
+        if (betweenY && !betweenX) {
+            return ConstraintKind::DistanceY;
+        }
+        return ConstraintKind::Distance;
+    }
+
     [[nodiscard]] std::vector<Annotation> layout() const {
         std::vector<Annotation> annotations;
         if (!active() || item() == nullptr) {
@@ -547,7 +601,6 @@ public:
                 continue;
             }
 
-            const double off = dimensionOffset * mm;
             QPointF labelAt;
             switch (c.kind) {
             case ConstraintKind::Distance:
@@ -556,32 +609,7 @@ public:
                 if (second == nullptr) {
                     continue;
                 }
-                const Point2 p1 = g.position(c.first);
-                const Point2 p2 = g.position(c.second);
-                Point2 q1;
-                Point2 q2;
-                if (c.kind == ConstraintKind::Distance) {
-                    // To the right of the way from the first point to the second, which is the
-                    // outside of an outline drawn counter-clockwise.
-                    const Point2 d = unit(p2 - p1);
-                    const Point2 n{d.y, -d.x};
-                    q1 = p1 + n * off;
-                    q2 = p2 + n * off;
-                } else if (c.kind == ConstraintKind::DistanceX) {
-                    const double level = std::min(p1.y, p2.y) - off;
-                    q1 = {p1.x, level};
-                    q2 = {p2.x, level};
-                } else {
-                    const double level = std::max(p1.x, p2.x) + off;
-                    q1 = {level, p1.y};
-                    q2 = {level, p2.y};
-                }
-                line(a.lines, p1, q1 + unit(q1 - p1) * (5.0 * mm));
-                line(a.lines, p2, q2 + unit(q2 - p2) * (5.0 * mm));
-                line(a.lines, q1, q2);
-                a.arrows.push_back(arrowAt(toWidget(q1), toWidget(q2)));
-                a.arrows.push_back(arrowAt(toWidget(q2), toWidget(q1)));
-                labelAt = (toWidget(q1) + toWidget(q2)) / 2.0;
+                labelAt = drawDistance(a, c.kind, g.position(c.first), g.position(c.second));
                 a.text = formatValue(c.value);
                 break;
             }
@@ -1621,15 +1649,41 @@ public:
         return true;
     }
 
+    // The distance the Dimension tool would add if its value were put where the pointer is,
+    // while a line it was given waits to be placed. Not while the pointer is on something else
+    // that a click would add to what is measured.
+    [[nodiscard]] std::optional<Annotation> pendingDimension() const {
+        if (tool != SketchTool::Dimension || pending.empty() || !cursorValid || field != nullptr ||
+            (hover != 0 && !contains(pending, hover))) {
+            return std::nullopt;
+        }
+        const sketch::Sketch& g = geometry();
+        const auto choice = sketch::dimensionFor(g, pending);
+        if (!choice.has_value() || choice->kind != ConstraintKind::Distance) {
+            return std::nullopt;
+        }
+        const Point2 p1 = g.position(choice->first);
+        const Point2 p2 = g.position(choice->second);
+        Annotation a;
+        a.dimension = true;
+        a.kind = distanceKindAt(p1, p2, cursor.position);
+        const QPointF labelAt = drawDistance(a, a.kind, p1, p2);
+        a.text = formatValue(a.kind == ConstraintKind::DistanceX   ? std::abs(p1.x - p2.x)
+                             : a.kind == ConstraintKind::DistanceY ? std::abs(p1.y - p2.y)
+                                                                   : apart(p1, p2));
+        const QFontMetricsF metrics(labelFont());
+        const QSizeF size(metrics.horizontalAdvance(a.text) + 12.0, metrics.height() + 4.0);
+        a.rect = QRectF(labelAt - QPointF(size.width(), size.height()) / 2.0, size);
+        return a;
+    }
+
     void placeDimension(std::optional<Point2> placedAt = std::nullopt) {
         const std::vector<EntityId> measured = pending;
         pending.clear();
         addDimensionFor(measured, placedAt);
     }
 
-    // `placedAt` is where the value was put, if it was put anywhere. Between the two points
-    // sideways, and above or below both, it asks for their horizontal distance; beside them,
-    // for the vertical one; anywhere else, for the distance straight across.
+    // `placedAt` is where the value was put, if it was put anywhere: see distanceKindAt().
     bool addDimensionFor(const std::vector<EntityId>& entities,
                          std::optional<Point2> placedAt = std::nullopt) {
         sketch::Sketch g = geometry();
@@ -1641,19 +1695,11 @@ public:
         if (choice->kind == ConstraintKind::Distance && placedAt.has_value()) {
             const Point2 a = g.position(choice->first);
             const Point2 b = g.position(choice->second);
-            const double least = 1e-6;
-            if (std::abs(a.x - b.x) > least && std::abs(a.y - b.y) > least) {
-                const bool betweenX =
-                    placedAt->x > std::min(a.x, b.x) && placedAt->x < std::max(a.x, b.x);
-                const bool betweenY =
-                    placedAt->y > std::min(a.y, b.y) && placedAt->y < std::max(a.y, b.y);
-                if (betweenX && !betweenY) {
-                    choice->kind = ConstraintKind::DistanceX;
-                    choice->value = std::abs(a.x - b.x);
-                } else if (betweenY && !betweenX) {
-                    choice->kind = ConstraintKind::DistanceY;
-                    choice->value = std::abs(a.y - b.y);
-                }
+            choice->kind = distanceKindAt(a, b, *placedAt);
+            if (choice->kind == ConstraintKind::DistanceX) {
+                choice->value = std::abs(a.x - b.x);
+            } else if (choice->kind == ConstraintKind::DistanceY) {
+                choice->value = std::abs(a.y - b.y);
             }
         }
         const sketch::Outcome outcome = sketch::tryConstraint(
@@ -2168,6 +2214,24 @@ public:
                 painter.drawPath(pathOf(stroke));
             }
         }
+        if (const std::optional<Annotation> placing = pendingDimension()) {
+            QPen pen(colors.preview, 1.2);
+            pen.setStyle(Qt::CustomDashLine);
+            pen.setDashPattern({4.0, 3.0});
+            painter.setPen(pen);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawPath(placing->lines);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(colors.preview);
+            for (const QPolygonF& arrow : placing->arrows) {
+                painter.drawPolygon(arrow);
+            }
+            painter.setPen(QPen(colors.preview, 1.0));
+            painter.setBrush(colors.label);
+            painter.drawRoundedRect(placing->rect, 3.0, 3.0);
+            painter.setPen(colors.line);
+            painter.drawText(placing->rect, Qt::AlignCenter, placing->text);
+        }
         const bool draws = tool != SketchTool::Select && tool != SketchTool::Dimension &&
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
                            tool != SketchTool::Extend && tool != SketchTool::Offset &&
@@ -2431,7 +2495,7 @@ bool SketchEditor::addDimension() {
     }
     if (m_impl->selected.empty()) {
         setTool(SketchTool::Dimension);
-        emit message(tr("Click what to measure, then empty space, and type the value."));
+        emit message(tr("Click a line, a circle, or an arc, and type its size."));
         return false;
     }
     return m_impl->addDimensionFor(m_impl->selected);
@@ -2711,10 +2775,17 @@ QString SketchEditor::hint() const {
     case SketchTool::Spline:
         return placed < 3 ? tr("Spline: click the points it goes through and toward")
                           : tr("Spline: click more points; Enter or a double-click ends it");
-    case SketchTool::Dimension:
-        return m_impl->pending.empty()
-                   ? tr("Dimension: click what to measure")
-                   : tr("Dimension: click a second line or point, or empty space to place it");
+    case SketchTool::Dimension: {
+        if (m_impl->pending.empty()) {
+            return tr("Dimension: click a line, a circle, an arc, or a point");
+        }
+        const Entity* picked = geometry().find(m_impl->pending.front());
+        if (picked != nullptr && picked->kind == EntityKind::Line) {
+            return tr("Dimension: type the length, or click where to put it, or click a second "
+                      "line or point");
+        }
+        return tr("Dimension: click a second point or a line");
+    }
     case SketchTool::Constraint:
         return tr("%1: %2").arg(Impl::nameOf(m_impl->constraintKind),
                                 Impl::needsOf(m_impl->constraintKind));
@@ -2973,14 +3044,30 @@ bool SketchEditor::keyPress(QKeyEvent* event) {
         emit changed();
         return true;
     }
+    // With a line picked by the Dimension tool, typing a number places the dimension where the
+    // pointer is and starts its value, and Enter places it as it measures now.
+    const QString typed = event->text();
+    const bool number =
+        typed.size() == 1 && (typed.at(0).isDigit() || typed.at(0) == QLatin1Char('.') ||
+                              typed.at(0) == QLatin1Char(','));
+    const bool enter = event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter;
+    if (m_impl->tool == SketchTool::Dimension && (number || enter) &&
+        sketch::dimensionFor(geometry(), m_impl->pending).has_value()) {
+        m_impl->placeDimension(m_impl->cursorValid ? std::optional(m_impl->cursor.position)
+                                                   : std::nullopt);
+        if (number && m_impl->field != nullptr) {
+            m_impl->field->setText(typed);
+            m_impl->field->end(false);
+        }
+        m_impl->update();
+        emit changed();
+        return true;
+    }
     // Typing a number while a line, a rectangle, or a circle is being drawn gives it its size.
     const bool sizing = (m_impl->tool == SketchTool::Line || m_impl->tool == SketchTool::Circle ||
                          m_impl->tool == SketchTool::Rectangle) &&
                         !m_impl->clicks.empty();
-    const QString typed = event->text();
-    if (sizing && typed.size() == 1 &&
-        (typed.at(0).isDigit() || typed.at(0) == QLatin1Char('.') ||
-         typed.at(0) == QLatin1Char(','))) {
+    if (sizing && number) {
         const QPointF at =
             m_impl->cursorValid ? m_impl->toWidget(m_impl->cursor.position) : m_impl->lastPosition;
         m_impl->openField(QRectF(at.x() + 16.0, at.y() + 14.0, 70.0, 24.0), typed, false);

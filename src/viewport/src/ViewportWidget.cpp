@@ -59,7 +59,6 @@
 
 #include <QApplication>
 #include <QCoreApplication>
-#include <QtGlobal>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -68,6 +67,7 @@
 #include <QOpenGLFunctions>
 #include <QWheelEvent>
 #include <QWindow>
+#include <QtGlobal>
 
 #if defined(Q_OS_WIN)
 #include <windows.h>

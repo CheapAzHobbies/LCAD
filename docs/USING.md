@@ -344,7 +344,13 @@ says which, in the status bar.
 
 ### Dimensions
 
-Press D. Click what to measure, then click empty space, and type the value.
+Press D. The panel on the right says what to click. Click a line and type its length: the
+dimension is placed where the pointer is, and Enter sets it. To put it somewhere else first,
+move the pointer there, where the dimension follows it, and click. A circle or an arc needs one
+click; two points or lines need a click on each.
+
+Or select first, then press D: a line gets its length, a circle its diameter, and the value
+opens for typing. With a line selected, the panel says "Press D to give it a length".
 
 | Click | Gives |
 |---|---|

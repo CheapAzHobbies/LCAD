@@ -136,8 +136,8 @@ void writeArchive(const std::filesystem::path& path,
                 zip_source_free(source);
             }
             zip_discard(archive);
-            throw FileError("Could not write " + name + " to " + core::toUtf8(path) + ": " + reason +
-                            ".");
+            throw FileError("Could not write " + name + " to " + core::toUtf8(path) + ": " +
+                            reason + ".");
         }
     }
     // Nothing reaches the disk before this call.

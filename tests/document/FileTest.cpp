@@ -440,8 +440,7 @@ TEST_CASE("Saving through a symbolic link updates the file it points to", "[docu
     std::filesystem::create_symlink(real, link, ec);
     if (ec) {
         // Windows lets only administrators and developer mode make symbolic links.
-        WARN("not checked: this system did not let a symbolic link be made (" + ec.message() +
-             ")");
+        WARN("not checked: this system did not let a symbolic link be made (" + ec.message() + ")");
         return;
     }
 
