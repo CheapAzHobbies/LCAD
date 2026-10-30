@@ -10,6 +10,7 @@
 
 #include <FrameChecks.h>
 #include <GraphicsMessages.h>
+#include <GuiHelpers.h>
 
 #include <QApplication>
 #include <QLineEdit>
@@ -197,7 +198,7 @@ void SketchViewTest::cleanup() {
 }
 
 void SketchViewTest::move(const QPoint& point) {
-    QTest::mouseMove(m_viewport, point);
+    lcad::test::movePointer(m_viewport, point);
     render();
 }
 
@@ -1215,7 +1216,7 @@ void SketchViewTest::aFullyConstrainedRectangleFollowsItsDimensions() {
     // The value is drawn near what it measures: below the bottom line.
     QVERIFY(label.center().y() > at(30.0, 0.0).y());
     QVERIFY(qAbs(label.center().x() - at(30.0, 0.0).x()) < 4.0);
-    QTest::mouseMove(m_viewport, label.center().toPoint());
+    lcad::test::movePointer(m_viewport, label.center().toPoint());
     QTest::mouseDClick(m_viewport, Qt::LeftButton, Qt::NoModifier, label.center().toPoint());
     render();
     QVERIFY(editor()->valueField() != nullptr);

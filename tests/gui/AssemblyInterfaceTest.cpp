@@ -25,6 +25,7 @@
 
 #include <FrameChecks.h>
 #include <GraphicsMessages.h>
+#include <GuiHelpers.h>
 
 #include <QComboBox>
 #include <QDir>
@@ -584,7 +585,7 @@ void AssemblyInterfaceTest::thePullArrowIsDraggedAndTyped() {
     render(window);
     const QPointF grip = window.viewport()->distanceHandleGrip();
     const QPoint from = grip.toPoint();
-    QTest::mouseMove(window.viewport(), from);
+    lcad::test::movePointer(window.viewport(), from);
     QTest::mousePress(window.viewport(), Qt::LeftButton, Qt::NoModifier, from);
     // Twenty millimeters up, as the view draws them.
     const QPointF zero = window.viewport()->project(20.0, 15.0, 0.0);

@@ -702,7 +702,7 @@ void InterfaceTest::eachTabKeepsItsOwnViewAndHistory() {
     show(window);
     create(window, PrimitiveKind::Box);
     window.viewport()->setStandardView(StandardView::Top);
-    QTest::mouseMove(window.viewport(), QPoint(4, 4));
+    lcad::test::movePointer(window.viewport(), QPoint(4, 4));
     const QImage firstView = window.viewport()->grabFramebuffer();
 
     window.newDocument();
@@ -1025,7 +1025,7 @@ void InterfaceTest::propertiesMeasureFacesEdgesAndVertices() {
     viewport->setStandardView(StandardView::Top);
     viewport->grabFramebuffer();
     const auto click = [viewport](const QPointF& where) {
-        QTest::mouseMove(viewport, where.toPoint());
+        lcad::test::movePointer(viewport, where.toPoint());
         viewport->grabFramebuffer();
         QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, where.toPoint());
         viewport->grabFramebuffer();

@@ -9,6 +9,7 @@
 
 #include <FrameChecks.h>
 #include <GraphicsMessages.h>
+#include <GuiHelpers.h>
 
 #include <QApplication>
 #include <QRegularExpression>
@@ -141,7 +142,7 @@ ObjectId ViewportTest::addBox() {
 
 void ViewportTest::click(const QPointF& position, Qt::KeyboardModifiers modifiers) {
     const QPoint point = position.toPoint();
-    QTest::mouseMove(m_viewport, point);
+    lcad::test::movePointer(m_viewport, point);
     render();
     QTest::mouseClick(m_viewport, Qt::LeftButton, modifiers, point);
     render();
@@ -149,7 +150,7 @@ void ViewportTest::click(const QPointF& position, Qt::KeyboardModifiers modifier
 
 void ViewportTest::drag(Qt::MouseButton button, Qt::KeyboardModifiers modifiers, QPoint from,
                         QPoint to) {
-    QTest::mouseMove(m_viewport, from);
+    lcad::test::movePointer(m_viewport, from);
     render();
     QTest::mousePress(m_viewport, button, modifiers, from);
     render();
@@ -396,7 +397,7 @@ void ViewportTest::draggingTheViewCubeOrbits() {
 
     // Hold the left button on the cube and move: the camera turns with the pointer.
     drag(Qt::LeftButton, Qt::NoModifier, onTheCube, onTheCube + QPoint(-90, 30));
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     const QImage after = m_viewport->grabFramebuffer();
     keepFrame(after, "viewport-cube-dragged");
 
@@ -454,7 +455,7 @@ void ViewportTest::navigationPresetSwapsPanAndOrbit() {
 
     // And dragging the view cube still orbits.
     const QPoint onTheCube = m_viewport->viewCubeCenter().toPoint();
-    QTest::mouseMove(m_viewport, onTheCube);
+    lcad::test::movePointer(m_viewport, onTheCube);
     render();
     render();
     drag(Qt::LeftButton, Qt::NoModifier, onTheCube, onTheCube + QPoint(-70, 20));
@@ -495,7 +496,7 @@ void ViewportTest::cameraStateCanBePutBack() {
     m_viewport->setProjection(Projection::Perspective);
     drag(Qt::MiddleButton, Qt::ShiftModifier, QPoint(320, 240), QPoint(380, 300));
     drag(Qt::MiddleButton, Qt::NoModifier, QPoint(320, 240), QPoint(250, 260));
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     const QImage arranged = m_viewport->grabFramebuffer();
     const CameraState state = m_viewport->cameraState();
 
@@ -620,7 +621,7 @@ void ViewportTest::originPlanesAndAxesCanBeShown() {
         "Far", lcad::kernel::translated(lcad::kernel::makeBox(40.0, 40.0, 20.0), 120.0, 90.0, 0.0));
     m_viewport->fitAll();
     render();
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     const QImage plain = m_viewport->grabFramebuffer();
     const double boxLength =
         QLineF(m_viewport->project(0.0, 0.0, 0.0), m_viewport->project(100.0, 0.0, 0.0)).length();
@@ -650,7 +651,7 @@ void ViewportTest::originPlanesAndAxesCanBeShown() {
                                   OriginItem::AxisX, OriginItem::AxisY, OriginItem::AxisZ}) {
         m_viewport->setOriginItemVisible(item, false);
     }
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     QVERIFY(differingFraction(plain, m_viewport->grabFramebuffer()) < 0.001);
 }
 
@@ -673,7 +674,7 @@ void ViewportTest::shiftMiddleButtonOrbits() {
     const QVector3D before = m_viewport->viewDirection();
 
     drag(Qt::MiddleButton, Qt::ShiftModifier, QPoint(320, 240), QPoint(420, 270));
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     const QImage after = m_viewport->grabFramebuffer();
     keepFrame(after, "viewport-box-orbited");
 
@@ -734,25 +735,25 @@ void ViewportTest::middleDoubleClickFitsTheView() {
     addBox();
     const QImage framed = m_viewport->grabFramebuffer();
     drag(Qt::MiddleButton, Qt::NoModifier, QPoint(320, 240), QPoint(600, 60));
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     QVERIFY(differingFraction(framed, m_viewport->grabFramebuffer()) > 0.05);
 
     QTest::mouseDClick(m_viewport, Qt::MiddleButton, Qt::NoModifier, QPoint(100, 100));
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
 
     QVERIFY(differingFraction(framed, m_viewport->grabFramebuffer()) < 0.001);
 }
 
 void ViewportTest::leftButtonDoesNotMoveTheCamera() {
     addBox();
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     const QImage before = m_viewport->grabFramebuffer();
     const QVector3D direction = m_viewport->viewDirection();
     const QPointF origin = m_viewport->project(0.0, 0.0, 0.0);
 
     // A drag over empty background, well away from the box.
     drag(Qt::LeftButton, Qt::NoModifier, QPoint(8, 8), QPoint(60, 40));
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
 
     QVERIFY(sameDirection(m_viewport->viewDirection(), direction));
     QCOMPARE(m_viewport->project(0.0, 0.0, 0.0), origin);
@@ -764,16 +765,16 @@ void ViewportTest::leftButtonDoesNotMoveTheCamera() {
 void ViewportTest::hoveringHighlightsWhatIsUnderThePointer() {
     addBox();
     m_viewport->setStandardView(StandardView::Top);
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     const QImage plain = m_viewport->grabFramebuffer();
 
-    QTest::mouseMove(m_viewport, m_viewport->project(50.0, 30.0, 40.0).toPoint());
+    lcad::test::movePointer(m_viewport, m_viewport->project(50.0, 30.0, 40.0).toPoint());
     // The highlight may take a second frame, which the viewport schedules itself. It is an
     // outline around the top face, so it changes few pixels.
     QTRY_VERIFY(differingFraction(plain, m_viewport->grabFramebuffer()) > 0.002);
     const QImage hovered = m_viewport->grabFramebuffer();
     keepFrame(hovered, "viewport-box-hovered");
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     const QImage left = m_viewport->grabFramebuffer();
 
     QVERIFY(differingFraction(plain, hovered) < 0.05);
@@ -926,7 +927,7 @@ void ViewportTest::bodiesCanBeSelectedFromOutside() {
     const ObjectId ball = m_document->addBody(
         "Ball", lcad::kernel::translated(lcad::kernel::makeSphere(20.0), 200.0, 0.0, 0.0));
     m_viewport->fitAll();
-    QTest::mouseMove(m_viewport, emptySpot());
+    lcad::test::movePointer(m_viewport, emptySpot());
     const QImage plain = m_viewport->grabFramebuffer();
     QSignalSpy changed(m_viewport, &ViewportWidget::selectionChanged);
 

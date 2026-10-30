@@ -145,7 +145,7 @@ private:
     }
     static void click(const MainWindow& window, const QPoint& point,
                       Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
-        QTest::mouseMove(window.viewport(), point);
+        lcad::test::movePointer(window.viewport(), point);
         render(window);
         QTest::mouseClick(window.viewport(), Qt::LeftButton, modifiers, point);
         render(window);
@@ -224,7 +224,7 @@ void SketchInterfaceTest::aNewSketchAsksForItsPlane() {
     QVERIFY(window.document()->sketches().empty());
 
     // Pointing at a plane says which it is: in the status bar, and by marking its button.
-    QTest::mouseMove(viewport, onPlane(window, OriginItem::PlaneXZ));
+    lcad::test::movePointer(viewport, onPlane(window, OriginItem::PlaneXZ));
     render(window);
     QTRY_COMPARE(window.planePanel()->hoveredPlane(), 1);
     QVERIFY(window.statusBar()->currentMessage().startsWith(QStringLiteral("XZ Plane")));
@@ -621,7 +621,7 @@ void SketchInterfaceTest::aRectangleIsDrawnConstrainedDimensionedSavedAndReopene
     }
     QVERIFY(width != 0);
     const QPoint onValue = editor(window)->dimensionRect(width).center().toPoint();
-    QTest::mouseMove(window.viewport(), onValue);
+    lcad::test::movePointer(window.viewport(), onValue);
     QTest::mouseDClick(window.viewport(), Qt::LeftButton, Qt::NoModifier, onValue);
     render(window);
     QLineEdit* field = editor(window)->valueField();

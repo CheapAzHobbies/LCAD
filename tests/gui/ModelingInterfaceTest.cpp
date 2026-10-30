@@ -21,6 +21,7 @@
 
 #include <FrameChecks.h>
 #include <GraphicsMessages.h>
+#include <GuiHelpers.h>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -130,7 +131,7 @@ private:
     static void render(const MainWindow& window) { window.viewport()->grabFramebuffer(); }
     static void click(const MainWindow& window, const QPoint& point,
                       Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
-        QTest::mouseMove(window.viewport(), point);
+        lcad::test::movePointer(window.viewport(), point);
         render(window);
         QTest::mouseClick(window.viewport(), Qt::LeftButton, modifiers, point);
         render(window);
@@ -460,7 +461,7 @@ void ModelingInterfaceTest::aBracketFollowsTheSketchItWasBuiltOn() {
     render(window);
     auto* editor = window.viewport()->sketchEditor();
     const QPoint onValue = editor->dimensionRect(width).center().toPoint();
-    QTest::mouseMove(window.viewport(), onValue);
+    lcad::test::movePointer(window.viewport(), onValue);
     QTest::mouseDClick(window.viewport(), Qt::LeftButton, Qt::NoModifier, onValue);
     render(window);
     QLineEdit* field = editor->valueField();

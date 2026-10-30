@@ -7,6 +7,8 @@
 #include <QApplication>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPoint>
 #include <QScreen>
 #include <QSize>
 #include <QString>
@@ -24,6 +26,15 @@ inline bool fitsOnScreen(const QWidget& window, QSize wanted) {
     const QSize frame = window.frameGeometry().size() - window.size();
     const QSize room = window.screen()->availableSize() - frame;
     return wanted.width() <= room.width() && wanted.height() <= room.height();
+}
+
+/// Moves the pointer over `widget`, there and then. QTest::mouseMove moves the real pointer,
+/// and on macOS the event for that arrives when the system gets to it, which can be after the
+/// press or the key a test sends next.
+inline void movePointer(QWidget* widget, QPoint point) {
+    QMouseEvent event(QEvent::MouseMove, point, widget->mapToGlobal(point), Qt::NoButton,
+                      Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(widget, &event);
 }
 
 /// Presses `button` on the next message box that opens, and notes what the box said.

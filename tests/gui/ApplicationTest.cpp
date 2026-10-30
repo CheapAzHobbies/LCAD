@@ -713,7 +713,7 @@ void ApplicationTest::selectionIsSharedBetweenBrowserAndViewport() {
     viewport->setStandardView(StandardView::Top);
     viewport->grabFramebuffer();
     const QPoint onTheBox = viewport->project(50.0, 30.0, 40.0).toPoint();
-    QTest::mouseMove(viewport, onTheBox);
+    lcad::test::movePointer(viewport, onTheBox);
     viewport->grabFramebuffer();
     QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, onTheBox);
     viewport->grabFramebuffer();
@@ -750,7 +750,7 @@ void ApplicationTest::statusBarMeasuresWhatIsPicked() {
     viewport->setStandardView(StandardView::Top);
     viewport->grabFramebuffer();
     const auto click = [viewport](const QPointF& where, Qt::KeyboardModifiers modifiers = {}) {
-        QTest::mouseMove(viewport, where.toPoint());
+        lcad::test::movePointer(viewport, where.toPoint());
         viewport->grabFramebuffer();
         QTest::mouseClick(viewport, Qt::LeftButton, modifiers, where.toPoint());
         viewport->grabFramebuffer();

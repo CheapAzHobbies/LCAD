@@ -20,6 +20,7 @@
 
 #include <FrameChecks.h>
 #include <GraphicsMessages.h>
+#include <GuiHelpers.h>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -107,7 +108,7 @@ private:
     }
     static void render(const MainWindow& window) { window.viewport()->grabFramebuffer(); }
     static void click(const MainWindow& window, const QPoint& point) {
-        QTest::mouseMove(window.viewport(), point);
+        lcad::test::movePointer(window.viewport(), point);
         render(window);
         QTest::mouseClick(window.viewport(), Qt::LeftButton, Qt::NoModifier, point);
         render(window);
