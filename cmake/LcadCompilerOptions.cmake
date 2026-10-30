@@ -14,6 +14,8 @@ function(lcad_target_defaults target)
         # max as macros, and with all of it, more such as small. (It still defines near and far,
         # which LCAD's code therefore does not use as names.)
         target_compile_definitions(${target} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        # M_PI and its kind, which other systems' cmath has without asking.
+        target_compile_definitions(${target} PRIVATE _USE_MATH_DEFINES)
         if(LCAD_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE /WX)
         endif()

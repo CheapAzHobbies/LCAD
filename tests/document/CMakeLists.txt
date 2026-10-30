@@ -32,5 +32,6 @@ catch_discover_tests(lcad_document_tests PROPERTIES
 # Writes the reference document that tests/models/ keeps one copy of per OCCT version. See
 # tests/models/README.md.
 add_executable(lcad_write_reference_model WriteReferenceModel.cpp)
-target_link_libraries(lcad_write_reference_model PRIVATE lcad::document lcad::kernel)
+target_link_libraries(lcad_write_reference_model PRIVATE
+    lcad::document lcad::kernel Catch2::Catch2)
 lcad_target_defaults(lcad_write_reference_model)

@@ -4,7 +4,7 @@
 section by section, what LCAD has of it and what is missing, with the phase each gap is
 scheduled for. It is updated at the end of every phase.
 
-Status as of Phase 5 (2026-10-19), components and assemblies, in progress. Phase 1b, the
+Status as of the port to Windows and macOS (2026-10-30), in progress. Phase 1b, the
 interface shell phase that this specification added to the [roadmap](../ROADMAP.md), was
 finished on 2026-10-12.
 
@@ -35,7 +35,7 @@ finished on 2026-10-12.
 | 23. Animation | The view cube's camera turn, which can be switched off, and a joint shown in motion when asked for (Animate). Nothing waits for an animation; Esc stops a joint's. | |
 | 24. Architecture | A command registry: each command is defined once, with its name, aliases, shortcuts, icon, and the conditions under which it applies, and the toolbar, menus, context menus, shortcuts, and search all use that definition. The shell, tabs, browser, viewport, properties, search, themes, and icons are separate classes that reach the model only through the document's interface. | Commands with their own parameters and validation as registry objects (today that lives in the command's panel, and for sketch tools in the sketch editor): Phase 3, when features need a common shape for it. |
 | 25. Working prototype | All sixteen steps. 1 to 7 and 14 to 16 as before; 8 to 13 in `ModelingInterfaceTest`: Pull with an exact distance, a fillet, the original sketch edited from the browser, the model following, a feature selected and edited from the timeline. | Nothing in the steps themselves. |
-| 26. GUI testing | Automated interface tests for all of the above that exists, run at the screen's scale and again at twice that, in both themes and at three window sizes: overlap and clipping, keyboard handling, context menus, selection, tabs, unsaved marks, undo and redo, state after cancel, and what reaches the screen. | A document with many features and many components, to time the interface by. |
+| 26. GUI testing | Automated interface tests for all of the above that exists, run at the screen's scale and, on Linux, again at twice that, in both themes and at three window sizes: overlap and clipping, keyboard handling, context menus, selection, tabs, unsaved marks, undo and redo, state after cancel, and what reaches the screen. | A document with many features and many components, to time the interface by. |
 
 ## What the specification changes in the plan
 

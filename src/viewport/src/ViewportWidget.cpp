@@ -4,6 +4,11 @@
 // and OCCT adopts both. The technique follows the QOpenGLWidget sample maintained for OCCT at
 // https://github.com/gkv311/occt-samples-qt (MIT license, see THIRD_PARTY_NOTICES.md).
 
+// Before OCCT's headers, which include it with much of it switched off.
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 // OCCT's OpenGL headers come first. They define every OpenGL version and function type
 // themselves, and on macOS clash with Apple's gl3.h when Qt's OpenGL headers have included it
 // first; the other way round, gl3.h finds the versions defined and leaves them alone.
@@ -72,10 +77,6 @@
 #include <QWheelEvent>
 #include <QWindow>
 #include <QtGlobal>
-
-#if defined(Q_OS_WIN)
-#include <windows.h>
-#endif
 
 #include <algorithm>
 #include <array>

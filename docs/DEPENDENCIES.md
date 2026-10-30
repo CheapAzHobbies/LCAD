@@ -154,6 +154,17 @@ provides Qt, and builds these from their sources at pinned commits:
 Open CASCADE and libzip are shared libraries in the Flatpak, replaceable as the LGPL asks;
 nlohmann/json and Eigen are headers, only used to build.
 
+The Windows installer and the macOS disk image take their libraries from conda-forge
+(`packaging/conda/environment.yml`), and carry Qt, OCCT, libzip, and what those need as separate
+shared libraries, the same way as the AppImage, with the same license texts still to be added
+before one is published. CI used Qt 6.10.2, OCCT 7.9.3, Catch2 3.16.1, and Eigen 3.4.0, and on
+macOS Clang 21.1.8. Two more tools are used on the way, and are not part of LCAD:
+
+| Tool | Used for | License |
+|---|---|---|
+| [Inno Setup](https://jrsoftware.org/isinfo.php) 6 | Makes the Windows installer | Inno Setup License (free, with conditions, for any use) |
+| [mesa-dist-win](https://github.com/pal1000/mesa-dist-win) 26.2.3 | OpenGL for the tests on CI's Windows machine, which has no graphics card; not in the installer | MIT |
+
 ## Later phases
 
 Noted now because they affect planning; each gets a full assessment when its phase starts.

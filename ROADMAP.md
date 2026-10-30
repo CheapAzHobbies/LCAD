@@ -24,9 +24,9 @@ more than writing the code, now sets the pace.
 | 1b. Interface shell | Design system, themes, command registry and search, tabs, layout, viewport controls | 2026-10-12 | 2026-10-25 | 2026-10-12 | |
 | 2. Sketcher | Sketch planes, drawing tools, constraints, solver | 2026-10-12 | 2026-11-30 | 2026-10-13 | |
 | 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-10-13 | 2027-02-15 | 2026-10-14 | v0.1 alpha |
-| 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2026-10-14 | 2027-03-31 | in progress | v0.2 |
-| 5. Components and assemblies | Components, linked parts, joints, interference checks | 2027-04-01 | 2027-07-15 | | v0.5 beta |
-| Port | Windows and macOS builds | 2027-07-16 | 2027-09-15 | | v0.6 |
+| 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2026-10-14 | 2027-03-31 | 2026-10-19 | v0.2 |
+| 5. Components and assemblies | Components, linked parts, joints, interference checks | 2026-10-19 | 2027-07-15 | 2026-10-21 | v0.5 beta |
+| Port | Windows and macOS builds | 2026-10-21 | 2027-09-15 | in progress | v0.6 |
 | 6. Drawings and manufacturing | Associative drawings, PDF/DXF, 2.5D and 3-axis CAM | 2027-09-16 | 2028-01-15 | | v1.0 |
 | 7. Advanced capabilities | Surfaces, sheet metal, mesh repair, rendering, plugins | 2028-01-16 | ongoing | | |
 
@@ -252,7 +252,7 @@ flat face within its own plane, or faces that are not all flat in a direction th
 off their neighbors' surfaces in a way defeaturing cannot undo; AP242 export (AP214 is
 written); and remembering which file a body was imported from.
 
-## Phase 5: Components and assemblies (started 2026-10-19, in progress, target 2027-07-15)
+## Phase 5: Components and assemblies (finished 2026-10-21)
 
 Started on the owner's word once Phase 4 was merged, on the branch
 `phase-5-components-assemblies` (pull request #7).
@@ -299,7 +299,7 @@ picked in the 3D view, materials that change how a body looks, the materials of 
 document's own list (only LCAD's are known in the document it is linked into), and the
 large-assembly benchmarks decision 3 asks for.
 
-## Port: Windows and macOS (2027-07-16 to 2027-09-15)
+## Port: Windows and macOS (started 2026-10-21, in progress, target 2027-09-15)
 
 Qt 6 and OCCT both run on Windows and macOS, so the port is mostly build, packaging, and platform testing,
 provided the code stays portable from the start: no Linux-only APIs outside a small platform layer, CMake
