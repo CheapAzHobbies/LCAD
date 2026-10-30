@@ -184,7 +184,8 @@ private:
                        QStringLiteral("part"));
         }
 #if defined(Q_OS_WIN)
-        TerminateProcess(GetCurrentProcess(), 9);
+        // With the code of an access violation: QProcess goes by the code to call it a crash.
+        TerminateProcess(GetCurrentProcess(), 0xC0000005);
 #else
         std::raise(SIGKILL);
 #endif
