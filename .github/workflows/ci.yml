@@ -159,18 +159,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # The program with its libraries and Qt's plugins, gathered by `cmake --install`, made into
-      # an installer by Inno Setup.
-      - name: Build the installer
+      - name: Install Inno Setup
         run: |
-          cmake --install build/ci --prefix stage
-          $version = (Select-String -Path build/ci/CMakeCache.txt `
-            -Pattern '^CMAKE_PROJECT_VERSION:STATIC=(.+)$').Matches[0].Groups[1].Value
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc "/DAppVersion=$version" "/DStageDir=$PWD\stage" "/DOutputDir=$PWD\installer" `
-            packaging/windows/LCAD.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build the installer
+        run: scripts/build-windows-installer.ps1 -Output installer -Build build/ci
 
       - name: Keep the installer
         uses: actions/upload-artifact@v7
@@ -198,7 +194,7 @@ jobs:
           cache-environment: true
 
       - name: Configure
-        run: cmake --preset ci -DLCAD_WARNINGS_AS_ERRORS=OFF "-DCMAKE_PREFIX_PATH=$CONDA_PREFIX"
+        run: cmake --preset ci "-DCMAKE_PREFIX_PATH=$CONDA_PREFIX"
 
       - name: Build
         run: cmake --build --preset ci
@@ -217,19 +213,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # LCAD.app with every library it uses inside it, put by `cmake --install` and macdeployqt,
-      # signed for this computer only (ad hoc: there is no Apple developer identity), on a disk
-      # image beside a link to Applications.
       - name: Build the disk image
-        run: |
-          cmake --install build/ci --prefix stage
-          codesign --force --deep --sign - stage/LCAD.app
-          version=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build/ci/CMakeCache.txt)
-          mkdir -p dmg/contents
-          cp -R stage/LCAD.app dmg/contents/
-          ln -s /Applications dmg/contents/Applications
-          hdiutil create -volname LCAD -srcfolder dmg/contents -ov -format UDZO \
-            "dmg/LCAD-$version-macos-$(uname -m).dmg"
+        run: scripts/build-macos-dmg.sh dmg build/ci
 
       - name: Keep the disk image
         uses: actions/upload-artifact@v7

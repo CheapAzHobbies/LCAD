@@ -24,12 +24,12 @@ QString stateFolder() {
     }
     return base + QStringLiteral("/lcad");
 #else
-    // The application's name comes from the QCoreApplication, which main() names "LCAD".
-    QString folder = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-    if (folder.isEmpty()) {
-        folder = QDir::homePath() + QStringLiteral("/LCAD");
+    // %LOCALAPPDATA%\LCAD on Windows, ~/Library/Application Support/LCAD on macOS.
+    QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (base.isEmpty()) {
+        base = QDir::homePath();
     }
-    return folder;
+    return base + QStringLiteral("/LCAD");
 #endif
 }
 

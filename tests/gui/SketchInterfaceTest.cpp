@@ -717,7 +717,10 @@ void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
 
     // Select the bottom side: the panel says what it is and lists what holds it.
     click(window, at(window, 40.0, 10.0));
-    QVERIFY2(panel->selectionText().startsWith(QStringLiteral("Line · length 60")),
+    // About 60 mm: where a click lands goes by the pixel, and how big a pixel is by the window.
+    const QStringList saying = panel->selectionText().split(QLatin1Char(' '));
+    QVERIFY2(saying.size() == 5 && saying[0] == QStringLiteral("Line") &&
+                 qAbs(saying[3].toDouble() - 60.0) < 1.0,
              qPrintable(panel->selectionText()));
     QStringList rows = panel->constraintRows();
     // Level, and joined to its neighbors at both ends.
@@ -992,7 +995,9 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     MainWindow window;
     window.resize(size);
     show(window);
-    QTRY_COMPARE(window.size(), size);
+    if (lcad::test::fitsOnScreen(window, size)) {
+        QTRY_COMPARE(window.size(), size);
+    }
     const ObjectId id = startSketch(window);
     QVERIFY(trigger(window, "sketch.rectangle"));
     click(window, at(window, 0.0, 0.0));

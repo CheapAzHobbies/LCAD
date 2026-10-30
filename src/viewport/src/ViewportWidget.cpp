@@ -2938,6 +2938,13 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
         }
         return;
     }
+    if (event->button() == Qt::LeftButton) {
+        // What the press is on, rather than what the pointer last moved over: a press can come
+        // with no move before it, as the click that brings the window forward does, and on
+        // macOS a move can arrive after the press it came before.
+        const Graphic3d_Vec2i pixel = m_impl->toFramebufferPixels(event->position());
+        m_impl->context->MoveTo(pixel.x(), pixel.y(), m_impl->view, false);
+    }
     if (event->button() == Qt::LeftButton && m_impl->isOverViewCube()) {
         // Wait and see whether this becomes a click or a drag.
         m_impl->cubePressed = true;

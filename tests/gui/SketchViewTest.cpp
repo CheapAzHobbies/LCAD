@@ -280,12 +280,19 @@ void SketchViewTest::sketchesAreDrawnAndFollowTheDocument() {
 
     // Its lines are there, in the color sketches have.
     const QColor color = m_viewport->colors().sketch;
+    // On macOS, where a line is one pixel wide, its color is shared out between two rows of
+    // pixels, blended with what is behind.
+    const QColor background = m_viewport->backgroundColor();
+    const QColor blended((color.red() * 2 + background.red()) / 3,
+                         (color.green() * 2 + background.green()) / 3,
+                         (color.blue() * 2 + background.blue()) / 3);
     const auto hasSketchColor = [&](const QImage& frame, const QPointF& where) {
         const QPoint pixel = (where * frame.devicePixelRatio()).toPoint();
         for (int dy = -3; dy <= 3; ++dy) {
             for (int dx = -3; dx <= 3; ++dx) {
                 if (frame.rect().contains(pixel + QPoint(dx, dy)) &&
-                    isNear(frame.pixel(pixel + QPoint(dx, dy)), color, 40)) {
+                    (isNear(frame.pixel(pixel + QPoint(dx, dy)), color, 40) ||
+                     isNear(frame.pixel(pixel + QPoint(dx, dy)), blended, 40))) {
                     return true;
                 }
             }
@@ -1125,7 +1132,7 @@ void SketchViewTest::redundantAndConflictingConstraintsAreRefused() {
     editor()->cancel();
     const std::vector<Entity> lines = curves(EntityKind::Line);
     const std::size_t constraints = sketch().constraints().size();
-    const int steps = [this] {
+    const int steps = [] {
         int n = 0;
         // Count the undo steps by undoing a copy of nothing: the label suffices here.
         return n;

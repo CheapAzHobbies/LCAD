@@ -1607,7 +1607,7 @@ void Document::notify(Change::Kind kind, ObjectId body) {
     for (const auto& [id, listener] : listeners) {
         const bool stillRegistered =
             std::any_of(m_listeners.begin(), m_listeners.end(),
-                        [id = id](const auto& entry) { return entry.first == id; });
+                        [id](const auto& entry) { return entry.first == id; });
         if (stillRegistered) {
             listener(Change{kind, body});
         }

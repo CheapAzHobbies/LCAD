@@ -557,7 +557,12 @@ void InterfaceTest::nothingEssentialIsClipped() {
     show(window);
     create(window, PrimitiveKind::Box);
     window.browser()->bodyItem(window.document()->bodies()[0].id)->setSelected(true);
-    QTRY_COMPARE(window.size(), size);
+    if (lcad::test::fitsOnScreen(window, size)) {
+        QTRY_COMPARE(window.size(), size);
+    } else {
+        // A smaller screen keeps the window smaller, and all this has to hold for it as well.
+        size = window.size();
+    }
     // The properties of the selected body have been laid out and are on screen.
     QTRY_VERIFY(
         window.properties()->findChild<QLineEdit*>(QStringLiteral("bodyName")) != nullptr &&
@@ -612,7 +617,9 @@ void InterfaceTest::nothingEssentialIsClipped() {
         }
         topPlaced << child->geometry();
     }
-    QVERIFY(window.mainMenu()->width() >= window.mainMenu()->sizeHint().width());
+    // On macOS the menus are in the system's menu bar instead.
+    QVERIFY(window.mainMenu()->isNativeMenuBar() ||
+            window.mainMenu()->width() >= window.mainMenu()->sizeHint().width());
 
     // The panels do not overlap the 3D view, and the view keeps most of the window.
     const QRect view = window.viewport()->geometry();
@@ -894,7 +901,7 @@ void InterfaceTest::layoutIsRememberedAndCanBeReset() {
         QVERIFY(!action(window, "window.browser")->isChecked());
         window.addDockWidget(Qt::LeftDockWidgetArea,
                              window.findChild<QDockWidget*>(QStringLiteral("propertiesDock")));
-        window.resize(1100, 720);
+        window.resize(980, 640);
         QVERIFY(window.close());
     }
     // As after a restart: the window comes back as it was left.
@@ -906,7 +913,7 @@ void InterfaceTest::layoutIsRememberedAndCanBeReset() {
     QVERIFY(!browser->isVisible());
     QVERIFY(!timeline->isVisible());
     QCOMPARE(window.dockWidgetArea(properties), Qt::LeftDockWidgetArea);
-    QCOMPARE(window.size(), QSize(1100, 720));
+    QCOMPARE(window.size(), QSize(980, 640));
     QVERIFY(!action(window, "window.timeline")->isChecked());
 
     window.commands()->trigger(QStringLiteral("window.resetLayout"));
@@ -933,7 +940,7 @@ void InterfaceTest::focusModeGivesTheWindowToTheView() {
     QVERIFY(!toolbar->isVisible());
     QTRY_VERIFY(window.viewport()->width() > normal.width() + 300);
     // The menus stay, so there is always a way back.
-    QVERIFY(window.mainMenu()->isVisible());
+    QVERIFY(window.mainMenu()->isNativeMenuBar() || window.mainMenu()->isVisible());
 
     window.commands()->trigger(QStringLiteral("window.focus"));
     QVERIFY(!window.isViewportFocused());

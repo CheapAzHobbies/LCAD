@@ -39,7 +39,7 @@ struct SolverAccess {
 namespace {
 
 // The most unknowns one equation involves: four points and two radii.
-constexpr int maxLocal = 10;
+constexpr std::size_t maxLocal = 10;
 constexpr double pi = 3.14159265358979323846;
 
 // How close to zero every equation has to come, in millimeters or radians.
@@ -60,7 +60,7 @@ struct Dual {
 
 Dual operator+(const Dual& a, const Dual& b) {
     Dual r(a.v + b.v);
-    for (int i = 0; i < maxLocal; ++i) {
+    for (std::size_t i = 0; i < maxLocal; ++i) {
         r.d[i] = a.d[i] + b.d[i];
     }
     return r;
@@ -68,7 +68,7 @@ Dual operator+(const Dual& a, const Dual& b) {
 
 Dual operator-(const Dual& a, const Dual& b) {
     Dual r(a.v - b.v);
-    for (int i = 0; i < maxLocal; ++i) {
+    for (std::size_t i = 0; i < maxLocal; ++i) {
         r.d[i] = a.d[i] - b.d[i];
     }
     return r;
@@ -76,7 +76,7 @@ Dual operator-(const Dual& a, const Dual& b) {
 
 Dual operator*(const Dual& a, const Dual& b) {
     Dual r(a.v * b.v);
-    for (int i = 0; i < maxLocal; ++i) {
+    for (std::size_t i = 0; i < maxLocal; ++i) {
         r.d[i] = a.d[i] * b.v + a.v * b.d[i];
     }
     return r;
@@ -84,7 +84,7 @@ Dual operator*(const Dual& a, const Dual& b) {
 
 Dual operator/(const Dual& a, const Dual& b) {
     Dual r(a.v / b.v);
-    for (int i = 0; i < maxLocal; ++i) {
+    for (std::size_t i = 0; i < maxLocal; ++i) {
         r.d[i] = (a.d[i] * b.v - a.v * b.d[i]) / (b.v * b.v);
     }
     return r;
@@ -94,7 +94,7 @@ Dual squareRoot(const Dual& a) {
     // A length of exactly zero has no direction to differentiate along; nudge it.
     const double root = std::sqrt(std::max(a.v, 1e-300));
     Dual r(root);
-    for (int i = 0; i < maxLocal; ++i) {
+    for (std::size_t i = 0; i < maxLocal; ++i) {
         r.d[i] = a.d[i] / (2.0 * root);
     }
     return r;
@@ -103,7 +103,7 @@ Dual squareRoot(const Dual& a) {
 Dual arcTangent(const Dual& y, const Dual& x) {
     Dual r(std::atan2(y.v, x.v));
     const double squared = std::max(x.v * x.v + y.v * y.v, 1e-300);
-    for (int i = 0; i < maxLocal; ++i) {
+    for (std::size_t i = 0; i < maxLocal; ++i) {
         r.d[i] = (x.v * y.d[i] - y.v * x.d[i]) / squared;
     }
     return r;

@@ -729,7 +729,9 @@ void MainWindow::defineCommands() {
                         occurrences.begin(), occurrences.end(),
                         [&path](const std::vector<document::ObjectId>& chosen) {
                             const std::size_t n = std::min(path.size(), chosen.size());
-                            return std::equal(path.begin(), path.begin() + n, chosen.begin());
+                            return std::equal(path.begin(),
+                                              path.begin() + static_cast<std::ptrdiff_t>(n),
+                                              chosen.begin());
                         });
                 };
                 std::vector<document::ObjectId> kept;
@@ -804,7 +806,7 @@ void MainWindow::defineCommands() {
                          tr("Create a %1 by its sizes").arg(primitiveName(kind).toLower()));
         c.iconName = QString::fromLatin1(iconName);
         c.aliases = aliases;
-        c.run = [this, kind = kind](bool) { startPrimitive(kind); };
+        c.run = [this, kind](bool) { startPrimitive(kind); };
         c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
     }
@@ -996,7 +998,7 @@ void MainWindow::defineCommands() {
             }
         };
         c.isEnabled = [selectedFeature] { return selectedFeature() != nullptr; };
-        c.currentText = [this, selectedFeature] {
+        c.currentText = [selectedFeature] {
             const document::Feature* feature = selectedFeature();
             return feature != nullptr && feature->suppressed ? tr("Re&store Feature")
                                                              : tr("&Suppress Feature");
@@ -1067,8 +1069,8 @@ void MainWindow::defineCommands() {
         c.checkable = true;
         c.exclusiveGroup = QStringLiteral("selectionFilter");
         c.aliases = {tr("selection filter"), tr("pick")};
-        c.run = [this, filter = filter](bool) { m_viewport->setSelectionFilter(filter); };
-        c.isChecked = [this, filter = filter] { return m_viewport->selectionFilter() == filter; };
+        c.run = [this, filter](bool) { m_viewport->setSelectionFilter(filter); };
+        c.isChecked = [this, filter] { return m_viewport->selectionFilter() == filter; };
         // While a sketch is open, a click picks what is in the sketch.
         c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
@@ -1136,9 +1138,7 @@ void MainWindow::defineCommands() {
         } else {
             c.aliases = {tr("%1 view").arg(QString(text).remove(QLatin1Char('&')).toLower())};
         }
-        c.run = [this, standardView = standardView](bool) {
-            m_viewport->setStandardView(standardView);
-        };
+        c.run = [this, standardView](bool) { m_viewport->setStandardView(standardView); };
         m_commands->add(std::move(c));
     }
     {
@@ -1174,13 +1174,13 @@ void MainWindow::defineCommands() {
         c.checkable = true;
         c.exclusiveGroup = QStringLiteral("displayStyle");
         c.aliases = {tr("display style"), tr("visual style")};
-        c.run = [this, style = style](bool) {
+        c.run = [this, style](bool) {
             m_viewport->setDisplayStyle(style);
             QSettings().setValue(QLatin1String(styleKey), static_cast<int>(style));
             // The toolbar's style button shows the icon of the style in use.
             applyTheme();
         };
-        c.isChecked = [this, style = style] { return m_viewport->displayStyle() == style; };
+        c.isChecked = [this, style] { return m_viewport->displayStyle() == style; };
         m_commands->add(std::move(c));
     }
     {
@@ -1220,11 +1220,11 @@ void MainWindow::defineCommands() {
         c.checkable = true;
         c.exclusiveGroup = QStringLiteral("navigation");
         c.aliases = {tr("mouse"), tr("navigation")};
-        c.run = [this, preset = preset](bool) {
+        c.run = [this, preset](bool) {
             m_viewport->setNavigationPreset(preset);
             QSettings().setValue(QLatin1String(navigationKey), static_cast<int>(preset));
         };
-        c.isChecked = [this, preset = preset] { return m_viewport->navigationPreset() == preset; };
+        c.isChecked = [this, preset] { return m_viewport->navigationPreset() == preset; };
         m_commands->add(std::move(c));
     }
     {
@@ -1266,8 +1266,8 @@ void MainWindow::defineCommands() {
         c.checkable = true;
         c.exclusiveGroup = QStringLiteral("theme");
         c.aliases = aliases + QStringList{tr("theme"), tr("appearance")};
-        c.run = [choice = choice](bool) { Theme::instance().setChoice(choice); };
-        c.isChecked = [choice = choice] { return Theme::instance().choice() == choice; };
+        c.run = [choice](bool) { Theme::instance().setChoice(choice); };
+        c.isChecked = [choice] { return Theme::instance().choice() == choice; };
         m_commands->add(std::move(c));
     }
     const std::tuple<QDockWidget*, const char*, QString> panels[] = {
@@ -1279,8 +1279,8 @@ void MainWindow::defineCommands() {
         Command c = make(id, text, window, tr("Show or hide this panel"));
         c.checkable = true;
         c.aliases = {tr("panel")};
-        c.run = [dock = dock](bool on) { dock->setVisible(on); };
-        c.isChecked = [dock = dock] { return !dock->isHidden(); };
+        c.run = [dock](bool on) { dock->setVisible(on); };
+        c.isChecked = [dock] { return !dock->isHidden(); };
         m_commands->add(std::move(c));
     }
     {
@@ -1358,7 +1358,7 @@ void MainWindow::defineSketchCommands() {
         for (const auto& [id, text, which] : planes) {
             c = make(id, text, tr("Start a sketch on this plane through the origin"), "sketch");
             c.aliases = {tr("create sketch")};
-            c.run = [this, which = which](bool) {
+            c.run = [this, which](bool) {
                 createSketch(which == 0   ? kernel::planeXY()
                              : which == 1 ? kernel::planeXZ()
                                           : kernel::planeYZ());
@@ -1594,9 +1594,9 @@ void MainWindow::defineSketchCommands() {
         c.checkable = true;
         c.aliases = {tr("constraint"), tr("constrain")};
         // On what is selected, if it fits; otherwise it becomes the tool and waits for clicks.
-        c.run = [editor, kind = kind](bool) { editor()->constrain(kind); };
+        c.run = [editor, kind](bool) { editor()->constrain(kind); };
         c.isEnabled = sketching;
-        c.isChecked = [this, editor, kind = kind] {
+        c.isChecked = [this, editor, kind] {
             return isSketching() && editor()->tool() == SketchTool::Constraint &&
                    editor()->constraintTool() == kind;
         };

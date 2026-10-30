@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(LCAD
     VERSION 0.0.1
-    DESCRIPTION "Local-first parametric 3D CAD for Linux"
+    DESCRIPTION "Local-first parametric 3D CAD"
     LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)

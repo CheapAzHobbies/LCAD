@@ -631,7 +631,8 @@ void ViewportTest::originPlanesAndAxesCanBeShown() {
         const QImage before = m_viewport->grabFramebuffer();
         m_viewport->setOriginItemVisible(item, true);
         QVERIFY(m_viewport->isOriginItemVisible(item));
-        QVERIFY2(differingFraction(before, m_viewport->grabFramebuffer()) > 0.0003,
+        // A little: on macOS, an axis is a line one pixel wide.
+        QVERIFY2(differingFraction(before, m_viewport->grabFramebuffer()) > 0.0001,
                  qPrintable(QStringLiteral("item %1").arg(static_cast<int>(item))));
     }
     keepFrame(m_viewport->grabFramebuffer(), "viewport-origin");

@@ -24,7 +24,9 @@ function(lcad_add_gui_test name)
     endif()
 
     # Each program runs twice: at the screen's own scale, and at twice that, as on a high-DPI
-    # display, where a logical pixel is two physical ones.
+    # display, where a logical pixel is two physical ones. The second run wants a screen made
+    # for it: on the small screens of CI's Windows and macOS machines, twice the scale would
+    # leave no room for the window, and those run once.
     if(LCAD_XVFB_RUN)
         add_test(NAME ${name}
             COMMAND "${LCAD_XVFB_RUN}" --auto-servernum "--server-args=-screen 0 1700x1100x24"
@@ -32,13 +34,12 @@ function(lcad_add_gui_test name)
         add_test(NAME ${name}_2x
             COMMAND "${LCAD_XVFB_RUN}" --auto-servernum "--server-args=-screen 0 3400x2200x24"
                     $<TARGET_FILE:${name}>)
+        set_tests_properties(${name}_2x PROPERTIES
+            LABELS gui ENVIRONMENT "${environment};QT_SCALE_FACTOR=2")
     else()
         add_test(NAME ${name} COMMAND ${name})
-        add_test(NAME ${name}_2x COMMAND ${name})
     endif()
     set_tests_properties(${name} PROPERTIES LABELS gui ENVIRONMENT "${environment}")
-    set_tests_properties(${name}_2x PROPERTIES
-        LABELS gui ENVIRONMENT "${environment};QT_SCALE_FACTOR=2")
 endfunction()
 
 lcad_add_gui_test(lcad_viewport_tests ViewportTest.cpp)

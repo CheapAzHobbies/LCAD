@@ -9,8 +9,7 @@ namespace lcad::app {
 /// LCAD's own version, for example "0.0.1".
 [[nodiscard]] QString versionString();
 
-/// Where LCAD keeps its log: lcad/lcad.log under $XDG_STATE_HOME, or under ~/.local/state when
-/// that is not set.
+/// Where LCAD keeps its log: lcad.log in its state folder (see stateFolder() in Paths.h).
 [[nodiscard]] QString defaultLogFilePath();
 
 /// Starts writing LCAD's log to `filePath`, and warnings and errors to the terminal as well.

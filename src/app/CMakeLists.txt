@@ -81,8 +81,8 @@ if(WIN32)
     # What the installer installs: the program in bin, beside the libraries it uses and Visual
     # C++'s runtime, which Windows does not always have. Qt's plugins are added by windeployqt.
     install(TARGETS lcad
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        RUNTIME_DEPENDENCY_SET lcad_runtime)
+        RUNTIME_DEPENDENCY_SET lcad_runtime
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
     # The libraries are found beside Qt's, and in the bin folder next to Open CASCADE's lib.
     get_target_property(_lcad_qt_core Qt6::Core IMPORTED_LOCATION_RELEASE)
     get_filename_component(_lcad_qt_bin "${_lcad_qt_core}" DIRECTORY)
