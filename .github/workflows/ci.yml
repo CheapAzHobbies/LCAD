@@ -125,9 +125,7 @@ jobs:
           cache-environment: true
 
       - name: Configure
-        run: >
-          cmake --preset ci -DLCAD_WARNINGS_AS_ERRORS=OFF
-          "-DCMAKE_PREFIX_PATH=$env:CONDA_PREFIX/Library"
+        run: cmake --preset ci "-DCMAKE_PREFIX_PATH=$env:CONDA_PREFIX/Library"
 
       - name: Build
         # Keeps going past a file that does not compile, to report them all in one run.

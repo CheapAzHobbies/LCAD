@@ -89,7 +89,9 @@ if(WIN32)
     get_filename_component(_lcad_occt_lib "${LCAD_OCCT_TKernel_LIBRARY}" DIRECTORY)
     install(RUNTIME_DEPENDENCY_SET lcad_runtime
         DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-"
+        # opengl32.dll belongs to Windows and the graphics driver. The one a build folder may have
+        # is Mesa's, put beside the tests on a machine without a graphics card.
+        PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-" "^opengl32"
         POST_EXCLUDE_REGEXES "[Ss]ystem32"
         DIRECTORIES "${_lcad_qt_bin}" "${_lcad_occt_lib}/../bin")
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${CMAKE_INSTALL_BINDIR}")
@@ -135,8 +137,15 @@ endif()
 # macdeployqt. On Linux the distribution provides them, and the AppImage and Flatpak bundle
 # them their own way.
 if(WIN32 OR APPLE)
+    # conda-forge's Qt has a second set of its tools in lib/qt6/bin, which is where CMake is told
+    # they are, and from there they cannot tell where Qt is. The one beside Qt's libraries can.
+    set(_lcad_deploy_options "")
+    if(WIN32 AND EXISTS "${_lcad_qt_bin}/qtpaths6.exe")
+        set(_lcad_deploy_options --qtpaths "${_lcad_qt_bin}/qtpaths6.exe")
+    endif()
     qt_generate_deploy_app_script(TARGET lcad
         OUTPUT_SCRIPT _lcad_deploy_script
-        NO_TRANSLATIONS)
+        NO_TRANSLATIONS
+        DEPLOY_TOOL_OPTIONS ${_lcad_deploy_options})
     install(SCRIPT "${_lcad_deploy_script}")
 endif()

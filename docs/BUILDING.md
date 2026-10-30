@@ -21,7 +21,7 @@ ctest --preset release
 
 ## Supported systems
 
-CI builds and tests LCAD on Windows (Windows Server 2025, Visual Studio 2022) and macOS (macOS 15
+CI builds and tests LCAD on Windows (Windows Server 2025, Visual Studio 2026) and macOS (macOS 15
 on Apple silicon), with conda-forge's Qt and Open CASCADE 7.9, and on these Linux
 distributions, from a bare install, on every change:
 
@@ -121,16 +121,16 @@ opened by their paths. Its log and its copies of unsaved work are under
 
 ## Windows
 
-LCAD builds with Visual Studio 2022 and takes Qt, Open CASCADE, and the smaller libraries from
+LCAD builds with Visual Studio 2026 and takes Qt, Open CASCADE, and the smaller libraries from
 [conda-forge](https://conda-forge.org/), where they come built for Windows. You need:
 
-- Visual Studio 2022 (the free Community edition is enough) with the **Desktop development with
+- Visual Studio 2026 (the free Community edition is enough) with the **Desktop development with
   C++** workload, which brings CMake and Ninja as well
 - [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html)
   (or conda or mamba) for the libraries
 - Git
 
-In a **Developer PowerShell for VS 2022**:
+In a **Developer PowerShell for VS**:
 
 ```powershell
 git clone https://github.com/CheapAzHobbies/LCAD.git
