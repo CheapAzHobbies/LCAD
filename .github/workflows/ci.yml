@@ -130,7 +130,8 @@ jobs:
           "-DCMAKE_PREFIX_PATH=$env:CONDA_PREFIX/Library"
 
       - name: Build
-        run: cmake --build --preset ci
+        # Keeps going past a file that does not compile, to report them all in one run.
+        run: cmake --build --preset ci -- -k 0
 
       # The runner has no graphics card, and Windows' own OpenGL stops at version 1.1. Mesa's
       # software renderer, put beside the tests, takes its place for them.

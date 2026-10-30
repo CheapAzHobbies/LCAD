@@ -997,6 +997,9 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     show(window);
     if (lcad::test::fitsOnScreen(window, size)) {
         QTRY_COMPARE(window.size(), size);
+    } else {
+        // A smaller screen keeps the window smaller, and all this has to hold for it as well.
+        size = window.size();
     }
     const ObjectId id = startSketch(window);
     QVERIFY(trigger(window, "sketch.rectangle"));
