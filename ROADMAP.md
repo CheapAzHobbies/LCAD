@@ -26,7 +26,7 @@ more than writing the code, now sets the pace.
 | 3. Parametric solids | Extrude, cut, revolve, fillet, patterns, timeline, parameters | 2026-10-13 | 2027-02-15 | 2026-10-14 | v0.1 alpha |
 | 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2026-10-14 | 2027-03-31 | 2026-10-19 | v0.2 |
 | 5. Components and assemblies | Components, linked parts, joints, interference checks | 2026-10-19 | 2027-07-15 | 2026-10-21 | v0.5 beta |
-| Port | Windows and macOS builds | 2026-10-21 | 2027-09-15 | in progress | v0.6 |
+| Port | Windows and macOS builds | 2026-10-21 | 2027-09-15 | 2026-10-30 | v0.6 |
 | 6. Drawings and manufacturing | Associative drawings, PDF/DXF, 2.5D and 3-axis CAM | 2027-09-16 | 2028-01-15 | | v1.0 |
 | 7. Advanced capabilities | Surfaces, sheet metal, mesh repair, rendering, plugins | 2028-01-16 | ongoing | | |
 
@@ -299,15 +299,23 @@ picked in the 3D view, materials that change how a body looks, the materials of 
 document's own list (only LCAD's are known in the document it is linked into), and the
 large-assembly benchmarks decision 3 asks for.
 
-## Port: Windows and macOS (started 2026-10-21, in progress, target 2027-09-15)
+## Port: Windows and macOS (finished 2026-10-30)
 
 Qt 6 and OCCT both run on Windows and macOS, so the port is mostly build, packaging, and platform testing,
 provided the code stays portable from the start: no Linux-only APIs outside a small platform layer, CMake
 throughout, and no hard-coded paths.
 
-- [ ] Windows build and installer.
-- [ ] macOS build and app bundle.
-- [ ] CI on all three platforms.
+- [x] Windows build and installer: Visual Studio, with Qt and OCCT from conda-forge; an Inno Setup
+      installer that adds LCAD to the Start menu and opens `.lcad` documents with it.
+- [x] macOS build and app bundle: LCAD.app on a disk image, for Apple silicon, carrying its
+      libraries, and opening `.lcad` documents from the Finder.
+- [x] CI on all three platforms, on every pull request. Each package is installed and opens a
+      document through the system, away from what it was built with.
+
+So far both have only run on CI's machines, which have small screens and no graphics card. Using
+them on a real Windows PC and a real Mac, with a real graphics driver and a high-DPI screen, is
+still to do, and neither package is signed. What differs between the systems, and what that costs,
+is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#17-windows-and-macos).
 
 ## Phase 6: Drawings and manufacturing (2027-09-16 to 2028-01-15)
 

@@ -7,8 +7,7 @@ the reasons for each. The product requirements are in [PROJECT_BRIEF.md](PROJECT
 
 Phases 0 to 2 built the desktop foundation and the sketcher, Phase 3 the features and the
 timeline, Phase 4 other programs' files and direct edits, Phase 5 components and assemblies, and
-the port (in progress) took all of it to Windows and macOS. Each decision below rests on running
-code:
+the port took all of it to Windows and macOS. Each decision below rests on running code:
 
 - `core` holds the log and LCAD's version.
 - `kernel` makes boxes, cylinders, spheres, cones, and tori, moves shapes, measures them (volume,
@@ -553,6 +552,10 @@ run on, so that what LCAD links would decide the oldest macOS it runs on.
 - *Menus.* On macOS the menus are in the system's menu bar, and not in the window.
 - *Opening a document.* The Finder asks the running LCAD to open a file with an event, not on
   the command line: `MainWindow::acceptFileOpenRequests()`.
+- *Packaging.* macOS uses Qt's `macdeployqt`. On Windows `cmake --install` does the work itself:
+  Qt's `windeployqt` cannot tell where conda-forge's Qt is, and LCAD needs one plugin of Qt's
+  there, for which CMake gathers what it depends on. `opengl32.dll` is left out on purpose, so
+  that Windows and the graphics driver provide it.
 
 **What it costs.**
 
@@ -564,6 +567,8 @@ run on, so that what LCAD links would decide the oldest macOS it runs on.
   tests the interface at the size that fits, and not at the larger sizes. They have no
   high-DPI screen either, so the run at twice the scale is Linux's alone.
 - *Neither package is signed.* Windows SmartScreen and macOS Gatekeeper ask the first time.
+- *Test machines only, so far.* On Windows the tests draw with Mesa's software OpenGL and on macOS
+  with Apple's software renderer. Neither has met a real graphics driver.
 - *Intel Macs.* CI builds for Apple silicon only.
 
 ## Threads

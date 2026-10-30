@@ -4,14 +4,15 @@ LCAD (LinuxCAD) is an open source parametric 3D CAD application, with a workflow
 Fusion 360: sketch, constrain, extrude, edit through a feature timeline, assemble. It runs offline, keeps
 project files on your own disk, and needs no account.
 
-Linux comes first. Windows and macOS builds are made from the same code, and tested on every change.
+It runs on Linux, Windows, and macOS (Apple silicon), from the same code, tested on every change. Linux
+comes first: so far LCAD has only run on Windows and macOS on test machines.
 
 ## Status
 
 Early. LCAD can sketch, turn sketches into solids, change them through a feature timeline, read
 and write other programs' files, and put parts together into assemblies. Phases 0 to 5 of the
-[roadmap](ROADMAP.md) are done, and the port to Windows and macOS is in progress; drawings and
-manufacturing are still to come.
+[roadmap](ROADMAP.md) and the port to Windows and macOS are done; drawings and manufacturing are
+still to come.
 
 What works today:
 

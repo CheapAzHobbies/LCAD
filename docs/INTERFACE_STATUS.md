@@ -4,7 +4,7 @@
 section by section, what LCAD has of it and what is missing, with the phase each gap is
 scheduled for. It is updated at the end of every phase.
 
-Status as of the port to Windows and macOS (2026-10-30), in progress. Phase 1b, the
+Status as of the port to Windows and macOS (2026-10-30). Phase 1b, the
 interface shell phase that this specification added to the [roadmap](../ROADMAP.md), was
 finished on 2026-10-12.
 

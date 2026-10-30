@@ -252,6 +252,8 @@ void ApplicationTest::windowHasItsFiveRegions() {
     QVERIFY(browserDock->geometry().right() <= view.left());
     QVERIFY(timelineDock->geometry().top() >= view.bottom());
     QVERIFY(toolbar->geometry().bottom() <= view.top());
+    // It starts on the screen, whole, however small that is.
+    QVERIFY(window.frameGeometry().height() <= window.screen()->availableSize().height());
     // The viewport is the main thing in the window, when there is room around the panels.
     QVERIFY(window.width() < 1280 ||
             view.width() * view.height() > window.width() * window.height() / 2);

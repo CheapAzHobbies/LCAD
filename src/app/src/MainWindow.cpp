@@ -55,6 +55,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -134,7 +135,9 @@ private:
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_viewport(new viewport::ViewportWidget(this)),
       m_commands(new CommandRegistry(this)) {
-    resize(1280, 800);
+    // Within the screen, with room for the title bar: Windows lets a window start larger than
+    // it, with the bottom of the window behind the taskbar.
+    resize(QSize(1280, 800).boundedTo(screen()->availableSize() - QSize(0, 40)));
     setCentralWidget(m_viewport);
     m_viewport->setContextMenuPolicy(Qt::CustomContextMenu);
 
