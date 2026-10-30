@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <lcad/core/Path.h>
 #include <lcad/document/Document.h>
 #include <lcad/document/File.h>
 #include <lcad/document/Links.h>
@@ -97,7 +98,9 @@ TEST_CASE("Links are kept relative to the document's folder", "[document][links]
     const std::filesystem::path folder = "/home/someone/projects/car";
     CHECK(makeLink("/home/someone/projects/car/parts/wheel.lcad", folder) == "parts/wheel.lcad");
     CHECK(makeLink("/home/someone/projects/common/bolt.lcad", folder) == "../common/bolt.lcad");
-    CHECK(makeLink("/home/someone/bolt.lcad", {}) == "/home/someone/bolt.lcad");
+    // Whole, which on Windows takes a drive.
+    const std::filesystem::path whole = std::filesystem::absolute("/home/someone/bolt.lcad");
+    CHECK(makeLink(whole, {}) == lcad::core::toGenericUtf8(whole));
     CHECK(resolveLink("parts/wheel.lcad", folder) ==
           std::filesystem::path("/home/someone/projects/car/parts/wheel.lcad"));
     CHECK(resolveLink("../common/bolt.lcad", folder) ==

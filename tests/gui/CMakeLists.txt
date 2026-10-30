@@ -10,6 +10,8 @@ endif()
 
 function(lcad_add_gui_test name)
     qt_add_executable(${name} ${ARGN})
+    # qt_add_executable() makes a program without a console on Windows, whose output is lost.
+    set_target_properties(${name} PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(${name} PRIVATE
         Qt6::Test lcad::app lcad::core lcad::document lcad::kernel lcad_test_support)
     lcad_target_defaults(${name})
@@ -58,6 +60,7 @@ endif()
 
 # Needs no display, so it runs with the unit tests.
 qt_add_executable(lcad_viewport_setup_tests SetupTest.cpp)
+set_target_properties(lcad_viewport_setup_tests PROPERTIES WIN32_EXECUTABLE FALSE)
 target_link_libraries(lcad_viewport_setup_tests PRIVATE Qt6::Test lcad::viewport)
 lcad_target_defaults(lcad_viewport_setup_tests)
 add_test(NAME lcad_viewport_setup_tests COMMAND lcad_viewport_setup_tests)
