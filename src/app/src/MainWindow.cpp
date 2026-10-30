@@ -21,6 +21,8 @@
 #include <lcad/app/SketchPanel.h>
 #include <lcad/app/Theme.h>
 #include <lcad/app/TimelinePanel.h>
+#include <lcad/core/Log.h>
+#include <lcad/core/Path.h>
 #include <lcad/document/File.h>
 #include <lcad/document/Links.h>
 #include <lcad/document/SketchShapes.h>
@@ -2449,6 +2451,7 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     }
     activate(index);
     rememberFile(absolute);
+    core::log(core::LogLevel::Info, "app", "Opened " + core::toUtf8(toPath(absolute)));
     statusBar()->showMessage(tr("Opened %1").arg(documentName()), 4000);
     // Linked parts that changed, or cannot be found, are said; nothing is changed until the
     // user updates them.

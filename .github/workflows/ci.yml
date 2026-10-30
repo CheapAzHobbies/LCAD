@@ -177,6 +177,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # From cmd, which the conda environment is not set up for: what is installed has to have
+      # all it needs beside it.
+      - name: Install LCAD and open a document
+        shell: cmd
+        run: >
+          pwsh -NoProfile -File scripts/smoke-test-windows.ps1 -Installer installer/*.exe
+          -Document tests/models/format-1/primitives-occt-7.6.3.lcad
+          -Screenshot windows-screen.png -OpenGL mesa/x64
+
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-screen
+          path: windows-screen.png
+          if-no-files-found: ignore
+          retention-days: 14
+
   macos:
     name: macOS
     runs-on: macos-15
@@ -223,6 +241,25 @@ jobs:
           name: LCAD-macOS-disk-image
           path: dmg/*.dmg
           if-no-files-found: error
+          retention-days: 14
+
+      # With the conda environment out of the way: the app has to carry all it needs.
+      - name: Open a document with the app on the disk image
+        run: |
+          mv "$CONDA_PREFIX" "$CONDA_PREFIX.aside"
+          status=0
+          scripts/smoke-test-macos.sh dmg/*.dmg tests/models/format-1/primitives-occt-7.6.3.lcad \
+            macos-screen.png || status=$?
+          mv "$CONDA_PREFIX.aside" "$CONDA_PREFIX"
+          exit $status
+
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-screen
+          path: macos-screen.png
+          if-no-files-found: ignore
           retention-days: 14
 
   # One file that runs without installing anything. Built on the oldest supported distribution,

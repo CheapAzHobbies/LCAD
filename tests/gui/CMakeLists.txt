@@ -24,6 +24,10 @@ function(lcad_add_gui_test name)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND environment "QT_QPA_PLATFORM=xcb" "LIBGL_ALWAYS_SOFTWARE=1")
     endif()
+    # Without a console window of its own, Qt Test on Windows says everything to the debugger.
+    if(WIN32)
+        list(APPEND environment "QT_FORCE_STDERR_LOGGING=1")
+    endif()
 
     # Each program runs twice: at the screen's own scale, and at twice that, as on a high-DPI
     # display, where a logical pixel is two physical ones. The second run wants a screen made
