@@ -78,11 +78,17 @@ if(WIN32)
     target_sources(lcad PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/lcad.rc")
     set_target_properties(lcad PROPERTIES WIN32_EXECUTABLE ON)
 
-    # What the installer installs: the program in bin, beside the libraries it uses and Visual
-    # C++'s runtime, which Windows does not always have. Qt's plugins are added by windeployqt.
+    # What the installer installs: the program in bin, beside the libraries it uses, Visual
+    # C++'s runtime, which Windows does not always have, and the one plugin of Qt's that LCAD
+    # needs, which Qt looks for beside the program. Qt's own windeployqt would see to the plugin,
+    # but in conda-forge's Qt it cannot tell where Qt is.
     install(TARGETS lcad
         RUNTIME_DEPENDENCY_SET lcad_runtime
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(IMPORTED_RUNTIME_ARTIFACTS Qt6::QWindowsIntegrationPlugin
+        RUNTIME_DEPENDENCY_SET lcad_runtime
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}/platforms"
+        LIBRARY DESTINATION "${CMAKE_INSTALL_BINDIR}/platforms")
     # The libraries are found beside Qt's, and in the bin folder next to Open CASCADE's lib.
     get_target_property(_lcad_qt_core Qt6::Core IMPORTED_LOCATION_RELEASE)
     get_filename_component(_lcad_qt_bin "${_lcad_qt_core}" DIRECTORY)
@@ -111,9 +117,13 @@ elseif(APPLE)
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_COPYRIGHT "GNU General Public License, version 3 or later"
         MACOSX_BUNDLE_ICON_FILE LCAD.icns)
-    # macdeployqt, run by the deploy script below, copies into the bundle every library the
-    # program uses that macOS does not have, Qt's and the others.
+    # macdeployqt copies into the bundle every library the program uses that macOS does not
+    # have, Qt's and the others, and Qt's plugins.
     install(TARGETS lcad BUNDLE DESTINATION .)
+    qt_generate_deploy_app_script(TARGET lcad
+        OUTPUT_SCRIPT _lcad_deploy_script
+        NO_TRANSLATIONS)
+    install(SCRIPT "${_lcad_deploy_script}")
 else()
     # What a package of LCAD contains: the program, its launcher, its icon, and the file type
     # of its documents.
@@ -131,21 +141,4 @@ else()
     # What software centers show about LCAD.
     install(FILES "${PROJECT_SOURCE_DIR}/packaging/${LCAD_APP_ID}.metainfo.xml"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
-endif()
-
-# On Windows and macOS, Qt's own libraries and plugins go with the program, by windeployqt and
-# macdeployqt. On Linux the distribution provides them, and the AppImage and Flatpak bundle
-# them their own way.
-if(WIN32 OR APPLE)
-    # conda-forge's Qt has a second set of its tools in lib/qt6/bin, which is where CMake is told
-    # they are, and from there they cannot tell where Qt is. The one beside Qt's libraries can.
-    set(_lcad_deploy_options "")
-    if(WIN32 AND EXISTS "${_lcad_qt_bin}/qtpaths6.exe")
-        set(_lcad_deploy_options --qtpaths "${_lcad_qt_bin}/qtpaths6.exe")
-    endif()
-    qt_generate_deploy_app_script(TARGET lcad
-        OUTPUT_SCRIPT _lcad_deploy_script
-        NO_TRANSLATIONS
-        DEPLOY_TOOL_OPTIONS ${_lcad_deploy_options})
-    install(SCRIPT "${_lcad_deploy_script}")
 endif()

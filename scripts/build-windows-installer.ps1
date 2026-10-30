@@ -46,7 +46,7 @@ if (-not $Build) {
     Assert-Success "Building"
 }
 
-# Installing runs windeployqt, which adds Qt's plugins.
+# Installing gathers the program, the libraries it uses, and Qt's plugin for Windows.
 $stage = Join-Path $work "stage"
 cmake --install $Build --prefix $stage
 Assert-Success "Installing"
