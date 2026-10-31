@@ -334,6 +334,8 @@ private:
     void defineCommands();
     void defineSketchCommands();
     void defineAssemblyCommands();
+    /// Has everything that watches the document let go of it: before a document goes.
+    void detachFromDocument();
     void defineDrawingCommands();
     void defineMachiningCommands();
     /// The faces selected in the 3D view, by what stays the same when the model changes.

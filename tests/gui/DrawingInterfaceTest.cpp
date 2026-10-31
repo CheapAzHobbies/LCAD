@@ -455,6 +455,16 @@ void DrawingInterfaceTest::aDrawingIsExportedSavedAndReopened() {
     window.newDocument();
     QVERIFY(window.drawings()->drawing() == nullptr);
     QCOMPARE(window.drawings()->view()->sheet().views.size(), std::size_t{0});
+
+    // A document that goes, by closing it or by an opened file taking its tab, leaves nothing
+    // holding on to it: the sanitizers would see that here.
+    window.closeDocument(window.documentCount() - 1);
+    QVERIFY(window.drawings()->drawing() != nullptr);
+    window.closeDocument(0);
+    QVERIFY(window.drawings()->drawing() == nullptr);
+    QVERIFY(window.loadFrom(folder + QStringLiteral("/part.lcad"), &error));
+    QVERIFY(window.drawings()->drawing() != nullptr);
+    QTRY_COMPARE(window.drawings()->view()->sheet().dimensions.size(), std::size_t{1});
 }
 
 QTEST_MAIN(DrawingInterfaceTest)

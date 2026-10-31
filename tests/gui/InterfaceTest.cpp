@@ -26,6 +26,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTemporaryDir>
@@ -133,6 +134,7 @@ private slots:
 
     // The window
     void layoutIsRememberedAndCanBeReset();
+    void theRightPanelIsAsLongAsThePageShown();
     void focusModeGivesTheWindowToTheView();
 
     // Panels and menus
@@ -922,6 +924,22 @@ void InterfaceTest::layoutIsRememberedAndCanBeReset() {
     QCOMPARE(window.dockWidgetArea(properties), Qt::RightDockWidgetArea);
     QCOMPARE(window.dockWidgetArea(browser), Qt::LeftDockWidgetArea);
     QVERIFY(action(window, "window.browser")->isChecked());
+}
+
+// The Manufacture workspace's panel is long. The page for what is selected is not, and is not
+// to take after it.
+void InterfaceTest::theRightPanelIsAsLongAsThePageShown() {
+    MainWindow window;
+    show(window);
+    create(window, PrimitiveKind::Box);
+    auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("inspectorStack"));
+    QVERIFY(stack != nullptr);
+    window.setWorkspace(lcad::app::Workspace::Design);
+    const int shortPage = stack->minimumSizeHint().height();
+    window.setWorkspace(lcad::app::Workspace::Manufacture);
+    QTRY_VERIFY(stack->minimumSizeHint().height() > shortPage);
+    window.setWorkspace(lcad::app::Workspace::Design);
+    QCOMPARE(stack->minimumSizeHint().height(), shortPage);
 }
 
 void InterfaceTest::focusModeGivesTheWindowToTheView() {

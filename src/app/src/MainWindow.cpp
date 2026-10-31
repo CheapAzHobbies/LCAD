@@ -132,6 +132,21 @@ private:
     }
 };
 
+// Pages of a panel, as tall and as wide as the page shown: a QStackedWidget goes by its largest,
+// and the page for what is selected would scroll by the length of the Manufacture workspace's.
+class InspectorStack : public QStackedWidget {
+public:
+    explicit InspectorStack(QWidget* parent) : QStackedWidget(parent) {
+        connect(this, &QStackedWidget::currentChanged, this, [this] { updateGeometry(); });
+    }
+    [[nodiscard]] QSize sizeHint() const override {
+        return currentWidget() != nullptr ? currentWidget()->sizeHint() : QSize();
+    }
+    [[nodiscard]] QSize minimumSizeHint() const override {
+        return currentWidget() != nullptr ? currentWidget()->minimumSizeHint() : QSize();
+    }
+};
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -464,11 +479,18 @@ MainWindow::~MainWindow() {
     closeFeaturePanel();
     // The viewport and the panels are destroyed after the documents, as child widgets. Detach
     // them first.
+    detachFromDocument();
+}
+
+void MainWindow::detachFromDocument() {
     m_viewport->setDocument(nullptr);
     m_browser->setDocument(nullptr, {});
     m_timeline->setDocument(nullptr);
     m_drawings->setDocument(nullptr);
     m_machining->setDocument(nullptr);
+    if (m_materialsDialog != nullptr) {
+        m_materialsDialog->setDocument(nullptr);
+    }
     if (m_parametersDialog != nullptr) {
         m_parametersDialog->setDocument(nullptr);
     }
@@ -2253,7 +2275,7 @@ void MainWindow::createDocks() {
 
     // The right-hand panel holds the command in progress, or else what is selected.
     m_properties = new PropertiesPanel(this);
-    auto* stack = new QStackedWidget(this);
+    auto* stack = new InspectorStack(this);
     stack->setObjectName(QStringLiteral("inspectorStack"));
     stack->addWidget(m_properties);
     m_sketchPanel = new SketchPanel(m_viewport->sketchEditor(), this);
@@ -2584,12 +2606,7 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     storeViewOf(m_current);
     int index = addSession(std::move(loaded), absolute);
     if (replaced >= 0) {
-        m_viewport->setDocument(nullptr);
-        m_browser->setDocument(nullptr, {});
-        m_timeline->setDocument(nullptr);
-        if (m_parametersDialog != nullptr) {
-            m_parametersDialog->setDocument(nullptr);
-        }
+        detachFromDocument();
         m_sessions.erase(m_sessions.begin() + replaced);
         {
             const QSignalBlocker blocker(m_tabs);
@@ -2687,13 +2704,7 @@ void MainWindow::closeDocument(int index) {
     }
     if (wasCurrent) {
         cancelCommand();
-        m_viewport->setDocument(nullptr);
-        m_browser->setDocument(nullptr, {});
-        m_timeline->setDocument(nullptr);
-        if (m_parametersDialog != nullptr) {
-            m_parametersDialog->setDocument(nullptr);
-        }
-        m_properties->refresh(nullptr, {}, {});
+        detachFromDocument();
     } else {
         storeViewOf(m_current);
     }

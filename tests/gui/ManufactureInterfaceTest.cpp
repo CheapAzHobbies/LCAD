@@ -373,6 +373,14 @@ void ManufactureInterfaceTest::setupsAreSavedAndUndone() {
     window.newDocument();
     QVERIFY(machining->setup() == nullptr);
     QVERIFY(machining->program().paths.empty());
+
+    // A document that goes leaves nothing holding on to it: the sanitizers would see that here.
+    window.closeDocument(window.documentCount() - 1);
+    QVERIFY(machining->setup() != nullptr);
+    window.closeDocument(0);
+    QVERIFY(machining->setup() == nullptr);
+    QVERIFY(window.loadFrom(file, &error));
+    QCOMPARE(machining->program().paths.size(), std::size_t{4});
 }
 
 QTEST_MAIN(ManufactureInterfaceTest)
