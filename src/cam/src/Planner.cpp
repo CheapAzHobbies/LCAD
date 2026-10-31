@@ -271,7 +271,7 @@ std::vector<double> tabPlaces(const Ring& ring, int count, double span, double s
     std::vector<double> places;
     for (int i = 0; i < count; ++i) {
         const double wanted = length * (i + 0.5) / count;
-        const auto free = [&](double place) {
+        const auto roomFor = [&](double place) {
             return std::all_of(places.begin(), places.end(),
                                [&](double other) { return between(place, other) >= spacing; });
         };
@@ -282,13 +282,13 @@ std::vector<double> tabPlaces(const Ring& ring, int count, double span, double s
             }
             const double place =
                 std::clamp(wanted, distances[j - 1] + span / 2.0, distances[j] - span / 2.0);
-            if (free(place) &&
+            if (roomFor(place) &&
                 (!best.has_value() || between(place, wanted) < between(*best, wanted))) {
                 best = place;
             }
         }
         if (!best.has_value()) {
-            if (!free(wanted)) {
+            if (!roomFor(wanted)) {
                 return {};
             }
             best = wanted;

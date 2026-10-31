@@ -105,9 +105,9 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
       m_rapid(numberField(this, 1.0, 100000.0, 100.0, tr(" mm/min"), 0)),
       m_maxFeed(numberField(this, 1.0, 100000.0, 100.0, tr(" mm/min"), 0)),
       m_maxSpindle(numberField(this, 1.0, 100000.0, 1000.0, tr(" rpm"), 0)),
-      m_operations(new QListWidget(this)), m_operationBox(new QGroupBox(tr("Operation"), this)),
-      m_operationName(new QLineEdit(this)), m_tool(new QComboBox(this)),
-      m_feed(numberField(this, 0.0, 100000.0, 50.0, tr(" mm/min"), 0)),
+      m_arcs(new QCheckBox(tr("Write curves as arcs"), this)), m_operations(new QListWidget(this)),
+      m_operationBox(new QGroupBox(tr("Operation"), this)), m_operationName(new QLineEdit(this)),
+      m_tool(new QComboBox(this)), m_feed(numberField(this, 0.0, 100000.0, 50.0, tr(" mm/min"), 0)),
       m_plunge(numberField(this, 0.0, 100000.0, 50.0, tr(" mm/min"), 0)),
       m_spindle(numberField(this, 0.0, 100000.0, 500.0, tr(" rpm"), 0)),
       m_stepover(numberField(this, 0.0, 1000.0, 0.1, tr(" mm"))),
@@ -219,6 +219,8 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
     machineForm->addRow(tr("Rapid"), m_rapid);
     machineForm->addRow(tr("Most feed"), m_maxFeed);
     machineForm->addRow(tr("Most spindle"), m_maxSpindle);
+    m_arcs->setObjectName(QStringLiteral("machineArcs"));
+    machineForm->addRow(m_arcs);
     layout->addWidget(machineBox);
 
     layout->addStretch(1);
@@ -268,6 +270,13 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
         Setup changed = *setup();
         changed.machine.name = m_machineName->text().toStdString();
         change(changed, tr("Change Machine"));
+    });
+    connect(m_arcs, &QCheckBox::toggled, this, [this](bool on) {
+        if (!m_filling && setup() != nullptr) {
+            Setup changed = *setup();
+            changed.machine.arcs = on;
+            change(changed, tr("Change Machine"));
+        }
     });
     connect(m_dialect, &QComboBox::activated, this, [this](int index) {
         if (setup() != nullptr) {
@@ -512,6 +521,7 @@ void MachiningWorkspace::fill() {
         const QSignalBlocker g(m_rapid);
         const QSignalBlocker h(m_maxFeed);
         const QSignalBlocker i(m_maxSpindle);
+        const QSignalBlocker j(m_arcs);
         m_stockSide->setValue(current->stock.side);
         m_stockTop->setValue(current->stock.top);
         m_stockBottom->setValue(current->stock.bottom);
@@ -524,6 +534,7 @@ void MachiningWorkspace::fill() {
         m_rapid->setValue(current->machine.rapidRate);
         m_maxFeed->setValue(current->machine.maxFeed);
         m_maxSpindle->setValue(current->machine.maxSpindle);
+        m_arcs->setChecked(current->machine.arcs);
     }
 
     const MachiningOperation* selected = operation();

@@ -19,6 +19,7 @@
 #include <GuiHelpers.h>
 
 #include <QAction>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFile>
@@ -384,6 +385,20 @@ void ManufactureInterfaceTest::rampsAndTabsAreOffered() {
     QCOMPARE(choose(OperationKind::Contour)->rampAngle, 10.0);
     window.document()->undo();
     QCOMPARE(choose(OperationKind::Contour)->rampAngle, 3.0);
+
+    // Arcs are the machine's to take or not, and what it wrote still reads back either way.
+    auto* arcs = machining->findChild<QCheckBox*>(QStringLiteral("machineArcs"));
+    QVERIFY(arcs != nullptr && arcs->isChecked());
+    QString error;
+    const auto curved = machining->gcode(&error);
+    QVERIFY2(curved.has_value(), qPrintable(error));
+    QVERIFY(curved->find("\nG2 ") != std::string::npos);
+    arcs->click();
+    QVERIFY(!machining->setup()->machine.arcs);
+    const auto straight = machining->gcode(&error);
+    QVERIFY2(straight.has_value(), qPrintable(error));
+    QVERIFY(straight->find("\nG2 ") == std::string::npos);
+    QVERIFY(straight->size() > curved->size());
 
     // A hole has neither, and a pocket has only the ramp.
     QVERIFY(choose(OperationKind::Drill) != nullptr);

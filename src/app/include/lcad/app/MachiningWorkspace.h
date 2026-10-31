@@ -136,6 +136,7 @@ private:
     QDoubleSpinBox* m_rapid;
     QDoubleSpinBox* m_maxFeed;
     QDoubleSpinBox* m_maxSpindle;
+    QCheckBox* m_arcs;
     QListWidget* m_operations;
     QGroupBox* m_operationBox;
     QFormLayout* m_operationForm = nullptr;

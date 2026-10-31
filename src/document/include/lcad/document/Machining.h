@@ -64,6 +64,8 @@ struct Machine {
     double maxFeed = 2000.0;
     /// The fastest its spindle turns, in turns a minute.
     double maxSpindle = 24000.0;
+    /// Whether curves are written as arcs, rather than as many short lines.
+    bool arcs = true;
 
     friend bool operator==(const Machine&, const Machine&) = default;
 };

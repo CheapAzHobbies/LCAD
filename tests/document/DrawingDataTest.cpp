@@ -106,6 +106,7 @@ Setup someSetup(Document& document, ObjectId tool) {
     pocket.stepdown = 1.5;
     pocket.side = ContourSide::Inside;
     pocket.peck = 2.5;
+    setup.machine.arcs = false;
     pocket.rampAngle = 7.5;
     pocket.tabs = 3;
     pocket.tabWidth = 4.5;

@@ -456,6 +456,13 @@ model's Z, so turn the model so that what is to be cut faces up.
 3. Select an operation in the list to set its tool, feeds, and depths. Use Selected Faces gives it
    other faces. The toolpaths in the 3D view change at once: cuts in blue, rapid moves dotted in red.
    What cannot be done is said at the top of the panel, and the path is left out.
+   - **Ramp** is how steeply a pocket or contour goes down into the material, along its path and
+     at the plunge feed. The default is 3 degrees; 0 goes straight down. A pocket with no long
+     enough ring in the middle spirals down on a small circle. Either way the tool cuts with its
+     end, so use an end mill that can: one that is center-cutting.
+   - **Tabs** are for a contour that cuts right through, which otherwise leaves the part loose
+     against a spinning cutter, and LCAD warns of that. Set how many, how wide, and how high. They
+     go evenly around, on straight stretches where they fit. Cut them by hand afterward.
 4. **Simulate** runs it all on the stock and shows what is left, with the time it takes. Drag the
    slider to any move. It looks for cuts into the part, rapid moves into the material, and tools
    buried past their flutes.
@@ -463,7 +470,9 @@ model's Z, so turn the model so that what is to be cut faces up.
    the machine would. It refuses if anything fails, and says why.
 
 G-code is for Grbl or LinuxCNC. Grbl has no tool changer, so between tools the program stops for you
-to change the tool and set Z zero. Zero in Z is the top of the stock.
+to change the tool and set Z zero. Zero in Z is the top of the stock. Level curves are written as
+arcs, which makes the file shorter and the motion smoother. Turn off **Write curves as arcs** under
+**Machine** for a controller that does not take them.
 
 **Be careful with this.** LCAD's G-code has been checked against its own simulation and its own
 reader of each dialect, and has not yet been run on a real machine. The checks know about the
@@ -472,10 +481,9 @@ material, which are yours to set: the defaults are a starting point, not advice.
 in the air first, with the spindle off and the tool well above the work, and keep a hand near the
 stop button.
 
-Not there yet: 3-axis surfacing, curves as arcs (a curve is many short lines), adaptive clearing,
-ramped entries (the tool goes straight down, so use end mills that can), tabs, chamfering, tools
-defined from the panel (four come with a setup), holders checked by their real shape, and tool
-libraries shared between documents.
+Not there yet: 3-axis surfacing, adaptive clearing, chamfering, tools defined from the panel (four
+come with a setup), holders checked by their real shape, and tool libraries shared between
+documents.
 
 ## Moving around the 3D view
 

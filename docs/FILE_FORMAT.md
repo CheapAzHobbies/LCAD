@@ -252,10 +252,10 @@ toolpaths of a setup are worked out from the model when they are wanted, and are
 | Field | Meaning |
 |---|---|
 | `id`, `name` | As for other objects |
-| `machine` | `name`, `dialect` (`grbl`, `linuxcnc`), `travelX`, `travelY`, `travelZ`, `rapidRate`, `maxFeed`, `maxSpindle` |
+| `machine` | `name`, `dialect` (`grbl`, `linuxcnc`), `travelX`, `travelY`, `travelZ`, `rapidRate`, `maxFeed`, `maxSpindle`, and optionally `arcs`, whether curves are written as arcs (false if absent) |
 | `stock` | `side`, `top`, `bottom`: how much around the part's box |
 | `origin` | `stock top corner` or `stock top center` |
-| `operations` | Each with `id`, `name`, `kind` (`face`, `pocket`, `contour`, `drill`), `tool`, `targets` (each `body`, `path`, and `face`, the face's name), `feed`, `plungeFeed`, `spindle`, `stepover`, `stepdown`, `clearance`, `retract`, `stockToLeave`, `side` (`outside`, `inside`), `peck`, `suppressed` |
+| `operations` | Each with `id`, `name`, `kind` (`face`, `pocket`, `contour`, `drill`), `tool`, `targets` (each `body`, `path`, and `face`, the face's name), `feed`, `plungeFeed`, `spindle`, `stepover`, `stepdown`, `clearance`, `retract`, `stockToLeave`, `side` (`outside`, `inside`), `peck`, `suppressed`. Optionally `rampAngle` (0, straight down, if absent), `tabs`, `tabWidth`, and `tabHeight` |
 
 ### Geometry
 

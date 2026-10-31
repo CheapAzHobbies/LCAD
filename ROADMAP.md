@@ -327,12 +327,14 @@ is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#17-windows-and-macos).
       gouges, rapid moves into material, and tools buried past their flutes.
 - [x] Postprocessors, starting with GRBL and LinuxCNC. What they write is read back by a strict reader
       of the dialect, and has to come to the same moves.
+- [x] Ramped entries into pockets and contours, tabs on contours, and level curves written as arcs
+      that are read back along the moves they stand for.
 - [ ] Run LCAD's G-code on a real machine. Until then nothing says that it cuts what the simulation
       says it cuts.
 
-Left for later, by the brief's own lights: 3-axis surfacing (these are 2.5D paths), arcs in the
-G-code (a curve is many short lines), adaptive clearing, tabs, ramped entries, auxiliary views, GD&T,
-balloons and bills of materials, a tool library shared between documents.
+Left for later, by the brief's own lights: 3-axis surfacing (these are 2.5D paths), adaptive
+clearing, auxiliary views, GD&T, balloons and bills of materials, a tool library shared between
+documents.
 
 Acceptance: produce a dimensioned drawing from a model, create a machining operation, simulate it, and
 export G-code through a validated postprocessor.

@@ -1338,7 +1338,8 @@ nlohmann::ordered_json writeSetup(const Setup& setup) {
         ordered_json{{"name", machine.name},       {"dialect", toString(machine.dialect)},
                      {"travelX", machine.travelX}, {"travelY", machine.travelY},
                      {"travelZ", machine.travelZ}, {"rapidRate", machine.rapidRate},
-                     {"maxFeed", machine.maxFeed}, {"maxSpindle", machine.maxSpindle}};
+                     {"maxFeed", machine.maxFeed}, {"maxSpindle", machine.maxSpindle},
+                     {"arcs", machine.arcs}};
     out["stock"] = ordered_json{
         {"side", setup.stock.side}, {"top", setup.stock.top}, {"bottom", setup.stock.bottom}};
     out["origin"] = toString(setup.origin);
@@ -1365,6 +1366,8 @@ Setup readSetup(const json& entry, const std::filesystem::path& path) {
     setup.machine.rapidRate = numberMember(machine, "rapidRate", at, path);
     setup.machine.maxFeed = numberMember(machine, "maxFeed", at, path);
     setup.machine.maxSpindle = numberMember(machine, "maxSpindle", at, path);
+    // A file from before there were arcs writes lines, as it did.
+    setup.machine.arcs = machine.contains("arcs") && boolMember(machine, "arcs", at, path);
     const json& stock = objectMember(entry, "stock", where, path);
     setup.stock.side = numberMember(stock, "side", where, path);
     setup.stock.top = numberMember(stock, "top", where, path);

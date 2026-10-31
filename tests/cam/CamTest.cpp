@@ -869,7 +869,9 @@ TEST_CASE("Each dialect gets what it has, and reads back as the same moves", "[c
         CHECK(reading.errors.empty());
         CHECK(reading.spindle == 12000.0);
         CHECK(reading.feed == 600.0);
-        CHECK(reading.moves.size() == machineMoves(program).size());
+        // Fewer than the program, which has its curves in many short lines.
+        CHECK(reading.moves.size() < machineMoves(program).size());
+        CHECK_FALSE(reading.arcs.empty());
 
         // Zero is at the stock's top corner: the machine goes down to minus, and not below
         // the bottom of the stock but for the drill.
@@ -898,6 +900,169 @@ TEST_CASE("Each dialect gets what it has, and reads back as the same moves", "[c
             CHECK_THAT(text, ContainsSubstring("G64 P0.01\n"));
             CHECK_THAT(text, ContainsSubstring("M2\n"));
         }
+    }
+}
+
+TEST_CASE("Curves are written as arcs, and read back along the moves", "[cam][gcode]") {
+    const Tool tool = flatMill(6.0);
+    std::vector<std::string> problems;
+    MachiningOperation operation = cut(OperationKind::Contour);
+    operation.rampAngle = 0.0;
+    Machine machine;
+    const kernel::BoundingBox stock{{-30.0, -30.0, 0.0}, {70.0, 70.0, 10.0}};
+    const auto lines = [](const std::string& text, const char* start) {
+        int found = 0;
+        std::istringstream in(text);
+        std::string line;
+        while (std::getline(in, line)) {
+            found += line.rfind(start, 0) == 0 ? 1 : 0;
+        }
+        return found;
+    };
+    const auto wholeProgram = [&](const kernel::FlatRegion& region) {
+        const auto moves = contourMoves(region, heights(10.0, 6.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        return programOf(stock, tool, moves);
+    };
+
+    SECTION("The corners of a square, going the way the tool does") {
+        const Program program = wholeProgram(square(40.0));
+        for (const PostDialect dialect : {PostDialect::Grbl, PostDialect::LinuxCnc}) {
+            machine.dialect = dialect;
+            const std::string text = writeGcode(program, machine, "corners");
+            const auto errors = verifyGcode(text, program, dialect);
+            INFO((errors.empty() ? std::string() : errors.front()));
+            CHECK(errors.empty());
+            // Two passes of four corners, clockwise: outside, a climb cut.
+            CHECK(lines(text, "G2 ") == 8);
+            CHECK(lines(text, "G3 ") == 0);
+            const GcodeReading reading = readGcode(text, dialect);
+            CHECK(reading.errors.empty());
+            REQUIRE(reading.arcs.size() == 8);
+            // Around the corners of the square, the tool's radius from them.
+            for (const GcodeArc& arc : reading.arcs) {
+                const double x = std::round(arc.centerX / 40.0) * 40.0;
+                const double y = std::round(arc.centerY / 40.0) * 40.0;
+                CHECK(std::hypot(arc.centerX - x, arc.centerY - y) < 0.01);
+                const Move& move = reading.moves[arc.move];
+                CHECK_THAT(std::hypot(move.to.x - arc.centerX, move.to.y - arc.centerY),
+                           WithinAbs(3.0, 0.01));
+            }
+        }
+    }
+    SECTION("Inside an outline they go the other way") {
+        operation.side = ContourSide::Inside;
+        kernel::FlatRegion rounded = round(30.0, 720);
+        const Program program = wholeProgram(rounded);
+        const std::string text = writeGcode(program, machine, "inside");
+        CHECK(verifyGcode(text, program, machine.dialect).empty());
+        CHECK(lines(text, "G3 ") > 0);
+        CHECK(lines(text, "G2 ") == 0);
+    }
+    SECTION("A whole circle takes several, each short of half a turn") {
+        const Program program = wholeProgram(round(20.0, 720));
+        const std::string text = writeGcode(program, machine, "circle");
+        const auto errors = verifyGcode(text, program, machine.dialect);
+        INFO((errors.empty() ? std::string() : errors.front()));
+        CHECK(errors.empty());
+        const GcodeReading reading = readGcode(text, machine.dialect);
+        CHECK(reading.arcs.size() >= 6);
+        kernel::Point from;
+        std::size_t next = 0;
+        for (std::size_t i = 0; i < reading.moves.size(); ++i) {
+            const kernel::Point& to = reading.moves[i].to;
+            if (next < reading.arcs.size() && reading.arcs[next].move == i) {
+                const double cx = reading.arcs[next].centerX;
+                const double cy = reading.arcs[next].centerY;
+                const double a = std::atan2(from.y - cy, from.x - cx);
+                const double b = std::atan2(to.y - cy, to.x - cx);
+                const double sweep = std::abs(std::remainder(a - b, 6.28318530717959));
+                CHECK(sweep < 3.0);
+                ++next;
+            }
+            from = to;
+        }
+    }
+    SECTION("Ramps and tabs stay lines, and the level cuts between them can be arcs") {
+        operation.rampAngle = 3.0;
+        operation.tabs = 4;
+        const auto moves =
+            contourMoves(round(30.0, 720), heights(10.0, 0.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        const Program program = programOf(stock, tool, moves);
+        const std::string text = writeGcode(program, machine, "tabs");
+        const auto errors = verifyGcode(text, program, machine.dialect);
+        INFO((errors.empty() ? std::string() : errors.front()));
+        CHECK(errors.empty());
+        CHECK(lines(text, "G2 ") > 0);
+        // A level arc says nothing of height.
+        std::istringstream in(text);
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.rfind("G2 ", 0) == 0) {
+                CHECK(line.find('Z') == std::string::npos);
+            }
+        }
+    }
+    SECTION("Machines can be told to have only lines") {
+        machine.arcs = false;
+        const Program program = wholeProgram(square(40.0));
+        const std::string text = writeGcode(program, machine, "lines");
+        CHECK(verifyGcode(text, program, machine.dialect).empty());
+        CHECK(lines(text, "G2 ") == 0);
+        CHECK(lines(text, "G3 ") == 0);
+        CHECK(readGcode(text, machine.dialect).moves.size() == machineMoves(program).size());
+    }
+    SECTION("Verification catches an arc that is not what the program does") {
+        const Program program = wholeProgram(square(40.0));
+        const std::string text = writeGcode(program, machine, "corners");
+        REQUIRE(verifyGcode(text, program, machine.dialect).empty());
+        const std::size_t at = text.find("\nG2 ") + 1;
+        const std::size_t end = text.find('\n', at);
+        const std::string arc = text.substr(at, end - at);
+
+        // The other way around.
+        std::string wrong = text;
+        wrong[at + 1] = '3';
+        CHECK_FALSE(verifyGcode(wrong, program, machine.dialect).empty());
+
+        // Around somewhere else, though it starts and ends in the same places: mirrored about
+        // the line between them, which gives the same radius.
+        const auto word = [&arc](char letter) {
+            const std::size_t from = arc.find(letter) + 1;
+            return std::stod(arc.substr(from, arc.find(' ', from) - from));
+        };
+        const auto replaced = [&](const std::string& line) {
+            return text.substr(0, at) + line + text.substr(end);
+        };
+        std::string bare = arc.substr(0, arc.find(" I"));
+        const std::string after =
+            arc.find(" F") == std::string::npos ? std::string() : arc.substr(arc.find(" F"));
+        const double i = word('I');
+        const double j = word('J');
+        const kernel::Point lastPlace =
+            readGcode(text.substr(0, at), machine.dialect).moves.back().to;
+        const double chordX = word('X') - lastPlace.x;
+        const double chordY = word('Y') - lastPlace.y;
+        const double mirroredI = chordX - i;
+        const double mirroredJ = chordY - j;
+        std::ostringstream mirrored;
+        mirrored.imbue(std::locale::classic());
+        mirrored.precision(4);
+        mirrored << std::fixed << bare << " I" << mirroredI << " J" << mirroredJ << after;
+        CHECK_FALSE(verifyGcode(replaced(mirrored.str()), program, machine.dialect).empty());
+
+        // A center that is off, which the machine itself would refuse.
+        std::ostringstream off;
+        off.imbue(std::locale::classic());
+        off.precision(4);
+        off << std::fixed << bare << " I" << (i + 0.5) << " J" << j << after;
+        const auto reading = readGcode(replaced(off.str()), machine.dialect);
+        REQUIRE_FALSE(reading.errors.empty());
+        CHECK_THAT(reading.errors.front(), ContainsSubstring("does not end on its circle"));
+
+        // An arc gone.
+        CHECK_FALSE(verifyGcode(replaced("(gone)"), program, machine.dialect).empty());
     }
 }
 
@@ -954,6 +1119,19 @@ TEST_CASE("The reader refuses what the machine would refuse or get wrong", "[cam
     CHECK_THAT(firstError(start + "@\n"), ContainsSubstring("not a word"));
     CHECK_THAT(firstError(start + "G1 X\n"), ContainsSubstring("no number"));
     CHECK(errorsOf(start + "T2 M6\nG43 H2\n", PostDialect::LinuxCnc).empty());
+
+    // Arcs: in a plane it has been told of, around a center, ending on the circle.
+    const std::string plane = "G21 G90 G94 G17\nG0 Z5\nG0 X0 Y0\nS1000 M3\nG1 Z-1 F100\n";
+    CHECK(errorsOf(plane + "G2 X10 Y0 I5 J0\nM5\nM30\n").empty());
+    CHECK(errorsOf(plane + "G3 X10 Y0 I5\nM5\nM30\n", PostDialect::LinuxCnc).empty());
+    CHECK_THAT(firstError(start + "G1 Z-1 F100\nG2 X10 Y0 I5\n"), ContainsSubstring("G17"));
+    CHECK_THAT(firstError(plane + "G18\nG2 X10 Y0 I5\n"), ContainsSubstring("G17"));
+    CHECK_THAT(firstError(plane + "G2 X10 Y0\n"), ContainsSubstring("no center"));
+    CHECK_THAT(firstError(plane + "G2 X10 Y0 I3\n"), ContainsSubstring("end on its circle"));
+    CHECK_THAT(firstError(plane + "G1 X10 I3\n"), ContainsSubstring("not an arc"));
+    CHECK_THAT(firstError(plane + "G2 X10 Y0 R5\n"), ContainsSubstring("no R"));
+    CHECK_THAT(firstError("G21 G90 G94 G17\nG0 Z5\nG0 X0 Y0\nG2 X10 Y0 I5 F100\n"),
+               ContainsSubstring("spindle"));
 }
 
 TEST_CASE("G-code has a point in its numbers, whatever language the system speaks",

@@ -241,10 +241,13 @@ struct Simulation::Impl {
         }
         // Level, a piece is exact at any length, and is kept short only for its box of cells to
         // stay close around it. On a slant the tool's height changes along the piece, so the
-        // pieces are short enough for the grid not to see it. Straight down, there is one.
+        // pieces are short enough for that to stay well under the depth allowance. Straight down,
+        // there is one.
         const double reach = std::hypot(to.x - from.x, to.y - from.y);
+        const double longest = std::max(path.tool.diameter / 2.0, stock.cell());
+        const double drop = std::abs(to.z - from.z);
         const double piece =
-            to.z == from.z ? std::max(path.tool.diameter / 2.0, stock.cell()) : stock.cell() / 2.0;
+            drop == 0.0 ? longest : std::clamp(0.01 * reach / drop, stock.cell() / 2.0, longest);
         const int pieces = std::max(1, static_cast<int>(std::ceil(reach / piece)));
         Point start = from;
         for (int i = 1; i <= pieces; ++i) {
