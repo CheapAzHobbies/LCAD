@@ -90,6 +90,21 @@ struct SectionCut {
 [[nodiscard]] FlatRegion flatOutline(const Shape& face, const Plane& plane,
                                      double tolerance = 0.02);
 
+/// A round face whose axis runs along Z: the side of a hole.
+struct RoundFace {
+    Point2D center;
+    double radius = 0.0;
+    double bottom = 0.0;
+    double top = 0.0;
+};
+
+/// A face as a round one along Z, if that is what it is.
+[[nodiscard]] std::optional<RoundFace> roundFaceAlongZ(const Shape& face);
+
+/// The plane that lies at height `z`, looked at from above: u along X and v along Y. What
+/// flatOutline() gives on it is in the model's own X and Y.
+[[nodiscard]] Plane levelPlane(double z);
+
 /// What can be said of an edge, for hanging a dimension on it.
 struct EdgeSummary {
     std::string name;

@@ -8,6 +8,7 @@
 #include <lcad/kernel/occt/ShapeAccess.h>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBndLib.hxx>
@@ -36,6 +37,7 @@
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Cylinder.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
@@ -311,6 +313,43 @@ FlatRegion flatOutline(const Shape& face, const Plane& plane, double tolerance) 
                                  toDir(plane.normal), toDir(plane.xDirection)));
         return regionOf(TopoDS::Face(occt::unwrap(face)), flat, tolerance);
     });
+}
+
+std::optional<RoundFace> roundFaceAlongZ(const Shape& face) {
+    if (face.isNull() || occt::unwrap(face).ShapeType() != TopAbs_FACE) {
+        return std::nullopt;
+    }
+    return occt::guarded("look at a round face", [&]() -> std::optional<RoundFace> {
+        const TopoDS_Face& topoFace = TopoDS::Face(occt::unwrap(face));
+        const BRepAdaptor_Surface surface(topoFace);
+        if (surface.GetType() != GeomAbs_Cylinder) {
+            return std::nullopt;
+        }
+        const gp_Cylinder cylinder = surface.Cylinder();
+        const gp_Dir axis = cylinder.Axis().Direction();
+        if (std::abs(std::abs(axis.Z()) - 1.0) > 1e-9) {
+            return std::nullopt;
+        }
+        Bnd_Box box;
+        BRepBndLib::AddOptimal(topoFace, box, false, false);
+        double xMin = 0.0;
+        double yMin = 0.0;
+        double zMin = 0.0;
+        double xMax = 0.0;
+        double yMax = 0.0;
+        double zMax = 0.0;
+        box.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+        RoundFace round;
+        round.center = {cylinder.Location().X(), cylinder.Location().Y()};
+        round.radius = cylinder.Radius();
+        round.bottom = zMin;
+        round.top = zMax;
+        return round;
+    });
+}
+
+Plane levelPlane(double z) {
+    return makePlane({0.0, 0.0, z}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0});
 }
 
 std::vector<EdgeSummary> edgeSummaries(const NamedShape& shape) {
