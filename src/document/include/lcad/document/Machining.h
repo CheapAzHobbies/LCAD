@@ -141,6 +141,14 @@ struct MachiningOperation {
     ContourSide side = ContourSide::Outside;
     /// How deep each peck of a drill goes, in millimeters. Zero drills in one go.
     double peck = 0.0;
+    /// Pockets and contours: how steeply the tool goes down into the material along its path, in
+    /// degrees from level. Zero goes straight down.
+    double rampAngle = 3.0;
+    /// Contours: how many bridges of material to leave, which hold the part in place when the cut
+    /// goes right through. How wide they are along the cut, and how high, in millimeters.
+    int tabs = 0;
+    double tabWidth = 6.0;
+    double tabHeight = 1.5;
     bool suppressed = false;
 
     friend bool operator==(const MachiningOperation&, const MachiningOperation&) = default;

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <clocale>
 #include <cmath>
+#include <limits>
 #include <sstream>
 
 using namespace lcad::cam;
@@ -208,12 +209,13 @@ TEST_CASE("A pocket stays a tool's radius from its walls, and clears all it can 
     CHECK_THAT(right, WithinAbs(37.0, 1e-3));
     CHECK_THAT(minOf(moves, &kernel::Point::z), WithinAbs(4.0, 1e-9));
     CHECK(moves.back().to.z == 15.0);
-    // Three depths, with the tool going down at the plunge feed and not sideways as it does.
+    // Three depths, with the tool going down at the plunge feed.
     std::vector<double> levels;
     for (const Move& move : moves) {
         if (move.kind == MoveKind::Plunge) {
-            levels.push_back(move.to.z);
             CHECK(move.feed == 200.0);
+        } else if (move.kind == MoveKind::Feed && move.to.z < 10.0) {
+            levels.push_back(move.to.z);
         }
     }
     std::sort(levels.begin(), levels.end());
@@ -324,6 +326,239 @@ TEST_CASE("A contour runs outside its outline by the tool's radius, a climb cut"
     CHECK_THAT(maxOf(inner, &kernel::Point::x), WithinAbs(37.0, 1e-3));
 }
 
+namespace {
+
+// A program of one path of moves, on a block.
+Program programOf(const kernel::BoundingBox& stock, const Tool& tool, std::vector<Move> moves) {
+    Program program;
+    program.work.stock = stock;
+    program.work.part = stock;
+    program.safeZ = stock.max.z + 5.0;
+    Toolpath path;
+    path.name = "Cut";
+    path.tool = tool;
+    path.spindle = 12000.0;
+    path.moves = std::move(moves);
+    program.paths.push_back(std::move(path));
+    return program;
+}
+
+// The steepest that moves go down into material no move has reached yet, from a height where it
+// starts, as height for distance across. Straight down has no distance across, and comes to
+// infinity.
+double steepestInto(const std::vector<Move>& moves, double height) {
+    double steepest = 0.0;
+    double reached = height;
+    kernel::Point at = moves.front().to;
+    for (std::size_t i = 1; i < moves.size(); ++i) {
+        const kernel::Point& to = moves[i].to;
+        if (moves[i].kind != MoveKind::Rapid && to.z < reached - 1e-9) {
+            const double across = std::hypot(to.x - at.x, to.y - at.y);
+            steepest = std::max(steepest, across > 1e-9 ? (at.z - to.z) / across
+                                                        : std::numeric_limits<double>::infinity());
+            reached = to.z;
+        }
+        at = to;
+    }
+    return steepest;
+}
+
+// How much of a line across a stock stands higher than `level`, a stretch at a time.
+std::vector<double> standing(const HeightField& stock, kernel::Point2D from, kernel::Point2D to,
+                             double level) {
+    std::vector<double> stretches;
+    const double length = std::hypot(to.x - from.x, to.y - from.y);
+    const double step = 0.05;
+    double run = 0.0;
+    for (double along = 0.0; along <= length; along += step) {
+        const double x = from.x + (to.x - from.x) * along / length;
+        const double y = from.y + (to.y - from.y) * along / length;
+        if (static_cast<double>(stock.sample(x, y, 0.0F)) > level) {
+            run += step;
+        } else if (run > 0.0) {
+            stretches.push_back(run);
+            run = 0.0;
+        }
+    }
+    if (run > 0.0) {
+        stretches.push_back(run);
+    }
+    return stretches;
+}
+
+kernel::FlatRegion round(double radius, int sides) {
+    kernel::FlatRegion region;
+    for (int i = 0; i < sides; ++i) {
+        const double angle = 2.0 * 3.14159265358979 * i / sides;
+        region.outer.push_back({radius * std::cos(angle), radius * std::sin(angle)});
+    }
+    return region;
+}
+
+} // namespace
+
+TEST_CASE("A cut goes down along its path, not straight in", "[cam]") {
+    const Tool tool = flatMill(6.0);
+    const double slope = std::tan(3.0 * 3.14159265358979 / 180.0);
+    std::vector<std::string> problems;
+
+    SECTION("A pocket, flat at the bottom when it is done") {
+        MachiningOperation operation = cut(OperationKind::Pocket);
+        const auto moves = pocketMoves(square(40.0), heights(10.0, 4.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        CHECK(steepestInto(moves, 10.0) <= slope * 1.001);
+
+        Program program = programOf({{-5.0, -5.0, 0.0}, {45.0, 45.0, 10.0}}, tool, moves);
+        Simulation simulation(program, {}, Setup{}.machine, 0.1);
+        CHECK_FALSE(simulation.run().hasErrors());
+        for (const double x : {3.5, 12.0, 20.0, 28.0, 36.5}) {
+            for (const double y : {3.5, 20.0, 36.5}) {
+                CAPTURE(x, y);
+                CHECK_THAT(static_cast<double>(simulation.stock().sample(x, y, 1e6F)),
+                           WithinAbs(4.0, 1e-3));
+            }
+        }
+        CHECK_THAT(static_cast<double>(simulation.stock().sample(-1.0, 20.0, 1e6F)),
+                   WithinAbs(10.0, 1e-3));
+    }
+    SECTION("A pocket with only a small round ring to come down around") {
+        MachiningOperation operation = cut(OperationKind::Pocket);
+        const auto moves =
+            pocketMoves(round(5.0, 72), heights(10.0, 4.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        CHECK(steepestInto(moves, 10.0) <= slope * 1.001);
+        double lowest = 10.0;
+        for (const Move& move : moves) {
+            lowest = std::min(lowest, move.to.z);
+        }
+        CHECK_THAT(lowest, WithinAbs(4.0, 1e-9));
+    }
+    SECTION("A ring too small to go around is gone straight down into") {
+        MachiningOperation operation = cut(OperationKind::Pocket);
+        const auto moves =
+            pocketMoves(round(3.2, 72), heights(10.0, 8.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        CHECK(std::isinf(steepestInto(moves, 10.0)));
+    }
+    SECTION("A contour, climbing all the way") {
+        MachiningOperation operation = cut(OperationKind::Contour);
+        const auto moves =
+            contourMoves(square(40.0), heights(10.0, 0.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        CHECK(steepestInto(moves, 10.0) <= slope * 1.001);
+        Program program = programOf({{-10.0, -10.0, 0.0}, {50.0, 50.0, 10.0}}, tool, moves);
+        Simulation simulation(program, {}, Setup{}.machine, 0.1);
+        CHECK_FALSE(simulation.run().hasErrors());
+        // Clear down to the bottom all the way around, the ramps left behind.
+        CHECK(standing(simulation.stock(), {0.0, -3.0}, {40.0, -3.0}, 0.01).empty());
+        CHECK(standing(simulation.stock(), {43.0, 0.0}, {43.0, 40.0}, 0.01).empty());
+        CHECK(standing(simulation.stock(), {40.0, 43.0}, {0.0, 43.0}, 0.01).empty());
+        CHECK(standing(simulation.stock(), {-3.0, 40.0}, {-3.0, 0.0}, 0.01).empty());
+        CHECK_THAT(static_cast<double>(simulation.stock().sample(20.0, 20.0, 0.0F)),
+                   WithinAbs(10.0, 1e-3));
+    }
+    SECTION("No ramp goes straight down") {
+        MachiningOperation operation = cut(OperationKind::Contour);
+        operation.rampAngle = 0.0;
+        const auto moves =
+            contourMoves(square(40.0), heights(10.0, 6.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        CHECK(std::isinf(steepestInto(moves, 10.0)));
+    }
+    SECTION("A ramp too steep is refused") {
+        MachiningOperation operation = cut(OperationKind::Pocket);
+        operation.rampAngle = 46.0;
+        CHECK(pocketMoves(square(40.0), heights(10.0, 6.0), tool, operation, problems).empty());
+        REQUIRE(problems.size() == 1);
+        CHECK_THAT(problems.front(), ContainsSubstring("45"));
+    }
+}
+
+TEST_CASE("Tabs hold what a contour cuts out", "[cam][simulation]") {
+    const Tool tool = flatMill(6.0);
+    std::vector<std::string> problems;
+    MachiningOperation operation = cut(OperationKind::Contour);
+    operation.tabs = 4;
+    operation.tabWidth = 6.0;
+    operation.tabHeight = 1.5;
+
+    const auto tabsAround = [](const HeightField& stock, double level) {
+        std::vector<double> all;
+        for (const auto& [from, to] : std::vector<std::pair<kernel::Point2D, kernel::Point2D>>{
+                 {{0.0, -3.0}, {40.0, -3.0}},
+                 {{43.0, 0.0}, {43.0, 40.0}},
+                 {{40.0, 43.0}, {0.0, 43.0}},
+                 {{-3.0, 40.0}, {-3.0, 0.0}}}) {
+            const std::vector<double> found = standing(stock, from, to, level);
+            all.insert(all.end(), found.begin(), found.end());
+        }
+        return all;
+    };
+
+    for (const double ramp : {3.0, 0.0}) {
+        CAPTURE(ramp);
+        operation.rampAngle = ramp;
+        const auto moves =
+            contourMoves(square(40.0), heights(10.0, 0.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        Program program = programOf({{-10.0, -10.0, 0.0}, {50.0, 50.0, 10.0}}, tool, moves);
+        Simulation simulation(program, {}, Setup{}.machine, 0.1);
+        CHECK_FALSE(simulation.run().hasErrors());
+
+        // Four bridges, each as wide as asked at the top, sloping away on the far side where the
+        // tool comes back down, as high as asked, and no higher.
+        const std::vector<double> bridges = tabsAround(simulation.stock(), 1.45);
+        REQUIRE(bridges.size() == 4);
+        for (const double width : bridges) {
+            CHECK_THAT(width, WithinAbs(6.05, 0.2));
+        }
+        for (const double width : tabsAround(simulation.stock(), 0.01)) {
+            CHECK_THAT(width, WithinAbs(7.5, 0.2));
+        }
+        CHECK(tabsAround(simulation.stock(), 1.5 + 0.01).empty());
+        // Everything else around the part is cut through, and the part is untouched.
+        CHECK_THAT(static_cast<double>(simulation.stock().sample(20.0, 20.0, 0.0F)),
+                   WithinAbs(10.0, 1e-3));
+    }
+
+    SECTION("They go on a curve where nothing is straight") {
+        operation.rampAngle = 3.0;
+        const auto moves =
+            contourMoves(round(20.0, 180), heights(10.0, 0.0), tool, operation, problems);
+        REQUIRE(problems.empty());
+        Program program = programOf({{-30.0, -30.0, 0.0}, {30.0, 30.0, 10.0}}, tool, moves);
+        Simulation simulation(program, {}, Setup{}.machine, 0.1);
+        CHECK_FALSE(simulation.run().hasErrors());
+        int bridges = 0;
+        bool over = false;
+        for (double angle = 0.0; angle < 6.2831; angle += 0.002) {
+            const auto high =
+                simulation.stock().sample(23.0 * std::cos(angle), 23.0 * std::sin(angle), 0.0F);
+            const bool now = high > 0.5F;
+            bridges += now && !over ? 1 : 0;
+            over = now;
+        }
+        CHECK(bridges == 4);
+    }
+    SECTION("More than fit are refused") {
+        operation.tabs = 40;
+        CHECK(contourMoves(square(40.0), heights(10.0, 0.0), tool, operation, problems).empty());
+        REQUIRE(problems.size() == 1);
+        CHECK_THAT(problems.front(), ContainsSubstring("40 tabs do not fit"));
+    }
+    SECTION("So are tabs as high as the cut is deep, or with no size") {
+        operation.tabHeight = 10.0;
+        CHECK(contourMoves(square(40.0), heights(10.0, 0.0), tool, operation, problems).empty());
+        REQUIRE(problems.size() == 1);
+        CHECK_THAT(problems.front(), ContainsSubstring("as high as the cut"));
+        problems.clear();
+        operation.tabHeight = 1.5;
+        operation.tabWidth = 0.0;
+        CHECK(contourMoves(square(40.0), heights(10.0, 0.0), tool, operation, problems).empty());
+        CHECK(problems.size() == 1);
+    }
+}
+
 TEST_CASE("Facing covers the whole stock, from outside it", "[cam]") {
     kernel::BoundingBox stock;
     stock.min = {0.0, 0.0, 0.0};
@@ -416,12 +651,22 @@ TEST_CASE("A setup becomes toolpaths from the faces of the model", "[cam]") {
     // The hole, right through.
     CHECK(minOf(program.paths[3].moves, &kernel::Point::z) < 0.0);
     CHECK_THAT(maxOf(program.paths[3].moves, &kernel::Point::x), WithinAbs(65.0, 1e-9));
-    // Which takes the drill's point past the stock, into what it stands on: worth knowing, and
-    // no reason to stop.
-    REQUIRE(program.problems.size() == 1);
+    // The outside goes right through, and has no tabs; the drill's point goes past the stock,
+    // into what it stands on. Both are worth knowing, and no reason to stop.
+    REQUIRE(program.problems.size() == 2);
     CHECK(program.problems[0].severity == Problem::Severity::Warning);
-    CHECK(program.problems[0].operation == setup.operations[3].id);
-    CHECK_THAT(program.problems[0].text, ContainsSubstring("below the stock"));
+    CHECK(program.problems[0].operation == setup.operations[2].id);
+    CHECK_THAT(program.problems[0].text, ContainsSubstring("comes loose"));
+    CHECK(program.problems[1].severity == Problem::Severity::Warning);
+    CHECK(program.problems[1].operation == setup.operations[3].id);
+    CHECK_THAT(program.problems[1].text, ContainsSubstring("below the stock"));
+    {
+        Setup held = setup;
+        held.operations[2].tabs = 4;
+        const Program tabbed = planSetup(part.document, held);
+        REQUIRE(tabbed.problems.size() == 1);
+        CHECK_THAT(tabbed.problems[0].text, ContainsSubstring("below the stock"));
+    }
 
     SECTION("An operation that has lost its face says so, and the others stand") {
         Setup changed = setup;
@@ -429,7 +674,7 @@ TEST_CASE("A setup becomes toolpaths from the faces of the model", "[cam]") {
         const Program broken = planSetup(part.document, changed);
         CHECK(broken.hasErrors());
         CHECK(broken.paths.size() == 3);
-        REQUIRE(broken.problems.size() == 2);
+        REQUIRE(broken.problems.size() == 3);
         CHECK(broken.problems[0].operation == changed.operations[1].id);
         CHECK_THAT(broken.problems[0].text, ContainsSubstring("not in the model"));
     }

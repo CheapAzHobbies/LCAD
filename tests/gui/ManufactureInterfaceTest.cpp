@@ -113,6 +113,7 @@ private slots:
     void theWorkspaceHasItsOwnCommands();
     void operationsTakeWhatIsSelected();
     void gCodeIsRefusedWhenSomethingIsWrong();
+    void rampsAndTabsAreOffered();
     void setupsAreSavedAndUndone();
 
 private:
@@ -346,6 +347,51 @@ void ManufactureInterfaceTest::gCodeIsRefusedWhenSomethingIsWrong() {
     QVERIFY(!machining->exportTo(path, &error));
     QVERIFY2(error.contains(QStringLiteral("cuts into the part")), qPrintable(error));
     QVERIFY(!QFile::exists(path));
+}
+
+void ManufactureInterfaceTest::rampsAndTabsAreOffered() {
+    MainWindow window;
+    show(window);
+    const ObjectId body = window.document()->addBody("Bracket", bracket());
+    window.setWorkspace(Workspace::Manufacture);
+    planBracket(window, body);
+    MachiningWorkspace* machining = window.machining();
+    auto* ramp = machining->findChild<QDoubleSpinBox*>(QStringLiteral("operationRamp"));
+    auto* tabs = machining->findChild<QDoubleSpinBox*>(QStringLiteral("operationTabs"));
+    QVERIFY(ramp != nullptr && tabs != nullptr);
+    const auto choose = [machining](OperationKind kind) {
+        const auto& operations = machining->setup()->operations;
+        for (std::size_t i = 0; i < operations.size(); ++i) {
+            if (operations[i].kind == kind) {
+                machining->operationList()->setCurrentRow(static_cast<int>(i));
+                return &operations[i];
+            }
+        }
+        return static_cast<const lcad::document::MachiningOperation*>(nullptr);
+    };
+
+    // A contour has both, and starts out ramping, and warns of what comes loose until it has tabs.
+    QVERIFY(choose(OperationKind::Contour) != nullptr);
+    QVERIFY(ramp->isVisible());
+    QVERIFY(tabs->isVisible());
+    QCOMPARE(ramp->value(), 3.0);
+    QVERIFY(machining->problemsText().contains(QStringLiteral("comes loose")));
+    tabs->setValue(4.0);
+    QCOMPARE(choose(OperationKind::Contour)->tabs, 4);
+    QTRY_VERIFY(!machining->problemsText().contains(QStringLiteral("comes loose")));
+    QVERIFY2(!machining->program().hasErrors(), qPrintable(machining->problemsText()));
+    ramp->setValue(10.0);
+    QCOMPARE(choose(OperationKind::Contour)->rampAngle, 10.0);
+    window.document()->undo();
+    QCOMPARE(choose(OperationKind::Contour)->rampAngle, 3.0);
+
+    // A hole has neither, and a pocket has only the ramp.
+    QVERIFY(choose(OperationKind::Drill) != nullptr);
+    QVERIFY(!ramp->isVisible());
+    QVERIFY(!tabs->isVisible());
+    QVERIFY(choose(OperationKind::Pocket) != nullptr);
+    QVERIFY(ramp->isVisible());
+    QVERIFY(!tabs->isVisible());
 }
 
 void ManufactureInterfaceTest::setupsAreSavedAndUndone() {

@@ -115,9 +115,14 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
       m_clearance(numberField(this, 0.0, 1000.0, 1.0, tr(" mm"))),
       m_retract(numberField(this, 0.0, 1000.0, 1.0, tr(" mm"))),
       m_leave(numberField(this, 0.0, 100.0, 0.1, tr(" mm"))), m_side(new QComboBox(this)),
-      m_peck(numberField(this, 0.0, 1000.0, 0.5, tr(" mm"))), m_suppressed(new QCheckBox(this)),
-      m_targets(new QLabel(this)), m_slider(new QSlider(Qt::Horizontal, this)),
-      m_summary(new QLabel(this)), m_problems(new QLabel(this)) {
+      m_peck(numberField(this, 0.0, 1000.0, 0.5, tr(" mm"))),
+      m_ramp(numberField(this, 0.0, 45.0, 1.0, tr("°"), 1)),
+      m_tabs(numberField(this, 0.0, 32.0, 1.0, QString(), 0)),
+      m_tabWidth(numberField(this, 0.1, 1000.0, 1.0, tr(" mm"))),
+      m_tabHeight(numberField(this, 0.1, 1000.0, 0.5, tr(" mm"))),
+      m_suppressed(new QCheckBox(this)), m_targets(new QLabel(this)),
+      m_slider(new QSlider(Qt::Horizontal, this)), m_summary(new QLabel(this)),
+      m_problems(new QLabel(this)) {
     setObjectName(QStringLiteral("machiningPanel"));
     auto* layout = new QVBoxLayout(this);
 
@@ -167,6 +172,12 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
     m_side->addItem(tr("Inside"));
     operationForm->addRow(tr("Side"), m_side);
     operationForm->addRow(tr("Peck"), m_peck);
+    m_ramp->setObjectName(QStringLiteral("operationRamp"));
+    operationForm->addRow(tr("Ramp"), m_ramp);
+    m_tabs->setObjectName(QStringLiteral("operationTabs"));
+    operationForm->addRow(tr("Tabs"), m_tabs);
+    operationForm->addRow(tr("Tab width"), m_tabWidth);
+    operationForm->addRow(tr("Tab height"), m_tabHeight);
     m_suppressed->setText(tr("Leave out"));
     operationForm->addRow(m_suppressed);
     layout->addWidget(m_operationBox);
@@ -291,6 +302,14 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
     operationField(m_retract, &MachiningOperation::retract);
     operationField(m_leave, &MachiningOperation::stockToLeave);
     operationField(m_peck, &MachiningOperation::peck);
+    operationField(m_ramp, &MachiningOperation::rampAngle);
+    operationField(m_tabWidth, &MachiningOperation::tabWidth);
+    operationField(m_tabHeight, &MachiningOperation::tabHeight);
+    connect(m_tabs, &QDoubleSpinBox::valueChanged, this, [this](double value) {
+        editOperation(tr("Change Operation"), [value](MachiningOperation& operation) {
+            operation.tabs = static_cast<int>(value);
+        });
+    });
     connect(m_operationName, &QLineEdit::editingFinished, this, [this] {
         const std::string name = m_operationName->text().trimmed().toStdString();
         if (!name.empty()) {
@@ -520,6 +539,10 @@ void MachiningWorkspace::fill() {
         const QSignalBlocker h(m_leave);
         const QSignalBlocker i(m_peck);
         const QSignalBlocker j(m_suppressed);
+        const QSignalBlocker k(m_ramp);
+        const QSignalBlocker l(m_tabs);
+        const QSignalBlocker m(m_tabWidth);
+        const QSignalBlocker n(m_tabHeight);
         m_operationName->setText(QString::fromStdString(selected->name));
         m_tool->clear();
         for (const Tool& tool : m_document->tools()) {
@@ -539,6 +562,10 @@ void MachiningWorkspace::fill() {
         m_leave->setValue(selected->stockToLeave);
         m_side->setCurrentIndex(selected->side == document::ContourSide::Outside ? 0 : 1);
         m_peck->setValue(selected->peck);
+        m_ramp->setValue(selected->rampAngle);
+        m_tabs->setValue(selected->tabs);
+        m_tabWidth->setValue(selected->tabWidth);
+        m_tabHeight->setValue(selected->tabHeight);
         m_suppressed->setChecked(selected->suppressed);
         const auto faces = static_cast<int>(selected->targets.size());
         // What this kind of operation has.
@@ -549,6 +576,11 @@ void MachiningWorkspace::fill() {
         m_operationForm->setRowVisible(m_leave, !drilling);
         m_operationForm->setRowVisible(m_side, selected->kind == OperationKind::Contour);
         m_operationForm->setRowVisible(m_peck, drilling);
+        const bool contour = selected->kind == OperationKind::Contour;
+        m_operationForm->setRowVisible(m_ramp, contour || selected->kind == OperationKind::Pocket);
+        m_operationForm->setRowVisible(m_tabs, contour);
+        m_operationForm->setRowVisible(m_tabWidth, contour && selected->tabs > 0);
+        m_operationForm->setRowVisible(m_tabHeight, contour && selected->tabs > 0);
         m_targets->setText(selected->kind == OperationKind::Face ? tr("Works on the stock's top")
                            : faces == 1                          ? tr("Works on 1 face")
                                         : tr("Works on %1 faces").arg(faces));
