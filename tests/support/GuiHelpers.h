@@ -7,13 +7,35 @@
 #include <QApplication>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPoint>
+#include <QScreen>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QWidget>
 
 // Helpers for interface tests that have to answer something which blocks: a message box or a
 // menu stops the code that opens it until it is closed, so the answer is arranged beforehand.
 namespace lcad::test {
+
+/// Whether this screen has room for a shown window to be `wanted` big. The screens of CI's
+/// Windows and macOS machines are small, and those systems keep a window on the screen.
+inline bool fitsOnScreen(const QWidget& window, QSize wanted) {
+    const QSize frame = window.frameGeometry().size() - window.size();
+    const QSize room = window.screen()->availableSize() - frame;
+    return wanted.width() <= room.width() && wanted.height() <= room.height();
+}
+
+/// Moves the pointer over `widget`, there and then. QTest::mouseMove moves the real pointer,
+/// and on macOS the event for that arrives when the system gets to it, which can be after the
+/// press or the key a test sends next.
+inline void movePointer(QWidget* widget, QPoint point) {
+    QMouseEvent event(QEvent::MouseMove, point, widget->mapToGlobal(point), Qt::NoButton,
+                      Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(widget, &event);
+}
 
 /// Presses `button` on the next message box that opens, and notes what the box said.
 inline void answerNextMessageBox(QMessageBox::StandardButton button, QString* text = nullptr) {

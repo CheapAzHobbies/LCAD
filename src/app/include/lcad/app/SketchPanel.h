@@ -32,8 +32,9 @@ namespace lcad::app {
 [[nodiscard]] QString describeConstraint(const sketch::Constraint& constraint);
 
 /// What the right-hand panel shows while a sketch is open: whether the sketch is fully
-/// constrained, the options of the drawing tools, what is selected with the constraints on it
-/// (each of which can be removed here), and the button that finishes the sketch.
+/// constrained, what the tool in use waits for, the options of the drawing tools, what is
+/// selected with the constraints on it (each of which can be removed here), and the button that
+/// finishes the sketch.
 ///
 /// The panel mirrors the sketch editor and changes the sketch only through it.
 class SketchPanel : public QWidget {
@@ -47,6 +48,9 @@ public:
 
     [[nodiscard]] QString heading() const;
     [[nodiscard]] QString stateText() const;
+    /// What the tool in use waits for, or what the selection can be given with a key: "Press D
+    /// to give it a length". Empty when there is nothing to say.
+    [[nodiscard]] QString promptText() const { return m_promptText; }
     /// What is said about the selection: "Line · length 40 mm", "3 items selected".
     [[nodiscard]] QString selectionText() const;
     /// The constraints listed for the selection, as the user reads them.
@@ -69,6 +73,8 @@ private:
     QLabel* m_heading;
     QLabel* m_state;
     QLabel* m_profiles;
+    QLabel* m_prompt;
+    QString m_promptText;
     QLabel* m_selection;
     QCheckBox* m_inference;
     QCheckBox* m_construction;

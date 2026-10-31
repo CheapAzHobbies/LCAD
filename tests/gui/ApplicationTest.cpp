@@ -21,6 +21,8 @@
 #include <QComboBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QFileInfo>
+#include <QFileOpenEvent>
 #include <QGuiApplication>
 #include <QLabel>
 #include <QMenu>
@@ -38,7 +40,9 @@
 #include <QToolButton>
 #include <QTreeWidget>
 
+#if defined(Q_OS_LINUX)
 #include <xcb/xcb.h>
+#endif
 
 #include <cmath>
 #include <cstdlib>
@@ -74,6 +78,9 @@ QImage onScreen(const QWidget* widget) {
 // XWayland does not let X11 clients read window contents back, so the screen cannot be checked
 // there. It announces itself with an X extension of its own.
 bool isXWayland() {
+#if !defined(Q_OS_LINUX)
+    return false;
+#else
     const auto* x11 = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
     if (x11 == nullptr) {
         return false;
@@ -86,6 +93,7 @@ bool isXWayland() {
     const bool present = reply != nullptr && reply->present != 0;
     std::free(reply);
     return present;
+#endif
 }
 
 QAction* action(const MainWindow& window, const char* name) {
@@ -96,7 +104,7 @@ double volumeOf(const MainWindow& window, std::size_t index) {
     return lcad::kernel::volume(window.document()->bodies().at(index).shape);
 }
 
-bool near(double actual, double expected) {
+bool nearly(double actual, double expected) {
     return std::abs(actual - expected) <= 1e-9 * std::abs(expected);
 }
 
@@ -143,6 +151,7 @@ private slots:
 
     void closingWithUnsavedChangesAsksFirst();
     void aFileThatCannotBeOpenedLeavesTheDocumentInPlace();
+    void aFileTheDesktopAsksForIsOpened();
     void savingToAnImpossiblePlaceReportsIt();
     void logGoesToAFile();
 
@@ -243,8 +252,11 @@ void ApplicationTest::windowHasItsFiveRegions() {
     QVERIFY(browserDock->geometry().right() <= view.left());
     QVERIFY(timelineDock->geometry().top() >= view.bottom());
     QVERIFY(toolbar->geometry().bottom() <= view.top());
-    // The viewport is the main thing in the window.
-    QVERIFY(view.width() * view.height() > window.width() * window.height() / 2);
+    // It starts on the screen, whole, however small that is.
+    QVERIFY(window.frameGeometry().height() <= window.screen()->availableSize().height());
+    // The viewport is the main thing in the window, when there is room around the panels.
+    QVERIFY(window.width() < 1280 ||
+            view.width() * view.height() > window.width() * window.height() / 2);
 
     // The properties panel is on the right, saying that nothing is selected.
     auto* propertiesDock = window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"));
@@ -294,14 +306,20 @@ void ApplicationTest::viewportAndMenusReachTheScreenTogether() {
 
     QVERIFY(drawnFraction(shownViewport, background) < 0.95);
     // The top bar on screen, with its menus and buttons, is what Qt's own painter produces.
+#if defined(Q_OS_MACOS)
+    // The screen goes through the display's color profile, and text is smoothed for it.
+    const double allowed = 0.1;
+#else
+    const double allowed = 0.01;
+#endif
     const double topBarDifference = differingFraction(shownTopBar, topBar->grab().toImage());
     QVERIFY2(
-        topBarDifference < 0.01,
+        topBarDifference < allowed,
         qPrintable(QStringLiteral("top bar differs in %1 of its pixels").arg(topBarDifference)));
     // And so is the browser, which sits beside the viewport.
     const BrowserPanel* browser = window.browser();
     QVERIFY(differingFraction(onScreen(browser),
-                              const_cast<BrowserPanel*>(browser)->grab().toImage()) < 0.01);
+                              const_cast<BrowserPanel*>(browser)->grab().toImage()) < allowed);
 }
 
 // The acceptance test of Phase 1, through the interface: create a document, add a solid, save,
@@ -358,8 +376,8 @@ void ApplicationTest::createSaveCloseReopenKeepsTheGeometry() {
     using namespace lcad::kernel;
     const Shape& box = bodies[0].shape;
     QVERIFY(isValid(box));
-    QVERIFY(near(volume(box), 120.0 * 80.0 * 12.5));
-    QVERIFY(near(surfaceArea(box), 2.0 * (120.0 * 80.0 + 80.0 * 12.5 + 120.0 * 12.5)));
+    QVERIFY(nearly(volume(box), 120.0 * 80.0 * 12.5));
+    QVERIFY(nearly(surfaceArea(box), 2.0 * (120.0 * 80.0 + 80.0 * 12.5 + 120.0 * 12.5)));
     const TopologyCount count = countTopology(box);
     QCOMPARE(count.solids, 1);
     QCOMPARE(count.faces, 6);
@@ -371,12 +389,12 @@ void ApplicationTest::createSaveCloseReopenKeepsTheGeometry() {
     QVERIFY(std::abs(bounds->min.y) < 1e-6 && std::abs(bounds->max.y - 80.0) < 1e-6);
     QVERIFY(std::abs(bounds->min.z - 5.0) < 1e-6 && std::abs(bounds->max.z - 17.5) < 1e-6);
     // And against the shape as it was before saving.
-    QVERIFY(near(volume(box), volume(saved)));
-    QVERIFY(near(surfaceArea(box), surfaceArea(saved)));
+    QVERIFY(nearly(volume(box), volume(saved)));
+    QVERIFY(nearly(surfaceArea(box), surfaceArea(saved)));
 
     const Shape& cylinder = bodies[1].shape;
     QVERIFY(isValid(cylinder));
-    QVERIFY(near(volume(cylinder), pi * 15.0 * 15.0 * 40.0));
+    QVERIFY(nearly(volume(cylinder), pi * 15.0 * 15.0 * 40.0));
 
     // The reopened document is on screen, in the browser and in the viewport.
     QVERIFY(window.browser()->bodyItem(bodies[0].id) != nullptr);
@@ -414,11 +432,11 @@ void ApplicationTest::everyPrimitiveCanBeCreated() {
                                  QStringLiteral("Sphere"), QStringLiteral("Cone"),
                                  QStringLiteral("Torus"), QStringLiteral("Box 2")}));
     // The sizes the panel starts with: 50 mm throughout, a pointed cone, a 100 by 20 ring.
-    QVERIFY(near(volumeOf(window, 0), 125000.0));
-    QVERIFY(near(volumeOf(window, 1), pi * 25.0 * 25.0 * 50.0));
-    QVERIFY(near(volumeOf(window, 2), 4.0 / 3.0 * pi * 25.0 * 25.0 * 25.0));
-    QVERIFY(near(volumeOf(window, 3), pi * 25.0 * 25.0 * 50.0 / 3.0));
-    QVERIFY(near(volumeOf(window, 4), 2.0 * pi * pi * 50.0 * 10.0 * 10.0));
+    QVERIFY(nearly(volumeOf(window, 0), 125000.0));
+    QVERIFY(nearly(volumeOf(window, 1), pi * 25.0 * 25.0 * 50.0));
+    QVERIFY(nearly(volumeOf(window, 2), 4.0 / 3.0 * pi * 25.0 * 25.0 * 25.0));
+    QVERIFY(nearly(volumeOf(window, 3), pi * 25.0 * 25.0 * 50.0 / 3.0));
+    QVERIFY(nearly(volumeOf(window, 4), 2.0 * pi * pi * 50.0 * 10.0 * 10.0));
     QCOMPARE(QString::fromStdString(window.document()->undoLabel()), QStringLiteral("Create Box"));
 }
 
@@ -461,7 +479,7 @@ void ApplicationTest::panelPreviewsAndRefusesSizesThatMakeNoSolid() {
     ok->click();
 
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
-    QVERIFY(near(volumeOf(window, 0), 2.0 * pi * pi * 50.0 * 15.0 * 15.0));
+    QVERIFY(nearly(volumeOf(window, 0), 2.0 * pi * pi * 50.0 * 15.0 * 15.0));
     QVERIFY(window.activePanel() == nullptr);
     // The panel hands the place back to the properties.
     QCOMPARE(dock->windowTitle(), QStringLiteral("Properties"));
@@ -515,7 +533,7 @@ void ApplicationTest::sizesCanBeTypedAndConfirmedFromTheKeyboard() {
     QTest::keyClick(height, Qt::Key_Return);
 
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
-    QVERIFY(near(volumeOf(window, 0), pi * 15.0 * 15.0 * 12.5));
+    QVERIFY(nearly(volumeOf(window, 0), pi * 15.0 * 15.0 * 12.5));
     QVERIFY(window.activePanel() == nullptr);
 
     // Enter does nothing while the sizes describe no solid, and Esc leaves the command.
@@ -697,7 +715,7 @@ void ApplicationTest::selectionIsSharedBetweenBrowserAndViewport() {
     viewport->setStandardView(StandardView::Top);
     viewport->grabFramebuffer();
     const QPoint onTheBox = viewport->project(50.0, 30.0, 40.0).toPoint();
-    QTest::mouseMove(viewport, onTheBox);
+    lcad::test::movePointer(viewport, onTheBox);
     viewport->grabFramebuffer();
     QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, onTheBox);
     viewport->grabFramebuffer();
@@ -734,7 +752,7 @@ void ApplicationTest::statusBarMeasuresWhatIsPicked() {
     viewport->setStandardView(StandardView::Top);
     viewport->grabFramebuffer();
     const auto click = [viewport](const QPointF& where, Qt::KeyboardModifiers modifiers = {}) {
-        QTest::mouseMove(viewport, where.toPoint());
+        lcad::test::movePointer(viewport, where.toPoint());
         viewport->grabFramebuffer();
         QTest::mouseClick(viewport, Qt::LeftButton, modifiers, where.toPoint());
         viewport->grabFramebuffer();
@@ -918,6 +936,23 @@ void ApplicationTest::aFileThatCannotBeOpenedLeavesTheDocumentInPlace() {
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
     QVERIFY(window.filePath().isEmpty());
     QVERIFY(window.isWindowModified());
+}
+
+// On macOS a document opened in the Finder reaches the running LCAD as an event, not on the
+// command line.
+void ApplicationTest::aFileTheDesktopAsksForIsOpened() {
+    const QString path = m_directory.filePath(QStringLiteral("opened.lcad"));
+    {
+        MainWindow writer;
+        create(writer, PrimitiveKind::Box);
+        QVERIFY(writer.saveTo(path));
+    }
+    MainWindow window;
+    window.acceptFileOpenRequests();
+    QFileOpenEvent event(path);
+    QVERIFY(QCoreApplication::sendEvent(qApp, &event));
+    QCOMPARE(window.filePath(), QFileInfo(path).absoluteFilePath());
+    QCOMPARE(window.document()->bodies().size(), std::size_t{1});
 }
 
 void ApplicationTest::savingToAnImpossiblePlaceReportsIt() {

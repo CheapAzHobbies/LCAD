@@ -631,8 +631,8 @@ TEST_CASE("A linked component keeps its bodies, and what is joined to them, when
     };
     LinkedContent content;
     content.stamp = "first";
-    const lcad::kernel::Shape small = lcad::kernel::makeBox(10.0, 10.0, 10.0);
-    content.bodies.push_back(LinkedBody{"9", "Cube", small, named(small), "PLA"});
+    const lcad::kernel::Shape cubeShape = lcad::kernel::makeBox(10.0, 10.0, 10.0);
+    content.bodies.push_back(LinkedBody{"9", "Cube", cubeShape, named(cubeShape), "PLA"});
 
     const ObjectId linked =
         document.addLinkedComponent("Cube", "parts/cube.lcad", content, {}, somewhereElse());
@@ -657,7 +657,7 @@ TEST_CASE("A linked component keeps its bodies, and what is joined to them, when
     cut.body = cube;
     cut.edges = {"a|b"};
     CHECK_THROWS_AS(document.addFeature(cut), std::invalid_argument);
-    CHECK_THROWS_AS(document.addBody("More", small, linked), std::invalid_argument);
+    CHECK_THROWS_AS(document.addBody("More", cubeShape, linked), std::invalid_argument);
 
     Part part;
     part.occurrence = document.occurrencesOf(linked).front();

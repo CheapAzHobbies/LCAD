@@ -66,12 +66,12 @@ ObjectId constructionIn(const std::string& reference) {
 }
 
 bool samePlace(const kernel::Plane& a, const kernel::Plane& b) {
-    const auto near = [](double x, double y) { return std::abs(x - y) < 1e-12; };
-    return near(a.origin.x, b.origin.x) && near(a.origin.y, b.origin.y) &&
-           near(a.origin.z, b.origin.z) && near(a.normal.x, b.normal.x) &&
-           near(a.normal.y, b.normal.y) && near(a.normal.z, b.normal.z) &&
-           near(a.xDirection.x, b.xDirection.x) && near(a.xDirection.y, b.xDirection.y) &&
-           near(a.xDirection.z, b.xDirection.z);
+    const auto nearly = [](double x, double y) { return std::abs(x - y) < 1e-12; };
+    return nearly(a.origin.x, b.origin.x) && nearly(a.origin.y, b.origin.y) &&
+           nearly(a.origin.z, b.origin.z) && nearly(a.normal.x, b.normal.x) &&
+           nearly(a.normal.y, b.normal.y) && nearly(a.normal.z, b.normal.z) &&
+           nearly(a.xDirection.x, b.xDirection.x) && nearly(a.xDirection.y, b.xDirection.y) &&
+           nearly(a.xDirection.z, b.xDirection.z);
 }
 
 } // namespace
@@ -1607,7 +1607,7 @@ void Document::notify(Change::Kind kind, ObjectId body) {
     for (const auto& [id, listener] : listeners) {
         const bool stillRegistered =
             std::any_of(m_listeners.begin(), m_listeners.end(),
-                        [id = id](const auto& entry) { return entry.first == id; });
+                        [id](const auto& entry) { return entry.first == id; });
         if (stillRegistered) {
             listener(Change{kind, body});
         }
@@ -1885,15 +1885,15 @@ void Document::rebuild() {
                 const AxisState placed = detail::placeAxis(resolved(feature), *this, state);
                 const auto before = m_axes.find(item);
                 const auto same = [](const AxisState& a, const AxisState& b) {
-                    const auto near = [](double x, double y) { return std::abs(x - y) < 1e-12; };
-                    return near(a.axis.origin.x, b.axis.origin.x) &&
-                           near(a.axis.origin.y, b.axis.origin.y) &&
-                           near(a.axis.origin.z, b.axis.origin.z) &&
-                           near(a.axis.direction.x, b.axis.direction.x) &&
-                           near(a.axis.direction.y, b.axis.direction.y) &&
-                           near(a.axis.direction.z, b.axis.direction.z) &&
-                           near(a.length, b.length) && near(a.center.x, b.center.x) &&
-                           near(a.center.y, b.center.y) && near(a.center.z, b.center.z);
+                    const auto nearly = [](double x, double y) { return std::abs(x - y) < 1e-12; };
+                    return nearly(a.axis.origin.x, b.axis.origin.x) &&
+                           nearly(a.axis.origin.y, b.axis.origin.y) &&
+                           nearly(a.axis.origin.z, b.axis.origin.z) &&
+                           nearly(a.axis.direction.x, b.axis.direction.x) &&
+                           nearly(a.axis.direction.y, b.axis.direction.y) &&
+                           nearly(a.axis.direction.z, b.axis.direction.z) &&
+                           nearly(a.length, b.length) && nearly(a.center.x, b.center.x) &&
+                           nearly(a.center.y, b.center.y) && nearly(a.center.z, b.center.z);
                 };
                 if (before == m_axes.end() || !same(before->second, placed)) {
                     statusChanged = true;

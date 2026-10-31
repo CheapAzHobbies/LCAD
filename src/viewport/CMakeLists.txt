@@ -12,4 +12,8 @@ target_include_directories(lcad_viewport PUBLIC include)
 target_link_libraries(lcad_viewport
     PUBLIC Qt6::Widgets Qt6::OpenGLWidgets lcad::document lcad::kernel
     PRIVATE Qt6::OpenGL lcad::kernel_occt lcad_occt_visualization)
+# wglGetCurrentDC(), for the window OCCT is handed on Windows.
+if(WIN32)
+    target_link_libraries(lcad_viewport PRIVATE opengl32)
+endif()
 lcad_target_defaults(lcad_viewport)

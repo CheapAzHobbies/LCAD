@@ -14,8 +14,8 @@ class QLockFile;
 
 namespace lcad::app {
 
-/// Where LCAD keeps copies of unsaved work: lcad/recovery under $XDG_STATE_HOME, or under
-/// ~/.local/state when that is not set.
+/// Where LCAD keeps copies of unsaved work: recovery in its state folder (see stateFolder() in
+/// Paths.h).
 [[nodiscard]] QString defaultRecoveryFolder();
 
 /// Copies of open documents with unsaved changes, kept apart from the user's files, so that

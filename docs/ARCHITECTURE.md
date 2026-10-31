@@ -6,8 +6,8 @@ the reasons for each. The product requirements are in [PROJECT_BRIEF.md](PROJECT
 ## What exists today
 
 Phases 0 to 2 built the desktop foundation and the sketcher, Phase 3 the features and the
-timeline, Phase 4 other programs' files and direct edits, Phase 5 (in progress) components and
-assemblies, and each decision below rests on running code:
+timeline, Phase 4 other programs' files and direct edits, Phase 5 components and assemblies, and
+the port took all of it to Windows and macOS. Each decision below rests on running code:
 
 - `core` holds the log and LCAD's version.
 - `kernel` makes boxes, cylinders, spheres, cones, and tori, moves shapes, measures them (volume,
@@ -121,6 +121,7 @@ Each was made on 2026-10-12 unless noted.
 | 14 | Commands | Defined once in a registry; settings in a panel beside the viewport with a live preview, not a modal dialog (2026-10-12, Phases 1 and 1b) | Phase 2, when commands need parameters in the registry |
 | 15 | Appearance | Design tokens, a light and a dark theme, Qt's Fusion widget style everywhere (2026-10-12, Phase 1b) | Not expected |
 | 16 | Assemblies | Components defined once and placed by occurrences; joints solved after the timeline, one part at a time from what is fixed; linked parts kept as copies (2026-10-19, Phase 5) | Assemblies with loops of joints, or large ones |
+| 17 | Windows and macOS | One code base; libraries from conda-forge on both; Visual Studio on Windows, conda-forge's Clang on macOS; OpenGL 4.1 core profile on macOS (2026-10-30, the port) | Apple drops OpenGL; a wish for wider lines on macOS |
 
 ### 1. Geometry kernel
 
@@ -519,6 +520,56 @@ of the running LCAD's own under `$XDG_STATE_HOME/lcad/recovery/`, locked with `Q
 long as it runs. A folder whose lock no running LCAD holds was left by one that ended without
 closing properly, and its copies are offered back at the next start. The copies are written as
 documents are saved, whole and then renamed into place.
+
+### 17. Windows and macOS
+
+**Chosen:** the same code on all three systems, with what differs kept to a few places. On
+Windows and macOS the libraries come from conda-forge
+(`packaging/conda/environment.yml`), and Windows builds with Visual Studio. macOS builds with
+conda-forge's Clang, not Apple's: conda-forge's libraries use its own C++ library, and a
+program with two C++ libraries in it can lose exceptions on their way across.
+
+**Alternatives:** vcpkg, which would build Open CASCADE and Qt from source, an hour or more
+for each new set of versions; Homebrew on macOS, whose libraries are built for the macOS they
+run on, so that what LCAD links would decide the oldest macOS it runs on.
+
+**What differs, and where.**
+
+- *File names.* The narrow encoding is UTF-8 on Linux and macOS and an old code page on
+  Windows, so a file name never passes through it. `core/Path.h` turns names into UTF-8 for the
+  libraries that take `const char*`, which libzip and OCCT read as UTF-8. Between Qt and the
+  standard library, `app/Paths.h` goes by UTF-16.
+- *Saving.* `document/File.cpp` flushes with `fsync` or `FlushFileBuffers`.
+- *Where LCAD keeps its state.* `stateFolder()` in `app/Paths.h`.
+- *The 3D view.* On Windows OCCT is given the window of the current OpenGL device context, and
+  the hidden X11 window of decision 3 is Linux's alone. On macOS the context is OpenGL 4.1 core
+  profile, the newest Apple offers.
+- *The windows.h macros.* It defines `near` and `far`, which LCAD's code does not use as names,
+  and `min` and `max` unless `NOMINMAX` says not to.
+- *Header order.* `ViewportWidget.cpp` includes OCCT's OpenGL headers before anything of Qt's.
+  They define every OpenGL version themselves, and clash with Apple's `gl3.h`, which Qt's
+  headers include, if that comes first.
+- *Menus.* On macOS the menus are in the system's menu bar, and not in the window.
+- *Opening a document.* The Finder asks the running LCAD to open a file with an event, not on
+  the command line: `MainWindow::acceptFileOpenRequests()`.
+- *Packaging.* macOS uses Qt's `macdeployqt`. On Windows `cmake --install` does the work itself:
+  Qt's `windeployqt` cannot tell where conda-forge's Qt is, and LCAD needs one plugin of Qt's
+  there, for which CMake gathers what it depends on. `opengl32.dll` is left out on purpose, so
+  that Windows and the graphics driver provide it.
+
+**What it costs.**
+
+- *Lines are one pixel wide on macOS.* The core profile leaves `glLineWidth()` with no effect
+  beyond 1, so edges and sketch curves in the 3D view are thinner there, which on a Retina
+  display means half a point. Curves in a sketch being edited are drawn by Qt and keep their
+  width. A legacy profile would bring wide lines back but stops at OpenGL 2.1.
+- *CI's machines have small screens.* Windows and macOS keep a window on the screen, so CI
+  tests the interface at the size that fits, and not at the larger sizes. They have no
+  high-DPI screen either, so the run at twice the scale is Linux's alone.
+- *Neither package is signed.* Windows SmartScreen and macOS Gatekeeper ask the first time.
+- *Test machines only, so far.* On Windows the tests draw with Mesa's software OpenGL and on macOS
+  with Apple's software renderer. Neither has met a real graphics driver.
+- *Intel Macs.* CI builds for Apple silicon only.
 
 ## Threads
 

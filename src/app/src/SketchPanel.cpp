@@ -4,6 +4,7 @@
 
 #include <lcad/app/Icons.h>
 #include <lcad/app/PropertiesPanel.h>
+#include <lcad/sketch/Edit.h>
 
 #include <QCheckBox>
 #include <QFormLayout>
@@ -34,6 +35,35 @@ QLabel* secondary(const QString& text, QWidget* parent) {
     label->setObjectName(QStringLiteral("secondary"));
     label->setWordWrap(true);
     return label;
+}
+
+QString capitalized(QString text) {
+    if (!text.isEmpty()) {
+        text[0] = text.at(0).toUpper();
+    }
+    return text;
+}
+
+// What pressing D does to these: "Press D to give it a length". Empty if it does nothing.
+QString dimensionPrompt(const sketch::Sketch& geometry,
+                        const std::vector<sketch::EntityId>& entities) {
+    const auto choice = sketch::dimensionFor(geometry, entities);
+    if (!choice.has_value()) {
+        return {};
+    }
+    switch (choice->kind) {
+    case sketch::ConstraintKind::Distance:
+        return entities.size() == 1 ? SketchPanel::tr("Press D to give it a length")
+                                    : SketchPanel::tr("Press D to give the distance between them");
+    case sketch::ConstraintKind::Diameter:
+        return SketchPanel::tr("Press D to give it a diameter");
+    case sketch::ConstraintKind::Radius:
+        return SketchPanel::tr("Press D to give it a radius");
+    case sketch::ConstraintKind::Angle:
+        return SketchPanel::tr("Press D to give the angle between them");
+    default:
+        return SketchPanel::tr("Press D to give the distance between them");
+    }
 }
 
 } // namespace
@@ -111,7 +141,8 @@ QString describeConstraint(const sketch::Constraint& constraint) {
 
 SketchPanel::SketchPanel(viewport::SketchEditor* editor, QWidget* parent)
     : QWidget(parent), m_editor(editor), m_heading(new QLabel(this)), m_state(new QLabel(this)),
-      m_profiles(secondary(QString(), this)), m_selection(new QLabel(this)),
+      m_profiles(secondary(QString(), this)), m_prompt(new QLabel(this)),
+      m_selection(new QLabel(this)),
       m_inference(new QCheckBox(tr("Pick up constraints while drawing"), this)),
       m_construction(new QCheckBox(tr("Draw construction geometry"), this)),
       m_sides(new QSpinBox(this)), m_constraintList(new QVBoxLayout),
@@ -130,6 +161,11 @@ SketchPanel::SketchPanel(viewport::SketchEditor* editor, QWidget* parent)
     layout->addWidget(m_state);
     layout->addWidget(m_profiles);
     layout->addSpacing(8);
+    m_prompt->setObjectName(QStringLiteral("sketchPrompt"));
+    m_prompt->setWordWrap(true);
+    m_prompt->setTextFormat(Qt::RichText);
+    m_prompt->hide();
+    layout->addWidget(m_prompt);
 
     layout->addWidget(secondary(tr("Drawing"), this));
     m_inference->setObjectName(QStringLiteral("sketchInference"));
@@ -221,6 +257,22 @@ void SketchPanel::refresh(const QString& name) {
     } else if (const sketch::Constraint* constraint =
                    geometry.findConstraint(constraints.front())) {
         m_selection->setText(describeConstraint(*constraint));
+    }
+    // What the tool waits for, said where the eye is while working: "Dimension: click a line",
+    // shown with the tool's name above what it waits for. With nothing else to say, what the
+    // selection can be given.
+    QString prompt = m_editor->hint();
+    if (prompt.isEmpty() && constraints.empty()) {
+        prompt = dimensionPrompt(geometry, entities);
+    }
+    if (prompt != m_promptText) {
+        m_promptText = prompt;
+        const qsizetype colon = prompt.indexOf(QStringLiteral(": "));
+        m_prompt->setText(colon < 0 ? prompt.toHtmlEscaped()
+                                    : QStringLiteral("<b>%1</b><br>%2")
+                                          .arg(prompt.left(colon).toHtmlEscaped(),
+                                               capitalized(prompt.mid(colon + 2)).toHtmlEscaped()));
+        m_prompt->setVisible(!prompt.isEmpty());
     }
     rebuildConstraints();
 }

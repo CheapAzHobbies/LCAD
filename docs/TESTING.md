@@ -34,9 +34,9 @@ cmake --preset asan && cmake --build --preset asan && ctest --preset asan    # s
 | Unit | Catch2 | `unit` | No | `core`: the log. `kernel`: primitives, measurement, moving, sub-shapes, serialization, errors, message routing, planes and projection onto them. `sketch`: geometry, every constraint, the solver's states, dragging, closed outlines, and the sketch tools. `document`: the model, undo, transactions, the file format, sketches as shapes. `kernel` and `document` also: STEP and IGES import, the STEP, STL, OBJ, and 3MF files written (read back by the tests' own parsers: closed meshes, volumes), direct edits, geometry checks, repair |
 | Save and reopen | Catch2 | `unit` | No | A reopened document measures the same as the one saved; damaged, foreign, and newer files are refused |
 | Reference models | Catch2 | `unit` | No | The documents and STEP files in `tests/models/` open and measure correctly, whichever OCCT wrote them |
-| Interface | Qt Test | `gui` | A virtual one | Eight programs, each run at the screen's scale and again at twice that. `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen. `ModelingInterfaceTest`: features, the timeline, and measuring through the whole window. `InterchangeInterfaceTest`: import, the direct edits, Check Geometry and Repair, export, and the export dialog. `AssemblyInterfaceTest`: components and working on one, joints set up by clicks and animated, moving a component, interference, mass and materials, linked parts and packaging, recovery after a real crash (the test runs itself again as a process that keeps unsaved work and is killed), and the arrow a pull is dragged by |
+| Interface | Qt Test | `gui` | A virtual one | Eight programs, each run at the screen's scale and, on Linux, again at twice that (the screens of CI's Windows and macOS machines are too small to double). `ViewportTest`: the rendering path, camera, selection, display styles, guides. `SketchViewTest`: the sketch editor in the 3D view, driven with the pointer and the keyboard. `ApplicationTest`: the main window, modeling commands, files, and Phase 1's acceptance test through the interface. `InterfaceTest`: the command registry and search, themes and icons, tabs, the remembered layout, the properties panel, context menus, shortcuts. `SketchInterfaceTest`: sketching through the whole window, from New Sketch to save and reopen. `ModelingInterfaceTest`: features, the timeline, and measuring through the whole window. `InterchangeInterfaceTest`: import, the direct edits, Check Geometry and Repair, export, and the export dialog. `AssemblyInterfaceTest`: components and working on one, joints set up by clicks and animated, moving a component, interference, mass and materials, linked parts and packaging, recovery after a real crash (the test runs itself again as a process that keeps unsaved work and is killed), and the arrow a pull is dragged by |
 | Sanitizers | All of the above, built with ASan and UBSan | all | A virtual one | Memory errors, leaks, undefined behavior |
-| Package | A shell script, in CI | | A virtual one | The AppImage starts on another distribution and draws a document; the Flatpak is built, installed, and does the same |
+| Package | A script, in CI | | A virtual one | The AppImage starts on another distribution and draws a document; the Flatpak is built, installed, and does the same; the Windows installer installs and the macOS disk image is opened, and each opens a document through the system, away from what it was built with |
 
 Planned, each when the code it tests arrives:
 
@@ -196,7 +196,8 @@ Nine lessons are built into them:
 - **A high-DPI display is a different display.** Everything OCCT draws at a fixed size on
   screen is measured in physical pixels. At twice the scale the view cube was half its size and
   sat where no click meant for it could land, and every test at the ordinary scale passed. So
-  CTest runs each interface test program twice, the second time with `QT_SCALE_FACTOR=2`.
+  on Linux, CTest runs each interface test program twice, the second time with
+  `QT_SCALE_FACTOR=2`.
 - **Fonts are part of the environment.** OCCT warns when the font it wants for the labels in
   the 3D view is not installed and it has to substitute. Bare containers have almost no fonts,
   so the CI jobs for Arch and Fedora install DejaVu, as a desktop would have.
@@ -268,14 +269,26 @@ and runs all tests.
 | Fedora 44 | GCC 16.2 | 6.11.2 | 7.9.3 |
 | Arch Linux | GCC 16.2 | 6.12.0 | 7.9.3 |
 | Sanitizers (Ubuntu 24.04) | GCC 13.3 | 6.4.2 | 7.6.3 |
+| Windows (Server 2025) | Visual Studio 2026, MSVC 19.51 | 6.10.2 | 7.9.3 |
+| macOS (15, Apple silicon) | Clang 21.1 | 6.10.2 | 7.9.3 |
 
-Versions are those the jobs installed on 2026-10-12. Arch and Fedora move forward on their own,
-so these jobs also give early warning when a new Qt, OCCT, or compiler breaks the build.
+Versions are those the jobs installed on 2026-10-12, and on 2026-10-30 for Windows and macOS. Arch
+and Fedora move forward on their own, so these jobs also give early warning when a new Qt, OCCT,
+or compiler breaks the build. Windows and macOS start from GitHub's images and take their
+libraries from conda-forge. Their screens are about 1024 by 768 and cannot be made larger, so the
+interface tests run at the sizes that fit, and only once, at the screen's own scale. Windows has
+no graphics card, and runs on Mesa's software OpenGL; macOS has Apple's software renderer.
 
 Two more jobs cover the package. **AppImage** builds it on Ubuntu 24.04. **AppImage runs on
 Fedora 44** starts it in a container with neither Qt nor Open CASCADE installed, gives it a
 document to open, and checks that it stays up, draws the model, and logs no warnings
 (`scripts/smoke-test-appimage.sh`).
 
+The Windows and macOS jobs do the same for their packages, which have no separate machine to go
+to. `scripts/smoke-test-windows.ps1` runs the installer, and opens a document by its file type
+from outside the conda environment. `scripts/smoke-test-macos.sh` takes LCAD.app from its disk
+image and opens a document through the system, with the conda environment moved out of the way.
+Each checks that LCAD stays up, says in its log that it opened the document, and logs no warnings.
+
 Each run attaches the frames the interface tests rendered, the reference document each job
-wrote with its own OCCT, the AppImage, and a screenshot of it running.
+wrote with its own OCCT, the packages, and a screenshot of each running.

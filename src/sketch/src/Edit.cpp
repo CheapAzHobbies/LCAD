@@ -1122,7 +1122,7 @@ std::vector<EntityId> offset(Sketch& sketch, const std::vector<EntityId>& curves
 // ---------------------------------------------------------------------------------------------
 // Trim and extend
 
-bool trim(Sketch& sketch, EntityId id, Point2 near) {
+bool trim(Sketch& sketch, EntityId id, Point2 nearPoint) {
     const Entity* found = sketch.find(id);
     // Ellipses and splines are not trimmed: where they cross other curves is not worked out.
     if (!isCurve(found) || found->fixed || isFreeform(found)) {
@@ -1155,7 +1155,7 @@ bool trim(Sketch& sketch, EntityId id, Point2 near) {
             return false;
         }
         // The part to go lies between the crossings on either side of `near`.
-        const double where = curve.parameterOf(near);
+        const double where = curve.parameterOf(nearPoint);
         std::size_t after = 0;
         while (after < around.size() && around[after].parameter <= where) {
             ++after;
@@ -1195,7 +1195,7 @@ bool trim(Sketch& sketch, EntityId id, Point2 near) {
         sketch.remove(id);
         return true;
     }
-    double where = curve.parameterOf(near);
+    double where = curve.parameterOf(nearPoint);
     if (!curve.isLine() && where > span) {
         // Beyond the arc: nearer to its start or to its end?
         where = (where - span) < (2.0 * pi - where) ? span : 0.0;
@@ -1258,7 +1258,7 @@ bool trim(Sketch& sketch, EntityId id, Point2 near) {
     return true;
 }
 
-bool extend(Sketch& sketch, EntityId id, Point2 near) {
+bool extend(Sketch& sketch, EntityId id, Point2 nearPoint) {
     const Entity* found = sketch.find(id);
     if (found == nullptr || found->fixed ||
         (found->kind != EntityKind::Line && found->kind != EntityKind::Arc)) {
@@ -1269,7 +1269,7 @@ bool extend(Sketch& sketch, EntityId id, Point2 near) {
     const double speed = std::max(curve.speed(), minimumLength);
     const double margin = 10.0 * joinTolerance / speed;
     const double span = curve.span();
-    const bool atEnd = apart(near, curve.b) <= apart(near, curve.a);
+    const bool atEnd = apart(nearPoint, curve.b) <= apart(nearPoint, curve.a);
 
     // The nearest crossing beyond the chosen end.
     const Cut* target = nullptr;

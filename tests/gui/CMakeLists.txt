@@ -10,20 +10,29 @@ endif()
 
 function(lcad_add_gui_test name)
     qt_add_executable(${name} ${ARGN})
+    # qt_add_executable() makes a program without a console on Windows, whose output is lost.
+    set_target_properties(${name} PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(${name} PRIVATE
         Qt6::Test lcad::app lcad::core lcad::document lcad::kernel lcad_test_support)
     lcad_target_defaults(${name})
 
-    # Force X11 so the test never lands on a developer's Wayland session, and software rendering
-    # so the result does not depend on the machine's GPU. LSAN_OPTIONS only has an effect in
-    # sanitizer builds.
+    # On Linux, force X11 so the test never lands on a developer's Wayland session, and software
+    # rendering so the result does not depend on the machine's GPU. LSAN_OPTIONS only has an
+    # effect in sanitizer builds. Windows and macOS use their own platform plugin and driver.
     set(environment
-        "QT_QPA_PLATFORM=xcb"
-        "LIBGL_ALWAYS_SOFTWARE=1"
         "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=0")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        list(APPEND environment "QT_QPA_PLATFORM=xcb" "LIBGL_ALWAYS_SOFTWARE=1")
+    endif()
+    # Without a console window of its own, Qt Test on Windows says everything to the debugger.
+    if(WIN32)
+        list(APPEND environment "QT_FORCE_STDERR_LOGGING=1")
+    endif()
 
     # Each program runs twice: at the screen's own scale, and at twice that, as on a high-DPI
-    # display, where a logical pixel is two physical ones.
+    # display, where a logical pixel is two physical ones. The second run wants a screen made
+    # for it: on the small screens of CI's Windows and macOS machines, twice the scale would
+    # leave no room for the window, and those run once.
     if(LCAD_XVFB_RUN)
         add_test(NAME ${name}
             COMMAND "${LCAD_XVFB_RUN}" --auto-servernum "--server-args=-screen 0 1700x1100x24"
@@ -31,13 +40,12 @@ function(lcad_add_gui_test name)
         add_test(NAME ${name}_2x
             COMMAND "${LCAD_XVFB_RUN}" --auto-servernum "--server-args=-screen 0 3400x2200x24"
                     $<TARGET_FILE:${name}>)
+        set_tests_properties(${name}_2x PROPERTIES
+            LABELS gui ENVIRONMENT "${environment};QT_SCALE_FACTOR=2")
     else()
         add_test(NAME ${name} COMMAND ${name})
-        add_test(NAME ${name}_2x COMMAND ${name})
     endif()
     set_tests_properties(${name} PROPERTIES LABELS gui ENVIRONMENT "${environment}")
-    set_tests_properties(${name}_2x PROPERTIES
-        LABELS gui ENVIRONMENT "${environment};QT_SCALE_FACTOR=2")
 endfunction()
 
 lcad_add_gui_test(lcad_viewport_tests ViewportTest.cpp)
@@ -49,11 +57,14 @@ lcad_add_gui_test(lcad_modeling_interface_tests ModelingInterfaceTest.cpp)
 lcad_add_gui_test(lcad_interchange_interface_tests InterchangeInterfaceTest.cpp)
 lcad_add_gui_test(lcad_assembly_interface_tests AssemblyInterfaceTest.cpp)
 # ApplicationTest asks the X server which kind of server it is.
-find_package(X11 REQUIRED)
-target_link_libraries(lcad_app_tests PRIVATE X11::xcb)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(X11 REQUIRED)
+    target_link_libraries(lcad_app_tests PRIVATE X11::xcb)
+endif()
 
 # Needs no display, so it runs with the unit tests.
 qt_add_executable(lcad_viewport_setup_tests SetupTest.cpp)
+set_target_properties(lcad_viewport_setup_tests PROPERTIES WIN32_EXECUTABLE FALSE)
 target_link_libraries(lcad_viewport_setup_tests PRIVATE Qt6::Test lcad::viewport)
 lcad_target_defaults(lcad_viewport_setup_tests)
 add_test(NAME lcad_viewport_setup_tests COMMAND lcad_viewport_setup_tests)

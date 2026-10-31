@@ -145,7 +145,7 @@ private:
     }
     static void click(const MainWindow& window, const QPoint& point,
                       Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
-        QTest::mouseMove(window.viewport(), point);
+        lcad::test::movePointer(window.viewport(), point);
         render(window);
         QTest::mouseClick(window.viewport(), Qt::LeftButton, modifiers, point);
         render(window);
@@ -224,7 +224,7 @@ void SketchInterfaceTest::aNewSketchAsksForItsPlane() {
     QVERIFY(window.document()->sketches().empty());
 
     // Pointing at a plane says which it is: in the status bar, and by marking its button.
-    QTest::mouseMove(viewport, onPlane(window, OriginItem::PlaneXZ));
+    lcad::test::movePointer(viewport, onPlane(window, OriginItem::PlaneXZ));
     render(window);
     QTRY_COMPARE(window.planePanel()->hoveredPlane(), 1);
     QVERIFY(window.statusBar()->currentMessage().startsWith(QStringLiteral("XZ Plane")));
@@ -621,7 +621,7 @@ void SketchInterfaceTest::aRectangleIsDrawnConstrainedDimensionedSavedAndReopene
     }
     QVERIFY(width != 0);
     const QPoint onValue = editor(window)->dimensionRect(width).center().toPoint();
-    QTest::mouseMove(window.viewport(), onValue);
+    lcad::test::movePointer(window.viewport(), onValue);
     QTest::mouseDClick(window.viewport(), Qt::LeftButton, Qt::NoModifier, onValue);
     render(window);
     QLineEdit* field = editor(window)->valueField();
@@ -717,7 +717,10 @@ void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
 
     // Select the bottom side: the panel says what it is and lists what holds it.
     click(window, at(window, 40.0, 10.0));
-    QVERIFY2(panel->selectionText().startsWith(QStringLiteral("Line · length 60")),
+    // About 60 mm: where a click lands goes by the pixel, and how big a pixel is by the window.
+    const QStringList saying = panel->selectionText().split(QLatin1Char(' '));
+    QVERIFY2(saying.size() == 5 && saying[0] == QStringLiteral("Line") &&
+                 qAbs(saying[3].toDouble() - 60.0) < 1.0,
              qPrintable(panel->selectionText()));
     QStringList rows = panel->constraintRows();
     // Level, and joined to its neighbors at both ends.
@@ -743,14 +746,32 @@ void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
     QVERIFY(trigger(window, "edit.undo"));
     QCOMPARE(panel->stateText(), QStringLiteral("4 degrees of freedom"));
 
-    // A dimension is listed with its value.
+    // A line selected says what D does with it, and D, pressed for real, does it: the line's
+    // length opens for typing in the view.
     editor(window)->setSelection({lines(geometry())[0].id});
-    QVERIFY(editor(window)->addDimension());
+    QCOMPARE(panel->promptText(), QStringLiteral("Press D to give it a length"));
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    window.viewport()->setFocus();
+    QTest::keyClick(&window, Qt::Key_D);
+    QVERIFY(editor(window)->valueField() != nullptr);
+    QCOMPARE(editor(window)->tool(), SketchTool::Select);
+    // A dimension is listed with its value.
     QTest::keyClicks(editor(window)->valueField(), QStringLiteral("64"));
     QTest::keyClick(editor(window)->valueField(), Qt::Key_Return);
     editor(window)->setSelection({lines(geometry())[0].id});
     QVERIFY2(panel->constraintRows().contains(QStringLiteral("Distance 64 mm")),
              qPrintable(panel->constraintRows().join(QStringLiteral(", "))));
+    // With nothing selected, Dimension becomes the tool, and the panel says what it waits for.
+    editor(window)->clearSelection();
+    QVERIFY(panel->promptText().isEmpty());
+    QVERIFY(trigger(window, "sketch.dimension"));
+    QCOMPARE(editor(window)->tool(), SketchTool::Dimension);
+    QVERIFY2(panel->promptText().startsWith(QStringLiteral("Dimension: click a line")),
+             qPrintable(panel->promptText()));
+    keepFrame(window.grab().toImage(), "sketch-window-dimension-tool");
+    editor(window)->cancel();
+    QVERIFY(panel->promptText().isEmpty());
 
     // The tool options are the editor's.
     QVERIFY(panel->inferenceBox()->isChecked());
@@ -974,7 +995,12 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     MainWindow window;
     window.resize(size);
     show(window);
-    QTRY_COMPARE(window.size(), size);
+    if (lcad::test::fitsOnScreen(window, size)) {
+        QTRY_COMPARE(window.size(), size);
+    } else {
+        // A smaller screen keeps the window smaller, and all this has to hold for it as well.
+        size = window.size();
+    }
     const ObjectId id = startSketch(window);
     QVERIFY(trigger(window, "sketch.rectangle"));
     click(window, at(window, 0.0, 0.0));

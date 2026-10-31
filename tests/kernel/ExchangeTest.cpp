@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <lcad/core/Path.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/Exchange.h>
 #include <lcad/kernel/Measure.h>
@@ -155,7 +156,7 @@ ReadMesh readBinaryStl(const std::string& bytes, std::uint32_t& count) {
 
 std::string zipEntry(const std::filesystem::path& path, const char* name) {
     int code = 0;
-    zip_t* archive = zip_open(path.c_str(), ZIP_RDONLY, &code);
+    zip_t* archive = zip_open(lcad::core::toUtf8(path).c_str(), ZIP_RDONLY, &code);
     REQUIRE(archive != nullptr);
     zip_stat_t stat;
     if (zip_stat(archive, name, 0, &stat) != 0) {
@@ -189,7 +190,7 @@ void writeIgesFaces(const TopoDS_Shape& shape, const std::filesystem::path& path
     IGESControl_Writer writer("MM", 0);
     writer.AddShape(shape);
     writer.ComputeModel();
-    REQUIRE(writer.Write(path.c_str()));
+    REQUIRE(writer.Write(lcad::core::toUtf8(path).c_str()));
 }
 
 } // namespace
@@ -240,7 +241,7 @@ TEST_CASE("A STEP file in inches is read in millimeters", "[kernel][exchange]") 
         STEPControl_Writer writer;
         const bool transferred = writer.Transfer(occt::unwrap(makeBox(1.0, 2.0, 0.5)),
                                                  STEPControl_AsIs) == IFSelect_RetDone;
-        const bool written = writer.Write(path.c_str()) == IFSelect_RetDone;
+        const bool written = writer.Write(lcad::core::toUtf8(path).c_str()) == IFSelect_RetDone;
         Interface_Static::SetCVal("xstep.cascade.unit", "MM");
         Interface_Static::SetCVal("write.step.unit", "MM");
         REQUIRE(transferred);

@@ -14,12 +14,15 @@
 #include <lcad/app/MeasurePanel.h>
 #include <lcad/app/MovePanel.h>
 #include <lcad/app/ParametersDialog.h>
+#include <lcad/app/Paths.h>
 #include <lcad/app/PropertiesPanel.h>
 #include <lcad/app/Recovery.h>
 #include <lcad/app/ShortcutsDialog.h>
 #include <lcad/app/SketchPanel.h>
 #include <lcad/app/Theme.h>
 #include <lcad/app/TimelinePanel.h>
+#include <lcad/core/Log.h>
+#include <lcad/core/Path.h>
 #include <lcad/document/File.h>
 #include <lcad/document/Links.h>
 #include <lcad/document/SketchShapes.h>
@@ -43,6 +46,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileOpenEvent>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
@@ -51,6 +55,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -97,10 +102,6 @@ const char* const exportAngleKey = "export/angle";
 const char* const exportTextKey = "export/stlText";
 const int recentLimit = 10;
 
-std::filesystem::path toPath(const QString& path) {
-    return std::filesystem::path(QFile::encodeName(path).toStdString());
-}
-
 QLabel* groupLabel(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text.toUpper(), parent);
     label->setObjectName(QStringLiteral("groupLabel"));
@@ -134,7 +135,9 @@ private:
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_viewport(new viewport::ViewportWidget(this)),
       m_commands(new CommandRegistry(this)) {
-    resize(1280, 800);
+    // Within the screen, with room for the title bar: Windows lets a window start larger than
+    // it, with the bottom of the window behind the taskbar.
+    resize(QSize(1280, 800).boundedTo(screen()->availableSize() - QSize(0, 40)));
     setCentralWidget(m_viewport);
     m_viewport->setContextMenuPolicy(Qt::CustomContextMenu);
 
@@ -731,7 +734,9 @@ void MainWindow::defineCommands() {
                         occurrences.begin(), occurrences.end(),
                         [&path](const std::vector<document::ObjectId>& chosen) {
                             const std::size_t n = std::min(path.size(), chosen.size());
-                            return std::equal(path.begin(), path.begin() + n, chosen.begin());
+                            return std::equal(path.begin(),
+                                              path.begin() + static_cast<std::ptrdiff_t>(n),
+                                              chosen.begin());
                         });
                 };
                 std::vector<document::ObjectId> kept;
@@ -806,7 +811,7 @@ void MainWindow::defineCommands() {
                          tr("Create a %1 by its sizes").arg(primitiveName(kind).toLower()));
         c.iconName = QString::fromLatin1(iconName);
         c.aliases = aliases;
-        c.run = [this, kind = kind](bool) { startPrimitive(kind); };
+        c.run = [this, kind](bool) { startPrimitive(kind); };
         c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
     }
@@ -998,7 +1003,7 @@ void MainWindow::defineCommands() {
             }
         };
         c.isEnabled = [selectedFeature] { return selectedFeature() != nullptr; };
-        c.currentText = [this, selectedFeature] {
+        c.currentText = [selectedFeature] {
             const document::Feature* feature = selectedFeature();
             return feature != nullptr && feature->suppressed ? tr("Re&store Feature")
                                                              : tr("&Suppress Feature");
@@ -1069,8 +1074,8 @@ void MainWindow::defineCommands() {
         c.checkable = true;
         c.exclusiveGroup = QStringLiteral("selectionFilter");
         c.aliases = {tr("selection filter"), tr("pick")};
-        c.run = [this, filter = filter](bool) { m_viewport->setSelectionFilter(filter); };
-        c.isChecked = [this, filter = filter] { return m_viewport->selectionFilter() == filter; };
+        c.run = [this, filter](bool) { m_viewport->setSelectionFilter(filter); };
+        c.isChecked = [this, filter] { return m_viewport->selectionFilter() == filter; };
         // While a sketch is open, a click picks what is in the sketch.
         c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
@@ -1138,9 +1143,7 @@ void MainWindow::defineCommands() {
         } else {
             c.aliases = {tr("%1 view").arg(QString(text).remove(QLatin1Char('&')).toLower())};
         }
-        c.run = [this, standardView = standardView](bool) {
-            m_viewport->setStandardView(standardView);
-        };
+        c.run = [this, standardView](bool) { m_viewport->setStandardView(standardView); };
         m_commands->add(std::move(c));
     }
     {
@@ -1176,13 +1179,13 @@ void MainWindow::defineCommands() {
         c.checkable = true;
         c.exclusiveGroup = QStringLiteral("displayStyle");
         c.aliases = {tr("display style"), tr("visual style")};
-        c.run = [this, style = style](bool) {
+        c.run = [this, style](bool) {
             m_viewport->setDisplayStyle(style);
             QSettings().setValue(QLatin1String(styleKey), static_cast<int>(style));
             // The toolbar's style button shows the icon of the style in use.
             applyTheme();
         };
-        c.isChecked = [this, style = style] { return m_viewport->displayStyle() == style; };
+        c.isChecked = [this, style] { return m_viewport->displayStyle() == style; };
         m_commands->add(std::move(c));
     }
     {
@@ -1222,11 +1225,11 @@ void MainWindow::defineCommands() {
         c.checkable = true;
         c.exclusiveGroup = QStringLiteral("navigation");
         c.aliases = {tr("mouse"), tr("navigation")};
-        c.run = [this, preset = preset](bool) {
+        c.run = [this, preset](bool) {
             m_viewport->setNavigationPreset(preset);
             QSettings().setValue(QLatin1String(navigationKey), static_cast<int>(preset));
         };
-        c.isChecked = [this, preset = preset] { return m_viewport->navigationPreset() == preset; };
+        c.isChecked = [this, preset] { return m_viewport->navigationPreset() == preset; };
         m_commands->add(std::move(c));
     }
     {
@@ -1268,8 +1271,8 @@ void MainWindow::defineCommands() {
         c.checkable = true;
         c.exclusiveGroup = QStringLiteral("theme");
         c.aliases = aliases + QStringList{tr("theme"), tr("appearance")};
-        c.run = [choice = choice](bool) { Theme::instance().setChoice(choice); };
-        c.isChecked = [choice = choice] { return Theme::instance().choice() == choice; };
+        c.run = [choice](bool) { Theme::instance().setChoice(choice); };
+        c.isChecked = [choice] { return Theme::instance().choice() == choice; };
         m_commands->add(std::move(c));
     }
     const std::tuple<QDockWidget*, const char*, QString> panels[] = {
@@ -1281,8 +1284,8 @@ void MainWindow::defineCommands() {
         Command c = make(id, text, window, tr("Show or hide this panel"));
         c.checkable = true;
         c.aliases = {tr("panel")};
-        c.run = [dock = dock](bool on) { dock->setVisible(on); };
-        c.isChecked = [dock = dock] { return !dock->isHidden(); };
+        c.run = [dock](bool on) { dock->setVisible(on); };
+        c.isChecked = [dock] { return !dock->isHidden(); };
         m_commands->add(std::move(c));
     }
     {
@@ -1360,7 +1363,7 @@ void MainWindow::defineSketchCommands() {
         for (const auto& [id, text, which] : planes) {
             c = make(id, text, tr("Start a sketch on this plane through the origin"), "sketch");
             c.aliases = {tr("create sketch")};
-            c.run = [this, which = which](bool) {
+            c.run = [this, which](bool) {
                 createSketch(which == 0   ? kernel::planeXY()
                              : which == 1 ? kernel::planeXZ()
                                           : kernel::planeYZ());
@@ -1596,9 +1599,9 @@ void MainWindow::defineSketchCommands() {
         c.checkable = true;
         c.aliases = {tr("constraint"), tr("constrain")};
         // On what is selected, if it fits; otherwise it becomes the tool and waits for clicks.
-        c.run = [editor, kind = kind](bool) { editor()->constrain(kind); };
+        c.run = [editor, kind](bool) { editor()->constrain(kind); };
         c.isEnabled = sketching;
-        c.isChecked = [this, editor, kind = kind] {
+        c.isChecked = [this, editor, kind] {
             return isSketching() && editor()->tool() == SketchTool::Constraint &&
                    editor()->constraintTool() == kind;
         };
@@ -2378,6 +2381,33 @@ void MainWindow::newDocument() {
     activate(addSession(std::make_unique<document::Document>(), QString()));
 }
 
+void MainWindow::openFromSystem(const QString& path) {
+    QString error;
+    if (!loadFrom(path, &error)) {
+        QMessageBox::critical(this, tr("Could not open the document"), error);
+    } else if (!m_loadWarnings.isEmpty()) {
+        QMessageBox::warning(this, tr("The document was opened with problems"),
+                             m_loadWarnings.join(QLatin1Char('\n')));
+    }
+}
+
+void MainWindow::acceptFileOpenRequests() {
+    qApp->installEventFilter(this);
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == qApp && event->type() == QEvent::FileOpen) {
+        const QString file = static_cast<QFileOpenEvent*>(event)->file();
+        if (!file.isEmpty()) {
+            openFromSystem(file);
+            raise();
+            activateWindow();
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
 bool MainWindow::loadFrom(const QString& path, QString* error) {
     m_loadWarnings.clear();
     const QString absolute = QFileInfo(path).absoluteFilePath();
@@ -2424,6 +2454,7 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     }
     activate(index);
     rememberFile(absolute);
+    core::log(core::LogLevel::Info, "app", "Opened " + core::toUtf8(toPath(absolute)));
     statusBar()->showMessage(tr("Opened %1").arg(documentName()), 4000);
     // Linked parts that changed, or cannot be found, are said; nothing is changed until the
     // user updates them.

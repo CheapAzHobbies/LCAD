@@ -344,7 +344,13 @@ says which, in the status bar.
 
 ### Dimensions
 
-Press D. Click what to measure, then click empty space, and type the value.
+Press D. The panel on the right says what to click. Click a line and type its length: the
+dimension is placed where the pointer is, and Enter sets it. To put it somewhere else first,
+move the pointer there, where the dimension follows it, and click. A circle or an arc needs one
+click; two points or lines need a click on each.
+
+Or select first, then press D: a line gets its length, a circle its diameter, and the value
+opens for typing. With a line selected, the panel says "Press D to give it a length".
 
 | Click | Gives |
 |---|---|
@@ -447,12 +453,15 @@ Saving replaces the file in one step, so a crash or power cut during a save leav
 either the old version or the new one, never half of each.
 
 Every minute LCAD keeps a copy of each document with unsaved changes, apart from your files, in
-`~/.local/state/lcad/recovery/`. If LCAD did not close properly (a crash, a power cut), it
+the `recovery` folder of LCAD's state folder (see [If something goes wrong](#if-something-goes-wrong)
+for where that is). If LCAD did not close properly (a crash, a power cut), it
 offers to restore that work the next time it starts: each document opens in a tab with its
 changes not yet saved, and saving it writes to its own file as usual. The copies go away when
 the work is saved, or closed without its changes.
 
 To open a document from a terminal or a file manager, give its name to LCAD: `lcad part.lcad`.
+On Windows and macOS, double-clicking a `.lcad` document opens it in LCAD; on Windows, when the
+installer was left to make LCAD what opens them.
 
 ## The window itself
 
@@ -465,7 +474,7 @@ To open a document from a terminal or a file manager, give its name to LCAD: `lc
 
 ## Keyboard
 
-These are the shortcuts LCAD starts with.
+These are the shortcuts LCAD starts with. On macOS, Ctrl in them is the Command key (⌘).
 
 | Key | Action |
 |---|---|
@@ -500,6 +509,14 @@ The origin guides that are shown are not saved with the document.
 
 ## If something goes wrong
 
-LCAD keeps a log at `~/.local/state/lcad/lcad.log` (or under `$XDG_STATE_HOME` if that is set).
+LCAD keeps a log, `lcad.log`, in its state folder:
+
+| System | State folder |
+|---|---|
+| Linux | `~/.local/state/lcad/` (or `lcad` under `$XDG_STATE_HOME`, if that is set) |
+| Linux, the Flatpak | `~/.var/app/io.github.cheapazhobbies.LCAD/.local/state/lcad/` |
+| Windows | `%LOCALAPPDATA%\LCAD\` |
+| macOS | `~/Library/Application Support/LCAD/` |
+
 Help > About shows the path, along with the versions of LCAD, Qt, and Open CASCADE and the
 graphics driver in use. Include both when reporting a problem.
