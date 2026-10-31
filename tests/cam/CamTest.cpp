@@ -485,6 +485,77 @@ TEST_CASE("The whole setup cuts the part out of the stock, and nothing of the pa
     CHECK(report.cuttingSeconds >= report.cuttingLength / 600.0 * 60.0 - 1e-6);
 }
 
+TEST_CASE("A cut takes away just what the tool sweeps, at any angle", "[cam][simulation]") {
+    const auto groove = [](const Tool& tool, const kernel::Point& end) {
+        Program program;
+        program.work.stock = {{0.0, 0.0, 0.0}, {100.0, 100.0, 10.0}};
+        program.safeZ = 20.0;
+        Toolpath path;
+        path.name = "Groove";
+        path.tool = tool;
+        path.moves = {{MoveKind::Rapid, {20.0, 20.0, 20.0}, 0.0},
+                      {MoveKind::Plunge, {20.0, 20.0, 5.0}, 100.0},
+                      {MoveKind::Feed, end, 500.0},
+                      {MoveKind::Rapid, {end.x, end.y, 20.0}, 0.0}};
+        program.paths.push_back(path);
+        return program;
+    };
+    const auto machine = Setup{}.machine;
+
+    SECTION("A flat mill leaves a slot with round ends and a flat floor") {
+        const Program program = groove(flatMill(6.0), {80.0, 60.0, 5.0});
+        Simulation simulation(program, {}, machine, 0.1);
+        const SimulationReport report = simulation.run();
+        CHECK_FALSE(report.hasErrors());
+        const double length = std::hypot(60.0, 40.0);
+        const double area = 6.0 * length + 3.14159265358979 * 9.0;
+        CHECK_THAT(report.removedVolume, WithinAbs(area * 5.0, area * 5.0 * 0.01));
+
+        // All along it, just inside its walls and just outside them.
+        const double acrossX = -40.0 / length;
+        const double acrossY = 60.0 / length;
+        for (int i = 0; i <= 40; ++i) {
+            const double x = 20.0 + 60.0 * i / 40.0;
+            const double y = 20.0 + 40.0 * i / 40.0;
+            CAPTURE(i);
+            CHECK_THAT(static_cast<double>(simulation.stock().sample(x, y, 1e6F)),
+                       WithinAbs(5.0, 1e-3));
+            for (const double side : {-1.0, 1.0}) {
+                const double inX = x + side * 2.85 * acrossX;
+                const double inY = y + side * 2.85 * acrossY;
+                CHECK_THAT(static_cast<double>(simulation.stock().sample(inX, inY, 1e6F)),
+                           WithinAbs(5.0, 1e-3));
+                const double outX = x + side * 3.15 * acrossX;
+                const double outY = y + side * 3.15 * acrossY;
+                CHECK_THAT(static_cast<double>(simulation.stock().sample(outX, outY, 1e6F)),
+                           WithinAbs(10.0, 1e-3));
+            }
+        }
+    }
+    SECTION("A ball mill leaves a round floor") {
+        Tool ball = flatMill(6.0);
+        ball.kind = ToolKind::BallEndMill;
+        const Program program = groove(ball, {80.0, 20.0, 5.0});
+        Simulation simulation(program, {}, machine, 0.1);
+        simulation.run();
+        CHECK_THAT(static_cast<double>(simulation.stock().sample(50.0, 20.05, 1e6F)),
+                   WithinAbs(5.0, 0.01));
+        // Two millimeters to the side of the middle, near enough: cells are 0.1 across.
+        const double side = simulation.stock().y(simulation.stock().rowAt(22.0)) - 20.0;
+        CHECK_THAT(static_cast<double>(simulation.stock().sample(50.0, 22.0, 1e6F)),
+                   WithinAbs(5.0 + 3.0 - std::sqrt(9.0 - side * side), 1e-3));
+    }
+    SECTION("A slanted cut goes down as it goes along") {
+        const Program program = groove(flatMill(6.0), {80.0, 20.0, 2.0});
+        Simulation simulation(program, {}, machine, 0.1);
+        simulation.run();
+        CHECK_THAT(static_cast<double>(simulation.stock().sample(50.0, 20.05, 1e6F)),
+                   WithinAbs(3.5 - 3.0 * 3.0 / 60.0, 0.03));
+        CHECK_THAT(static_cast<double>(simulation.stock().sample(79.0, 20.05, 1e6F)),
+                   WithinAbs(2.0, 0.03));
+    }
+}
+
 TEST_CASE("The simulation catches what would go wrong", "[cam][simulation]") {
     Part part;
     Program program = planSetup(part.document, part.setup());

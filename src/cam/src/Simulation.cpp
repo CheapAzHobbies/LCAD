@@ -156,22 +156,40 @@ struct Simulation::Impl {
         }
     }
 
-    // The tool at a place: takes away what is above its surface, and sees what it hits.
-    void stamp(const Toolpath& path, const Point& tip, bool rapid) {
+    // The tool along a straight piece of a move, or at its end if the piece goes straight up or
+    // down: takes away what is above its surface, and sees what it hits. A cell meets the tool
+    // where the tool comes nearest to it, and on a level piece that is where it is cut deepest.
+    void stroke(const Toolpath& path, const Point& from, const Point& to, bool rapid) {
         const Tool& tool = path.tool;
         const double radius = tool.diameter / 2.0;
-        const int columnLow = std::max(0, stock.columnAt(tip.x - radius));
-        const int columnHigh = std::min(stock.columns() - 1, stock.columnAt(tip.x + radius));
-        const int rowLow = std::max(0, stock.rowAt(tip.y - radius));
-        const int rowHigh = std::min(stock.rows() - 1, stock.rowAt(tip.y + radius));
+        const double acrossX = to.x - from.x;
+        const double acrossY = to.y - from.y;
+        const double lengthSquared = acrossX * acrossX + acrossY * acrossY;
+        const int columnLow = std::max(0, stock.columnAt(std::min(from.x, to.x) - radius));
+        const int columnHigh =
+            std::min(stock.columns() - 1, stock.columnAt(std::max(from.x, to.x) + radius));
+        const int rowLow = std::max(0, stock.rowAt(std::min(from.y, to.y) - radius));
+        const int rowHigh =
+            std::min(stock.rows() - 1, stock.rowAt(std::max(from.y, to.y) + radius));
         for (int row = rowLow; row <= rowHigh; ++row) {
-            const double dy = stock.y(row) - tip.y;
+            const double cellY = stock.y(row);
             for (int column = columnLow; column <= columnHigh; ++column) {
-                const double dx = stock.x(column) - tip.x;
-                const double distance = std::hypot(dx, dy);
-                if (distance > radius) {
+                const double cellX = stock.x(column);
+                const double t =
+                    lengthSquared > 0.0
+                        ? std::clamp(((cellX - from.x) * acrossX + (cellY - from.y) * acrossY) /
+                                         lengthSquared,
+                                     0.0, 1.0)
+                        : 1.0;
+                const Point tip{from.x + acrossX * t, from.y + acrossY * t,
+                                from.z + (to.z - from.z) * t};
+                const double dx = cellX - tip.x;
+                const double dy = cellY - tip.y;
+                const double distanceSquared = dx * dx + dy * dy;
+                if (distanceSquared > radius * radius) {
                     continue;
                 }
+                const double distance = std::sqrt(distanceSquared);
                 float& top = stock.at(column, row);
                 const double surface = tip.z + profile(tool, distance);
                 if (static_cast<double>(top) > tip.z + tool.fluteLength) {
@@ -221,16 +239,20 @@ struct Simulation::Impl {
             report.cuttingLength += length;
             report.cuttingSeconds += length / std::min(move.feed, machine.maxFeed) * 60.0;
         }
-        // Along the move, closely enough for the grid to see no gaps between one place and the
-        // next. Straight down, only the bottom matters.
+        // Level, a piece is exact at any length, and is kept short only for its box of cells to
+        // stay close around it. On a slant the tool's height changes along the piece, so the
+        // pieces are short enough for the grid not to see it. Straight down, there is one.
         const double reach = std::hypot(to.x - from.x, to.y - from.y);
-        const int pieces = std::max(1, static_cast<int>(std::ceil(reach / (stock.cell() / 2.0))));
+        const double piece =
+            to.z == from.z ? std::max(path.tool.diameter / 2.0, stock.cell()) : stock.cell() / 2.0;
+        const int pieces = std::max(1, static_cast<int>(std::ceil(reach / piece)));
+        Point start = from;
         for (int i = 1; i <= pieces; ++i) {
             const double t = static_cast<double>(i) / pieces;
-            stamp(path,
-                  {from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t,
-                   from.z + (to.z - from.z) * t},
-                  rapid);
+            const Point end{from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t,
+                            from.z + (to.z - from.z) * t};
+            stroke(path, start, end, rapid);
+            start = end;
         }
         position = to;
         ++done;
