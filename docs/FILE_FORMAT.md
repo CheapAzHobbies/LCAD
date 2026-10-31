@@ -168,6 +168,12 @@ coordinates). A body may have `material`, the name of what it is made of, and a 
 makes, or a feature, may have `tag`, the text the names of its faces start with in place of its
 id (a copy of a component keeps its original's, so that the copy's features find their faces).
 
+A body may also have `piece`, set where a feature leaves solids that do not touch. The body the
+feature works on holds the first of them, and `piece` says which of the others this body holds,
+from 1, with `madeBy` naming that feature. A body with `discarded` set to true was deleted while
+the feature behind it stayed for the sake of its other solids: it has no shape, and is not made
+again.
+
 `components` lists `{"id", "name"}`, and for a linked part `link`, the path of its document
 relative to this one's folder (or whole), and `linkStamp`, what identifies the content that
 file had when it was last read. Each component appears at least once in `occurrences`:

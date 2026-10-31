@@ -526,6 +526,24 @@ kernel::NamedShape placed(const Feature& feature, const Document& document,
 
 } // namespace
 
+std::vector<kernel::NamedShape> solidsOf(const kernel::NamedShape& result, const BodyStates& bodies,
+                                         ObjectId body) {
+    std::vector<kernel::NamedShape> solids = kernel::separated(result);
+    const auto before = bodies.find(body);
+    if (solids.size() < 2 || before == bodies.end()) {
+        return solids;
+    }
+    const std::vector<std::string>& names = before->second.faceNames;
+    const auto own = std::find_if(solids.begin(), solids.end(), [&names](const auto& solid) {
+        return std::find_first_of(solid.faceNames.begin(), solid.faceNames.end(), names.begin(),
+                                  names.end()) != solid.faceNames.end();
+    });
+    if (own != solids.end()) {
+        std::rotate(solids.begin(), own, own + 1);
+    }
+    return solids;
+}
+
 AxisState placeAxis(const Feature& feature, const Document& document, const BodyStates& bodies) {
     AxisState state;
     std::optional<kernel::BoundingBox> extent;

@@ -110,6 +110,7 @@ private slots:
     void sketchesFollowConstructionPlanesAndFaces();
     void holesAreDrilledAtSketchPoints();
     void aPullTapersOrGoesUpToAFace();
+    void partsThatDoNotTouchAreBodiesOfTheirOwn();
     void parametersDriveTheModel();
     void constructionAxesGuideRevolvesAndPatterns();
 
@@ -1172,6 +1173,55 @@ void ModelingInterfaceTest::aPullTapersOrGoesUpToAFace() {
     QVERIFY(nearly(volumeOf(window, rise), pi * 25.0 * 8.0));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-taper-to-face");
+}
+
+void ModelingInterfaceTest::partsThatDoNotTouchAreBodiesOfTheirOwn() {
+    MainWindow window;
+    show(window);
+    lcad::document::Document* document = window.document();
+    const ObjectId sketch = document->addSketch("Squares", lcad::kernel::planeXY());
+    lcad::sketch::Sketch squares;
+    (void)lcad::sketch::addRectangle(squares, {0.0, 0.0}, {10.0, 10.0});
+    (void)lcad::sketch::addRectangle(squares, {30.0, 0.0}, {40.0, 10.0});
+    document->setSketchGeometry(sketch, squares, "Rectangles");
+
+    QVERIFY(trigger(window, "solid.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    std::vector<std::vector<lcad::sketch::EntityId>> outlines;
+    for (const lcad::sketch::Region& region : document->findSketch(sketch)->geometry.regions()) {
+        outlines.push_back(region.outer);
+    }
+    QCOMPARE(outlines.size(), std::size_t{2});
+    pull->setProfiles(sketch, outlines);
+    typeInto(pull, "distance", 5.0);
+    QTRY_VERIFY(okButton(pull)->isEnabled());
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // Two in the list, each to be seen, picked, and deleted on its own.
+    QCOMPARE(document->features().size(), std::size_t{1});
+    QCOMPARE(document->bodies().size(), std::size_t{2});
+    const ObjectId first = document->bodies()[0].id;
+    const ObjectId second = document->bodies()[1].id;
+    QVERIFY(window.browser()->bodyItem(first) != nullptr);
+    QTreeWidgetItem* listed = window.browser()->bodyItem(second);
+    QVERIFY(listed != nullptr);
+    QCOMPARE(listed->text(0), QStringLiteral("Body 2"));
+    QVERIFY(!listed->isHidden());
+    QVERIFY(nearly(lcad::kernel::volume(document->findBody(second)->shape), 500.0));
+
+    document->removeBody(second);
+    QVERIFY(window.browser()->bodyItem(second)->isHidden());
+    QVERIFY(!window.browser()->bodyItem(first)->isHidden());
+    // A filter does not bring it back.
+    auto* filter = window.findChild<QLineEdit*>(QStringLiteral("browserFilter"));
+    filter->setText(QStringLiteral("Body"));
+    QVERIFY(window.browser()->bodyItem(second)->isHidden());
+    filter->clear();
+    QVERIFY(window.browser()->bodyItem(second)->isHidden());
+    document->undo();
+    QVERIFY(!window.browser()->bodyItem(second)->isHidden());
 }
 
 void ModelingInterfaceTest::parametersDriveTheModel() {

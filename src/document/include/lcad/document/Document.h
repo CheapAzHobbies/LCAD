@@ -42,6 +42,13 @@ struct Body {
     /// For a body that no feature makes: the shape it was given. Features that act on the
     /// body start from this.
     kernel::Shape source;
+    /// Solids that do not touch are bodies of their own. Where a feature leaves several, the body
+    /// it works on holds the first, and this says which of the others this body holds, from 1.
+    /// `madeBy` is then that feature. Zero for every other body.
+    int piece = 0;
+    /// Deleted, though the feature behind it stays for the sake of the other solids it leaves.
+    /// The body has no shape, and it is not made again.
+    bool discarded = false;
     /// A name for each face of `shape`; see kernel::NamedShape.
     std::vector<std::string> faceNames;
     /// The component it is part of. Not valid for the document's root.
@@ -674,6 +681,10 @@ private:
     };
 
     void record(Edit edit, const std::string& label);
+    /// Makes a body for each solid that has none, as part of the step that split them.
+    void settlePieces();
+    /// The bodies that hold the solids a feature leaves past the first, in order.
+    [[nodiscard]] std::vector<ObjectId> piecesOf(ObjectId feature) const;
     void apply(const Edit& edit);
     void revert(const Edit& edit);
     void applyExpressions(const Edit& edit, bool forward);
@@ -769,6 +780,8 @@ private:
         bool done = false;    ///< whether what follows is up to date
         bool applied = false; ///< whether the feature took effect
         kernel::NamedShape result;
+        /// `result` a solid at a time, the first for the body the feature works on.
+        std::vector<kernel::NamedShape> solids;
         std::string error;
     };
     std::unordered_map<ObjectId, Built> m_built;

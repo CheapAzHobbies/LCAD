@@ -1264,6 +1264,13 @@ ObjectId Document::copyComponent(ObjectId occurrenceId) {
             fresh(body.id);
         }
     }
+    for (const ObjectId item : items) {
+        for (const ObjectId piece : piecesOf(item)) {
+            if (!ids.contains(piece)) {
+                fresh(piece);
+            }
+        }
+    }
     std::vector<ObjectId> inner = occurrencesIn(source.id);
     for (const ObjectId id : inner) {
         fresh(id);
@@ -1301,6 +1308,26 @@ ObjectId Document::copyComponent(ObjectId occurrenceId) {
                 edit.body.id = edit.id;
                 edit.body.component = component;
                 edit.oldMarker = edit.newMarker = m_marker;
+                record(std::move(edit), "Copy Component");
+            }
+            // A solid of a feature that is not being copied comes along as it is.
+            for (const Body& body : std::vector<Body>(m_bodies)) {
+                if (body.component != source.id || body.piece == 0 || body.shape.isNull() ||
+                    std::find(items.begin(), items.end(), body.madeBy) != items.end()) {
+                    continue;
+                }
+                Edit edit{};
+                edit.kind = Edit::Kind::AddBody;
+                edit.id = map(body.id);
+                edit.place = placeForNew();
+                markersForAdding(edit);
+                edit.index = m_bodies.size();
+                edit.body = body;
+                edit.body.id = edit.id;
+                edit.body.component = component;
+                edit.body.source = body.shape;
+                edit.body.madeBy = {};
+                edit.body.piece = 0;
                 record(std::move(edit), "Copy Component");
             }
             for (const ObjectId item : items) {
@@ -1348,6 +1375,20 @@ ObjectId Document::copyComponent(ObjectId occurrenceId) {
                     edit.body.tag = detail::tagOf(*body);
                 }
                 record(std::move(edit), "Copy Component");
+                // The other solids it leaves. One kept elsewhere has no place in the copy.
+                for (const ObjectId piece : piecesOf(item)) {
+                    Edit held{};
+                    held.kind = Edit::Kind::AddBody;
+                    held.id = map(piece);
+                    held.index = m_bodies.size();
+                    held.body = *findBody(piece);
+                    held.body.id = held.id;
+                    held.body.madeBy = map(item);
+                    held.body.discarded = held.body.discarded || held.body.component != source.id;
+                    held.body.component = component;
+                    held.body.shape = {};
+                    record(std::move(held), "Copy Component");
+                }
             }
             for (const ObjectId id : inner) {
                 Edit edit{};
@@ -1764,7 +1805,8 @@ void Document::applyAssembly(const Edit& edit, bool forward) {
         const bool material = body.material != to.material;
         const bool moved = body.component != to.component;
         const bool reshaped = body.source.impl() != to.source.impl() ||
-                              body.sourceFaceNames != to.sourceFaceNames || body.tag != to.tag;
+                              body.sourceFaceNames != to.sourceFaceNames || body.tag != to.tag ||
+                              body.discarded != to.discarded;
         body.name = to.name;
         body.visible = to.visible;
         body.component = to.component;
@@ -1773,6 +1815,7 @@ void Document::applyAssembly(const Edit& edit, bool forward) {
         body.linkKey = to.linkKey;
         body.source = to.source;
         body.sourceFaceNames = to.sourceFaceNames;
+        body.discarded = to.discarded;
         if (reshaped) {
             touch(edit.id);
         }

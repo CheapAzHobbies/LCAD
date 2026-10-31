@@ -44,6 +44,12 @@ bool usesSketch(const Feature& feature) {
            feature.kind == FeatureKind::Hole;
 }
 
+// Whether a body has a place of its own in the timeline. One that holds a solid of a feature's is
+// that feature's, and a linked one is made in another document.
+bool onTimeline(const Body& body) {
+    return body.linkKey.empty() && body.piece == 0;
+}
+
 // A construction plane placed against an origin plane needs no body.
 bool needsBody(const Feature& feature) {
     return !((feature.kind == FeatureKind::Plane || feature.kind == FeatureKind::Axis) &&
@@ -213,7 +219,8 @@ Document::Document(DocumentState state)
         inComponent(body.component, "the body \"" + body.name + "\"");
         if (body.madeBy.isValid()) {
             const Feature* maker = findFeature(body.madeBy);
-            if (maker == nullptr || !makesBody(*maker) || maker->body != body.id) {
+            if (maker == nullptr ||
+                (body.piece == 0 && (!makesBody(*maker) || maker->body != body.id))) {
                 throw std::invalid_argument("Document: body \"" + body.name +
                                             "\" names a feature that does not make it");
             }
@@ -288,6 +295,8 @@ Document::Document(DocumentState state)
     }
     m_rebuildAll = true;
     rebuild();
+    // A file from before solids that do not touch were bodies of their own, with nothing to undo.
+    settlePieces();
 }
 
 Document::~Document() = default;
@@ -346,6 +355,23 @@ void Document::removeBody(ObjectId id) {
         if (feature != nullptr && feature->body == id) {
             acting.push_back(item);
         }
+    }
+    // Among the solids a feature leaves, the others are built with this one: the features stay.
+    bool amongOthers = m_bodies[index].piece > 0;
+    for (const ObjectId item : acting) {
+        for (const ObjectId piece : piecesOf(item)) {
+            amongOthers = amongOthers || !findBody(piece)->discarded;
+        }
+    }
+    if (amongOthers) {
+        Edit edit{};
+        edit.kind = Edit::Kind::ChangeBody;
+        edit.id = id;
+        edit.body = m_bodies[index];
+        edit.newBody = edit.body;
+        edit.newBody.discarded = true;
+        record(std::move(edit), "Delete Body");
+        return;
     }
     const bool madeByFeature = m_bodies[index].madeBy.isValid();
     const bool ownStep = !m_open && (!acting.empty() || madeByFeature);
@@ -661,19 +687,50 @@ void Document::removeFeature(ObjectId id) {
         throw std::invalid_argument("removeFeature: there is no feature with id " +
                                     std::to_string(id.value));
     }
-    Edit edit{};
-    edit.kind = Edit::Kind::RemoveFeature;
-    edit.id = id;
-    edit.feature = m_features[index];
-    if (makesBody(edit.feature)) {
-        edit.hasBody = true;
-        edit.index = indexOf(edit.feature.body);
-        edit.body = m_bodies[edit.index];
+    const auto remove = [this, id] {
+        Edit edit{};
+        edit.kind = Edit::Kind::RemoveFeature;
+        edit.id = id;
+        edit.feature = m_features[featureIndexOf(id)];
+        if (makesBody(edit.feature)) {
+            edit.hasBody = true;
+            edit.index = indexOf(edit.feature.body);
+            edit.body = m_bodies[edit.index];
+        }
+        edit.place = placeOf(id);
+        markersForRemoving(edit, edit.place);
+        const std::string label = "Delete " + edit.feature.name;
+        record(std::move(edit), label);
+    };
+    const std::vector<ObjectId> pieces = piecesOf(id);
+    if (pieces.empty()) {
+        remove();
+        return;
     }
-    edit.place = placeOf(id);
-    markersForRemoving(edit, edit.place);
-    const std::string label = "Delete " + edit.feature.name;
-    record(std::move(edit), label);
+    // The other solids it leaves go with it, as the body it makes does, and what works on them.
+    // The feature goes before their bodies do: while it is there it would make them again.
+    inOneStep("Delete " + m_features[index].name, [&] {
+        std::vector<ObjectId> acting;
+        for (const ObjectId item : m_timeline) {
+            const Feature* feature = findFeature(item);
+            if (feature != nullptr &&
+                std::find(pieces.begin(), pieces.end(), feature->body) != pieces.end()) {
+                acting.push_back(item);
+            }
+        }
+        for (auto feature = acting.rbegin(); feature != acting.rend(); ++feature) {
+            removeFeature(*feature);
+        }
+        remove();
+        for (auto piece = pieces.rbegin(); piece != pieces.rend(); ++piece) {
+            Edit edit{};
+            edit.kind = Edit::Kind::RemoveBody;
+            edit.id = *piece;
+            edit.index = indexOf(*piece);
+            edit.body = m_bodies[edit.index];
+            record(std::move(edit), "Delete Body");
+        }
+    });
 }
 
 void Document::renameFeature(ObjectId id, std::string name) {
@@ -1177,6 +1234,7 @@ void Document::resumeRebuild() {
     }
     if (--m_suspended == 0) {
         rebuild();
+        settlePieces();
         notify(Change::Kind::HistoryChanged);
     }
 }
@@ -1268,9 +1326,11 @@ void Document::record(Edit edit, const std::string& label) {
             m_open->edits.back().kind == Edit::Kind::SetSketchGeometry &&
             m_open->edits.back().id == edit.id) {
             m_open->edits.back().newGeometry = std::move(edit.newGeometry);
+            settlePieces();
             return;
         }
         m_open->edits.push_back(std::move(edit));
+        settlePieces();
         return;
     }
     // An edit made on its own is its own undo step.
@@ -1278,27 +1338,89 @@ void Document::record(Edit edit, const std::string& label) {
     step.edits.push_back(std::move(edit));
     m_undo.push_back(std::move(step));
     m_redo.clear();
+    settlePieces();
     notify(Change::Kind::HistoryChanged);
+}
+
+std::vector<ObjectId> Document::piecesOf(ObjectId feature) const {
+    std::vector<const Body*> found;
+    for (const Body& body : m_bodies) {
+        if (body.piece > 0 && body.madeBy == feature) {
+            found.push_back(&body);
+        }
+    }
+    std::sort(found.begin(), found.end(),
+              [](const Body* a, const Body* b) { return a->piece < b->piece; });
+    std::vector<ObjectId> pieces;
+    pieces.reserve(found.size());
+    for (const Body* body : found) {
+        pieces.push_back(body->id);
+    }
+    return pieces;
+}
+
+void Document::settlePieces() {
+    if (m_suspended > 0) {
+        return;
+    }
+    // Round again until none are wanted: a feature later on can work on one just made.
+    bool made = true;
+    while (made) {
+        made = false;
+        for (const Feature& feature : m_features) {
+            const auto built = m_built.find(feature.id);
+            const Body* holder = findBody(feature.body);
+            if (built == m_built.end() || holder == nullptr) {
+                continue;
+            }
+            const bool visible = holder->visible;
+            const std::string material = holder->material;
+            const std::size_t wanted = built->second.solids.size();
+            for (std::size_t piece = piecesOf(feature.id).size() + 1; piece < wanted; ++piece) {
+                Edit edit{};
+                edit.kind = Edit::Kind::AddBody;
+                edit.id = ObjectId{m_nextId++};
+                edit.index = m_bodies.size();
+                edit.body = Body{edit.id, uniqueBodyName("Body"), visible, {}};
+                edit.body.madeBy = feature.id;
+                edit.body.piece = static_cast<int>(piece);
+                edit.body.component = feature.component;
+                edit.body.material = material;
+                apply(edit);
+                if (m_open) {
+                    m_open->edits.push_back(std::move(edit));
+                } else if (!m_undo.empty()) {
+                    m_undo.back().edits.push_back(std::move(edit));
+                }
+                made = true;
+            }
+        }
+        if (made) {
+            rebuild();
+        }
+    }
 }
 
 void Document::apply(const Edit& edit) {
     switch (edit.kind) {
     case Edit::Kind::AddBody:
         m_bodies.insert(m_bodies.begin() + static_cast<std::ptrdiff_t>(edit.index), edit.body);
-        if (edit.body.linkKey.empty()) {
+        if (onTimeline(edit.body)) {
             insertItem(edit.id, edit.place);
             m_marker = edit.newMarker;
         }
         touch(edit.id);
+        touch(edit.body.madeBy);
         notify(Change::Kind::BodyAdded, edit.id);
         break;
     case Edit::Kind::RemoveBody:
         m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(edit.index));
-        if (edit.body.linkKey.empty()) {
+        if (onTimeline(edit.body)) {
             eraseItem(edit.id);
             m_marker = edit.newMarker;
         }
         touch(edit.id);
+        touch(edit.body.madeBy);
         notify(Change::Kind::BodyRemoved, edit.id);
         break;
     case Edit::Kind::RenameBody:
@@ -1479,22 +1601,24 @@ void Document::revert(const Edit& edit) {
     switch (edit.kind) {
     case Edit::Kind::AddBody:
         m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(indexOf(edit.id)));
-        if (edit.body.linkKey.empty()) {
+        if (onTimeline(edit.body)) {
             eraseItem(edit.id);
             m_marker = edit.oldMarker;
         }
         touch(edit.id);
+        touch(edit.body.madeBy);
         notify(Change::Kind::BodyRemoved, edit.id);
         break;
     case Edit::Kind::RemoveBody: {
         // Back where it was, with the name and visibility it had when it was removed.
         const std::size_t index = std::min(edit.index, m_bodies.size());
         m_bodies.insert(m_bodies.begin() + static_cast<std::ptrdiff_t>(index), edit.body);
-        if (edit.body.linkKey.empty()) {
+        if (onTimeline(edit.body)) {
             insertItem(edit.id, edit.place);
             m_marker = edit.oldMarker;
         }
         touch(edit.id);
+        touch(edit.body.madeBy);
         notify(Change::Kind::BodyAdded, edit.id);
         break;
     }
@@ -1819,6 +1943,25 @@ void Document::rebuild() {
     detail::BodyStates state;
     // Bodies whose state, at this point in the timeline, is not what it was last time.
     std::unordered_set<ObjectId> changed;
+    const auto markChanged = [this, &changed](const Feature& feature) {
+        changed.insert(feature.body);
+        for (const ObjectId piece : piecesOf(feature.id)) {
+            changed.insert(piece);
+        }
+    };
+    // What a feature leaves goes into its bodies. With fewer of them than solids, for now, it all
+    // stays together: settlePieces() is about to make the rest.
+    const auto leave = [this, &state](const Feature& feature, const Built& built) {
+        const std::vector<ObjectId> pieces = piecesOf(feature.id);
+        if (built.solids.size() < 2 || built.solids.size() > pieces.size() + 1) {
+            state[feature.body] = built.result;
+            return;
+        }
+        state[feature.body] = built.solids.front();
+        for (std::size_t i = 1; i < built.solids.size(); ++i) {
+            state[pieces[i - 1]] = built.solids[i];
+        }
+    };
     // Linked bodies are made in their own document, and are what they are from the start.
     for (const Body& body : m_bodies) {
         if (!body.linkKey.empty()) {
@@ -1991,7 +2134,7 @@ void Document::rebuild() {
         Built& built = m_built[item];
         if (!reached || feature.suppressed) {
             if (built.applied || !built.error.empty() || m_touched.contains(item)) {
-                changed.insert(feature.body);
+                markChanged(feature);
                 statusChanged = true;
             }
             built = Built{};
@@ -2010,25 +2153,27 @@ void Document::rebuild() {
             movedConstruction.contains(constructionIn(feature.reference2));
         if (!stale) {
             if (built.applied) {
-                state[feature.body] = built.result;
+                leave(feature, built);
             }
             continue;
         }
         const std::string before = built.error;
         try {
             built.result = detail::evaluate(resolved(feature), *this, state);
+            built.solids = detail::solidsOf(built.result, state, feature.body);
             built.applied = true;
             built.error.clear();
-            state[feature.body] = built.result;
+            leave(feature, built);
         } catch (const detail::FeatureFailure& failure) {
             // Left out. The model carries on from what it was before this feature.
             built.result = {};
+            built.solids.clear();
             built.applied = false;
             built.error = failure.what();
         }
         built.done = true;
         statusChanged = statusChanged || before != built.error;
-        changed.insert(feature.body);
+        markChanged(feature);
     }
     m_touched.clear();
     m_rebuildAll = false;
@@ -2036,7 +2181,8 @@ void Document::rebuild() {
     std::vector<ObjectId> reshaped;
     for (Body& body : m_bodies) {
         const auto found = state.find(body.id);
-        const kernel::NamedShape now = found == state.end() ? kernel::NamedShape{} : found->second;
+        const kernel::NamedShape now =
+            found == state.end() || body.discarded ? kernel::NamedShape{} : found->second;
         if (now.shape.impl() != body.shape.impl()) {
             body.shape = now.shape;
             reshaped.push_back(body.id);

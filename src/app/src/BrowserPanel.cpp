@@ -27,6 +27,7 @@ namespace {
 constexpr int idRole = Qt::UserRole;
 constexpr int kindRole = Qt::UserRole + 1;
 constexpr int pathRole = Qt::UserRole + 2;
+constexpr int goneRole = Qt::UserRole + 3;
 
 document::ObjectId idOf(const QTreeWidgetItem* item) {
     return document::ObjectId{item->data(0, idRole).toULongLong()};
@@ -766,8 +767,9 @@ void BrowserPanel::applyFilter() {
     const QString wanted = m_filter->text().trimmed();
     for (QTreeWidgetItem* item : entries()) {
         if (kindOf(item) == EntryKind::Body || kindOf(item) == EntryKind::Sketch) {
-            item->setHidden(!wanted.isEmpty() &&
-                            !item->text(0).contains(wanted, Qt::CaseInsensitive));
+            item->setHidden(
+                item->data(0, goneRole).toBool() ||
+                (!wanted.isEmpty() && !item->text(0).contains(wanted, Qt::CaseInsensitive)));
         }
     }
     // A document without sketches has no use for an empty "Sketches" entry.
@@ -865,6 +867,9 @@ void BrowserPanel::markExistence(QTreeWidgetItem* item, const document::Body& bo
     // A body whose feature fails, is suppressed, or lies beyond the history marker is listed,
     // so that it can still be found and renamed, but in italics and with the reason.
     const bool exists = !body.shape.isNull();
+    // Not one that was deleted, or a solid its feature no longer leaves.
+    item->setData(0, goneRole, body.discarded || (body.piece > 0 && !exists));
+    item->setHidden(item->data(0, goneRole).toBool());
     QFont font = item->font(0);
     font.setItalic(!exists);
     item->setFont(0, font);

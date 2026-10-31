@@ -345,6 +345,19 @@ plane or to a face is moved there when its turn comes, and the features made fro
 again if it moved. Either one keeps where it last was, and says why, when what it is placed on
 is gone.
 
+Solids that do not touch are bodies of their own, whichever feature left them apart. A rebuild
+separates what each feature leaves (`kernel::separated()`), in the order of the lowest face name
+of each solid, so that the same solid lands in the same body when the model changes. The body
+the feature works on goes on in the first solid with something of what that body was. The others
+are in bodies with `piece` set and `madeBy` naming the feature, which have no place in the
+timeline of their own. How many of them there are depends on the geometry, so they cannot be
+decided when the feature is added: a change that splits a body may be to a dimension several
+features back. `settlePieces()` therefore makes the bodies that are missing after the rebuild
+that shows they are needed, as part of the undo step that caused it. A body whose solid has gone
+away stays, without a shape and out of the browser, because later features may name it and the
+solid may come back. Deleting one body among several only marks it `discarded`, since its
+features are still needed for the others.
+
 ### 11. Stable references
 
 When an early feature changes, later features must still find "that edge" and "that face".

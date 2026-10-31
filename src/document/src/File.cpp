@@ -1442,6 +1442,12 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
         if (entry.contains("tag")) {
             body.tag = stringMember(entry, "tag", where, path);
         }
+        if (entry.contains("piece")) {
+            body.piece = static_cast<int>(idMember(entry, "piece", where, path));
+        }
+        if (entry.contains("discarded")) {
+            body.discarded = boolMember(entry, "discarded", where, path);
+        }
         if (entry.contains("madeBy")) {
             // A body that a feature makes has no geometry in the file: it is built again.
             body.madeBy = ObjectId{idMember(entry, "madeBy", where, path)};
@@ -1565,6 +1571,12 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
         }
         if (!body.tag.empty()) {
             entry["tag"] = body.tag;
+        }
+        if (body.piece > 0) {
+            entry["piece"] = body.piece;
+        }
+        if (body.discarded) {
+            entry["discarded"] = true;
         }
         if (body.madeBy.isValid()) {
             // What features make is not stored. The features are, and it is built from them.

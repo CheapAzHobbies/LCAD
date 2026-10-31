@@ -29,6 +29,12 @@ struct NamedShape {
     std::vector<std::string> faceNames;
 };
 
+/// The solids of a shape apart, each with the names of its faces, in the order of the lowest name
+/// each has: an order that stays the same when the shape is built again. Comes back whole, as the
+/// one item, when it has fewer than two solids, or solids that share a face, or faces that belong
+/// to no solid.
+[[nodiscard]] std::vector<NamedShape> separated(const NamedShape& shape);
+
 /// Names every face `prefix` followed by its number. For a shape that has no history to name
 /// its faces by: a primitive, an imported solid.
 [[nodiscard]] NamedShape nameFaces(const Shape& shape, const std::string& prefix);

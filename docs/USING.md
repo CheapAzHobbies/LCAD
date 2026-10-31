@@ -65,6 +65,12 @@ programs call extrude).
 
 The 3D view shows the result as you type. If it cannot be made, the panel says why and OK waits.
 
+Parts that do not touch are separate bodies. Pull two outlines that lie apart and you get a body
+for each, both from the one Pull, so changing its distance changes both. A cut right across a
+body leaves two bodies the same way, and so do pattern or mirror copies that do not touch the
+original. Delete one body and the others stay; delete the Pull from the timeline and all of them
+go.
+
 **Revolve** turns closed areas about a line of the same sketch (draw that line as construction
 geometry if it is not part of the outline), an origin axis, or a construction axis: choose it
 under **Axis** in the panel. **Mirror**, **Rectangular Pattern**, and **Circular

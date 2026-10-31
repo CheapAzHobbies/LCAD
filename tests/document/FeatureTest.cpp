@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1337,8 +1338,18 @@ TEST_CASE("Ellipses and splines are pulled into solids, and saved", "[document][
 
     const ObjectId pulled = document.addFeature(pullOf(sketch, 5.0));
     REQUIRE(document.featureError(pulled).empty());
-    const lcad::kernel::Shape& solid = document.findBody(document.findFeature(pulled)->body)->shape;
-    CHECK_THAT(lcad::kernel::volume(solid), WithinRel((pi * 30.0 * 12.0 + 420.0) * 5.0, 1e-9));
+    // The two are far apart, so they are two bodies.
+    const auto volumes = [](const Document& model) {
+        std::vector<double> found;
+        for (const Body& body : model.bodies()) {
+            found.push_back(lcad::kernel::volume(body.shape));
+        }
+        std::sort(found.begin(), found.end());
+        return found;
+    };
+    REQUIRE(volumes(document).size() == 2);
+    CHECK_THAT(volumes(document)[0], WithinRel(420.0 * 5.0, 1e-9));
+    CHECK_THAT(volumes(document)[1], WithinRel(pi * 30.0 * 12.0 * 5.0, 1e-9));
 
     const lcad::test::TempDir directory;
     const auto path = directory.file("curves.lcad");
@@ -1348,9 +1359,9 @@ TEST_CASE("Ellipses and splines are pulled into solids, and saved", "[document][
     const auto& reread = loaded.document->findSketch(sketch)->geometry;
     CHECK(reread.find(curve)->kind == lcad::sketch::EntityKind::Spline);
     CHECK(reread.find(curve)->points == s.find(curve)->points);
-    CHECK_THAT(lcad::kernel::volume(
-                   loaded.document->findBody(loaded.document->findFeature(pulled)->body)->shape),
-               WithinRel((pi * 30.0 * 12.0 + 420.0) * 5.0, 1e-9));
+    REQUIRE(volumes(*loaded.document).size() == 2);
+    CHECK_THAT(volumes(*loaded.document)[0], WithinRel(420.0 * 5.0, 1e-9));
+    CHECK_THAT(volumes(*loaded.document)[1], WithinRel(pi * 30.0 * 12.0 * 5.0, 1e-9));
 }
 
 TEST_CASE("Construction axes: revolves turn about them, patterns go around them",
@@ -1427,15 +1438,19 @@ TEST_CASE("Construction axes: revolves turn about them, patterns go around them"
     around.angle = 360.0;
     const ObjectId copies = document.addFeature(around);
     REQUIRE(document.featureError(copies).empty());
-    auto box = lcad::kernel::boundingBox(document.findBody(ringBody)->shape);
+    // The copy does not touch the ring, so it is a body of its own: the last one.
+    const ObjectId copied = document.bodies().back().id;
+    REQUIRE(copied != ringBody);
+    CHECK(document.findBody(copied)->madeBy == copies);
+    auto box = lcad::kernel::boundingBox(document.findBody(copied)->shape);
     REQUIRE(box.has_value());
-    // The copy, half a turn about x = 50, reaches to 50 + 50 + 30.
+    // Half a turn about x = 50, it reaches to 50 + 50 + 30.
     CHECK_THAT(box->max.x, WithinAbs(130.0, 1e-6));
     lcad::sketch::Sketch moved = document.findSketch(rodSketch)->geometry;
     moved.dragBy(rim, 10.0, 0.0);
     document.setSketchGeometry(rodSketch, moved, "Move");
     CHECK_THAT(document.axisState(rodAxis)->axis.origin.x, WithinAbs(60.0, 1e-9));
-    box = lcad::kernel::boundingBox(document.findBody(ringBody)->shape);
+    box = lcad::kernel::boundingBox(document.findBody(copied)->shape);
     CHECK_THAT(box->max.x, WithinAbs(150.0, 1e-6));
 
     // An axis along a flat face is no axis to turn about... it is the face's normal. A face
@@ -1458,4 +1473,262 @@ TEST_CASE("Construction axes: revolves turn about them, patterns go around them"
     CHECK(*loaded.document->findFeature(ring) == *document.findFeature(ring));
     CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(ringBody)->shape),
                WithinRel(lcad::kernel::volume(document.findBody(ringBody)->shape), 1e-9));
+}
+
+namespace {
+
+// Two squares 10 across, in one sketch on the XY plane: at the origin, and 30 along X.
+ObjectId twoSquares(Document& document) {
+    const ObjectId id = document.addSketch("Squares", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    (void)lcad::sketch::addRectangle(s, {0.0, 0.0}, {10.0, 10.0});
+    (void)lcad::sketch::addRectangle(s, {30.0, 0.0}, {40.0, 10.0});
+    document.setSketchGeometry(id, s, "Rectangles");
+    return id;
+}
+
+double centerX(const Body& body) {
+    return lcad::kernel::centerOfMass(body.shape)->x;
+}
+
+// The bodies that exist.
+std::vector<const Body*> solidBodies(const Document& document) {
+    std::vector<const Body*> found;
+    for (const Body& body : document.bodies()) {
+        if (!body.shape.isNull()) {
+            found.push_back(&body);
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("Solids that do not touch are bodies of their own", "[document][feature]") {
+    Document document;
+    const ObjectId sketch = twoSquares(document);
+
+    SECTION("pulling two outlines apart makes two bodies, in one step") {
+        const std::size_t steps = document.timeline().size();
+        const ObjectId pull = document.addFeature(pullOf(sketch, 5.0));
+        REQUIRE(document.featureError(pull).empty());
+        REQUIRE(document.bodies().size() == 2);
+        const Body& first = document.bodies()[0];
+        const Body& second = document.bodies()[1];
+        CHECK(first.name == "Body");
+        CHECK(second.name == "Body 2");
+        for (const Body& body : document.bodies()) {
+            CHECK(lcad::kernel::countTopology(body.shape).solids == 1);
+            CHECK_THAT(lcad::kernel::volume(body.shape), WithinAbs(500.0, 1e-6));
+            CHECK(body.madeBy == pull);
+        }
+        CHECK_THAT(std::abs(centerX(first) - centerX(second)), WithinAbs(30.0, 1e-6));
+        // The feature has the one place in the timeline.
+        CHECK(document.timeline().size() == steps + 1);
+
+        document.undo();
+        CHECK(document.bodies().empty());
+        CHECK(document.features().empty());
+        document.redo();
+        REQUIRE(document.bodies().size() == 2);
+        CHECK_THAT(lcad::kernel::volume(document.bodies()[1].shape), WithinAbs(500.0, 1e-6));
+    }
+
+    SECTION("outlines that touch are one body") {
+        const ObjectId touching = document.addSketch("Touching", lcad::kernel::planeXY());
+        lcad::sketch::Sketch s;
+        (void)lcad::sketch::addRectangle(s, {0.0, 0.0}, {10.0, 10.0});
+        (void)lcad::sketch::addRectangle(s, {10.0, 0.0}, {20.0, 10.0});
+        document.setSketchGeometry(touching, s, "Rectangles");
+        const ObjectId pull = document.addFeature(pullOf(touching, 5.0));
+        REQUIRE(document.featureError(pull).empty());
+        REQUIRE(document.bodies().size() == 1);
+        CHECK(lcad::kernel::countTopology(document.bodies()[0].shape).solids == 1);
+    }
+
+    SECTION("a cut right across a body leaves two, and it comes back when the cut stops short") {
+        const ObjectId plate = document.addSketch("Plate", lcad::kernel::planeXY());
+        lcad::sketch::Sketch outline;
+        (void)lcad::sketch::addRectangle(outline, {0.0, 0.0}, {60.0, 20.0});
+        document.setSketchGeometry(plate, outline, "Rectangle");
+        const ObjectId made = document.addFeature(pullOf(plate, 10.0));
+        const ObjectId body = document.findFeature(made)->body;
+        REQUIRE(document.bodies().size() == 1);
+
+        const ObjectId slot = document.addSketch("Slot", lcad::kernel::planeXY());
+        lcad::sketch::Sketch across;
+        (void)lcad::sketch::addRectangle(across, {25.0, -5.0}, {35.0, 25.0});
+        document.setSketchGeometry(slot, across, "Rectangle");
+        const ObjectId cut = document.addFeature(pullOf(slot, 10.0, Operation::Cut, body));
+        REQUIRE(document.featureError(cut).empty());
+        REQUIRE(document.bodies().size() == 2);
+        const ObjectId other = document.bodies()[1].id;
+        CHECK(document.findBody(other)->madeBy == cut);
+        CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+                   WithinAbs(25.0 * 20.0 * 10.0, 1e-6));
+        CHECK_THAT(lcad::kernel::volume(document.findBody(other)->shape),
+                   WithinAbs(25.0 * 20.0 * 10.0, 1e-6));
+
+        // Which is which stays the same as the model changes.
+        const double left = centerX(*document.findBody(body));
+        Feature deeper = *document.findFeature(cut);
+        deeper.distance = 12.0;
+        document.changeFeature(cut, deeper);
+        CHECK_THAT(centerX(*document.findBody(body)), WithinAbs(left, 1e-6));
+
+        // Short of the bottom, the two are joined under the slot: the second body is not there,
+        // and back it comes.
+        Feature shallow = *document.findFeature(cut);
+        shallow.distance = 4.0;
+        document.changeFeature(cut, shallow);
+        CHECK(solidBodies(document).size() == 1);
+        CHECK(document.findBody(other) != nullptr);
+        CHECK(document.findBody(other)->shape.isNull());
+        document.changeFeature(cut, deeper);
+        REQUIRE(solidBodies(document).size() == 2);
+        CHECK_THAT(lcad::kernel::volume(document.findBody(other)->shape),
+                   WithinAbs(25.0 * 20.0 * 10.0, 1e-6));
+
+        // A cut that goes on to split the body, by a change and not as it is made: one undo step.
+        document.changeFeature(cut, shallow);
+        document.undo();
+        CHECK(solidBodies(document).size() == 2);
+    }
+
+    SECTION("joining something apart from a body leaves two") {
+        const ObjectId plate = document.addSketch("Plate", lcad::kernel::planeXY());
+        lcad::sketch::Sketch outline;
+        (void)lcad::sketch::addRectangle(outline, {0.0, 50.0}, {10.0, 60.0});
+        document.setSketchGeometry(plate, outline, "Rectangle");
+        const ObjectId made = document.addFeature(pullOf(plate, 5.0));
+        const ObjectId body = document.findFeature(made)->body;
+        const double y = lcad::kernel::centerOfMass(document.findBody(body)->shape)->y;
+
+        const ObjectId join = document.addFeature(pullOf(sketch, 5.0, Operation::Join, body));
+        REQUIRE(document.featureError(join).empty());
+        REQUIRE(document.bodies().size() == 3);
+        // The body it was stays that one.
+        CHECK_THAT(lcad::kernel::centerOfMass(document.findBody(body)->shape)->y,
+                   WithinAbs(y, 1e-6));
+    }
+
+    SECTION("each is a body to work on, and they are saved and read back") {
+        const ObjectId pull = document.addFeature(pullOf(sketch, 5.0));
+        const ObjectId second = document.bodies()[1].id;
+        const ObjectId first = document.bodies()[0].id;
+
+        Feature rounds;
+        rounds.kind = FeatureKind::Fillet;
+        rounds.body = second;
+        rounds.edges = uprightEdges(document, second);
+        REQUIRE(rounds.edges.size() == 4);
+        rounds.size = 1.0;
+        const ObjectId rounded = document.addFeature(rounds);
+        REQUIRE(document.featureError(rounded).empty());
+        CHECK_THAT(lcad::kernel::volume(document.findBody(first)->shape), WithinAbs(500.0, 1e-6));
+        const double roundedVolume = (100.0 - (4.0 - pi)) * 5.0;
+        CHECK_THAT(lcad::kernel::volume(document.findBody(second)->shape),
+                   WithinAbs(roundedVolume, 1e-6));
+
+        // It follows the model.
+        Feature taller = *document.findFeature(pull);
+        taller.distance = 10.0;
+        document.changeFeature(pull, taller);
+        CHECK_THAT(lcad::kernel::volume(document.findBody(second)->shape),
+                   WithinAbs(roundedVolume * 2.0, 1e-6));
+
+        const lcad::test::TempDir directory;
+        const std::filesystem::path path = directory.file("apart.lcad");
+        saveDocument(document, path);
+        const LoadedDocument loaded = loadDocument(path);
+        REQUIRE(loaded.document->bodies().size() == 2);
+        CHECK(loaded.document->findBody(second)->piece == 1);
+        CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(second)->shape),
+                   WithinAbs(roundedVolume * 2.0, 1e-6));
+        CHECK_FALSE(loaded.document->isModified());
+    }
+
+    SECTION("deleting one leaves the other") {
+        const ObjectId pull = document.addFeature(pullOf(sketch, 5.0));
+        const ObjectId first = document.bodies()[0].id;
+        const ObjectId second = document.bodies()[1].id;
+
+        document.removeBody(second);
+        REQUIRE(solidBodies(document).size() == 1);
+        CHECK(solidBodies(document).front()->id == first);
+        CHECK(document.findFeature(pull) != nullptr);
+        // It stays gone as the model changes.
+        Feature taller = *document.findFeature(pull);
+        taller.distance = 10.0;
+        document.changeFeature(pull, taller);
+        REQUIRE(solidBodies(document).size() == 1);
+        document.undo();
+        document.undo();
+        REQUIRE(solidBodies(document).size() == 2);
+
+        // The first of them too: that one is the one the feature works on.
+        document.removeBody(first);
+        REQUIRE(solidBodies(document).size() == 1);
+        CHECK(solidBodies(document).front()->id == second);
+        CHECK(document.findFeature(pull) != nullptr);
+        // And with the last, the feature goes, and all with it.
+        document.removeBody(second);
+        document.removeFeature(pull);
+        CHECK(document.bodies().empty());
+    }
+
+    SECTION("deleting the feature takes all it left, and what works on them") {
+        const ObjectId pull = document.addFeature(pullOf(sketch, 5.0));
+        const ObjectId second = document.bodies()[1].id;
+        Feature rounds;
+        rounds.kind = FeatureKind::Fillet;
+        rounds.body = second;
+        rounds.edges = uprightEdges(document, second);
+        rounds.size = 1.0;
+        const ObjectId rounded = document.addFeature(rounds);
+
+        document.removeFeature(pull);
+        CHECK(document.bodies().empty());
+        CHECK(document.features().empty());
+        document.undo();
+        REQUIRE(document.bodies().size() == 2);
+        REQUIRE(document.findFeature(rounded) != nullptr);
+        CHECK(document.featureError(rounded).empty());
+        CHECK_FALSE(document.findBody(second)->shape.isNull());
+    }
+
+    SECTION("a component's copy has them too") {
+        const ObjectId pull = document.addFeature(pullOf(sketch, 5.0));
+        const ObjectId first = document.bodies()[0].id;
+        const ObjectId second = document.bodies()[1].id;
+        const ObjectId component = document.makeComponent("Parts", {first, second});
+        const ObjectId copy = document.copyComponent(document.occurrencesOf(component).front());
+        const ObjectId copied = document.findOccurrence(copy)->component;
+        int pieces = 0;
+        for (const Body& body : document.bodies()) {
+            if (body.component == copied) {
+                ++pieces;
+                CHECK_THAT(lcad::kernel::volume(body.shape), WithinAbs(500.0, 1e-6));
+            }
+        }
+        CHECK(pieces == 2);
+        CHECK(document.bodies().size() == 4);
+        CHECK(document.featureError(pull).empty());
+    }
+
+    SECTION("a component of the one solid is copied as it is") {
+        (void)document.addFeature(pullOf(sketch, 5.0));
+        const ObjectId second = document.bodies()[1].id;
+        const ObjectId component = document.makeComponent("Part", {second});
+        const ObjectId copy = document.copyComponent(document.occurrencesOf(component).front());
+        const ObjectId copied = document.findOccurrence(copy)->component;
+        std::vector<const Body*> found;
+        for (const Body& body : document.bodies()) {
+            if (body.component == copied) {
+                found.push_back(&body);
+            }
+        }
+        REQUIRE(found.size() == 1);
+        CHECK_THAT(lcad::kernel::volume(found.front()->shape), WithinAbs(500.0, 1e-6));
+    }
 }
