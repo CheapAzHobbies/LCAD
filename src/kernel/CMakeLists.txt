@@ -10,6 +10,7 @@ add_library(lcad_kernel STATIC
     src/Modeling.cpp
     src/Plane.cpp
     src/Primitives.cpp
+    src/Projection.cpp
     src/Serialization.cpp
     src/Shape.cpp
     src/SubShapes.cpp

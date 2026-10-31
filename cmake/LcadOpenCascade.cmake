@@ -77,7 +77,7 @@ function(lcad_find_occt_toolkits result)
 endfunction()
 
 lcad_find_occt_toolkits(_lcad_occt_modeling_libraries
-    TKOffset TKFillet TKBool TKBO TKShHealing TKPrim TKTopAlgo TKGeomAlgo TKMesh TKBRep
+    TKHLR TKOffset TKFillet TKBool TKBO TKShHealing TKPrim TKTopAlgo TKGeomAlgo TKMesh TKBRep
     TKGeomBase TKG3d TKG2d TKMath TKernel)
 lcad_find_occt_toolkits(_lcad_occt_visualization_libraries
     TKOpenGl TKV3d TKService)
