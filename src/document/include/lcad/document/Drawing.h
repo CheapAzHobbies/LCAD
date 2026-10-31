@@ -64,7 +64,8 @@ struct DrawingView {
     /// model. Up the parent if `sectionVertical`, and across it otherwise.
     bool sectionVertical = true;
     double sectionPosition = 0.0;
-    /// For a section: looks from the other side of the cutting line.
+    /// For a section: looks from the other side of the cutting line. Unless flipped, a section
+    /// looks left at a line up its parent, and up at a line across it.
     bool sectionFlipped = false;
     /// For a detail: the circle on the parent that it shows, in the parent's coordinates, in
     /// millimeters of the model.
