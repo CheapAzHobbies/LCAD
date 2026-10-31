@@ -96,8 +96,7 @@ QString timeText(double seconds) {
 MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidget* parent)
     : QWidget(parent), m_viewport(viewport), m_setups(new QComboBox(this)),
       m_machineName(new QLineEdit(this)), m_dialect(new QComboBox(this)),
-      m_origin(new QComboBox(this)),
-      m_stockSide(numberField(this, 0.0, 1000.0, 1.0, tr(" mm"))),
+      m_origin(new QComboBox(this)), m_stockSide(numberField(this, 0.0, 1000.0, 1.0, tr(" mm"))),
       m_stockTop(numberField(this, 0.0, 1000.0, 0.5, tr(" mm"))),
       m_stockBottom(numberField(this, 0.0, 1000.0, 0.5, tr(" mm"))),
       m_travelX(numberField(this, 1.0, 10000.0, 10.0, tr(" mm"), 0)),
@@ -276,13 +275,11 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
         }
     });
 
-    const auto operationField = [this](QDoubleSpinBox* field,
-                                       double MachiningOperation::*member) {
+    const auto operationField = [this](QDoubleSpinBox* field, double MachiningOperation::*member) {
         connect(field, &QDoubleSpinBox::valueChanged, this, [this, member](double value) {
-            editOperation(tr("Change Operation"),
-                          [member, value](MachiningOperation& operation) {
-                              operation.*member = value;
-                          });
+            editOperation(tr("Change Operation"), [member, value](MachiningOperation& operation) {
+                operation.*member = value;
+            });
         });
     };
     operationField(m_feed, &MachiningOperation::feed);
@@ -589,8 +586,8 @@ void MachiningWorkspace::change(const Setup& changed, const QString& label) {
     m_document->changeSetup(changed, label.toStdString());
 }
 
-void MachiningWorkspace::editOperation(
-    const QString& label, const std::function<void(MachiningOperation&)>& edit) {
+void MachiningWorkspace::editOperation(const QString& label,
+                                       const std::function<void(MachiningOperation&)>& edit) {
     if (m_filling || setup() == nullptr || operation() == nullptr) {
         return;
     }
@@ -681,9 +678,8 @@ bool MachiningWorkspace::removeOperation() {
 }
 
 void MachiningWorkspace::setTargets(const std::vector<OperationTarget>& targets) {
-    editOperation(tr("Change Faces"), [&targets](MachiningOperation& each) {
-        each.targets = targets;
-    });
+    editOperation(tr("Change Faces"),
+                  [&targets](MachiningOperation& each) { each.targets = targets; });
 }
 
 kernel::Mesh MachiningWorkspace::partMesh() const {
@@ -728,8 +724,7 @@ void MachiningWorkspace::showMove(std::size_t move) {
     }
     if (move < m_simulation->movesDone()) {
         // The stock cannot grow back: start over.
-        m_simulation =
-            std::make_unique<cam::Simulation>(*m_simulated, m_mesh, setup()->machine);
+        m_simulation = std::make_unique<cam::Simulation>(*m_simulated, m_mesh, setup()->machine);
     }
     m_simulation->runTo(move);
     showSimulationAt(move);

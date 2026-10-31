@@ -672,9 +672,9 @@ void MainWindow::defineCommands() {
         c.run = [this](bool) {
             if (m_workspace == Workspace::Drawing) {
                 m_drawings->setTool(DrawingWorkspace::Tool::Select);
-            } else if (m_panel != nullptr || m_planePanel != nullptr ||
-                       m_featurePanel != nullptr || m_measurePanel != nullptr ||
-                       m_jointPanel != nullptr || m_movePanel != nullptr) {
+            } else if (m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
+                       m_measurePanel != nullptr || m_jointPanel != nullptr ||
+                       m_movePanel != nullptr) {
                 cancelCommand();
             } else if (isAnimating()) {
                 stopAnimation();
@@ -1840,13 +1840,13 @@ void MainWindow::createTopBar() {
     sheet->addSeparator();
     QMenu* addView = sheet->addMenu(tr("Add &View"));
     addView->setObjectName(QStringLiteral("menu.addView"));
-    for (const char* id : {"drawing.view.front", "drawing.view.back", "drawing.view.top",
-                           "drawing.view.bottom", "drawing.view.left", "drawing.view.right",
-                           "drawing.view.isometric"}) {
+    for (const char* id :
+         {"drawing.view.front", "drawing.view.back", "drawing.view.top", "drawing.view.bottom",
+          "drawing.view.left", "drawing.view.right", "drawing.view.isometric"}) {
         addView->addAction(action(id));
     }
-    sheet->addActions({action("drawing.sectionUp"), action("drawing.sectionAcross"),
-                       action("drawing.detail")});
+    sheet->addActions(
+        {action("drawing.sectionUp"), action("drawing.sectionAcross"), action("drawing.detail")});
     sheet->addSeparator();
     sheet->addActions({action("sketch.dimension"), action("drawing.note")});
     sheet->addSeparator();

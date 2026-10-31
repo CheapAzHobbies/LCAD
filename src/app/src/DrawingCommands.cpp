@@ -137,8 +137,8 @@ void MainWindow::defineMachiningCommands() {
             QMessageBox::warning(this, tr("Could not write the G-code"), error);
             return;
         }
-        const QString name = QString::fromStdString(m_machining->setup()->name) +
-                             QStringLiteral(".nc");
+        const QString name =
+            QString::fromStdString(m_machining->setup()->name) + QStringLiteral(".nc");
         QString path = QFileDialog::getSaveFileName(this, tr("Write G-code"), name,
                                                     tr("G-code files (*.nc *.gcode *.ngc)"));
         if (path.isEmpty()) {

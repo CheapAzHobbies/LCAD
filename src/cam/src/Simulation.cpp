@@ -3,8 +3,8 @@
 #include <lcad/cam/Simulation.h>
 
 #include <algorithm>
-#include <cmath>
 #include <charconv>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <string>

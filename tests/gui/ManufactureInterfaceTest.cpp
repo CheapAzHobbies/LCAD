@@ -50,7 +50,8 @@ lcad::kernel::Shape bracket() {
     const NamedShape plate = nameFaces(makeBox(80.0, 60.0, 12.0), "plate");
     const NamedShape pocket =
         nameFaces(translated(makeBox(40.0, 30.0, 10.0), 10.0, 15.0, 6.0), "pocket");
-    const NamedShape bore = nameFaces(translated(makeCylinder(3.0, 14.0), 65.0, 30.0, -1.0), "bore");
+    const NamedShape bore =
+        nameFaces(translated(makeCylinder(3.0, 14.0), 65.0, 30.0, -1.0), "bore");
     return combine(combine(plate, pocket, Combination::Cut), bore, Combination::Cut).shape;
 }
 
@@ -133,7 +134,8 @@ private:
         const Faces faces = facesOf(*window.document(), body);
         MachiningWorkspace* machining = window.machining();
         machining->addOperation(OperationKind::Face, {});
-        machining->addOperation(OperationKind::Pocket, {OperationTarget{body, {}, faces.floorName}});
+        machining->addOperation(OperationKind::Pocket,
+                                {OperationTarget{body, {}, faces.floorName}});
         machining->addOperation(OperationKind::Contour,
                                 {OperationTarget{body, {}, faces.bottomName}});
         machining->addOperation(OperationKind::Drill, {OperationTarget{body, {}, faces.holeName}});
@@ -217,8 +219,8 @@ void ManufactureInterfaceTest::aModelBecomesADrawingAndGCode() {
     QFile file(path);
     QVERIFY(file.open(QIODevice::ReadOnly));
     const std::string text = file.readAll().toStdString();
-    const auto wrong = lcad::cam::verifyGcode(text, machining->program(),
-                                              lcad::document::PostDialect::Grbl);
+    const auto wrong =
+        lcad::cam::verifyGcode(text, machining->program(), lcad::document::PostDialect::Grbl);
     QVERIFY(wrong.empty());
     QVERIFY(text.find("M3") != std::string::npos);
     QVERIFY(text.find("M6") == std::string::npos);
@@ -270,7 +272,8 @@ void ManufactureInterfaceTest::operationsTakeWhatIsSelected() {
     window.setWorkspace(Workspace::Manufacture);
 
     // Click the pocket's floor in the 3D view, as a user would, through the selection.
-    window.viewport()->setSelection({SelectedItem{body, SelectedItem::Kind::Face, faces.floor, {}}});
+    window.viewport()->setSelection(
+        {SelectedItem{body, SelectedItem::Kind::Face, faces.floor, {}}});
     QVERIFY(trigger(window, "manufacture.pocket"));
     MachiningWorkspace* machining = window.machining();
     QVERIFY(machining->operation() != nullptr);
