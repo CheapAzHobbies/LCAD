@@ -25,6 +25,7 @@
 #include <QMenuBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QSettings>
 #include <QStackedWidget>
 #include <QStatusBar>
@@ -935,11 +936,27 @@ void InterfaceTest::theRightPanelIsAsLongAsThePageShown() {
     auto* stack = window.findChild<QStackedWidget*>(QStringLiteral("inspectorStack"));
     QVERIFY(stack != nullptr);
     window.setWorkspace(lcad::app::Workspace::Design);
+    auto* scroll = qobject_cast<QScrollArea*>(stack->parentWidget()->parentWidget());
+    QVERIFY(scroll != nullptr);
+    const auto* dock = window.findChild<QDockWidget*>(QStringLiteral("propertiesDock"));
+    const int usualWidth = dock->width();
+    const int usualPageWidth = stack->width();
     const int shortPage = stack->minimumSizeHint().height();
     window.setWorkspace(lcad::app::Workspace::Manufacture);
     QTRY_VERIFY(stack->minimumSizeHint().height() > shortPage);
+    // Each workspace's page fits across the panel, none of it cut off at the side.
+    QTRY_VERIFY(stack->minimumSizeHint().width() <= scroll->viewport()->width());
+    QTRY_COMPARE(stack->width(), scroll->viewport()->width());
+    window.setWorkspace(lcad::app::Workspace::Drawing);
+    QTRY_VERIFY(stack->minimumSizeHint().width() <= scroll->viewport()->width());
+    QTRY_COMPARE(stack->width(), scroll->viewport()->width());
     window.setWorkspace(lcad::app::Workspace::Design);
     QCOMPARE(stack->minimumSizeHint().height(), shortPage);
+    // And the panel is back as it was, not held open by a page that is not shown: what is shown
+    // would run off the side of the panel, or scroll for nothing.
+    QTRY_COMPARE(dock->width(), usualWidth);
+    QTRY_COMPARE(stack->width(), usualPageWidth);
+    QTRY_COMPARE(stack->height(), scroll->viewport()->height());
 }
 
 void InterfaceTest::focusModeGivesTheWindowToTheView() {

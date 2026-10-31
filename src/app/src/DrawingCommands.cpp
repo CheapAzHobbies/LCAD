@@ -47,6 +47,7 @@ void MainWindow::setWorkspace(Workspace workspace) {
     m_workspaceBox->setCurrentIndex(m_workspaceBox->findData(static_cast<int>(workspace)));
     updateMode();
     showInspector();
+    fitInspector();
     fitToolbar();
     m_commands->refresh();
     if (drawing && m_drawings->drawing() == nullptr) {

@@ -63,6 +63,7 @@
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QStyle>
 #include <QTabBar>
 #include <QToolBar>
 #include <QToolButton>
@@ -132,20 +133,8 @@ private:
     }
 };
 
-// Pages of a panel, as tall and as wide as the page shown: a QStackedWidget goes by its largest,
-// and the page for what is selected would scroll by the length of the Manufacture workspace's.
-class InspectorStack : public QStackedWidget {
-public:
-    explicit InspectorStack(QWidget* parent) : QStackedWidget(parent) {
-        connect(this, &QStackedWidget::currentChanged, this, [this] { updateGeometry(); });
-    }
-    [[nodiscard]] QSize sizeHint() const override {
-        return currentWidget() != nullptr ? currentWidget()->sizeHint() : QSize();
-    }
-    [[nodiscard]] QSize minimumSizeHint() const override {
-        return currentWidget() != nullptr ? currentWidget()->minimumSizeHint() : QSize();
-    }
-};
+// How wide the right-hand panel starts out.
+constexpr int inspectorWidth = 240;
 
 } // namespace
 
@@ -164,7 +153,7 @@ MainWindow::MainWindow(QWidget* parent)
     createDocks();
     m_drawings = new DrawingWorkspace(this);
     m_center->addWidget(m_drawings->view());
-    m_inspectorStack->addWidget(m_drawings->panel());
+    m_drawings->panel()->hide();
     connect(m_drawings, &DrawingWorkspace::stateChanged, this, [this] {
         m_commands->refresh();
         if (m_workspace == Workspace::Drawing) {
@@ -174,7 +163,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_drawings, &DrawingWorkspace::message, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
     m_machining = new MachiningWorkspace(m_viewport, this);
-    m_inspectorStack->addWidget(m_machining);
+    m_machining->hide();
     connect(m_machining, &MachiningWorkspace::stateChanged, this,
             [this] { m_commands->refresh(); });
     connect(m_machining, &MachiningWorkspace::message, this,
@@ -2275,7 +2264,7 @@ void MainWindow::createDocks() {
 
     // The right-hand panel holds the command in progress, or else what is selected.
     m_properties = new PropertiesPanel(this);
-    auto* stack = new InspectorStack(this);
+    auto* stack = new QStackedWidget(this);
     stack->setObjectName(QStringLiteral("inspectorStack"));
     stack->addWidget(m_properties);
     m_sketchPanel = new SketchPanel(m_viewport->sketchEditor(), this);
@@ -2292,10 +2281,10 @@ void MainWindow::createDocks() {
     m_inspectorDock = new QDockWidget(tr("Properties"), this);
     m_inspectorDock->setObjectName(QStringLiteral("propertiesDock"));
     m_inspectorDock->setWidget(scroll);
-    m_inspectorDock->setMinimumWidth(240);
+    m_inspectorDock->setMinimumWidth(inspectorWidth);
     addDockWidget(Qt::RightDockWidgetArea, m_inspectorDock);
     // Narrow side panels and a thin timeline, so that the 3D view has most of the window.
-    resizeDocks({m_browserDock, m_inspectorDock}, {210, 240}, Qt::Horizontal);
+    resizeDocks({m_browserDock, m_inspectorDock}, {210, inspectorWidth}, Qt::Horizontal);
     resizeDocks({m_timelineDock}, {40}, Qt::Vertical);
 
     // The browser and the properties run the full height of the window; the timeline sits
@@ -3126,14 +3115,30 @@ void MainWindow::showViewportMenu(const QPoint& position) {
 // ---------------------------------------------------------------------------------------------
 // Modeling commands
 
+void MainWindow::fitInspector() {
+    // A workspace's page can need more room across than the panel has beside a scroll bar, which
+    // would cut off the side of it. The 3D view stays where it is within a workspace.
+    const int needed = m_workspace == Workspace::Design
+                           ? 0
+                           : m_inspectorStack->minimumSizeHint().width() +
+                                 style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+    const int width = std::max(inspectorWidth, needed);
+    // As wide as it has to be, so it is narrowed again; a width the user chose is left alone.
+    const bool fitted = m_inspectorDock->width() <= m_inspectorDock->minimumWidth();
+    m_inspectorDock->setMinimumWidth(width);
+    if (fitted && m_inspectorDock->isVisible() && !m_inspectorDock->isFloating()) {
+        resizeDocks({m_inspectorDock}, {width}, Qt::Horizontal);
+    }
+}
+
 void MainWindow::showInspector() {
     QStackedWidget* stack = m_inspectorStack;
     if (m_workspace == Workspace::Drawing) {
-        stack->setCurrentWidget(m_drawings->panel());
+        showWorkspacePage(m_drawings->panel());
         m_inspectorDock->setWindowTitle(tr("Drawing"));
         m_commandLabel->setText(m_drawings->panel()->promptText());
     } else if (m_workspace == Workspace::Manufacture) {
-        stack->setCurrentWidget(m_machining);
+        showWorkspacePage(m_machining);
         m_inspectorDock->setWindowTitle(tr("Manufacture"));
         m_commandLabel->clear();
     } else if (m_panel != nullptr) {
@@ -3178,6 +3183,22 @@ void MainWindow::showInspector() {
         m_inspectorDock->setWindowTitle(tr("Properties"));
         m_commandLabel->clear();
     }
+    // These two are in the stack only while they are shown. A stack is as long and as wide as the
+    // largest page in it, even for a page that is not, and everything else would scroll by the
+    // length of the Manufacture page and be cut off by its width.
+    if (m_workspace != Workspace::Drawing) {
+        stack->removeWidget(m_drawings->panel());
+    }
+    if (m_workspace != Workspace::Manufacture) {
+        stack->removeWidget(m_machining);
+    }
+}
+
+void MainWindow::showWorkspacePage(QWidget* page) {
+    if (m_inspectorStack->indexOf(page) < 0) {
+        m_inspectorStack->addWidget(page);
+    }
+    m_inspectorStack->setCurrentWidget(page);
 }
 
 void MainWindow::startPrimitive(PrimitiveKind kind) {

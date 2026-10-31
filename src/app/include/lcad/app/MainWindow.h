@@ -388,6 +388,8 @@ private:
     void updateRecentMenu();
     void rememberFile(const QString& path);
     void showInspector();
+    void showWorkspacePage(QWidget* page);
+    void fitInspector();
     /// Opens the panel for a feature and sets up picking for it.
     void openFeaturePanel(document::FeatureKind kind);
     void closeFeaturePanel();
