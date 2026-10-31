@@ -816,6 +816,44 @@ const QHash<QString, Drawing>& drawings() {
              i.p.drawRoundedRect(QRectF(-1.5, -3.5, 11, 7), 3.5, 3.5);
              i.p.restore();
          }},
+        {QStringLiteral("drawing"),
+         [](const Ink& i) {
+             // A sheet with its title block.
+             i.p.drawRect(QRectF(3.5, 5.5, 17, 13));
+             i.line(11, 18.5, 11, 15);
+             i.line(11, 15, 20.5, 15);
+             i.poly({{6, 12}, {9, 8}, {14, 8}, {11, 12}});
+         }},
+        {QStringLiteral("view"),
+         [](const Ink& i) {
+             // A part in a frame of corners.
+             i.p.drawRect(QRectF(8, 8, 8, 8));
+             i.poly({{3.5, 7}, {3.5, 3.5}, {7, 3.5}}, false);
+             i.poly({{17, 3.5}, {20.5, 3.5}, {20.5, 7}}, false);
+             i.poly({{20.5, 17}, {20.5, 20.5}, {17, 20.5}}, false);
+             i.poly({{7, 20.5}, {3.5, 20.5}, {3.5, 17}}, false);
+         }},
+        {QStringLiteral("section"),
+         [](const Ink& i) {
+             // A part cut through, the cut hatched.
+             i.p.drawRect(QRectF(4.5, 6.5, 15, 11));
+             i.line(4.5, 13, 11, 6.5);
+             i.line(7, 17.5, 16, 8.5);
+             i.line(13, 17.5, 19.5, 11);
+         }},
+        {QStringLiteral("detail"),
+         [](const Ink& i) {
+             // A circle around a corner of a part.
+             i.ellipse(14, 10, 6.5, 6.5);
+             i.poly({{3.5, 20.5}, {3.5, 10}, {14, 10}}, false);
+         }},
+        {QStringLiteral("note"),
+         [](const Ink& i) {
+             // Lines of text.
+             i.line(4, 6.5, 20, 6.5);
+             i.line(4, 12, 20, 12);
+             i.line(4, 17.5, 14, 17.5);
+         }},
         {QStringLiteral("animate"),
          [](const Ink& i) {
              // A play mark in a circle.

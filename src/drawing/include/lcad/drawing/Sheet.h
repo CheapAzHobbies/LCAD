@@ -74,13 +74,23 @@ struct Label {
     bool bold = false;
 };
 
-/// The part of a sheet a view takes up.
+/// The part of a sheet a view takes up, and how the two relate.
 struct ViewBox {
     document::ObjectId view;
     double left = 0.0;
     double bottom = 0.0;
     double right = 0.0;
     double top = 0.0;
+    /// What point of the view, in millimeters of the model, lies at (x, y) on the sheet.
+    Point2D origin;
+    double x = 0.0;
+    double y = 0.0;
+    double scale = 1.0;
+
+    /// A place on the sheet as a point of the view.
+    [[nodiscard]] Point2D toView(const Point2D& onSheet) const {
+        return {origin.x + (onSheet.x - x) / scale, origin.y + (onSheet.y - y) / scale};
+    }
 };
 
 /// A point of the model that a dimension can hang on, as it lies on the sheet.
@@ -90,13 +100,24 @@ struct SnapPoint {
     Point2D at;
 };
 
-/// A circle of the model on the sheet, for a radius or a diameter.
+/// A straight edge of the model on the sheet, for dimensioning it with one click.
+struct SnapEdge {
+    document::ObjectId view;
+    document::DrawingPoint start;
+    document::DrawingPoint end;
+    Point2D from;
+    Point2D to;
+};
+
+/// A circle or an arc of the model on the sheet, for a radius or a diameter.
 struct SnapCircle {
     document::ObjectId view;
     document::DrawingPoint point;
     Point2D center;
     /// On the sheet.
     double radius = 0.0;
+    /// A whole circle, which is said by its diameter, and not an arc, by its radius.
+    bool whole = false;
 };
 
 /// A dimension as it came out.
@@ -119,6 +140,7 @@ struct Sheet {
     std::vector<ViewBox> views;
     std::vector<PlacedDimension> dimensions;
     std::vector<SnapPoint> snapPoints;
+    std::vector<SnapEdge> snapEdges;
     std::vector<SnapCircle> snapCircles;
     /// What could not be shown, in sentences: a view of nothing, a dimension whose edge is gone.
     std::vector<std::string> problems;

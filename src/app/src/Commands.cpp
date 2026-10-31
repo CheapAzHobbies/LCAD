@@ -115,9 +115,8 @@ void CommandRegistry::refresh() {
     for (const QString& id : std::as_const(m_order)) {
         const Command& definition = m_commands[id];
         QAction* action = m_actions[id];
-        if (definition.isEnabled) {
-            action->setEnabled(definition.isEnabled());
-        }
+        const bool available = !m_available || m_available(id);
+        action->setEnabled(available && (!definition.isEnabled || definition.isEnabled()));
         if (definition.checkable && definition.isChecked) {
             action->setChecked(definition.isChecked());
         }

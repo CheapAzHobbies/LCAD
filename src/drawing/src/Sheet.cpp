@@ -713,20 +713,52 @@ struct SheetBuilder::Impl {
                 if (edge.isCircle) {
                     add(edge.center, DrawingPoint::Where::Center);
                     const kernel::Point center = kernel::apply(part.placement, edge.center);
-                    if (keep(center)) {
+                    // Round only in a view along its axis.
+                    const Vector axis = kernel::apply(part.placement, edge.axis);
+                    const double facing =
+                        std::abs(kernel::depthOf(placed.frame, {axis.x, axis.y, axis.z}));
+                    if (keep(center) && facing > 1.0 - 1e-6) {
+                        const double closed = std::hypot(edge.start.x - edge.end.x,
+                                                         edge.start.y - edge.end.y) +
+                                              std::abs(edge.start.z - edge.end.z);
                         sheet.snapCircles.push_back(
                             {view.id,
                              {part.body, part.path, edge.name, DrawingPoint::Where::Center},
                              placed.mapping(kernel::projected(placed.frame, center)),
-                             edge.radius * placed.mapping.scale});
+                             edge.radius * placed.mapping.scale,
+                             closed < 1e-6});
                     }
                 }
-                if (edge.isLine || edge.isCircle) {
+                // Where a whole circle starts is only where its seam happens to be.
+                const bool closedCircle =
+                    edge.isCircle && std::hypot(edge.start.x - edge.end.x,
+                                                edge.start.y - edge.end.y) +
+                                             std::abs(edge.start.z - edge.end.z) <
+                                         1e-6;
+                if (edge.isCircle && !closedCircle) {
                     add(edge.start, DrawingPoint::Where::Start);
                     add(edge.end, DrawingPoint::Where::End);
                 }
                 if (edge.isLine) {
-                    add(edge.middle, DrawingPoint::Where::Middle);
+                    const kernel::Point from = kernel::apply(part.placement, edge.start);
+                    const kernel::Point to = kernel::apply(part.placement, edge.end);
+                    const Point2D a = placed.mapping(kernel::projected(placed.frame, from));
+                    const Point2D b = placed.mapping(kernel::projected(placed.frame, to));
+                    // An edge seen end on is a point, and has no length to give; what shows
+                    // there belongs to what it runs away from.
+                    if (lengthOf(b - a) > 1e-6) {
+                        add(edge.start, DrawingPoint::Where::Start);
+                        add(edge.end, DrawingPoint::Where::End);
+                        add(edge.middle, DrawingPoint::Where::Middle);
+                        if (keep(from) && keep(to)) {
+                            sheet.snapEdges.push_back(
+                                {view.id,
+                                 {part.body, part.path, edge.name, DrawingPoint::Where::Start},
+                                 {part.body, part.path, edge.name, DrawingPoint::Where::End},
+                                 a,
+                                 b});
+                        }
+                    }
                 }
             }
         }
@@ -844,6 +876,10 @@ struct SheetBuilder::Impl {
 
             ViewBox box;
             box.view = view.id;
+            box.origin = map.origin;
+            box.x = view.x;
+            box.y = view.y;
+            box.scale = view.scale;
             if (view.kind == ViewKind::Detail) {
                 const double radius = view.detailRadius * view.scale;
                 box.left = view.x - radius;

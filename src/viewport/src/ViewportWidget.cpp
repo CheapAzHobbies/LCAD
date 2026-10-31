@@ -1597,6 +1597,8 @@ public:
         case Kind::SketchRenamed:
         case Kind::ParametersChanged:
         case Kind::HistoryChanged:
+        case Kind::DrawingsChanged:
+        case Kind::MachiningChanged:
         case Kind::MaterialsChanged:
             return;
         }

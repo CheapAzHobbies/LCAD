@@ -1018,6 +1018,8 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
         }
         break;
     case Kind::PlacementsChanged:
+    case Kind::DrawingsChanged:
+    case Kind::MachiningChanged:
     case Kind::MaterialsChanged:
     case Kind::ParametersChanged:
     case Kind::HistoryChanged:

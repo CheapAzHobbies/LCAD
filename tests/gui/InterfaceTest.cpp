@@ -622,7 +622,7 @@ void InterfaceTest::nothingEssentialIsClipped() {
             window.mainMenu()->width() >= window.mainMenu()->sizeHint().width());
 
     // The panels do not overlap the 3D view, and the view keeps most of the window.
-    const QRect view = window.viewport()->geometry();
+    const QRect view = window.centralWidget()->geometry();
     for (const char* name : {"browserDock", "propertiesDock", "timelineDock"}) {
         const auto* dock = window.findChild<QDockWidget*>(QString::fromLatin1(name));
         QVERIFY2(dock->isVisible() && !dock->geometry().intersects(view), name);
