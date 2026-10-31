@@ -10,6 +10,7 @@ add_library(lcad_document STATIC
     src/Feature.cpp
     src/Links.cpp
     src/Migration.cpp
+    src/Outputs.cpp
     src/Rebuild.cpp
     src/SketchShapes.cpp)
 add_library(lcad::document ALIAS lcad_document)

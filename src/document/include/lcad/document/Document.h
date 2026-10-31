@@ -3,7 +3,9 @@
 #pragma once
 
 #include <lcad/document/Assembly.h>
+#include <lcad/document/Drawing.h>
 #include <lcad/document/Feature.h>
+#include <lcad/document/Machining.h>
 #include <lcad/document/ObjectId.h>
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
@@ -138,6 +140,10 @@ struct Change {
         PlacementsChanged,
         /// The document's materials, or what a body (`body`) is made of, changed.
         MaterialsChanged,
+        /// A drawing (`body` is its id) was added, removed, or changed.
+        DrawingsChanged,
+        /// A setup or a tool (`body` is its id) was added, removed, or changed.
+        MachiningChanged,
     };
     Kind kind = Kind::HistoryChanged;
     /// The body or sketch concerned. Not valid for HistoryChanged, TimelineChanged, and the
@@ -166,6 +172,9 @@ struct DocumentState {
     std::vector<Joint> joints;
     /// The materials the document defines for itself, besides LCAD's own.
     std::vector<Material> materials;
+    std::vector<Drawing> drawings;
+    std::vector<Tool> tools;
+    std::vector<Setup> setups;
 };
 
 /// What a feature would give if it were applied now. See Document::tryFeature().
@@ -470,6 +479,47 @@ public:
     /// made of anything.
     void removeMaterial(const std::string& name);
 
+    // What is made from the model. Each change is one undo step. What these hold refers to the
+    // model by names that outlast changes to it; what they lead to is worked out by the drawing
+    // and cam modules.
+
+    /// An id no other object of the document has, for something inside a drawing or a setup.
+    ObjectId newId();
+
+    [[nodiscard]] const std::vector<Drawing>& drawings() const { return m_drawings; }
+    /// The drawing with this id, or nullptr. The pointer is valid until the next edit.
+    [[nodiscard]] const Drawing* findDrawing(ObjectId id) const;
+    /// `base` followed by the lowest number no drawing has yet: "Drawing 1".
+    [[nodiscard]] std::string uniqueDrawingName(std::string_view base) const;
+    /// Adds a drawing, and gives it its id. Throws std::invalid_argument without a name, or for a
+    /// view without a scale above zero.
+    ObjectId addDrawing(Drawing drawing);
+    /// Replaces the drawing with the same id.
+    void changeDrawing(const Drawing& drawing, const std::string& label = "Change Drawing");
+    void removeDrawing(ObjectId id);
+
+    [[nodiscard]] const std::vector<Tool>& tools() const { return m_tools; }
+    /// The tool with this id, or nullptr. The pointer is valid until the next edit.
+    [[nodiscard]] const Tool* findTool(ObjectId id) const;
+    /// Adds a tool, and gives it its id. Throws std::invalid_argument without a name, or
+    /// without a diameter above zero.
+    ObjectId addTool(Tool tool);
+    /// Replaces the tool with the same id.
+    void changeTool(const Tool& tool);
+    /// Throws std::invalid_argument if an operation uses it.
+    void removeTool(ObjectId id);
+
+    [[nodiscard]] const std::vector<Setup>& setups() const { return m_setups; }
+    /// The setup with this id, or nullptr. The pointer is valid until the next edit.
+    [[nodiscard]] const Setup* findSetup(ObjectId id) const;
+    /// `base` followed by the lowest number no setup has yet: "Setup 1".
+    [[nodiscard]] std::string uniqueSetupName(std::string_view base) const;
+    /// Adds a setup, and gives it its id. Throws std::invalid_argument without a name.
+    ObjectId addSetup(Setup setup);
+    /// Replaces the setup with the same id.
+    void changeSetup(const Setup& setup, const std::string& label = "Change Setup");
+    void removeSetup(ObjectId id);
+
     // Undo
 
     [[nodiscard]] bool canUndo() const;
@@ -539,6 +589,16 @@ private:
             AddMaterial,
             RemoveMaterial,
             ChangeMaterial,
+            // Drawings, tools, setups
+            AddDrawing,
+            RemoveDrawing,
+            ChangeDrawing,
+            AddTool,
+            RemoveTool,
+            ChangeTool,
+            AddSetup,
+            RemoveSetup,
+            ChangeSetup,
         };
         Kind kind;
         ObjectId id;
@@ -597,6 +657,13 @@ private:
         ObjectId newComponentId;
         Material material;
         Material newMaterial;
+        // The drawings, tools, and setups added, removed, or changed: before and after.
+        Drawing drawing;
+        Drawing newDrawing;
+        Tool tool;
+        Tool newTool;
+        Setup setup;
+        Setup newSetup;
     };
 
     struct Step {
@@ -637,6 +704,7 @@ private:
     /// Removes a component that has no occurrences left, with everything in it.
     void removeComponentContents(ObjectId component);
     void applyAssembly(const Edit& edit, bool forward);
+    void applyOutput(const Edit& edit, bool forward);
 
     // The timeline
     void insertItem(ObjectId item, std::size_t place);
@@ -675,6 +743,9 @@ private:
     std::vector<Occurrence> m_occurrences;
     std::vector<Joint> m_joints;
     std::vector<Material> m_materials;
+    std::vector<Drawing> m_drawings;
+    std::vector<Tool> m_tools;
+    std::vector<Setup> m_setups;
     /// Where each occurrence is in its parent, as the joints last placed it, and why a joint
     /// does not hold.
     std::unordered_map<ObjectId, kernel::Placement> m_solved;

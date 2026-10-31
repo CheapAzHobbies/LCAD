@@ -83,7 +83,9 @@ Document::Document(DocumentState state)
       m_features(std::move(state.features)), m_parameters(std::move(state.parameters)),
       m_components(std::move(state.components)), m_occurrences(std::move(state.occurrences)),
       m_joints(std::move(state.joints)), m_materials(std::move(state.materials)),
-      m_timeline(std::move(state.timeline)), m_marker(state.marker), m_nextId(state.nextId) {
+      m_drawings(std::move(state.drawings)), m_tools(std::move(state.tools)),
+      m_setups(std::move(state.setups)), m_timeline(std::move(state.timeline)),
+      m_marker(state.marker), m_nextId(state.nextId) {
     std::unordered_set<ObjectId> seen;
     const auto claim = [this, &seen](ObjectId id, const char* what) {
         if (!id.isValid() || id.value >= m_nextId) {
@@ -173,6 +175,18 @@ Document::Document(DocumentState state)
     }
     for (const Feature& feature : m_features) {
         inComponent(feature.component, "the feature \"" + feature.name + "\"");
+    }
+    for (const Drawing& drawing : m_drawings) {
+        claim(drawing.id, "drawing");
+        requireName(drawing.name, "Document");
+    }
+    for (const Tool& tool : m_tools) {
+        claim(tool.id, "tool");
+        requireName(tool.name, "Document");
+    }
+    for (const Setup& setup : m_setups) {
+        claim(setup.id, "setup");
+        requireName(setup.name, "Document");
     }
     std::unordered_set<std::string> materialNames;
     for (const Material& material : m_materials) {
@@ -1409,6 +1423,17 @@ void Document::apply(const Edit& edit) {
     case Edit::Kind::ChangeMaterial:
         applyAssembly(edit, true);
         break;
+    case Edit::Kind::AddDrawing:
+    case Edit::Kind::RemoveDrawing:
+    case Edit::Kind::ChangeDrawing:
+    case Edit::Kind::AddTool:
+    case Edit::Kind::RemoveTool:
+    case Edit::Kind::ChangeTool:
+    case Edit::Kind::AddSetup:
+    case Edit::Kind::RemoveSetup:
+    case Edit::Kind::ChangeSetup:
+        applyOutput(edit, true);
+        break;
     }
 }
 
@@ -1597,6 +1622,17 @@ void Document::revert(const Edit& edit) {
     case Edit::Kind::RemoveMaterial:
     case Edit::Kind::ChangeMaterial:
         applyAssembly(edit, false);
+        break;
+    case Edit::Kind::AddDrawing:
+    case Edit::Kind::RemoveDrawing:
+    case Edit::Kind::ChangeDrawing:
+    case Edit::Kind::AddTool:
+    case Edit::Kind::RemoveTool:
+    case Edit::Kind::ChangeTool:
+    case Edit::Kind::AddSetup:
+    case Edit::Kind::RemoveSetup:
+    case Edit::Kind::ChangeSetup:
+        applyOutput(edit, false);
         break;
     }
 }
