@@ -226,6 +226,9 @@ void DrawingInterfaceTest::aSheetGetsDimensionsByClickingWhatTheyMeasure() {
     click(window, {top.right, top.top});
     QCOMPARE(dimensions().size(), std::size_t{5});
     QVERIFY(qAbs(dimensions()[4].value - std::hypot(60.0, 40.0)) < 1e-6);
+    // A slanted one stays by what it measures, and does not go off across the sheet.
+    QCOMPARE(window.drawings()->drawing()->dimensions[4].kind, DimensionKind::Aligned);
+    QVERIFY(qAbs(window.drawings()->drawing()->dimensions[4].offset) <= 10.0);
     keepFrame(window.grab().toImage(), "drawing-dimensions");
 
     // Selected in the Select tool, its panel shows it; its text gets a tolerance there.

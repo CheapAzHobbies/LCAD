@@ -16,3 +16,8 @@ add_library(lcad::cam ALIAS lcad_cam)
 target_include_directories(lcad_cam PUBLIC include)
 target_link_libraries(lcad_cam PUBLIC lcad::document lcad::kernel PRIVATE lcad_clipper2)
 lcad_target_defaults(lcad_cam)
+# Clipper2's templates are compiled here, and Visual Studio finds unreachable code in them. Its
+# copy in third_party stays as it was released.
+if(MSVC)
+    target_compile_options(lcad_cam PRIVATE /wd4702)
+endif()

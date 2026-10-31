@@ -585,6 +585,18 @@ Program planSetup(const document::Document& document, const Setup& setup) {
         if (!trouble.empty() || moves.empty()) {
             continue;
         }
+        // Below the stock is whatever it stands on. A hole that goes through needs that, and
+        // what is under the work is the user's to know about.
+        double lowest = work.stock.min.z;
+        for (const Move& move : moves) {
+            lowest = std::min(lowest, move.to.z);
+        }
+        if (lowest < work.stock.min.z - 1e-6) {
+            say(operation.id,
+                operation.name + " goes " + millimeters(work.stock.min.z - lowest) +
+                    " below the stock: put something under the work that can take it.",
+                Problem::Severity::Warning);
+        }
         Toolpath toolpath;
         toolpath.operation = operation.id;
         toolpath.name = operation.name;

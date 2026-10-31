@@ -354,16 +354,21 @@ void addField(Sheet& sheet, double left, double top, double width, double height
 
 // The sign of the projection a drawing uses: a cone seen from the side and from its end.
 void addProjectionSymbol(Sheet& sheet, const Point2D& middle, DrawingStandard standard) {
-    const double inner = 2.0;
-    const double outer = 3.5;
+    const double inner = 1.5;
+    const double outer = 2.6;
+    const double half = 3.0;
     // First-angle has the circles on the right of the cone, third-angle on the left.
-    const double cone = standard == DrawingStandard::Iso ? -6.0 : 6.0;
+    const double cone = standard == DrawingStandard::Iso ? -5.0 : 5.0;
     const Point2D c{middle.x + cone, middle.y};
     const Point2D rings{middle.x - cone, middle.y};
-    sheet.strokes.push_back(lineOf(Pen::Frame, {c.x - 4.0, c.y - inner}, {c.x + 4.0, c.y - outer}));
-    sheet.strokes.push_back(lineOf(Pen::Frame, {c.x - 4.0, c.y + inner}, {c.x + 4.0, c.y + outer}));
-    sheet.strokes.push_back(lineOf(Pen::Frame, {c.x - 4.0, c.y - inner}, {c.x - 4.0, c.y + inner}));
-    sheet.strokes.push_back(lineOf(Pen::Frame, {c.x + 4.0, c.y - outer}, {c.x + 4.0, c.y + outer}));
+    sheet.strokes.push_back(
+        lineOf(Pen::Frame, {c.x - half, c.y - inner}, {c.x + half, c.y - outer}));
+    sheet.strokes.push_back(
+        lineOf(Pen::Frame, {c.x - half, c.y + inner}, {c.x + half, c.y + outer}));
+    sheet.strokes.push_back(
+        lineOf(Pen::Frame, {c.x - half, c.y - inner}, {c.x - half, c.y + inner}));
+    sheet.strokes.push_back(
+        lineOf(Pen::Frame, {c.x + half, c.y - outer}, {c.x + half, c.y + outer}));
     sheet.strokes.push_back(circleOf(Pen::Frame, rings, inner));
     sheet.strokes.push_back(circleOf(Pen::Frame, rings, outer));
 }
@@ -396,7 +401,8 @@ void addFrameAndTitle(Sheet& sheet, const Drawing& drawing) {
     addField(sheet, x + 110.0, y - row * 2.0, 20.0, row, "Scale", scale);
     addField(sheet, x + 130.0, y - row * 2.0, 20.0, row, "Sheet", toString(drawing.size));
     addField(sheet, x + 150.0, y - row * 2.0, 30.0, row, "Projection", {});
-    addProjectionSymbol(sheet, {x + 165.0, y - row * 2.5 - 0.6}, drawing.standard);
+    // Below its caption.
+    addProjectionSymbol(sheet, {x + 165.0, y - row * 2.5 - 1.2}, drawing.standard);
 }
 
 // A number with the decimals it needs.

@@ -416,6 +416,12 @@ TEST_CASE("A setup becomes toolpaths from the faces of the model", "[cam]") {
     // The hole, right through.
     CHECK(minOf(program.paths[3].moves, &kernel::Point::z) < 0.0);
     CHECK_THAT(maxOf(program.paths[3].moves, &kernel::Point::x), WithinAbs(65.0, 1e-9));
+    // Which takes the drill's point past the stock, into what it stands on: worth knowing, and
+    // no reason to stop.
+    REQUIRE(program.problems.size() == 1);
+    CHECK(program.problems[0].severity == Problem::Severity::Warning);
+    CHECK(program.problems[0].operation == setup.operations[3].id);
+    CHECK_THAT(program.problems[0].text, ContainsSubstring("below the stock"));
 
     SECTION("An operation that has lost its face says so, and the others stand") {
         Setup changed = setup;
@@ -423,7 +429,7 @@ TEST_CASE("A setup becomes toolpaths from the faces of the model", "[cam]") {
         const Program broken = planSetup(part.document, changed);
         CHECK(broken.hasErrors());
         CHECK(broken.paths.size() == 3);
-        REQUIRE(broken.problems.size() == 1);
+        REQUIRE(broken.problems.size() == 2);
         CHECK(broken.problems[0].operation == changed.operations[1].id);
         CHECK_THAT(broken.problems[0].text, ContainsSubstring("not in the model"));
     }

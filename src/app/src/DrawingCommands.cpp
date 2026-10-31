@@ -321,18 +321,14 @@ void MainWindow::defineDrawingCommands() {
         c = make("drawing.exportPdf", tr("Export &PDF…"), tr("Write the sheet to a PDF file"),
                  "export");
         c.aliases = {tr("print"), tr("pdf")};
-        c.run = [exportTo, this](bool) {
-            exportTo(tr("PDF files (*.pdf)"), QStringLiteral("pdf"));
-        };
+        c.run = [exportTo](bool) { exportTo(tr("PDF files (*.pdf)"), QStringLiteral("pdf")); };
         c.isEnabled = hasSheet;
         m_commands->add(std::move(c));
 
         c = make("drawing.exportDxf", tr("Export DX&F…"),
                  tr("Write the sheet to a DXF file, for other CAD programs and cutters"), "export");
         c.aliases = {tr("dxf"), tr("autocad")};
-        c.run = [exportTo, this](bool) {
-            exportTo(tr("DXF files (*.dxf)"), QStringLiteral("dxf"));
-        };
+        c.run = [exportTo](bool) { exportTo(tr("DXF files (*.dxf)"), QStringLiteral("dxf")); };
         c.isEnabled = hasSheet;
         m_commands->add(std::move(c));
     }

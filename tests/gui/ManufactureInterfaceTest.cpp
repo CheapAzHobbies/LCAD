@@ -224,6 +224,12 @@ void ManufactureInterfaceTest::aModelBecomesADrawingAndGCode() {
     QVERIFY(wrong.empty());
     QVERIFY(text.find("M3") != std::string::npos);
     QVERIFY(text.find("M6") == std::string::npos);
+    // Kept with the frames of a run, for a person to read.
+    const QString artifacts = qEnvironmentVariable("LCAD_TEST_ARTIFACTS");
+    if (!artifacts.isEmpty()) {
+        QFile::remove(artifacts + QStringLiteral("/bracket.nc"));
+        QFile::copy(path, artifacts + QStringLiteral("/bracket.nc"));
+    }
 
     // And another dialect at the turn of a box.
     QComboBox* dialect = machining->dialectBox();

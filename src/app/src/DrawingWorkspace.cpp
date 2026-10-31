@@ -423,8 +423,14 @@ void DrawingWorkspace::addLinear(ObjectId view, const DrawingPoint& first, const
         }
     }
     const double stand = 10.0 + 8.0 * alongside;
-    dimension.offset =
-        outward ? high - std::max(pointA, pointB) + stand : low - std::min(pointA, pointB) - stand;
+    if (dimension.kind == DimensionKind::Aligned) {
+        // A slanted one stays by what it measures: from a corner of the view to outside all of
+        // it would be a long way, across whatever is beside it.
+        dimension.offset = outward ? stand : -stand;
+    } else {
+        dimension.offset = outward ? high - std::max(pointA, pointB) + stand
+                                   : low - std::min(pointA, pointB) - stand;
+    }
     changed.dimensions.push_back(std::move(dimension));
     change(changed, tr("Add Dimension"));
 }
