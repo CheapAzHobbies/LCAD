@@ -718,9 +718,9 @@ struct SheetBuilder::Impl {
                     const double facing =
                         std::abs(kernel::depthOf(placed.frame, {axis.x, axis.y, axis.z}));
                     if (keep(center) && facing > 1.0 - 1e-6) {
-                        const double closed = std::hypot(edge.start.x - edge.end.x,
-                                                         edge.start.y - edge.end.y) +
-                                              std::abs(edge.start.z - edge.end.z);
+                        const double closed =
+                            std::hypot(edge.start.x - edge.end.x, edge.start.y - edge.end.y) +
+                            std::abs(edge.start.z - edge.end.z);
                         sheet.snapCircles.push_back(
                             {view.id,
                              {part.body, part.path, edge.name, DrawingPoint::Where::Center},
@@ -731,10 +731,10 @@ struct SheetBuilder::Impl {
                 }
                 // Where a whole circle starts is only where its seam happens to be.
                 const bool closedCircle =
-                    edge.isCircle && std::hypot(edge.start.x - edge.end.x,
-                                                edge.start.y - edge.end.y) +
-                                             std::abs(edge.start.z - edge.end.z) <
-                                         1e-6;
+                    edge.isCircle &&
+                    std::hypot(edge.start.x - edge.end.x, edge.start.y - edge.end.y) +
+                            std::abs(edge.start.z - edge.end.z) <
+                        1e-6;
                 if (edge.isCircle && !closedCircle) {
                     add(edge.start, DrawingPoint::Where::Start);
                     add(edge.end, DrawingPoint::Where::End);

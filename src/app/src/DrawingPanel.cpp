@@ -32,7 +32,7 @@ constexpr std::array<SheetSize, 9> sheetSizes{
     SheetSize::A4,     SheetSize::A3,      SheetSize::A2,    SheetSize::A1,   SheetSize::A0,
     SheetSize::Letter, SheetSize::Tabloid, SheetSize::AnsiC, SheetSize::AnsiD};
 
-constexpr std::array<double, 11> scales{10.0, 5.0, 2.0, 1.0,  0.5,  0.2,
+constexpr std::array<double, 11> scales{10.0, 5.0,  2.0,  1.0,  0.5,  0.2,
                                         0.1,  0.05, 0.02, 0.01, 0.005};
 
 QString viewKindName(ViewKind kind) {

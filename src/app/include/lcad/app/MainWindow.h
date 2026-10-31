@@ -431,6 +431,8 @@ private:
     QStackedWidget* m_center = nullptr;
     Workspace m_workspace = Workspace::Design;
     QComboBox* m_workspaceBox = nullptr;
+    /// The quick buttons that give way in a narrow window.
+    QList<QToolButton*> m_foldingButtons;
     DrawingWorkspace* m_drawings = nullptr;
     QToolBar* m_drawingToolbar = nullptr;
     /// The menus of the model, and of the sheet, shown in the workspace they are of use in.

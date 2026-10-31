@@ -154,8 +154,8 @@ void DrawingWorkspace::onDocumentChanged(const document::Change& change) {
         break;
     case Kind::DrawingsChanged:
         if (drawing() == nullptr) {
-            m_current = m_document->drawings().empty() ? ObjectId{}
-                                                       : m_document->drawings().front().id;
+            m_current =
+                m_document->drawings().empty() ? ObjectId{} : m_document->drawings().front().id;
             m_view->setSelected({});
             m_panel->setSelected({});
         }
@@ -168,8 +168,7 @@ void DrawingWorkspace::onDocumentChanged(const document::Change& change) {
 
 void DrawingWorkspace::rebuild() {
     const Drawing* current = drawing();
-    m_panel->setDrawings(m_document != nullptr ? m_document->drawings()
-                                               : std::vector<Drawing>{},
+    m_panel->setDrawings(m_document != nullptr ? m_document->drawings() : std::vector<Drawing>{},
                          current);
     m_panel->setSelected(m_view->selected());
     m_panel->setPrompt(prompt());
@@ -354,8 +353,7 @@ void DrawingWorkspace::clickDimension(const Point2D& at, Qt::KeyboardModifiers m
         DrawingDimension dimension;
         dimension.id = m_document->newId();
         dimension.view = circle.view;
-        dimension.kind =
-            circle.whole != shifted ? DimensionKind::Diameter : DimensionKind::Radius;
+        dimension.kind = circle.whole != shifted ? DimensionKind::Diameter : DimensionKind::Radius;
         dimension.first = circle.point;
         dimension.offset = 8.0;
         Drawing changed = *drawing();
@@ -425,8 +423,8 @@ void DrawingWorkspace::addLinear(ObjectId view, const DrawingPoint& first, const
         }
     }
     const double stand = 10.0 + 8.0 * alongside;
-    dimension.offset = outward ? high - std::max(pointA, pointB) + stand
-                               : low - std::min(pointA, pointB) - stand;
+    dimension.offset =
+        outward ? high - std::max(pointA, pointB) + stand : low - std::min(pointA, pointB) - stand;
     changed.dimensions.push_back(std::move(dimension));
     change(changed, tr("Add Dimension"));
 }
@@ -578,8 +576,7 @@ bool DrawingWorkspace::exportTo(const QString& path, QString* error) {
     writer.setCreator(QStringLiteral("LCAD"));
     writer.setTitle(QString::fromStdString(current->name));
     writer.setResolution(1200);
-    writer.setPageSize(
-        QPageSize(QSizeF(sheet.width, sheet.height), QPageSize::Millimeter));
+    writer.setPageSize(QPageSize(QSizeF(sheet.width, sheet.height), QPageSize::Millimeter));
     writer.setPageMargins(QMarginsF(0.0, 0.0, 0.0, 0.0));
     QPainter painter;
     if (!painter.begin(&writer)) {

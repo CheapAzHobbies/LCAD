@@ -105,8 +105,9 @@ private:
             std::find_if(drawing->views.begin(), drawing->views.end(),
                          [kind](const lcad::document::DrawingView& v) { return v.kind == kind; });
         const auto& boxes = window.drawings()->view()->sheet().views;
-        return *std::find_if(boxes.begin(), boxes.end(),
-                             [view](const lcad::drawing::ViewBox& b) { return b.view == view->id; });
+        return *std::find_if(boxes.begin(), boxes.end(), [view](const lcad::drawing::ViewBox& b) {
+            return b.view == view->id;
+        });
     }
 
     QTemporaryDir m_directory;
@@ -137,7 +138,7 @@ void DrawingInterfaceTest::theWorkspaceChangesWhatTheWindowIsFor() {
     QCOMPARE(center->currentWidget(), window.viewport());
     QVERIFY(modeling->isVisible());
     QVERIFY(!sheetTools->isVisible());
-    QVERIFY(!action(window, "drawing.dimension")->isEnabled());
+    QVERIFY(!action(window, "sketch.dimension")->isEnabled());
 
     // The box at the top, as a user would.
     box->setCurrentIndex(box->findText(QStringLiteral("Drawing")));
@@ -156,7 +157,7 @@ void DrawingInterfaceTest::theWorkspaceChangesWhatTheWindowIsFor() {
     // What belongs to the model cannot be started here, and D is the sheet's Dimension.
     QVERIFY(!action(window, "solid.pull")->isEnabled());
     QVERIFY(!action(window, "sketch.new")->isEnabled());
-    QVERIFY(action(window, "drawing.dimension")->isEnabled());
+    QVERIFY(action(window, "sketch.dimension")->isEnabled());
     QVERIFY(action(window, "edit.undo")->isEnabled());
     window.drawings()->view()->setFocus();
     QTest::keyClick(&window, Qt::Key_D);
@@ -189,7 +190,7 @@ void DrawingInterfaceTest::aSheetGetsDimensionsByClickingWhatTheyMeasure() {
     const lcad::drawing::ViewBox top = boxOf(window, ViewKind::Top);
 
     // One click on a line gives its length.
-    QVERIFY(trigger(window, "drawing.dimension"));
+    QVERIFY(trigger(window, "sketch.dimension"));
     click(window, {(top.left + top.right) / 2.0, top.bottom});
     QCOMPARE(dimensions().size(), std::size_t{1});
     QVERIFY(qAbs(dimensions()[0].value - 60.0) < 1e-6);
@@ -204,10 +205,10 @@ void DrawingInterfaceTest::aSheetGetsDimensionsByClickingWhatTheyMeasure() {
     QCOMPARE(window.drawings()->drawing()->dimensions[1].kind, DimensionKind::Vertical);
 
     // A circle by its diameter; with Shift, by its radius.
-    const auto circle = std::find_if(
-        window.drawings()->view()->sheet().snapCircles.begin(),
-        window.drawings()->view()->sheet().snapCircles.end(),
-        [&top](const lcad::drawing::SnapCircle& c) { return c.view == top.view; });
+    const auto circle =
+        std::find_if(window.drawings()->view()->sheet().snapCircles.begin(),
+                     window.drawings()->view()->sheet().snapCircles.end(),
+                     [&top](const lcad::drawing::SnapCircle& c) { return c.view == top.view; });
     QVERIFY(circle != window.drawings()->view()->sheet().snapCircles.end());
     const Point2D rim{circle->center.x + circle->radius, circle->center.y};
     const Point2D center = circle->center;
@@ -267,26 +268,22 @@ void DrawingInterfaceTest::sectionsDetailsAndNotesAreAddedAndMoved() {
     QCOMPARE(kinds(ViewKind::Section), 1);
     QCOMPARE(window.drawings()->tool(), DrawingWorkspace::Tool::Select);
     QVERIFY2(view->sheet().problems.empty(),
-             qPrintable(QString::fromStdString(view->sheet().problems.empty()
-                                                   ? std::string()
-                                                   : view->sheet().problems.front())));
-    QVERIFY(std::any_of(view->sheet().labels.begin(), view->sheet().labels.end(),
-                        [](const lcad::drawing::Label& label) {
-                            return label.text == "SECTION A-A";
-                        }));
-    QVERIFY(std::any_of(view->sheet().strokes.begin(), view->sheet().strokes.end(),
-                        [](const lcad::drawing::Stroke& s) {
-                            return s.pen == lcad::drawing::Pen::Hatch;
-                        }));
+             qPrintable(QString::fromStdString(
+                 view->sheet().problems.empty() ? std::string() : view->sheet().problems.front())));
+    QVERIFY(
+        std::any_of(view->sheet().labels.begin(), view->sheet().labels.end(),
+                    [](const lcad::drawing::Label& label) { return label.text == "SECTION A-A"; }));
+    QVERIFY(std::any_of(
+        view->sheet().strokes.begin(), view->sheet().strokes.end(),
+        [](const lcad::drawing::Stroke& s) { return s.pen == lcad::drawing::Pen::Hatch; }));
 
     // A detail of its corner, which goes by the next letter.
     QVERIFY(trigger(window, "drawing.detail"));
     click(window, {top.right, top.top});
     QCOMPARE(kinds(ViewKind::Detail), 1);
-    QVERIFY(std::any_of(view->sheet().labels.begin(), view->sheet().labels.end(),
-                        [](const lcad::drawing::Label& label) {
-                            return label.text.rfind("DETAIL B", 0) == 0;
-                        }));
+    QVERIFY(std::any_of(
+        view->sheet().labels.begin(), view->sheet().labels.end(),
+        [](const lcad::drawing::Label& label) { return label.text.rfind("DETAIL B", 0) == 0; }));
 
     // A note: click where, type, Enter.
     QVERIFY(trigger(window, "drawing.note"));
@@ -296,10 +293,9 @@ void DrawingInterfaceTest::sectionsDetailsAndNotesAreAddedAndMoved() {
     QTest::keyClick(view->textField(), Qt::Key_Return);
     QTRY_VERIFY(view->textField() == nullptr);
     QCOMPARE(window.drawings()->drawing()->notes.size(), std::size_t{1});
-    QVERIFY(std::any_of(view->sheet().labels.begin(), view->sheet().labels.end(),
-                        [](const lcad::drawing::Label& label) {
-                            return label.text == "Break all edges";
-                        }));
+    QVERIFY(std::any_of(
+        view->sheet().labels.begin(), view->sheet().labels.end(),
+        [](const lcad::drawing::Label& label) { return label.text == "Break all edges"; }));
     keepFrame(window.grab().toImage(), "drawing-section-detail");
 
     // A view is dragged to another place, one undo step, with what it shows.
@@ -410,7 +406,7 @@ void DrawingInterfaceTest::aDrawingIsExportedSavedAndReopened() {
         QTRY_VERIFY(!window.drawings()->view()->sheet().views.empty());
         window.drawings()->view()->fit();
         const lcad::drawing::ViewBox top = boxOf(window, ViewKind::Top);
-        QVERIFY(trigger(window, "drawing.dimension"));
+        QVERIFY(trigger(window, "sketch.dimension"));
         click(window, {(top.left + top.right) / 2.0, top.bottom});
 
         QString error;
@@ -422,7 +418,8 @@ void DrawingInterfaceTest::aDrawingIsExportedSavedAndReopened() {
         QVERIFY(bytes.startsWith("%PDF"));
         QVERIFY(bytes.size() > 2000);
         // One page, of the sheet's size: 420 by 297 millimeters in points.
-        const QRegularExpression mediaBox(QStringLiteral("/MediaBox \\[0 0 ([0-9.]+) ([0-9.]+)\\]"));
+        const QRegularExpression mediaBox(
+            QStringLiteral("/MediaBox \\[0 0 ([0-9.]+) ([0-9.]+)\\]"));
         const QRegularExpressionMatch page = mediaBox.match(QString::fromLatin1(bytes));
         QVERIFY(page.hasMatch());
         QVERIFY(qAbs(page.captured(1).toDouble() - 420.0 / 25.4 * 72.0) < 2.0);
@@ -436,7 +433,8 @@ void DrawingInterfaceTest::aDrawingIsExportedSavedAndReopened() {
         QVERIFY(text.contains("ENTITIES"));
         QVERIFY(text.contains("VISIBLE"));
 
-        QVERIFY(!window.drawings()->exportTo(folder + QStringLiteral("/no/such/sheet.dxf"), &error));
+        QVERIFY(
+            !window.drawings()->exportTo(folder + QStringLiteral("/no/such/sheet.dxf"), &error));
         QVERIFY(!error.isEmpty());
 
         QVERIFY(window.saveTo(folder + QStringLiteral("/part.lcad"), &error));

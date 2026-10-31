@@ -1565,10 +1565,23 @@ void MainWindow::defineSketchCommands() {
         c.shortcuts = {QKeySequence(Qt::Key_D)};
         c.aliases = {tr("measure"),  tr("size"),   tr("length"),
                      tr("distance"), tr("radius"), tr("angle")};
-        // On what is selected, or else on what is clicked next.
-        c.run = [editor](bool) { editor()->addDimension(); };
-        c.isEnabled = sketching;
+        // On what is selected, or else on what is clicked next. On a sheet, the tool that puts
+        // dimensions there: one key for one idea.
+        c.run = [this, editor](bool) {
+            if (m_workspace == Workspace::Drawing) {
+                m_drawings->setTool(DrawingWorkspace::Tool::Dimension);
+            } else {
+                editor()->addDimension();
+            }
+        };
+        c.isEnabled = [this] {
+            return isSketching() ||
+                   (m_workspace == Workspace::Drawing && m_drawings->drawing() != nullptr);
+        };
         c.isChecked = [this, editor] {
+            if (m_workspace == Workspace::Drawing) {
+                return m_drawings->tool() == DrawingWorkspace::Tool::Dimension;
+            }
             return isSketching() && editor()->tool() == SketchTool::Dimension;
         };
         m_commands->add(std::move(c));
@@ -1815,7 +1828,7 @@ void MainWindow::createTopBar() {
     sheet->addActions({action("drawing.sectionUp"), action("drawing.sectionAcross"),
                        action("drawing.detail")});
     sheet->addSeparator();
-    sheet->addActions({action("drawing.dimension"), action("drawing.note")});
+    sheet->addActions({action("sketch.dimension"), action("drawing.note")});
     sheet->addSeparator();
     sheet->addActions({action("drawing.exportPdf"), action("drawing.exportDxf")});
     m_menuBar->insertMenu(window->menuAction(), sheet);
@@ -1834,6 +1847,10 @@ void MainWindow::createTopBar() {
         button->setAutoRaise(true);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         layout->addWidget(button);
+        if (QLatin1String(id) == QLatin1String("file.new") ||
+            QLatin1String(id) == QLatin1String("file.open")) {
+            m_foldingButtons.append(button);
+        }
         if (QLatin1String(id) == QLatin1String("file.save")) {
             layout->addSpacing(6);
         }
@@ -2067,6 +2084,13 @@ void MainWindow::fitToolbar() {
     // The menus before the tabs: where the top bar is short of room, tabs can scroll.
     if (!m_menuBar->isNativeMenuBar()) {
         m_menuBar->setMinimumWidth(m_menuBar->sizeHint().width());
+    }
+    // And the buttons for what the File menu and Ctrl+N and Ctrl+O have as well. A tab needs a
+    // hundred or so, besides the room for the other buttons.
+    const int menus = m_menuBar->isNativeMenuBar() ? 0 : m_menuBar->sizeHint().width();
+    const int taken = menus + m_workspaceBox->sizeHint().width() + 430;
+    for (QToolButton* button : std::as_const(m_foldingButtons)) {
+        button->setVisible(taken <= width());
     }
     // How wide a toolbar wants to be now. Its layout keeps the answer it last gave until told
     // that what is in it has changed.

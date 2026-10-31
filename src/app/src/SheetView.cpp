@@ -82,8 +82,7 @@ void paintLabel(QPainter& painter, const Label& label, const QPointF& at, double
     painter.setFont(font);
     const QFontMetricsF metrics(font);
     const double factor = label.height * scale / (fontPixels * capitalHeight);
-    const QStringList lines =
-        QString::fromStdString(label.text).split(QLatin1Char('\n'));
+    const QStringList lines = QString::fromStdString(label.text).split(QLatin1Char('\n'));
     painter.save();
     painter.translate(at);
     painter.rotate(-label.angle * 180.0 / pi);
@@ -335,8 +334,8 @@ void SheetView::mouseMoveEvent(QMouseEvent* event) {
         update();
         return;
     }
-    if (m_pressed && !m_dragging && (m_selected.kind == Selected::Kind::View ||
-                                     m_selected.kind == Selected::Kind::Note)) {
+    if (m_pressed && !m_dragging &&
+        (m_selected.kind == Selected::Kind::View || m_selected.kind == Selected::Kind::Note)) {
         const QPointF moved = event->position() - m_pressPosition;
         if (moved.manhattanLength() >= QApplication::startDragDistance()) {
             m_dragging = true;

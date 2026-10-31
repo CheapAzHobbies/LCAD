@@ -77,6 +77,10 @@ void MainWindow::defineDrawingCommands() {
             id.startsWith(QStringLiteral("help."))) {
             return true;
         }
+        // Dimension is the one command the model and the sheet share.
+        if (id == QStringLiteral("sketch.dimension")) {
+            return true;
+        }
         const bool sheetCommand = id.startsWith(QStringLiteral("drawing."));
         return (m_workspace == Workspace::Drawing) == sheetCommand;
     });
@@ -88,8 +92,8 @@ void MainWindow::defineDrawingCommands() {
         c.run = [this](bool) { setWorkspace(Workspace::Design); };
         m_commands->add(std::move(c));
 
-        c = make("workspace.drawing", tr("&Drawing"),
-                 tr("Make engineering drawings of the model"), "drawing");
+        c = make("workspace.drawing", tr("&Drawing"), tr("Make engineering drawings of the model"),
+                 "drawing");
         c.aliases = {tr("workspace"), tr("sheet"), tr("blueprint"), tr("2d")};
         c.run = [this](bool) { setWorkspace(Workspace::Drawing); };
         m_commands->add(std::move(c));
@@ -146,17 +150,9 @@ void MainWindow::defineDrawingCommands() {
         c.aliases = {tr("section"), tr("cut"), tr("hatch")};
         m_commands->add(std::move(c));
 
-        c = toolCommand("drawing.detail", tr("De&tail"),
-                        tr("Show a round part of a view larger"), "detail",
-                        DrawingWorkspace::Tool::Detail);
+        c = toolCommand("drawing.detail", tr("De&tail"), tr("Show a round part of a view larger"),
+                        "detail", DrawingWorkspace::Tool::Detail);
         c.aliases = {tr("zoom"), tr("enlarge")};
-        m_commands->add(std::move(c));
-
-        c = toolCommand("drawing.dimension", tr("&Dimension"),
-                        tr("Give a line, a circle, or two points their measure"), "dimension",
-                        DrawingWorkspace::Tool::Dimension);
-        c.shortcuts = {QKeySequence(Qt::Key_D)};
-        c.aliases = {tr("measure"), tr("size"), tr("length")};
         m_commands->add(std::move(c));
 
         c = toolCommand("drawing.note", tr("N&ote"), tr("Put text on the sheet"), "note",
@@ -185,14 +181,18 @@ void MainWindow::defineDrawingCommands() {
         c = make("drawing.exportPdf", tr("Export &PDF…"), tr("Write the sheet to a PDF file"),
                  "export");
         c.aliases = {tr("print"), tr("pdf")};
-        c.run = [exportTo, this](bool) { exportTo(tr("PDF files (*.pdf)"), QStringLiteral("pdf")); };
+        c.run = [exportTo, this](bool) {
+            exportTo(tr("PDF files (*.pdf)"), QStringLiteral("pdf"));
+        };
         c.isEnabled = hasSheet;
         m_commands->add(std::move(c));
 
         c = make("drawing.exportDxf", tr("Export DX&F…"),
                  tr("Write the sheet to a DXF file, for other CAD programs and cutters"), "export");
         c.aliases = {tr("dxf"), tr("autocad")};
-        c.run = [exportTo, this](bool) { exportTo(tr("DXF files (*.dxf)"), QStringLiteral("dxf")); };
+        c.run = [exportTo, this](bool) {
+            exportTo(tr("DXF files (*.dxf)"), QStringLiteral("dxf"));
+        };
         c.isEnabled = hasSheet;
         m_commands->add(std::move(c));
     }
@@ -224,7 +224,7 @@ void MainWindow::createDrawingToolbar() {
     toolbar->addWidget(views);
     toolbar->addSeparator();
     for (const char* id : {"drawing.sectionUp", "drawing.sectionAcross", "drawing.detail",
-                           "drawing.dimension", "drawing.note"}) {
+                           "sketch.dimension", "drawing.note"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
