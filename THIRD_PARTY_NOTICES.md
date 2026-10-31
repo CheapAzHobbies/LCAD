@@ -2,7 +2,12 @@
 
 LCAD links against libraries that are installed separately; their licenses are listed in
 [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md). This file covers third-party work that LCAD's own
-source code is derived from.
+source code is derived from, or that is kept in its repository.
+
+## Clipper2
+
+`third_party/clipper2` is part of [Clipper2](https://github.com/AngusJohnson/Clipper2) by Angus
+Johnson, under the Boost Software License 1.0. See `third_party/clipper2/LICENSE`.
 
 ## OCCT Qt samples
 

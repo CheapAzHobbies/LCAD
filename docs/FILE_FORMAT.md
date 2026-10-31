@@ -221,6 +221,36 @@ A reader ignores fields and archive entries it does not know, so that a later LC
 optional ones without changing the version. Everything listed above is required, and a file
 with a missing or wrong value is refused as a whole. LCAD never opens a document partially.
 
+### Drawings, tools, and setups
+
+These lists, each left out when empty, keep what the user chose. The views on a sheet and the
+toolpaths of a setup are worked out from the model when they are wanted, and are not stored.
+
+`drawings` is a list of sheets:
+
+| Field | Meaning |
+|---|---|
+| `id`, `name` | As for other objects |
+| `size` | `A4` to `A0`, `Letter`, `Tabloid`, `ANSI C`, `ANSI D` |
+| `standard` | `iso` for first-angle projection, `ansi` for third-angle |
+| `titleBlock` | `title`, `partNumber`, `revision`, `drawnBy`, `date`, `material`, `company` |
+| `views` | Each with `id`, `kind` (`front`, `back`, `top`, `bottom`, `left`, `right`, `isometric`, `section`, `detail`), `label`, `scale` (sheet millimeters per model millimeter), `x` and `y` (its middle on the sheet), `showHidden`, `centerMarks`. A section or a detail has `parent`. A section has `sectionVertical`, `sectionPosition`, `sectionFlipped`. A detail has `detailX`, `detailY`, `detailRadius` |
+| `dimensions` | Each with `id`, `view`, `kind` (`aligned`, `horizontal`, `vertical`, `radius`, `diameter`), `first`, and but for a radius or a diameter `second`, then `offset` and `suffix`. A point is `body`, `path`, `edge` (the edge's name), and `where` (`start`, `end`, `middle`, `center`) |
+| `notes` | Each with `id`, `text`, `x`, `y`, `height` |
+
+`tools` is a list with `id`, `name`, `kind` (`flat`, `ball`, `drill`), `diameter`, `fluteLength`,
+`stickout`, `flutes`, `tipAngle`, and `number`.
+
+`setups` is a list with:
+
+| Field | Meaning |
+|---|---|
+| `id`, `name` | As for other objects |
+| `machine` | `name`, `dialect` (`grbl`, `linuxcnc`), `travelX`, `travelY`, `travelZ`, `rapidRate`, `maxFeed`, `maxSpindle` |
+| `stock` | `side`, `top`, `bottom`: how much around the part's box |
+| `origin` | `stock top corner` or `stock top center` |
+| `operations` | Each with `id`, `name`, `kind` (`face`, `pocket`, `contour`, `drill`), `tool`, `targets` (each `body`, `path`, and `face`, the face's name), `feed`, `plungeFeed`, `spindle`, `stepover`, `stepdown`, `clearance`, `retract`, `stockToLeave`, `side` (`outside`, `inside`), `peck`, `suppressed` |
+
 ### Geometry
 
 Each file in `geometry/` is one shape in OCCT's binary B-rep format, without display meshes.

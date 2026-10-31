@@ -6,7 +6,12 @@ What LCAD can do today, and how to do it. This grows with each phase; the
 LCAD sketches, pulls and revolves sketches into solids, rounds, bevels, hollows, patterns, and
 drills them, keeps the steps in a timeline that can be edited, changes imported solids directly,
 reads and writes other programs' files, and puts parts together into assemblies: components,
-joints between them, linked parts from other documents, and their weight and overlaps.
+joints between them, linked parts from other documents, and their weight and overlaps. From a
+model it makes engineering drawings, and toolpaths and G-code for a milling machine.
+
+The box at the top chooses what the window is set up for: **Design**, **Drawing**, or
+**Manufacture**. The toolbar, the menus, and the panel on the right change with it, and the model
+stays as it is.
 
 ## The window
 
@@ -395,6 +400,77 @@ constraining a point onto one. Curves that cross are not split where
 they cross, so an outline is closed only where curves meet at their ends: trim first. A
 projected edge is a copy, and does not follow its body if the body changes.
 
+## Drawings
+
+Choose **Drawing** in the box at the top. The first time, LCAD starts a sheet with views of the
+model: the front, the top, the right, and an isometric view, at a scale that fits. The panel on
+the right has the sheet's size, the standard, and the title block. ISO puts the top view below the
+front view (first-angle), and ANSI above it (third-angle). The views show everything that is shown
+in the model.
+
+- **Move a view** by dragging it. Select it to change its scale, or to leave out hidden lines or
+  center marks.
+- **Add a view** from the View button.
+- **A section:** choose Section, Up or Section, Across, and click the view where the cut goes. The
+  section goes beside it, and the cutting line onto it. "Look from the other side" in the panel
+  turns it around.
+- **A detail:** choose Detail and click the middle of what to show larger.
+- **A dimension:** press D, or choose Dimension, and click a line for its length, or a circle for
+  its diameter; an arc gives its radius, and Shift gives the other. To measure between two points,
+  click near each. Select a dimension to add a tolerance after its value, or to set how far it stands
+  off.
+- **A note:** choose Note, click, type, and press Enter.
+- Delete removes what is selected. A view goes with the sections and details taken from it.
+
+Views are worked out from the model each time: change the model, and the sheet follows. A
+dimension hangs on an edge by the name the edge keeps, so it follows too. If the model no longer
+has that edge, the dimension is not shown, the panel says so, and it comes back if the edge does.
+
+**Export PDF** writes the sheet at its true size, and **Export DXF** writes it for other CAD
+programs and cutters, with each kind of line on a layer of its own.
+
+Not there yet: auxiliary views, GD&T, hole callouts and balloons, a bill of materials, drawing
+templates, dragging a dimension, more than one sheet in a drawing (use more drawings), and views of
+some bodies only (hide the others).
+
+## Manufacture
+
+Choose **Manufacture** in the box at the top. The first time, LCAD starts a setup: the block the part
+is cut from, the machine, and four tools to start from. The tool comes straight down along the
+model's Z, so turn the model so that what is to be cut faces up.
+
+1. Check the panel: **Stock** is how much is around, above, and below the part, **Zero at** is where
+   zero is on the machine, and **Machine** is what it can do and which G-code it takes.
+2. Add operations in the order they run. Each works with what is selected in the 3D view:
+   - **Face** levels the top of the stock down to the top of the part.
+   - **Pocket** clears down to the flat floor face selected, around any islands in it.
+   - **Contour** cuts around the outline of the flat face selected, down to it: select the part's
+     bottom face to cut it out.
+   - **Drill** drills the round faces selected. A tool has to match the hole.
+3. Select an operation in the list to set its tool, feeds, and depths. Use Selected Faces gives it
+   other faces. The toolpaths in the 3D view change at once: cuts in blue, rapid moves dotted in red.
+   What cannot be done is said at the top of the panel, and the path is left out.
+4. **Simulate** runs it all on the stock and shows what is left, with the time it takes. Drag the
+   slider to any move. It looks for cuts into the part, rapid moves into the material, and tools
+   buried past their flutes.
+5. **Write G-code** writes the file. It runs every check again first, and reads back what it wrote as
+   the machine would. It refuses if anything fails, and says why.
+
+G-code is for Grbl or LinuxCNC. Grbl has no tool changer, so between tools the program stops for you
+to change the tool and set Z zero. Zero in Z is the top of the stock.
+
+**Be careful with this.** LCAD's G-code has been checked against its own simulation and its own
+reader of each dialect, and has not yet been run on a real machine. The checks know about the
+tools, the stock, and the part. They do not know about your clamps, your vise, or feeds that suit your
+material, which are yours to set: the defaults are a starting point, not advice. Run a new program
+in the air first, with the spindle off and the tool well above the work, and keep a hand near the
+stop button.
+
+Not there yet: 3-axis surfacing, curves as arcs (a curve is many short lines), adaptive clearing,
+ramped entries (the tool goes straight down, so use end mills that can), tabs, chamfering, tools
+defined from the panel (four come with a setup), holders checked by their real shape, and tool
+libraries shared between documents.
+
 ## Moving around the 3D view
 
 | To | Do this |
@@ -488,7 +564,7 @@ These are the shortcuts LCAD starts with. On macOS, Ctrl in them is the Command 
 | Esc | Leave the command in progress; in a sketch, step back from the tool in use |
 | Ctrl + Enter | Finish the sketch |
 | L, R, C, A | In a sketch: line, rectangle, circle, arc |
-| D, T, O, P, X | In a sketch: dimension, trim, offset, project, construction |
+| D, T, O, P, X | In a sketch: dimension, trim, offset, project, construction. D also dimensions on a drawing's sheet |
 | E | Pull (also from inside a sketch, which it finishes) |
 | F | Fillet |
 | H | Hole |

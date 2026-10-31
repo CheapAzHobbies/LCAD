@@ -27,7 +27,7 @@ more than writing the code, now sets the pace.
 | 4. Direct modeling and interchange | STEP/IGES import, STL/3MF export, face edits, healing | 2026-10-14 | 2027-03-31 | 2026-10-19 | v0.2 |
 | 5. Components and assemblies | Components, linked parts, joints, interference checks | 2026-10-19 | 2027-07-15 | 2026-10-21 | v0.5 beta |
 | Port | Windows and macOS builds | 2026-10-21 | 2027-09-15 | 2026-10-30 | v0.6 |
-| 6. Drawings and manufacturing | Associative drawings, PDF/DXF, 2.5D and 3-axis CAM | 2027-09-16 | 2028-01-15 | | v1.0 |
+| 6. Drawings and manufacturing | Associative drawings, PDF/DXF, 2.5D CAM | 2026-10-31 | 2028-01-15 | in progress | v1.0 |
 | 7. Advanced capabilities | Surfaces, sheet metal, mesh repair, rendering, plugins | 2028-01-16 | ongoing | | |
 
 The targets of Phases 0 and 1 are the original ones, kept for the record.
@@ -317,13 +317,22 @@ them on a real Windows PC and a real Mac, with a real graphics driver and a high
 still to do, and neither package is signed. What differs between the systems, and what that costs,
 is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#17-windows-and-macos).
 
-## Phase 6: Drawings and manufacturing (2027-09-16 to 2028-01-15)
+## Phase 6: Drawings and manufacturing (started 2026-10-31, in progress, target 2028-01-15)
 
-- [ ] Associative drawings: orthographic, isometric, section, and detail views; dimensions; title blocks.
-- [ ] PDF and DXF export.
-- [ ] CAM: stock, work coordinates, tool library, facing, pocket, contour, drill.
-- [ ] Toolpath simulation and time estimate.
-- [ ] Postprocessors, starting with GRBL and LinuxCNC.
+- [x] Associative drawings: orthographic, isometric, section, and detail views; dimensions; title blocks.
+      The views are worked out from the model each time; dimensions hang on named edges and follow it.
+- [x] PDF and DXF export.
+- [x] CAM: stock, work coordinates, tool library, facing, pocket, contour, drill.
+- [x] Toolpath simulation and time estimate: a height field of the stock, cut by the tools, that catches
+      gouges, rapid moves into material, and tools buried past their flutes.
+- [x] Postprocessors, starting with GRBL and LinuxCNC. What they write is read back by a strict reader
+      of the dialect, and has to come to the same moves.
+- [ ] Run LCAD's G-code on a real machine. Until then nothing says that it cuts what the simulation
+      says it cuts.
+
+Left for later, by the brief's own lights: 3-axis surfacing (these are 2.5D paths), arcs in the
+G-code (a curve is many short lines), adaptive clearing, tabs, ramped entries, auxiliary views, GD&T,
+balloons and bills of materials, a tool library shared between documents.
 
 Acceptance: produce a dimensioned drawing from a model, create a machining operation, simulate it, and
 export G-code through a validated postprocessor.

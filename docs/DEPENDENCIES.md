@@ -15,6 +15,7 @@ This is an engineering summary, not legal advice.
 | [libzip](https://github.com/nih-at/libzip) | The `.lcad` container | BSD-3-Clause | 1.12 (2026-10-07) | 1.7.3 (oldest tested) |
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON inside `.lcad` files | MIT | 3.12.0 | 3.11.3 (oldest tested) |
 | [Eigen](https://gitlab.com/libeigen/eigen) | Linear algebra inside the sketch solver | MPL-2.0 | 5.0.1 | 3.4.0 (oldest tested) |
+| [Clipper2](https://github.com/AngusJohnson/Clipper2) | Offset paths for milling | BSL-1.0 | 2.0.1 (2025-12-19) | 2.0.1, kept in `third_party/clipper2` |
 | [Catch2](https://github.com/catchorg/Catch2) | Unit tests | BSL-1.0 | 3.16.1 (2026-10-08) | 3.4 (oldest tested) |
 | Qt Test | GUI tests | Same as Qt | Same as Qt | 6.4 |
 | CMake, Ninja, GCC or Clang | Build | Build tools only | | CMake 3.28, C++20 |
@@ -34,6 +35,15 @@ Catch2 and Qt Test are used only to build the tests. They are not part of what L
 
 Linux Mint 22 is built on Ubuntu 24.04 and has the same versions. Ubuntu 24.04 is the floor: it
 sets the minimum Qt and OCCT that LCAD's source has to compile against.
+
+### Clipper2
+
+Polygon offsetting is what a pocket is made of, and has to hold up on outlines that touch
+themselves or vanish as they shrink. Clipper2 is the established library for that. It is kept in
+`third_party/clipper2` at a pinned release, unchanged, because Ubuntu, conda-forge, and the Flatpak
+runtime do not package it, and because what a machine is told to do should not change with the
+distribution. See `third_party/clipper2/README.md`. DXF needs no library: LCAD writes the plain
+R12 form itself, and Qt writes PDF.
 
 ### Open CASCADE Technology
 
@@ -178,8 +188,7 @@ Noted now because they affect planning; each gets a full assessment when its pha
 - **Assembly solver (Phase 5).** Candidates are the SolveSpace solver in 3D and
   [OndselSolver](https://github.com/FreeCAD/OndselSolver) (LGPL-2.1), which FreeCAD maintains
   after the original repository was archived in 2025.
-- **DXF and PDF (Phase 6).** Qt writes PDF. A DXF library is to be chosen.
-- **CAM, mesh repair, Python scripting.** To be assessed.
+- **Mesh repair, Python scripting.** To be assessed.
 
 ## LCAD's own license
 
