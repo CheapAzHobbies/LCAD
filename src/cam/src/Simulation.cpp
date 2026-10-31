@@ -4,7 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
+#include <charconv>
 #include <limits>
 #include <map>
 #include <string>
@@ -43,9 +43,13 @@ double profile(const Tool& tool, double distance) {
 }
 
 std::string at(double x, double y) {
-    char text[64];
-    std::snprintf(text, sizeof(text), "(%.1f, %.1f)", x, y);
-    return text;
+    const auto text = [](double value) {
+        char buffer[64];
+        const auto end =
+            std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::fixed, 1).ptr;
+        return std::string(buffer, end);
+    };
+    return "(" + text(x) + ", " + text(y) + ")";
 }
 
 } // namespace

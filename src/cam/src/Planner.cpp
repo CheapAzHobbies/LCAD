@@ -11,7 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
+#include <charconv>
 #include <limits>
 #include <optional>
 
@@ -37,8 +37,9 @@ double apart(const Point2D& a, const Point2D& b) {
 
 std::string millimeters(double value) {
     char text[64];
-    std::snprintf(text, sizeof(text), "%.2f mm", value);
-    return text;
+    const auto end =
+        std::to_chars(text, text + sizeof(text), value, std::chars_format::fixed, 2).ptr;
+    return std::string(text, end) + " mm";
 }
 
 // Collects the moves of a path, leaving out what goes nowhere.
@@ -265,8 +266,8 @@ std::vector<Move> pocketMoves(const FlatRegion& region, const Heights& heights, 
             const Point2D start = ring.front();
             // Across to the next ring at depth if that stays in the pocket and is near, so that
             // it cuts only what is left between them; otherwise over the top.
-            const bool near = !first && apart(path.at(), start) <= operation.stepover * 1.5 + 1e-6;
-            if (near && lineInside(room, path.at(), start)) {
+            const bool close = !first && apart(path.at(), start) <= operation.stepover * 1.5 + 1e-6;
+            if (close && lineInside(room, path.at(), start)) {
                 path.feed({start.x, start.y, z});
             } else {
                 path.travelTo(start);

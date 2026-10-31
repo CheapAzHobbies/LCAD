@@ -12,6 +12,7 @@
 #include <lcad/app/GeometryCheckDialog.h>
 #include <lcad/app/Icons.h>
 #include <lcad/app/JointPanel.h>
+#include <lcad/app/MachiningWorkspace.h>
 #include <lcad/app/MeasurePanel.h>
 #include <lcad/app/MovePanel.h>
 #include <lcad/app/ParametersDialog.h>
@@ -157,13 +158,23 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(m_drawings, &DrawingWorkspace::message, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
+    m_machining = new MachiningWorkspace(m_viewport, this);
+    m_inspectorStack->addWidget(m_machining);
+    connect(m_machining, &MachiningWorkspace::stateChanged, this,
+            [this] { m_commands->refresh(); });
+    connect(m_machining, &MachiningWorkspace::message, this,
+            [this](const QString& text) { statusBar()->showMessage(text, 5000); });
+    connect(m_machining, &MachiningWorkspace::targetsRequested, this,
+            [this] { m_machining->setTargets(selectedTargets()); });
     defineCommands();
     defineAssemblyCommands();
     defineDrawingCommands();
+    defineMachiningCommands();
     createTopBar();
     createToolbar();
     createSketchToolbar();
     createDrawingToolbar();
+    createMachiningToolbar();
     m_search = new CommandSearch(m_commands, this);
 
     m_selectionLabel = new QLabel(this);
@@ -457,6 +468,7 @@ MainWindow::~MainWindow() {
     m_browser->setDocument(nullptr, {});
     m_timeline->setDocument(nullptr);
     m_drawings->setDocument(nullptr);
+    m_machining->setDocument(nullptr);
     if (m_parametersDialog != nullptr) {
         m_parametersDialog->setDocument(nullptr);
     }
@@ -600,6 +612,10 @@ void MainWindow::defineCommands() {
                 m_drawings->deleteSelected();
                 return;
             }
+            if (m_workspace == Workspace::Manufacture) {
+                m_machining->removeOperation();
+                return;
+            }
             const auto joints = m_browser->selectedJoints();
             const auto occurrences = m_browser->selectedOccurrences();
             if (!isSketching() && (!joints.empty() || !occurrences.empty())) {
@@ -634,6 +650,9 @@ void MainWindow::defineCommands() {
         c.isEnabled = [this] {
             if (m_workspace == Workspace::Drawing) {
                 return m_drawings->view()->selected().kind != SheetView::Selected::Kind::None;
+            }
+            if (m_workspace == Workspace::Manufacture) {
+                return m_machining->operation() != nullptr;
             }
             if (isSketching()) {
                 const viewport::SketchEditor* editor = m_viewport->sketchEditor();
@@ -1811,7 +1830,8 @@ void MainWindow::createTopBar() {
     window->addSeparator();
     window->addActions({action("window.focus"), action("window.resetLayout")});
     window->addSeparator();
-    window->addActions({action("workspace.design"), action("workspace.drawing")});
+    window->addActions(
+        {action("workspace.design"), action("workspace.drawing"), action("workspace.manufacture")});
 
     // The menu of the sheet, between Assemble and what follows it.
     QMenu* sheet = new QMenu(tr("&Drawing"), m_menuBar);
@@ -1835,7 +1855,20 @@ void MainWindow::createTopBar() {
     m_sheetMenu = sheet->menuAction();
     m_sheetMenu->setVisible(false);
     m_modelMenus = {create->menuAction(), modifyMenu->menuAction(), assembleMenu->menuAction(),
-                    sketchMenu->menuAction(), view->menuAction()};
+                    sketchMenu->menuAction()};
+    m_viewMenu = view->menuAction();
+
+    QMenu* machining = new QMenu(tr("&Manufacture"), m_menuBar);
+    machining->setObjectName(QStringLiteral("menu.manufacture"));
+    machining->addAction(action("manufacture.setup"));
+    machining->addSeparator();
+    machining->addActions({action("manufacture.face"), action("manufacture.pocket"),
+                           action("manufacture.contour"), action("manufacture.drill")});
+    machining->addSeparator();
+    machining->addActions({action("manufacture.simulate"), action("manufacture.export")});
+    m_menuBar->insertMenu(window->menuAction(), machining);
+    m_machiningMenu = machining->menuAction();
+    m_machiningMenu->setVisible(false);
 
     QMenu* helpMenu = m_menuBar->addMenu(tr("&Help"));
     helpMenu->addAction(action("help.about"));
@@ -1863,6 +1896,7 @@ void MainWindow::createTopBar() {
     m_workspaceBox->setToolTip(tr("The part of the work the window is set up for"));
     m_workspaceBox->addItem(tr("Design"), static_cast<int>(Workspace::Design));
     m_workspaceBox->addItem(tr("Drawing"), static_cast<int>(Workspace::Drawing));
+    m_workspaceBox->addItem(tr("Manufacture"), static_cast<int>(Workspace::Manufacture));
     m_workspaceBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     connect(m_workspaceBox, &QComboBox::activated, this, [this](int index) {
         setWorkspace(static_cast<Workspace>(m_workspaceBox->itemData(index).toInt()));
@@ -2067,11 +2101,14 @@ void MainWindow::updateMode() {
     m_modelToolbar->setVisible(designing && !sketching && !focused);
     m_sketchToolbar->setVisible(designing && sketching && !focused);
     m_drawingToolbar->setVisible(m_workspace == Workspace::Drawing && !focused);
+    m_machiningToolbar->setVisible(m_workspace == Workspace::Manufacture && !focused);
     // The menus that the workspace has a use for.
     for (QAction* menu : std::as_const(m_modelMenus)) {
         menu->setVisible(designing);
     }
+    m_viewMenu->setVisible(m_workspace != Workspace::Drawing);
     m_sheetMenu->setVisible(m_workspace == Workspace::Drawing);
+    m_machiningMenu->setVisible(m_workspace == Workspace::Manufacture);
     fitToolbar();
 }
 
@@ -2426,6 +2463,7 @@ void MainWindow::activate(int index) {
     }
     m_timeline->setDocument(session.document.get());
     m_drawings->setDocument(session.document.get());
+    m_machining->setDocument(session.document.get());
     if (m_parametersDialog != nullptr) {
         m_parametersDialog->setDocument(session.document.get());
     }
@@ -3083,6 +3121,10 @@ void MainWindow::showInspector() {
         stack->setCurrentWidget(m_drawings->panel());
         m_inspectorDock->setWindowTitle(tr("Drawing"));
         m_commandLabel->setText(m_drawings->panel()->promptText());
+    } else if (m_workspace == Workspace::Manufacture) {
+        stack->setCurrentWidget(m_machining);
+        m_inspectorDock->setWindowTitle(tr("Manufacture"));
+        m_commandLabel->clear();
     } else if (m_panel != nullptr) {
         stack->setCurrentWidget(m_panel);
         const QString title = tr("Create %1").arg(primitiveName(m_panel->kind()));

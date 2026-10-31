@@ -15,6 +15,7 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/GeometryCheckDialog.h
     include/lcad/app/Icons.h
     include/lcad/app/JointPanel.h
+    include/lcad/app/MachiningWorkspace.h
     include/lcad/app/MainWindow.h
     include/lcad/app/MeasurePanel.h
     include/lcad/app/MovePanel.h
@@ -43,6 +44,7 @@ qt_add_library(lcad_app STATIC
     src/GeometryCheckDialog.cpp
     src/Icons.cpp
     src/JointPanel.cpp
+    src/MachiningWorkspace.cpp
     src/MainWindow.cpp
     src/MeasurePanel.cpp
     src/MovePanel.cpp
@@ -59,7 +61,7 @@ qt_add_library(lcad_app STATIC
 add_library(lcad::app ALIAS lcad_app)
 target_include_directories(lcad_app PUBLIC include)
 target_link_libraries(lcad_app
-    PUBLIC Qt6::Widgets lcad::viewport lcad::document lcad::drawing lcad::kernel
+    PUBLIC Qt6::Widgets lcad::viewport lcad::cam lcad::document lcad::drawing lcad::kernel
     PRIVATE lcad::core)
 lcad_target_defaults(lcad_app)
 

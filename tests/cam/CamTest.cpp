@@ -14,6 +14,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <clocale>
 #include <cmath>
 #include <sstream>
 
@@ -631,6 +632,36 @@ TEST_CASE("The reader refuses what the machine would refuse or get wrong", "[cam
     CHECK_THAT(firstError(start + "@\n"), ContainsSubstring("not a word"));
     CHECK_THAT(firstError(start + "G1 X\n"), ContainsSubstring("no number"));
     CHECK(errorsOf(start + "T2 M6\nG43 H2\n", PostDialect::LinuxCnc).empty());
+}
+
+TEST_CASE("G-code has a point in its numbers, whatever language the system speaks",
+          "[cam][gcode]") {
+    Part part;
+    const Setup setup = part.setup();
+    const Program program = planSetup(part.document, setup);
+    const std::string expected = writeGcode(program, setup.machine, "part");
+
+    // Qt sets the language of the system for the C library when an application starts.
+    const std::string before = std::setlocale(LC_ALL, nullptr);
+    bool tried = false;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "de_DE"}) {
+        if (std::setlocale(LC_ALL, name) != nullptr) {
+            tried = true;
+            CHECK(writeGcode(program, setup.machine, "part") == expected);
+        }
+    }
+    std::setlocale(LC_ALL, before.c_str());
+    if (!tried) {
+        WARN("No language with a decimal comma is installed here.");
+    }
+    // In code, as opposed to comments, there is no comma at all.
+    std::istringstream lines(expected);
+    std::string line;
+    while (std::getline(lines, line)) {
+        if (!line.empty() && line[0] != '(') {
+            CHECK(line.find(',') == std::string::npos);
+        }
+    }
 }
 
 TEST_CASE("Verification catches G-code that differs from its program", "[cam][gcode]") {

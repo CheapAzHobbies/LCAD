@@ -583,11 +583,11 @@ TEST_CASE("DXF keeps lines and circles, on layers of their own", "[drawing][dxf]
     arc.radius = 3.0;
     arc.startAngle = 0.0;
     arc.endAngle = pi / 2.0;
-    Sheet small;
-    small.width = 10.0;
-    small.height = 10.0;
-    small.strokes.push_back(arc);
-    const std::string arcText = dxfText(small);
+    Sheet tiny;
+    tiny.width = 10.0;
+    tiny.height = 10.0;
+    tiny.strokes.push_back(arc);
+    const std::string arcText = dxfText(tiny);
     CHECK_THAT(arcText, ContainsSubstring("ARC\n8\nVISIBLE"));
     CHECK_THAT(arcText, ContainsSubstring("51\n90.000000"));
 }

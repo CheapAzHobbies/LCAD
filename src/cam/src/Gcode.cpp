@@ -6,7 +6,6 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
-#include <cstdio>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -24,10 +23,13 @@ constexpr double tolerance = 0.0011;
 // Grbl reads a line into a buffer of 80 characters, and refuses a longer one.
 constexpr std::size_t longestLine = 78;
 
+// Three decimals, with a point whatever the language of the system: printf would write a comma
+// on a German one, which a machine reads as something else.
 std::string number(double value) {
     char text[64];
-    std::snprintf(text, sizeof(text), "%.3f", value);
-    std::string out(text);
+    const auto end =
+        std::to_chars(text, text + sizeof(text), value, std::chars_format::fixed, 3).ptr;
+    std::string out(text, end);
     if (out.find('.') != std::string::npos) {
         out.erase(out.find_last_not_of('0') + 1);
         if (out.back() == '.') {
@@ -35,6 +37,37 @@ std::string number(double value) {
         }
     }
     return out == "-0" ? "0" : out;
+}
+
+// A number as a machine reads it: a sign, digits, and a point, and nothing else.
+std::optional<double> parsedNumber(const std::string& text) {
+    std::size_t i = 0;
+    const bool negative = !text.empty() && text[0] == '-';
+    if (negative) {
+        ++i;
+    }
+    double whole = 0.0;
+    double scale = 1.0;
+    bool point = false;
+    bool digits = false;
+    for (; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '.' && !point) {
+            point = true;
+        } else if (c >= '0' && c <= '9') {
+            digits = true;
+            whole = whole * 10.0 + (c - '0');
+            if (point) {
+                scale *= 10.0;
+            }
+        } else {
+            return std::nullopt;
+        }
+    }
+    if (!digits) {
+        return std::nullopt;
+    }
+    return (negative ? -whole : whole) / scale;
 }
 
 // Text fit for a comment: no parentheses, which end it, and nothing outside plain ASCII.
@@ -265,14 +298,13 @@ GcodeReading readGcode(const std::string& text, PostDialect dialect) {
                                          code[end] == '.' || code[end] == '-')) {
                 ++end;
             }
-            double value = 0.0;
-            const auto [next, status] = std::from_chars(code.data() + i, code.data() + end, value);
-            if (end == i || status != std::errc() || next != code.data() + end) {
+            const std::optional<double> value = parsedNumber(code.substr(i, end - i));
+            if (!value.has_value()) {
                 fail(std::string("the word ") + letter + " has no number.");
                 broken = true;
                 break;
             }
-            words.push_back({letter, value});
+            words.push_back({letter, *value});
             i = end;
         }
         if (broken) {

@@ -36,6 +36,7 @@ class BrowserPanel;
 class CommandRegistry;
 class DrawingWorkspace;
 class InterferenceDialog;
+class MachiningWorkspace;
 class JointPanel;
 class LinksDialog;
 class MassDialog;
@@ -53,7 +54,7 @@ class SketchPanel;
 class SketchPlanePanel;
 
 /// The parts of the work the window can be set up for.
-enum class Workspace { Design, Drawing };
+enum class Workspace { Design, Drawing, Manufacture };
 
 /// LCAD's window. It holds the open documents, one per tab, and shows the current one in the
 /// regions of the interface:
@@ -115,6 +116,8 @@ public:
     void setWorkspace(Workspace workspace);
     /// The Drawing workspace: its sheet, its panel, and its tools.
     [[nodiscard]] DrawingWorkspace* drawings() const { return m_drawings; }
+    /// The Manufacture workspace: its panel, its toolpaths, and its simulation.
+    [[nodiscard]] MachiningWorkspace* machining() const { return m_machining; }
     /// What the right-hand panel shows now.
     [[nodiscard]] QWidget* inspectorPanel() const;
 
@@ -332,6 +335,9 @@ private:
     void defineSketchCommands();
     void defineAssemblyCommands();
     void defineDrawingCommands();
+    void defineMachiningCommands();
+    /// The faces selected in the 3D view, by what stays the same when the model changes.
+    [[nodiscard]] std::vector<document::OperationTarget> selectedTargets() const;
     /// Works on `component` if it is not the one being worked on: through `path` if that leads
     /// to it, or else its first occurrence.
     void ensureActive(document::ObjectId component,
@@ -358,6 +364,7 @@ private:
     void createToolbar();
     void createSketchToolbar();
     void createDrawingToolbar();
+    void createMachiningToolbar();
     /// Shows the toolbar that goes with what is being done: modeling, or sketching.
     void updateMode();
     /// Drops the labels of the primitive buttons when the window is too narrow for them.
@@ -435,6 +442,10 @@ private:
     QList<QToolButton*> m_foldingButtons;
     DrawingWorkspace* m_drawings = nullptr;
     QToolBar* m_drawingToolbar = nullptr;
+    MachiningWorkspace* m_machining = nullptr;
+    QToolBar* m_machiningToolbar = nullptr;
+    QAction* m_machiningMenu = nullptr;
+    QAction* m_viewMenu = nullptr;
     /// The menus of the model, and of the sheet, shown in the workspace they are of use in.
     QList<QAction*> m_modelMenus;
     QAction* m_sheetMenu = nullptr;
