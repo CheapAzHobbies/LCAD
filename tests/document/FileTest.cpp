@@ -968,3 +968,35 @@ TEST_CASE("A document with a damaged feature is refused", "[document][file][feat
                  [&damage](json&, json& model, detail::Entries&) { damage.change(model); });
     CHECK_THROWS_AS(loadDocument(path), FileError);
 }
+
+TEST_CASE("A file with solids apart in one body opens with a body for each", "[document][file]") {
+    const TempDir directory;
+    const std::filesystem::path saved = directory.file("saved.lcad");
+    const std::filesystem::path older = directory.file("older.lcad");
+    Document document;
+    const ObjectId sketch = document.addSketch("Squares", lcad::kernel::planeXY());
+    lcad::sketch::Sketch squares;
+    (void)lcad::sketch::addRectangle(squares, {0.0, 0.0}, {10.0, 10.0});
+    (void)lcad::sketch::addRectangle(squares, {30.0, 0.0}, {40.0, 10.0});
+    document.setSketchGeometry(sketch, squares, "Rectangles");
+    Feature pull;
+    pull.kind = FeatureKind::Pull;
+    pull.sketch = sketch;
+    pull.distance = 5.0;
+    (void)document.addFeature(pull);
+    REQUIRE(document.bodies().size() == 2);
+    saveDocument(document, saved);
+
+    // As LCAD wrote it when a feature made the one body however many solids it left.
+    writeVariant(saved, older,
+                 [](json&, json& model, detail::Entries&) { model["bodies"].erase(1); });
+    const LoadedDocument loaded = loadDocument(older);
+    REQUIRE(loaded.document->bodies().size() == 2);
+    for (const Body& body : loaded.document->bodies()) {
+        CHECK(lcad::kernel::countTopology(body.shape).solids == 1);
+        CHECK_THAT(lcad::kernel::volume(body.shape), WithinRel(500.0, 1e-9));
+    }
+    // That is not a change of the user's.
+    CHECK_FALSE(loaded.document->isModified());
+    CHECK_FALSE(loaded.document->canUndo());
+}

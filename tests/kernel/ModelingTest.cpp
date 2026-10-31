@@ -240,10 +240,33 @@ TEST_CASE("Combining solids keeps the names of the faces that survive", "[kernel
         } catch (const Error& failure) {
             CHECK(failure.reason() == "the two do not overlap");
         }
-        // Joined, they are two solids in one body.
+        // Joined, they are two solids in one shape.
         const NamedShape both = combine(body, distant, Combination::Join);
         CHECK(countTopology(both.shape).solids == 2);
         CHECK_THAT(volume(both.shape), WithinRel(10125.0, 1e-9));
+
+        // And apart again, each with the names of its own faces.
+        const std::vector<NamedShape> apart = separated(both);
+        REQUIRE(apart.size() == 2);
+        std::size_t faces = 0;
+        for (const NamedShape& piece : apart) {
+            CHECK(countTopology(piece.shape).solids == 1);
+            REQUIRE(static_cast<int>(piece.faceNames.size()) == countTopology(piece.shape).faces);
+            faces += piece.faceNames.size();
+            for (const std::string& name : piece.faceNames) {
+                CHECK(std::count(both.faceNames.begin(), both.faceNames.end(), name) == 1);
+            }
+        }
+        CHECK(faces == both.faceNames.size());
+        CHECK(apart[0].faceNames.front() != apart[1].faceNames.front());
+        CHECK_THAT(volume(apart[0].shape) + volume(apart[1].shape), WithinRel(10125.0, 1e-9));
+        // In the same order whichever way round they were put together.
+        const std::vector<NamedShape> again = separated(combine(distant, body, Combination::Join));
+        REQUIRE(again.size() == 2);
+        CHECK(std::is_permutation(again[0].faceNames.begin(), again[0].faceNames.end(),
+                                  apart[0].faceNames.begin(), apart[0].faceNames.end()));
+        // One solid is not taken apart.
+        CHECK(separated(body).size() == 1);
     }
     SECTION("faces without a history get numbers") {
         const NamedShape box = nameFaces(makeBox(10.0, 10.0, 10.0), "2/f");

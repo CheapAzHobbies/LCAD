@@ -11,8 +11,8 @@ comes first: so far LCAD has only run on Windows and macOS on test machines.
 
 Early. LCAD can sketch, turn sketches into solids, change them through a feature timeline, read
 and write other programs' files, and put parts together into assemblies. Phases 0 to 5 of the
-[roadmap](ROADMAP.md) and the port to Windows and macOS are done; drawings and manufacturing are
-still to come.
+[roadmap](ROADMAP.md) and the port to Windows and macOS are done, and Phase 6, drawings and
+manufacturing, is in progress.
 
 What works today:
 
@@ -45,6 +45,13 @@ What works today:
   slider, cylindrical, pin-slot, planar, ball) with limits, and shown in motion; parts linked
   from other LCAD documents, a list of linked files, and packaging a project into one folder;
   interference checking, materials, and mass properties.
+- **Drawings.** Sheets of views of the model, with hidden lines, sections, details, center marks,
+  dimensions by a click on what they measure, a title block, and PDF and DXF files. They follow
+  the model.
+- **Manufacture.** 2.5D milling: facing, pockets, contours, and drilling from the faces of the
+  model; a simulation that cuts the stock and catches gouges and crashes, with a time estimate;
+  G-code for Grbl and LinuxCNC, checked by reading it back. It has not been run on a real machine
+  yet: see [what that means](docs/USING.md#manufacture).
 - **The window.** A 3D view with a view cube, standard views, display styles, and a grid;
   selecting bodies, faces, edges, vertices, and sketches, with their measurements; a browser
   tree and a properties panel to rename, hide, isolate, and delete; several documents in tabs;

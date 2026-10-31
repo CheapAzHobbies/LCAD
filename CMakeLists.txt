@@ -24,6 +24,7 @@ include(LcadOpenCascade)
 include(LcadFileLibraries)
 include(LcadCompilerOptions)
 
+add_subdirectory(third_party/clipper2)
 add_subdirectory(src)
 
 include(CTest)

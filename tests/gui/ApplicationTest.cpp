@@ -209,7 +209,9 @@ void ApplicationTest::windowHasItsFiveRegions() {
     QCOMPARE(window.menuWidget(), topBar);
     QStringList menus;
     for (const QAction* menu : window.mainMenu()->actions()) {
-        menus << menu->text().remove(QLatin1Char('&'));
+        if (menu->isVisible()) {
+            menus << menu->text().remove(QLatin1Char('&'));
+        }
     }
     QCOMPARE(
         menus,
@@ -247,8 +249,9 @@ void ApplicationTest::windowHasItsFiveRegions() {
     QVERIFY(timelineDock != nullptr && timelineDock->isVisible());
     QCOMPARE(window.dockWidgetArea(browserDock), Qt::LeftDockWidgetArea);
     QCOMPARE(window.dockWidgetArea(timelineDock), Qt::BottomDockWidgetArea);
-    QCOMPARE(window.centralWidget(), window.viewport());
-    const QRect view = window.viewport()->geometry();
+    QCOMPARE(window.viewport()->parentWidget(), window.centralWidget());
+    QVERIFY(window.viewport()->isVisible());
+    const QRect view = window.centralWidget()->geometry();
     QVERIFY(browserDock->geometry().right() <= view.left());
     QVERIFY(timelineDock->geometry().top() >= view.bottom());
     QVERIFY(toolbar->geometry().bottom() <= view.top());

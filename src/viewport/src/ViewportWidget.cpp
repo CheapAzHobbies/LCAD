@@ -31,6 +31,7 @@
 
 #include <AIS_AnimationCamera.hxx>
 #include <AIS_InteractiveContext.hxx>
+#include <AIS_InteractiveObject.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_ViewController.hxx>
 #include <AIS_ViewCube.hxx>
@@ -44,17 +45,24 @@
 #include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <Font_NameOfFont.hxx>
+#include <Graphic3d_ArrayOfPolylines.hxx>
+#include <Graphic3d_ArrayOfTriangles.hxx>
+#include <Graphic3d_AspectLine3d.hxx>
 #include <Graphic3d_CView.hxx>
 #include <Graphic3d_Camera.hxx>
+#include <Graphic3d_Group.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
 #include <Graphic3d_TransformPers.hxx>
 #include <Prs3d_DatumAspect.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <Prs3d_Presentation.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 #include <Prs3d_TextAspect.hxx>
+#include <PrsMgr_PresentationManager.hxx>
 #include <Quantity_Color.hxx>
 #include <SelectMgr_IndexedMapOfOwner.hxx>
+#include <SelectMgr_Selection.hxx>
 #include <Standard_Failure.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TColStd_IndexedDataMapOfStringString.hxx>
@@ -65,6 +73,7 @@
 #include <V3d_Viewer.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
+#include <gp_XYZ.hxx>
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -92,6 +101,93 @@ namespace lcad::viewport {
 namespace {
 
 // The view cube sits this far in from the top right corner and is this large, in logical pixels.
+// Lines in space that nothing can pick: toolpaths and the like.
+class LinesObject : public AIS_InteractiveObject {
+    DEFINE_STANDARD_RTTI_INLINE(LinesObject, AIS_InteractiveObject)
+
+public:
+    LinesObject(std::vector<std::vector<kernel::Point>> lines, const Quantity_Color& color,
+                Aspect_TypeOfLine style, double width)
+        : m_lines(std::move(lines)), m_color(color), m_style(style), m_width(width) {}
+
+private:
+    void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& shown,
+                 const Standard_Integer) override {
+        int vertices = 0;
+        for (const auto& line : m_lines) {
+            vertices += static_cast<int>(line.size());
+        }
+        if (vertices == 0) {
+            return;
+        }
+        Handle(Graphic3d_ArrayOfPolylines) array =
+            new Graphic3d_ArrayOfPolylines(vertices, static_cast<int>(m_lines.size()));
+        for (const auto& line : m_lines) {
+            array->AddBound(static_cast<int>(line.size()));
+            for (const kernel::Point& p : line) {
+                array->AddVertex(p.x, p.y, p.z);
+            }
+        }
+        Handle(Graphic3d_Group) group = shown->NewGroup();
+        group->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(m_color, m_style, m_width));
+        group->AddPrimitiveArray(array);
+    }
+    void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
+
+    std::vector<std::vector<kernel::Point>> m_lines;
+    Quantity_Color m_color;
+    Aspect_TypeOfLine m_style;
+    double m_width;
+};
+
+// A surface of triangles that nothing can pick: the stock as a simulation has cut it.
+class SurfaceObject : public AIS_InteractiveObject {
+    DEFINE_STANDARD_RTTI_INLINE(SurfaceObject, AIS_InteractiveObject)
+
+public:
+    explicit SurfaceObject(kernel::Mesh mesh) : m_mesh(std::move(mesh)) {}
+
+private:
+    void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& shown,
+                 const Standard_Integer) override {
+        // Smooth by what each corner's triangles say.
+        std::vector<gp_XYZ> normals(m_mesh.vertices.size(), gp_XYZ(0.0, 0.0, 0.0));
+        const auto vertex = [this](std::uint32_t i) {
+            const kernel::Point& p = m_mesh.vertices[i];
+            return gp_XYZ(p.x, p.y, p.z);
+        };
+        for (const auto& triangle : m_mesh.triangles) {
+            const gp_XYZ normal = (vertex(triangle[1]) - vertex(triangle[0]))
+                                      .Crossed(vertex(triangle[2]) - vertex(triangle[0]));
+            for (const std::uint32_t corner : triangle) {
+                normals[corner] += normal;
+            }
+        }
+        Handle(Graphic3d_ArrayOfTriangles) array = new Graphic3d_ArrayOfTriangles(
+            static_cast<int>(m_mesh.vertices.size()), static_cast<int>(m_mesh.triangles.size()) * 3,
+            Graphic3d_ArrayFlags_VertexNormal);
+        for (std::size_t i = 0; i < m_mesh.vertices.size(); ++i) {
+            const kernel::Point& p = m_mesh.vertices[i];
+            gp_XYZ normal = normals[i];
+            if (normal.Modulus() < 1e-12) {
+                normal = gp_XYZ(0.0, 0.0, 1.0);
+            }
+            normal.Normalize();
+            array->AddVertex(gp_Pnt(p.x, p.y, p.z), gp_Dir(normal));
+        }
+        for (const auto& triangle : m_mesh.triangles) {
+            array->AddEdges(static_cast<int>(triangle[0]) + 1, static_cast<int>(triangle[1]) + 1,
+                            static_cast<int>(triangle[2]) + 1);
+        }
+        Handle(Graphic3d_Group) group = shown->NewGroup();
+        group->SetGroupPrimitivesAspect(Attributes()->ShadingAspect()->Aspect());
+        group->AddPrimitiveArray(array);
+    }
+    void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
+
+    kernel::Mesh m_mesh;
+};
+
 const int viewCubeOffset = 70;
 const double viewCubeSize = 46.0;
 
@@ -324,6 +420,11 @@ public:
         }
     };
     std::map<BodyKey, Handle(AIS_Shape)> bodyObjects;
+    Handle(AIS_InteractiveObject) cutObject;
+    Handle(AIS_InteractiveObject) rapidObject;
+    Handle(AIS_InteractiveObject) stockObject;
+    Handle(AIS_InteractiveObject) surfaceObject;
+    Handle(AIS_Shape) toolObject;
     std::unordered_map<const Standard_Transient*, BodyKey> bodyOfObject;
     // The occurrence of the component being worked on, and, while joints are shown in motion,
     // where the occurrences are shown instead of where the document has them.
@@ -1597,6 +1698,8 @@ public:
         case Kind::SketchRenamed:
         case Kind::ParametersChanged:
         case Kind::HistoryChanged:
+        case Kind::DrawingsChanged:
+        case Kind::MachiningChanged:
         case Kind::MaterialsChanged:
             return;
         }
@@ -1929,6 +2032,77 @@ void ViewportWidget::showInstances(const std::vector<document::Instance>& instan
     }
     m_impl->syncBodies();
     m_impl->replaceSingles();
+    m_impl->redraw();
+}
+
+void ViewportWidget::setToolpaths(const ToolpathLines& lines) {
+    if (m_impl->context.IsNull()) {
+        return;
+    }
+    const auto replace = [this](Handle(AIS_InteractiveObject)& object,
+                                const std::vector<std::vector<kernel::Point>>& paths,
+                                const QColor& color, Aspect_TypeOfLine style, double width) {
+        if (!object.IsNull()) {
+            m_impl->context->Remove(object, false);
+            object.Nullify();
+        }
+        if (!paths.empty()) {
+            object = new LinesObject(paths, toOcct(color), style, width);
+            // Over the bodies: what runs inside them is what is looked at here.
+            object->SetZLayer(Graphic3d_ZLayerId_Topmost);
+            m_impl->context->Display(object, 0, -1, false);
+        }
+    };
+    replace(m_impl->cutObject, lines.cuts, m_impl->colors.selection, Aspect_TOL_SOLID, 1.0);
+    replace(m_impl->rapidObject, lines.rapids, m_impl->colors.sketchConflict, Aspect_TOL_DOT, 1.0);
+    replace(m_impl->stockObject, lines.stock, m_impl->colors.line, Aspect_TOL_DASH, 1.0);
+    m_impl->redraw();
+}
+
+void ViewportWidget::setStockSurface(const kernel::Mesh& mesh) {
+    if (m_impl->context.IsNull()) {
+        return;
+    }
+    const bool wasShown = !m_impl->surfaceObject.IsNull();
+    if (wasShown) {
+        m_impl->context->Remove(m_impl->surfaceObject, false);
+        m_impl->surfaceObject.Nullify();
+    }
+    const bool showing = !mesh.triangles.empty();
+    if (showing) {
+        Handle(SurfaceObject) surface = new SurfaceObject(mesh);
+        surface->Attributes()->SetShadingAspect(new Prs3d_ShadingAspect());
+        surface->Attributes()->ShadingAspect()->SetMaterial(bodyMaterial());
+        surface->Attributes()->ShadingAspect()->SetColor(toOcct(m_impl->colors.body));
+        m_impl->surfaceObject = surface;
+        m_impl->context->Display(m_impl->surfaceObject, 0, -1, false);
+    }
+    if (showing != wasShown) {
+        for (const auto& entry : m_impl->bodyObjects) {
+            if (showing) {
+                m_impl->context->Erase(entry.second, false);
+            } else {
+                m_impl->context->Display(entry.second, false);
+            }
+        }
+    }
+    m_impl->redraw();
+}
+
+void ViewportWidget::setToolShape(const kernel::Shape& shape) {
+    if (m_impl->context.IsNull()) {
+        return;
+    }
+    if (!m_impl->toolObject.IsNull()) {
+        m_impl->context->Remove(m_impl->toolObject, false);
+        m_impl->toolObject.Nullify();
+    }
+    if (!shape.isNull()) {
+        m_impl->toolObject = new AIS_Shape(kernel::occt::unwrap(shape));
+        m_impl->toolObject->SetMaterial(bodyMaterial());
+        m_impl->toolObject->SetColor(toOcct(m_impl->colors.preview));
+        m_impl->context->Display(m_impl->toolObject, AIS_Shaded, -1, false);
+    }
     m_impl->redraw();
 }
 

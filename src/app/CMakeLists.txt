@@ -7,12 +7,15 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/BrowserPanel.h
     include/lcad/app/CommandSearch.h
     include/lcad/app/Commands.h
+    include/lcad/app/DrawingPanel.h
+    include/lcad/app/DrawingWorkspace.h
     include/lcad/app/ExportDialog.h
     include/lcad/app/ExpressionBox.h
     include/lcad/app/FeaturePanel.h
     include/lcad/app/GeometryCheckDialog.h
     include/lcad/app/Icons.h
     include/lcad/app/JointPanel.h
+    include/lcad/app/MachiningWorkspace.h
     include/lcad/app/MainWindow.h
     include/lcad/app/MeasurePanel.h
     include/lcad/app/MovePanel.h
@@ -21,6 +24,7 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/PrimitivePanel.h
     include/lcad/app/PropertiesPanel.h
     include/lcad/app/Recovery.h
+    include/lcad/app/SheetView.h
     include/lcad/app/ShortcutsDialog.h
     include/lcad/app/SketchPanel.h
     include/lcad/app/Theme.h
@@ -31,12 +35,16 @@ qt_add_library(lcad_app STATIC
     src/BrowserPanel.cpp
     src/CommandSearch.cpp
     src/Commands.cpp
+    src/DrawingCommands.cpp
+    src/DrawingPanel.cpp
+    src/DrawingWorkspace.cpp
     src/ExportDialog.cpp
     src/ExpressionBox.cpp
     src/FeaturePanel.cpp
     src/GeometryCheckDialog.cpp
     src/Icons.cpp
     src/JointPanel.cpp
+    src/MachiningWorkspace.cpp
     src/MainWindow.cpp
     src/MeasurePanel.cpp
     src/MovePanel.cpp
@@ -45,6 +53,7 @@ qt_add_library(lcad_app STATIC
     src/PrimitivePanel.cpp
     src/PropertiesPanel.cpp
     src/Recovery.cpp
+    src/SheetView.cpp
     src/ShortcutsDialog.cpp
     src/SketchPanel.cpp
     src/Theme.cpp
@@ -52,7 +61,7 @@ qt_add_library(lcad_app STATIC
 add_library(lcad::app ALIAS lcad_app)
 target_include_directories(lcad_app PUBLIC include)
 target_link_libraries(lcad_app
-    PUBLIC Qt6::Widgets lcad::viewport lcad::document lcad::kernel
+    PUBLIC Qt6::Widgets lcad::viewport lcad::cam lcad::document lcad::drawing lcad::kernel
     PRIVATE lcad::core)
 lcad_target_defaults(lcad_app)
 

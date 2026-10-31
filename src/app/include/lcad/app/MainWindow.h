@@ -34,7 +34,9 @@ namespace lcad::app {
 
 class BrowserPanel;
 class CommandRegistry;
+class DrawingWorkspace;
 class InterferenceDialog;
+class MachiningWorkspace;
 class JointPanel;
 class LinksDialog;
 class MassDialog;
@@ -50,6 +52,9 @@ class CommandSearch;
 class PropertiesPanel;
 class SketchPanel;
 class SketchPlanePanel;
+
+/// The parts of the work the window can be set up for.
+enum class Workspace { Design, Drawing, Manufacture };
 
 /// LCAD's window. It holds the open documents, one per tab, and shows the current one in the
 /// regions of the interface:
@@ -105,6 +110,17 @@ public:
 
     /// Opens a new, empty document in a tab of its own and shows it.
     void newDocument();
+    /// Which part of the work the window is set up for.
+    [[nodiscard]] Workspace workspace() const { return m_workspace; }
+    /// Moves to another workspace, finishing what is under way in this one.
+    void setWorkspace(Workspace workspace);
+    /// The Drawing workspace: its sheet, its panel, and its tools.
+    [[nodiscard]] DrawingWorkspace* drawings() const { return m_drawings; }
+    /// The Manufacture workspace: its panel, its toolpaths, and its simulation.
+    [[nodiscard]] MachiningWorkspace* machining() const { return m_machining; }
+    /// What the right-hand panel shows now.
+    [[nodiscard]] QWidget* inspectorPanel() const;
+
     /// Opens the file in a tab and shows it. A file that is already open is shown, not opened
     /// twice. An untouched empty document gives its tab to the file. On failure nothing changes
     /// and `error` receives the reason.
@@ -318,6 +334,12 @@ private:
     void defineCommands();
     void defineSketchCommands();
     void defineAssemblyCommands();
+    /// Has everything that watches the document let go of it: before a document goes.
+    void detachFromDocument();
+    void defineDrawingCommands();
+    void defineMachiningCommands();
+    /// The faces selected in the 3D view, by what stays the same when the model changes.
+    [[nodiscard]] std::vector<document::OperationTarget> selectedTargets() const;
     /// Works on `component` if it is not the one being worked on: through `path` if that leads
     /// to it, or else its first occurrence.
     void ensureActive(document::ObjectId component,
@@ -343,6 +365,8 @@ private:
     void createTopBar();
     void createToolbar();
     void createSketchToolbar();
+    void createDrawingToolbar();
+    void createMachiningToolbar();
     /// Shows the toolbar that goes with what is being done: modeling, or sketching.
     void updateMode();
     /// Drops the labels of the primitive buttons when the window is too narrow for them.
@@ -364,6 +388,8 @@ private:
     void updateRecentMenu();
     void rememberFile(const QString& path);
     void showInspector();
+    void showWorkspacePage(QWidget* page);
+    void fitInspector();
     /// Opens the panel for a feature and sets up picking for it.
     void openFeaturePanel(document::FeatureKind kind);
     void closeFeaturePanel();
@@ -412,6 +438,21 @@ private:
     void showViewportMenu(const QPoint& position);
 
     viewport::ViewportWidget* m_viewport;
+    /// What fills the middle of the window: the 3D view, or a drawing's sheet.
+    QStackedWidget* m_center = nullptr;
+    Workspace m_workspace = Workspace::Design;
+    QComboBox* m_workspaceBox = nullptr;
+    /// The quick buttons that give way in a narrow window.
+    QList<QToolButton*> m_foldingButtons;
+    DrawingWorkspace* m_drawings = nullptr;
+    QToolBar* m_drawingToolbar = nullptr;
+    MachiningWorkspace* m_machining = nullptr;
+    QToolBar* m_machiningToolbar = nullptr;
+    QAction* m_machiningMenu = nullptr;
+    QAction* m_viewMenu = nullptr;
+    /// The menus of the model, and of the sheet, shown in the workspace they are of use in.
+    QList<QAction*> m_modelMenus;
+    QAction* m_sheetMenu = nullptr;
     BrowserPanel* m_browser = nullptr;
     PropertiesPanel* m_properties = nullptr;
     CommandRegistry* m_commands = nullptr;

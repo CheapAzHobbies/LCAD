@@ -7,7 +7,8 @@ the reasons for each. The product requirements are in [PROJECT_BRIEF.md](PROJECT
 
 Phases 0 to 2 built the desktop foundation and the sketcher, Phase 3 the features and the
 timeline, Phase 4 other programs' files and direct edits, Phase 5 components and assemblies, and
-the port took all of it to Windows and macOS. Each decision below rests on running code:
+the port took all of it to Windows and macOS. Phase 6 (in progress) adds drawings and
+manufacturing. Each decision below rests on running code:
 
 - `core` holds the log and LCAD's version.
 - `kernel` makes boxes, cylinders, spheres, cones, and tori, moves shapes, measures them (volume,
@@ -48,11 +49,19 @@ flowchart TD
     sketch["sketch<br/>2D geometry and constraints"]
     kernel["kernel<br/>exact geometry"]
     core["core<br/>log, version"]
+    drawing["drawing<br/>sheets, DXF"]
+    cam["cam<br/>toolpaths, simulation, G-code"]
     qt(["Qt 6"])
     occt(["Open CASCADE"])
 
     app --> viewport
     app --> document
+    app --> drawing
+    app --> cam
+    drawing --> document
+    drawing --> kernel
+    cam --> document
+    cam --> kernel
     viewport --> document
     viewport --> kernel
     viewport --> sketch
@@ -72,10 +81,12 @@ flowchart TD
 | `sketch` | Sketch entities, constraints, the constraint solver, closed outlines, and the geometry of the sketch tools. No Qt and no OCCT. | In place; ellipse and spline to come |
 | `document` | The model: components, bodies, sketches, parameters, and the feature history. Recompute, transactions and undo, saving and loading. | In place: bodies, sketches, features, components, joints, links |
 | `viewport` | Displays the document's geometry and turns pointer input into picks and camera motion. Wraps OCCT's viewer in a Qt widget. Edits a sketch in place. | In place |
+| `drawing` | What a sheet of a drawing shows, as lines and labels, and DXF files. No Qt and no OCCT. | In place |
+| `cam` | Toolpaths, the simulation that checks them, and G-code. No Qt and no OCCT. | In place |
 | `app` | Main window, browser, timeline, toolbars, the command system, and interactive tools. | Window, primitive commands, and sketch commands in place |
 
-Drawings, CAM, and scripting become modules of their own when their phases start. Each sits beside
-`app` and uses `document` and `kernel` the same way.
+Scripting will be a module of its own when its phase starts, beside `app`, and using `document` and
+`kernel` the same way as `drawing` and `cam` do.
 
 ### Rules
 
@@ -121,6 +132,8 @@ Each was made on 2026-10-12 unless noted.
 | 14 | Commands | Defined once in a registry; settings in a panel beside the viewport with a live preview, not a modal dialog (2026-10-12, Phases 1 and 1b) | Phase 2, when commands need parameters in the registry |
 | 15 | Appearance | Design tokens, a light and a dark theme, Qt's Fusion widget style everywhere (2026-10-12, Phase 1b) | Not expected |
 | 16 | Assemblies | Components defined once and placed by occurrences; joints solved after the timeline, one part at a time from what is fixed; linked parts kept as copies (2026-10-19, Phase 5) | Assemblies with loops of joints, or large ones |
+| 18 | Drawings | Kept as what the user chose; a sheet is worked out from the model each time, as lines and labels that the screen, PDF, and DXF all draw (2026-10-31, Phase 6) | Large assemblies, when hidden line removal takes too long |
+| 19 | Manufacturing | Toolpaths worked out from the model each time; a height field to simulate on; G-code read back by a strict reader of the dialect before it is handed out (2026-10-31, Phase 6) | 3-axis surfacing, which a height field can carry; 5-axis, which it cannot |
 | 17 | Windows and macOS | One code base; libraries from conda-forge on both; Visual Studio on Windows, conda-forge's Clang on macOS; OpenGL 4.1 core profile on macOS (2026-10-30, the port) | Apple drops OpenGL; a wish for wider lines on macOS |
 
 ### 1. Geometry kernel
@@ -331,6 +344,19 @@ timeline. A sketch that is attached to a construction
 plane or to a face is moved there when its turn comes, and the features made from it are built
 again if it moved. Either one keeps where it last was, and says why, when what it is placed on
 is gone.
+
+Solids that do not touch are bodies of their own, whichever feature left them apart. A rebuild
+separates what each feature leaves (`kernel::separated()`), in the order of the lowest face name
+of each solid, so that the same solid lands in the same body when the model changes. The body
+the feature works on goes on in the first solid with something of what that body was. The others
+are in bodies with `piece` set and `madeBy` naming the feature, which have no place in the
+timeline of their own. How many of them there are depends on the geometry, so they cannot be
+decided when the feature is added: a change that splits a body may be to a dimension several
+features back. `settlePieces()` therefore makes the bodies that are missing after the rebuild
+that shows they are needed, as part of the undo step that caused it. A body whose solid has gone
+away stays, without a shape and out of the browser, because later features may name it and the
+solid may come back. Deleting one body among several only marks it `discarded`, since its
+features are still needed for the others.
 
 ### 11. Stable references
 
@@ -570,6 +596,63 @@ run on, so that what LCAD links would decide the oldest macOS it runs on.
 - *Test machines only, so far.* On Windows the tests draw with Mesa's software OpenGL and on macOS
   with Apple's software renderer. Neither has met a real graphics driver.
 - *Intel Macs.* CI builds for Apple silicon only.
+
+### 18. Drawings
+
+**Chosen:** a drawing keeps what the user chose: which views, at what scale, where, and what the
+dimensions hang on. All the geometry on a sheet is worked out from the model each time, by the
+`drawing` module, into a `Sheet`: a list of lines, filled shapes, and labels in millimeters.
+
+**Why.** A sheet that keeps no geometry cannot go stale, which is the hard part of associative
+drawings. The screen, PDF, and DXF all draw one list, so they cannot disagree. Hidden line removal
+is OCCT's (`HLRBRep`), behind `kernel::project()`, which takes time, so `SheetBuilder` keeps
+what it worked out for a view until the model changes.
+
+**How dimensions stay on.** A dimension names a body, the occurrences it is seen through, an edge
+by the name `kernel::edgeNames()` gives it, and where on the edge. These names outlast changes to
+the model (decision 11). HLR's output has no link back to the edges it came from, so picking does
+not use it: `addSnaps()` projects the model's edges on its own, and a click finds the nearest. An
+edge the model no longer has leaves its dimension in the drawing, unshown and reported.
+
+**What it costs.** HLR draws every curve that is not a line or a circle as many short lines, in DXF
+too. Hidden lines that lie exactly behind visible ones have to be taken out afterwards, because
+HLR gives them both.
+
+### 19. Manufacturing
+
+**Chosen:** a setup keeps what the user chose. Toolpaths are worked out from the model each time by
+the `cam` module, in its model's coordinates. A `Simulation` runs them on a grid of heights over
+the stock, against a grid of the part's heights. A post writes G-code, and an independent reader
+of the dialect has to read it back into the same moves.
+
+**Why.** The brief says never to generate supposedly safe toolpaths through placeholder logic, so
+each stage checks the one before it instead of being trusted:
+
+| Stage | What it checks |
+|---|---|
+| `planSetup()` | What the tool can do at all: fits the pocket, reaches the depth, feeds within the machine |
+| `pocketMoves()` | That the rings really cover what a tool can reach, by subtracting what they sweep from it |
+| `Simulation` | What the moves do: cuts into the part, rapid moves into material, tools buried past their flutes |
+| `verifyGcode()` | That the text says those moves: a reader that shares no code with the writer |
+
+Writing G-code runs them all, every time, and writes nothing if any fails. A height field is
+enough for a tool that comes down along Z, and is simple enough to be sure of.
+
+**Offsets** come from Clipper2, kept in `third_party/clipper2` at a pinned release, because
+nothing else here could be trusted as far: no distribution LCAD builds on packages it, and an
+offset that goes wrong on a self-touching outline would cut the part.
+
+**What it costs.**
+
+- *Checked against itself.* None of this has met a real machine. The reader is LCAD's own, written
+  from the Grbl and LinuxCNC documentation. A word it wrongly accepts would get through.
+- *Tolerances.* The simulation holds the tool 0.03 mm smaller than it is, and allows 0.02 mm of
+  depth, so that a tool running exactly along a wall is not called a gouge. A real gouge smaller
+  than that is not seen.
+- *What it does not know.* Clamps, the vise, and the holder's real shape are not modeled. Bodies in
+  the document are the only things it avoids.
+- *Heights only.* A height field has no undercuts, which is right for a tool along Z, and would not
+  do for a machine with more axes.
 
 ## Threads
 

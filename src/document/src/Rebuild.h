@@ -27,6 +27,11 @@ public:
                                           const BodyStates& bodies,
                                           kernel::NamedShape* tool = nullptr);
 
+/// What a feature left in `body` a solid at a time. The body carries on in the first of them:
+/// one with something of what the body was, if it was anything before.
+[[nodiscard]] std::vector<kernel::NamedShape> solidsOf(const kernel::NamedShape& result,
+                                                       const BodyStates& bodies, ObjectId body);
+
 /// Where a construction plane goes, given the bodies as they are when its turn comes. Throws
 /// FeatureFailure if it cannot be placed.
 [[nodiscard]] PlaneState placePlane(const Feature& feature, const Document& document,

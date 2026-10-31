@@ -429,6 +429,43 @@ NamedShape nameFaces(const Shape& shape, const std::string& prefix) {
     return result;
 }
 
+std::vector<NamedShape> separated(const NamedShape& shape) {
+    const TopoDS_Shape& whole = occt::unwrap(shape.shape);
+    if (whole.IsNull()) {
+        return {shape};
+    }
+    const TopTools_IndexedMapOfShape solids = mapOf(whole, TopAbs_SOLID);
+    const TopTools_IndexedMapOfShape faces = mapOf(whole, TopAbs_FACE);
+    if (solids.Extent() < 2 || faces.Extent() != static_cast<int>(shape.faceNames.size())) {
+        return {shape};
+    }
+    std::vector<NamedShape> pieces;
+    int facesOfSolids = 0;
+    for (int i = 1; i <= solids.Extent(); ++i) {
+        NamedShape piece{occt::wrap(solids(i)), {}};
+        const TopTools_IndexedMapOfShape own = mapOf(solids(i), TopAbs_FACE);
+        for (int j = 1; j <= own.Extent(); ++j) {
+            const int index = faces.FindIndex(own(j));
+            if (index == 0) {
+                return {shape};
+            }
+            piece.faceNames.push_back(shape.faceNames[static_cast<std::size_t>(index) - 1]);
+        }
+        facesOfSolids += own.Extent();
+        pieces.push_back(std::move(piece));
+    }
+    if (facesOfSolids != faces.Extent()) {
+        return {shape};
+    }
+    const auto lowest = [](const NamedShape& piece) {
+        return *std::min_element(piece.faceNames.begin(), piece.faceNames.end());
+    };
+    std::sort(pieces.begin(), pieces.end(), [&lowest](const NamedShape& a, const NamedShape& b) {
+        return lowest(a) < lowest(b);
+    });
+    return pieces;
+}
+
 std::vector<std::string> edgeNames(const NamedShape& shape) {
     const TopoDS_Shape& whole = occt::unwrap(shape.shape);
     std::vector<std::string> names;

@@ -4,6 +4,7 @@
 
 #include <lcad/document/Assembly.h>
 #include <lcad/document/ObjectId.h>
+#include <lcad/kernel/Exchange.h>
 #include <lcad/kernel/Transform.h>
 
 #include <QColor>
@@ -137,6 +138,16 @@ struct SelectedItem {
     friend bool operator==(const SelectedItem&, const SelectedItem&) = default;
 };
 
+/// What a machining setup shows in the 3D view: lines in the root's coordinates.
+struct ToolpathLines {
+    /// Where the tool cuts.
+    std::vector<std::vector<kernel::Point>> cuts;
+    /// Where it moves without cutting.
+    std::vector<std::vector<kernel::Point>> rapids;
+    /// The edges of the stock.
+    std::vector<std::vector<kernel::Point>> stock;
+};
+
 /// A closed region of a sketch, which a pull or a revolve is made from: the sketch, and the
 /// curves of the outline around the region (sketch::EntityId), in increasing order.
 struct Profile {
@@ -207,6 +218,13 @@ public:
     /// Small X, Y, Z arrows at these frames, in the root's coordinates: where a joint is being
     /// placed. An empty list removes them.
     void setFrameMarkers(const std::vector<kernel::Placement>& frames);
+    /// Shows toolpaths and the stock's edges. They cannot be picked. Empty lists remove them.
+    void setToolpaths(const ToolpathLines& lines);
+    /// Shows the stock as a simulation has cut it, in place of the bodies. A mesh without
+    /// triangles removes it and shows the bodies again.
+    void setStockSurface(const kernel::Mesh& mesh);
+    /// Shows a tool, in the root's coordinates. A null shape removes it.
+    void setToolShape(const kernel::Shape& shape);
 
     // A handle that sets a distance
 

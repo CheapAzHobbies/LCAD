@@ -4,6 +4,7 @@ add_executable(lcad_document_tests
     AssemblyTest.cpp
     DirectEditTest.cpp
     DocumentTest.cpp
+    DrawingDataTest.cpp
     FeatureTest.cpp
     FileTest.cpp
     LinksTest.cpp

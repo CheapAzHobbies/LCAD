@@ -1001,6 +1001,414 @@ void writeAssembly(const Document& document, nlohmann::ordered_json& model,
     }
 }
 
+// Drawings, tools, and setups.
+
+// A number that a file may leave out, with what it then is.
+double numberOr(const json& object, const char* key, double fallback, const std::string& where,
+                const std::filesystem::path& path) {
+    return object.contains(key) ? numberMember(object, key, where, path) : fallback;
+}
+
+// The value of a kind, by the name it goes by in a file.
+template <typename Kind>
+Kind kindMember(const json& object, const char* key, bool (*fromString)(const std::string&, Kind&),
+                const std::string& where, const std::filesystem::path& path) {
+    const std::string name = stringMember(object, key, where, path);
+    Kind kind{};
+    if (!fromString(name, kind)) {
+        damaged(path, where + " has the unknown " + key + " \"" + name + "\"");
+    }
+    return kind;
+}
+
+nlohmann::ordered_json writeDrawingPoint(const DrawingPoint& point) {
+    using nlohmann::ordered_json;
+    ordered_json out;
+    out["body"] = point.body.value;
+    out["path"] = ordered_json::array();
+    for (const ObjectId id : point.path) {
+        out["path"].push_back(id.value);
+    }
+    out["edge"] = point.edge;
+    switch (point.where) {
+    case DrawingPoint::Where::Start:
+        out["where"] = "start";
+        break;
+    case DrawingPoint::Where::End:
+        out["where"] = "end";
+        break;
+    case DrawingPoint::Where::Middle:
+        out["where"] = "middle";
+        break;
+    case DrawingPoint::Where::Center:
+        out["where"] = "center";
+        break;
+    }
+    return out;
+}
+
+DrawingPoint readDrawingPoint(const json& entry, const char* key, const std::string& where,
+                              const std::filesystem::path& path) {
+    const json& value = objectMember(entry, key, where, path);
+    const std::string at = "a point of " + where;
+    DrawingPoint point;
+    point.body = ObjectId{idMember(value, "body", at, path)};
+    for (const std::uint64_t id : idsMember(value, "path", at, path)) {
+        point.path.push_back(ObjectId{id});
+    }
+    point.edge = stringMember(value, "edge", at, path);
+    const std::string name = stringMember(value, "where", at, path);
+    if (name == "start") {
+        point.where = DrawingPoint::Where::Start;
+    } else if (name == "end") {
+        point.where = DrawingPoint::Where::End;
+    } else if (name == "middle") {
+        point.where = DrawingPoint::Where::Middle;
+    } else if (name == "center") {
+        point.where = DrawingPoint::Where::Center;
+    } else {
+        damaged(path, at + " is at the unknown \"" + name + "\"");
+    }
+    return point;
+}
+
+nlohmann::ordered_json writeDrawing(const Drawing& drawing) {
+    using nlohmann::ordered_json;
+    ordered_json out;
+    out["id"] = drawing.id.value;
+    out["name"] = drawing.name;
+    out["size"] = toString(drawing.size);
+    out["standard"] = drawing.standard == DrawingStandard::Iso ? "iso" : "ansi";
+    const TitleBlock& title = drawing.titleBlock;
+    out["titleBlock"] = ordered_json{
+        {"title", title.title},       {"partNumber", title.partNumber},
+        {"revision", title.revision}, {"drawnBy", title.drawnBy},
+        {"date", title.date},         {"material", title.material},
+        {"company", title.company},
+    };
+    out["views"] = ordered_json::array();
+    for (const DrawingView& view : drawing.views) {
+        ordered_json entry;
+        entry["id"] = view.id.value;
+        entry["kind"] = toString(view.kind);
+        entry["label"] = view.label;
+        entry["scale"] = view.scale;
+        entry["x"] = view.x;
+        entry["y"] = view.y;
+        entry["showHidden"] = view.showHidden;
+        entry["centerMarks"] = view.centerMarks;
+        if (view.kind == ViewKind::Section || view.kind == ViewKind::Detail) {
+            entry["parent"] = view.parent.value;
+        }
+        if (view.kind == ViewKind::Section) {
+            entry["sectionVertical"] = view.sectionVertical;
+            entry["sectionPosition"] = view.sectionPosition;
+            entry["sectionFlipped"] = view.sectionFlipped;
+        }
+        if (view.kind == ViewKind::Detail) {
+            entry["detailX"] = view.detailX;
+            entry["detailY"] = view.detailY;
+            entry["detailRadius"] = view.detailRadius;
+        }
+        out["views"].push_back(std::move(entry));
+    }
+    out["dimensions"] = ordered_json::array();
+    for (const DrawingDimension& dimension : drawing.dimensions) {
+        ordered_json entry;
+        entry["id"] = dimension.id.value;
+        entry["view"] = dimension.view.value;
+        entry["kind"] = toString(dimension.kind);
+        entry["first"] = writeDrawingPoint(dimension.first);
+        if (dimension.kind != DimensionKind::Radius && dimension.kind != DimensionKind::Diameter) {
+            entry["second"] = writeDrawingPoint(dimension.second);
+        }
+        entry["offset"] = dimension.offset;
+        entry["suffix"] = dimension.suffix;
+        out["dimensions"].push_back(std::move(entry));
+    }
+    out["notes"] = ordered_json::array();
+    for (const DrawingNote& note : drawing.notes) {
+        out["notes"].push_back(ordered_json{{"id", note.id.value},
+                                            {"text", note.text},
+                                            {"x", note.x},
+                                            {"y", note.y},
+                                            {"height", note.height}});
+    }
+    return out;
+}
+
+Drawing readDrawing(const json& entry, const std::filesystem::path& path) {
+    Drawing drawing;
+    drawing.id = ObjectId{idMember(entry, "id", "a drawing", path)};
+    drawing.name = stringMember(entry, "name", "a drawing", path);
+    const std::string where = "the drawing " + drawing.name;
+    drawing.size = kindMember<SheetSize>(entry, "size", sheetSizeFromString, where, path);
+    const std::string standard = stringMember(entry, "standard", where, path);
+    if (standard == "iso") {
+        drawing.standard = DrawingStandard::Iso;
+    } else if (standard == "ansi") {
+        drawing.standard = DrawingStandard::Ansi;
+    } else {
+        damaged(path, where + " follows the unknown standard \"" + standard + "\"");
+    }
+    const json& title = objectMember(entry, "titleBlock", where, path);
+    const std::string titleWhere = "the title block of " + where;
+    drawing.titleBlock.title = stringMember(title, "title", titleWhere, path);
+    drawing.titleBlock.partNumber = stringMember(title, "partNumber", titleWhere, path);
+    drawing.titleBlock.revision = stringMember(title, "revision", titleWhere, path);
+    drawing.titleBlock.drawnBy = stringMember(title, "drawnBy", titleWhere, path);
+    drawing.titleBlock.date = stringMember(title, "date", titleWhere, path);
+    drawing.titleBlock.material = stringMember(title, "material", titleWhere, path);
+    drawing.titleBlock.company = stringMember(title, "company", titleWhere, path);
+    if (const json* views = optionalList(entry, "views", path)) {
+        for (const json& item : *views) {
+            DrawingView view;
+            const std::string at = "a view of " + where;
+            view.id = ObjectId{idMember(item, "id", at, path)};
+            view.kind = kindMember<ViewKind>(item, "kind", viewKindFromString, at, path);
+            view.label = stringMember(item, "label", at, path);
+            view.scale = numberMember(item, "scale", at, path);
+            view.x = numberMember(item, "x", at, path);
+            view.y = numberMember(item, "y", at, path);
+            view.showHidden = boolMember(item, "showHidden", at, path);
+            view.centerMarks = boolMember(item, "centerMarks", at, path);
+            if (view.kind == ViewKind::Section || view.kind == ViewKind::Detail) {
+                view.parent = ObjectId{idMember(item, "parent", at, path)};
+            }
+            if (view.kind == ViewKind::Section) {
+                view.sectionVertical = boolMember(item, "sectionVertical", at, path);
+                view.sectionPosition = numberMember(item, "sectionPosition", at, path);
+                view.sectionFlipped = boolMember(item, "sectionFlipped", at, path);
+            }
+            if (view.kind == ViewKind::Detail) {
+                view.detailX = numberMember(item, "detailX", at, path);
+                view.detailY = numberMember(item, "detailY", at, path);
+                view.detailRadius = numberMember(item, "detailRadius", at, path);
+            }
+            drawing.views.push_back(std::move(view));
+        }
+    }
+    if (const json* dimensions = optionalList(entry, "dimensions", path)) {
+        for (const json& item : *dimensions) {
+            DrawingDimension dimension;
+            const std::string at = "a dimension of " + where;
+            dimension.id = ObjectId{idMember(item, "id", at, path)};
+            dimension.view = ObjectId{idMember(item, "view", at, path)};
+            dimension.kind =
+                kindMember<DimensionKind>(item, "kind", dimensionKindFromString, at, path);
+            dimension.first = readDrawingPoint(item, "first", at, path);
+            if (dimension.kind != DimensionKind::Radius &&
+                dimension.kind != DimensionKind::Diameter) {
+                dimension.second = readDrawingPoint(item, "second", at, path);
+            }
+            dimension.offset = numberMember(item, "offset", at, path);
+            dimension.suffix = stringMember(item, "suffix", at, path);
+            drawing.dimensions.push_back(std::move(dimension));
+        }
+    }
+    if (const json* notes = optionalList(entry, "notes", path)) {
+        for (const json& item : *notes) {
+            DrawingNote note;
+            const std::string at = "a note of " + where;
+            note.id = ObjectId{idMember(item, "id", at, path)};
+            note.text = stringMember(item, "text", at, path);
+            note.x = numberMember(item, "x", at, path);
+            note.y = numberMember(item, "y", at, path);
+            note.height = numberMember(item, "height", at, path);
+            drawing.notes.push_back(std::move(note));
+        }
+    }
+    return drawing;
+}
+
+nlohmann::ordered_json writeTool(const Tool& tool) {
+    return nlohmann::ordered_json{{"id", tool.id.value},
+                                  {"name", tool.name},
+                                  {"kind", toString(tool.kind)},
+                                  {"diameter", tool.diameter},
+                                  {"fluteLength", tool.fluteLength},
+                                  {"stickout", tool.stickout},
+                                  {"flutes", tool.flutes},
+                                  {"tipAngle", tool.tipAngle},
+                                  {"number", tool.number}};
+}
+
+Tool readTool(const json& entry, const std::filesystem::path& path) {
+    Tool tool;
+    tool.id = ObjectId{idMember(entry, "id", "a tool", path)};
+    tool.name = stringMember(entry, "name", "a tool", path);
+    const std::string where = "the tool " + tool.name;
+    tool.kind = kindMember<ToolKind>(entry, "kind", toolKindFromString, where, path);
+    tool.diameter = numberMember(entry, "diameter", where, path);
+    tool.fluteLength = numberMember(entry, "fluteLength", where, path);
+    tool.stickout = numberMember(entry, "stickout", where, path);
+    tool.flutes = static_cast<int>(numberMember(entry, "flutes", where, path));
+    tool.tipAngle = numberMember(entry, "tipAngle", where, path);
+    tool.number = static_cast<int>(numberMember(entry, "number", where, path));
+    return tool;
+}
+
+nlohmann::ordered_json writeOperation(const MachiningOperation& operation) {
+    using nlohmann::ordered_json;
+    ordered_json out;
+    out["id"] = operation.id.value;
+    out["name"] = operation.name;
+    out["kind"] = toString(operation.kind);
+    out["tool"] = operation.tool.value;
+    out["targets"] = ordered_json::array();
+    for (const OperationTarget& target : operation.targets) {
+        ordered_json entry;
+        entry["body"] = target.body.value;
+        entry["path"] = ordered_json::array();
+        for (const ObjectId id : target.path) {
+            entry["path"].push_back(id.value);
+        }
+        entry["face"] = target.face;
+        out["targets"].push_back(std::move(entry));
+    }
+    out["feed"] = operation.feed;
+    out["plungeFeed"] = operation.plungeFeed;
+    out["spindle"] = operation.spindle;
+    out["stepover"] = operation.stepover;
+    out["stepdown"] = operation.stepdown;
+    out["clearance"] = operation.clearance;
+    out["retract"] = operation.retract;
+    out["stockToLeave"] = operation.stockToLeave;
+    out["side"] = operation.side == ContourSide::Outside ? "outside" : "inside";
+    out["peck"] = operation.peck;
+    out["suppressed"] = operation.suppressed;
+    return out;
+}
+
+MachiningOperation readOperation(const json& entry, const std::filesystem::path& path) {
+    MachiningOperation operation;
+    operation.id = ObjectId{idMember(entry, "id", "an operation", path)};
+    operation.name = stringMember(entry, "name", "an operation", path);
+    const std::string where = "the operation " + operation.name;
+    operation.kind = kindMember<OperationKind>(entry, "kind", operationKindFromString, where, path);
+    operation.tool = ObjectId{idMember(entry, "tool", where, path)};
+    if (const json* targets = optionalList(entry, "targets", path)) {
+        for (const json& item : *targets) {
+            OperationTarget target;
+            target.body = ObjectId{idMember(item, "body", where, path)};
+            for (const std::uint64_t id : idsMember(item, "path", where, path)) {
+                target.path.push_back(ObjectId{id});
+            }
+            target.face = stringMember(item, "face", where, path);
+            operation.targets.push_back(std::move(target));
+        }
+    }
+    operation.feed = numberMember(entry, "feed", where, path);
+    operation.plungeFeed = numberMember(entry, "plungeFeed", where, path);
+    operation.spindle = numberMember(entry, "spindle", where, path);
+    operation.stepover = numberMember(entry, "stepover", where, path);
+    operation.stepdown = numberMember(entry, "stepdown", where, path);
+    operation.clearance = numberMember(entry, "clearance", where, path);
+    operation.retract = numberMember(entry, "retract", where, path);
+    operation.stockToLeave = numberMember(entry, "stockToLeave", where, path);
+    const std::string side = stringMember(entry, "side", where, path);
+    if (side == "outside") {
+        operation.side = ContourSide::Outside;
+    } else if (side == "inside") {
+        operation.side = ContourSide::Inside;
+    } else {
+        damaged(path, where + " is on the unknown side \"" + side + "\"");
+    }
+    operation.peck = numberOr(entry, "peck", 0.0, where, path);
+    operation.suppressed = boolMember(entry, "suppressed", where, path);
+    return operation;
+}
+
+nlohmann::ordered_json writeSetup(const Setup& setup) {
+    using nlohmann::ordered_json;
+    ordered_json out;
+    out["id"] = setup.id.value;
+    out["name"] = setup.name;
+    const Machine& machine = setup.machine;
+    out["machine"] =
+        ordered_json{{"name", machine.name},       {"dialect", toString(machine.dialect)},
+                     {"travelX", machine.travelX}, {"travelY", machine.travelY},
+                     {"travelZ", machine.travelZ}, {"rapidRate", machine.rapidRate},
+                     {"maxFeed", machine.maxFeed}, {"maxSpindle", machine.maxSpindle}};
+    out["stock"] = ordered_json{
+        {"side", setup.stock.side}, {"top", setup.stock.top}, {"bottom", setup.stock.bottom}};
+    out["origin"] = toString(setup.origin);
+    out["operations"] = ordered_json::array();
+    for (const MachiningOperation& operation : setup.operations) {
+        out["operations"].push_back(writeOperation(operation));
+    }
+    return out;
+}
+
+Setup readSetup(const json& entry, const std::filesystem::path& path) {
+    Setup setup;
+    setup.id = ObjectId{idMember(entry, "id", "a setup", path)};
+    setup.name = stringMember(entry, "name", "a setup", path);
+    const std::string where = "the setup " + setup.name;
+    const json& machine = objectMember(entry, "machine", where, path);
+    const std::string at = "the machine of " + where;
+    setup.machine.name = stringMember(machine, "name", at, path);
+    setup.machine.dialect =
+        kindMember<PostDialect>(machine, "dialect", postDialectFromString, at, path);
+    setup.machine.travelX = numberMember(machine, "travelX", at, path);
+    setup.machine.travelY = numberMember(machine, "travelY", at, path);
+    setup.machine.travelZ = numberMember(machine, "travelZ", at, path);
+    setup.machine.rapidRate = numberMember(machine, "rapidRate", at, path);
+    setup.machine.maxFeed = numberMember(machine, "maxFeed", at, path);
+    setup.machine.maxSpindle = numberMember(machine, "maxSpindle", at, path);
+    const json& stock = objectMember(entry, "stock", where, path);
+    setup.stock.side = numberMember(stock, "side", where, path);
+    setup.stock.top = numberMember(stock, "top", where, path);
+    setup.stock.bottom = numberMember(stock, "bottom", where, path);
+    setup.origin = kindMember<WorkOrigin>(entry, "origin", workOriginFromString, where, path);
+    if (const json* operations = optionalList(entry, "operations", path)) {
+        for (const json& item : *operations) {
+            setup.operations.push_back(readOperation(item, path));
+        }
+    }
+    return setup;
+}
+
+void readOutputs(const json& document, const std::filesystem::path& path, DocumentState& state) {
+    if (const json* drawings = optionalList(document, "drawings", path)) {
+        for (const json& entry : *drawings) {
+            state.drawings.push_back(readDrawing(entry, path));
+        }
+    }
+    if (const json* tools = optionalList(document, "tools", path)) {
+        for (const json& entry : *tools) {
+            state.tools.push_back(readTool(entry, path));
+        }
+    }
+    if (const json* setups = optionalList(document, "setups", path)) {
+        for (const json& entry : *setups) {
+            state.setups.push_back(readSetup(entry, path));
+        }
+    }
+}
+
+void writeOutputs(const Document& document, nlohmann::ordered_json& model) {
+    using nlohmann::ordered_json;
+    if (!document.drawings().empty()) {
+        model["drawings"] = ordered_json::array();
+        for (const Drawing& drawing : document.drawings()) {
+            model["drawings"].push_back(writeDrawing(drawing));
+        }
+    }
+    if (!document.tools().empty()) {
+        model["tools"] = ordered_json::array();
+        for (const Tool& tool : document.tools()) {
+            model["tools"].push_back(writeTool(tool));
+        }
+    }
+    if (!document.setups().empty()) {
+        model["setups"] = ordered_json::array();
+        for (const Setup& setup : document.setups()) {
+            model["setups"].push_back(writeSetup(setup));
+        }
+    }
+}
+
 DocumentState interpret(const ArchiveContents& contents, const std::filesystem::path& path,
                         std::vector<std::string>& warnings) {
     const json& units = objectMember(contents.manifest, "units", manifestName, path);
@@ -1033,6 +1441,12 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
         }
         if (entry.contains("tag")) {
             body.tag = stringMember(entry, "tag", where, path);
+        }
+        if (entry.contains("piece")) {
+            body.piece = static_cast<int>(idMember(entry, "piece", where, path));
+        }
+        if (entry.contains("discarded")) {
+            body.discarded = boolMember(entry, "discarded", where, path);
         }
         if (entry.contains("madeBy")) {
             // A body that a feature makes has no geometry in the file: it is built again.
@@ -1121,6 +1535,7 @@ DocumentState interpret(const ArchiveContents& contents, const std::filesystem::
     }
     // And, in Phase 5, components, occurrences, joints, and materials.
     readAssembly(contents.document, path, state);
+    readOutputs(contents.document, path, state);
     return state;
 }
 
@@ -1156,6 +1571,12 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
         }
         if (!body.tag.empty()) {
             entry["tag"] = body.tag;
+        }
+        if (body.piece > 0) {
+            entry["piece"] = body.piece;
+        }
+        if (body.discarded) {
+            entry["discarded"] = true;
         }
         if (body.madeBy.isValid()) {
             // What features make is not stored. The features are, and it is built from them.
@@ -1206,6 +1627,7 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
         model["marker"] = document.historyMarker();
     }
     writeAssembly(document, model, options);
+    writeOutputs(document, model);
 
     std::vector<std::pair<std::string, std::string>> entries;
     entries.emplace_back(manifestName, manifest.dump(2) + "\n");

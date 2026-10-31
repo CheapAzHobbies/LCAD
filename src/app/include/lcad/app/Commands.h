@@ -77,6 +77,12 @@ public:
     /// and icon. Call after anything the commands depend on has changed.
     void refresh();
 
+    /// Decides, over any command's own say, which commands can be started at all now: a
+    /// workspace has its own. Unset means all.
+    void setAvailability(std::function<bool(const QString& id)> available) {
+        m_available = std::move(available);
+    }
+
     /// Starts a command as a click on its button would. Returns false, and does nothing, when
     /// there is no such command or it cannot be started now.
     bool trigger(const QString& id);
@@ -108,6 +114,7 @@ signals:
     void triggered(const QString& id);
 
 private:
+    std::function<bool(const QString& id)> m_available;
     void noteUsed(const QString& id);
 
     QHash<QString, Command> m_commands;

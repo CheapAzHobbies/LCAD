@@ -816,6 +816,85 @@ const QHash<QString, Drawing>& drawings() {
              i.p.drawRoundedRect(QRectF(-1.5, -3.5, 11, 7), 3.5, 3.5);
              i.p.restore();
          }},
+        {QStringLiteral("drawing"),
+         [](const Ink& i) {
+             // A sheet with its title block.
+             i.p.drawRect(QRectF(3.5, 5.5, 17, 13));
+             i.line(11, 18.5, 11, 15);
+             i.line(11, 15, 20.5, 15);
+             i.poly({{6, 12}, {9, 8}, {14, 8}, {11, 12}});
+         }},
+        {QStringLiteral("view"),
+         [](const Ink& i) {
+             // A part in a frame of corners.
+             i.p.drawRect(QRectF(8, 8, 8, 8));
+             i.poly({{3.5, 7}, {3.5, 3.5}, {7, 3.5}}, false);
+             i.poly({{17, 3.5}, {20.5, 3.5}, {20.5, 7}}, false);
+             i.poly({{20.5, 17}, {20.5, 20.5}, {17, 20.5}}, false);
+             i.poly({{7, 20.5}, {3.5, 20.5}, {3.5, 17}}, false);
+         }},
+        {QStringLiteral("section"),
+         [](const Ink& i) {
+             // A part cut through, the cut hatched.
+             i.p.drawRect(QRectF(4.5, 6.5, 15, 11));
+             i.line(4.5, 13, 11, 6.5);
+             i.line(7, 17.5, 16, 8.5);
+             i.line(13, 17.5, 19.5, 11);
+         }},
+        {QStringLiteral("detail"),
+         [](const Ink& i) {
+             // A circle around a corner of a part.
+             i.ellipse(14, 10, 6.5, 6.5);
+             i.poly({{3.5, 20.5}, {3.5, 10}, {14, 10}}, false);
+         }},
+        {QStringLiteral("note"),
+         [](const Ink& i) {
+             // Lines of text.
+             i.line(4, 6.5, 20, 6.5);
+             i.line(4, 12, 20, 12);
+             i.line(4, 17.5, 14, 17.5);
+         }},
+        {QStringLiteral("setup"),
+         [](const Ink& i) {
+             // A block on a table, with zero marked on it.
+             i.p.drawRect(QRectF(5.5, 8.5, 13, 8));
+             i.line(3, 19.5, 21, 19.5);
+             i.fill({{5.5, 5.5}, {9, 5.5}, {5.5, 9}});
+         }},
+        {QStringLiteral("cut-tool"),
+         [](const Ink& i) {
+             // An end mill coming down on a surface.
+             i.poly({{9, 3.5}, {15, 3.5}, {15, 15}, {12, 17}, {9, 15}});
+             i.line(9, 8, 15, 11);
+             i.line(3.5, 20.5, 20.5, 20.5);
+         }},
+        {QStringLiteral("operation-face"),
+         [](const Ink& i) {
+             // To and fro over the top of a block.
+             i.poly({{4, 7}, {20, 7}, {20, 10}, {4, 10}, {4, 13}, {20, 13}}, false);
+             i.p.drawRect(QRectF(3.5, 16.5, 17, 4));
+         }},
+        {QStringLiteral("operation-pocket"),
+         [](const Ink& i) {
+             // A rounded opening with rings inside.
+             i.p.drawRoundedRect(QRectF(3.5, 5.5, 17, 13), 3, 3);
+             i.p.drawRoundedRect(QRectF(7.5, 9, 9, 6), 2, 2);
+         }},
+        {QStringLiteral("operation-contour"),
+         [](const Ink& i) {
+             // A dashed path around a part.
+             i.p.drawRect(QRectF(7.5, 7.5, 9, 9));
+             QPen pen = i.p.pen();
+             pen.setStyle(Qt::DashLine);
+             i.p.setPen(pen);
+             i.p.drawRoundedRect(QRectF(3.5, 3.5, 17, 17), 3, 3);
+         }},
+        {QStringLiteral("operation-drill"),
+         [](const Ink& i) {
+             // A drill's point going into a block.
+             i.poly({{9.5, 3}, {14.5, 3}, {14.5, 13}, {12, 17}, {9.5, 13}});
+             i.poly({{3.5, 12}, {8, 12}, {8, 20.5}, {16, 20.5}, {16, 12}, {20.5, 12}}, false);
+         }},
         {QStringLiteral("animate"),
          [](const Ink& i) {
              // A play mark in a circle.

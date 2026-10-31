@@ -7,10 +7,12 @@
 #include <lcad/app/BrowserPanel.h>
 #include <lcad/app/CommandSearch.h>
 #include <lcad/app/Commands.h>
+#include <lcad/app/DrawingWorkspace.h>
 #include <lcad/app/FeaturePanel.h>
 #include <lcad/app/GeometryCheckDialog.h>
 #include <lcad/app/Icons.h>
 #include <lcad/app/JointPanel.h>
+#include <lcad/app/MachiningWorkspace.h>
 #include <lcad/app/MeasurePanel.h>
 #include <lcad/app/MovePanel.h>
 #include <lcad/app/ParametersDialog.h>
@@ -61,6 +63,7 @@
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QStyle>
 #include <QTabBar>
 #include <QToolBar>
 #include <QToolButton>
@@ -130,6 +133,9 @@ private:
     }
 };
 
+// How wide the right-hand panel starts out.
+constexpr int inspectorWidth = 240;
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -138,15 +144,41 @@ MainWindow::MainWindow(QWidget* parent)
     // Within the screen, with room for the title bar: Windows lets a window start larger than
     // it, with the bottom of the window behind the taskbar.
     resize(QSize(1280, 800).boundedTo(screen()->availableSize() - QSize(0, 40)));
-    setCentralWidget(m_viewport);
+    m_center = new QStackedWidget(this);
+    m_center->setObjectName(QStringLiteral("centerStack"));
+    m_center->addWidget(m_viewport);
+    setCentralWidget(m_center);
     m_viewport->setContextMenuPolicy(Qt::CustomContextMenu);
 
     createDocks();
+    m_drawings = new DrawingWorkspace(this);
+    m_center->addWidget(m_drawings->view());
+    m_drawings->panel()->hide();
+    connect(m_drawings, &DrawingWorkspace::stateChanged, this, [this] {
+        m_commands->refresh();
+        if (m_workspace == Workspace::Drawing) {
+            m_commandLabel->setText(m_drawings->panel()->promptText());
+        }
+    });
+    connect(m_drawings, &DrawingWorkspace::message, this,
+            [this](const QString& text) { statusBar()->showMessage(text, 5000); });
+    m_machining = new MachiningWorkspace(m_viewport, this);
+    m_machining->hide();
+    connect(m_machining, &MachiningWorkspace::stateChanged, this,
+            [this] { m_commands->refresh(); });
+    connect(m_machining, &MachiningWorkspace::message, this,
+            [this](const QString& text) { statusBar()->showMessage(text, 5000); });
+    connect(m_machining, &MachiningWorkspace::targetsRequested, this,
+            [this] { m_machining->setTargets(selectedTargets()); });
     defineCommands();
     defineAssemblyCommands();
+    defineDrawingCommands();
+    defineMachiningCommands();
     createTopBar();
     createToolbar();
     createSketchToolbar();
+    createDrawingToolbar();
+    createMachiningToolbar();
     m_search = new CommandSearch(m_commands, this);
 
     m_selectionLabel = new QLabel(this);
@@ -436,9 +468,18 @@ MainWindow::~MainWindow() {
     closeFeaturePanel();
     // The viewport and the panels are destroyed after the documents, as child widgets. Detach
     // them first.
+    detachFromDocument();
+}
+
+void MainWindow::detachFromDocument() {
     m_viewport->setDocument(nullptr);
     m_browser->setDocument(nullptr, {});
     m_timeline->setDocument(nullptr);
+    m_drawings->setDocument(nullptr);
+    m_machining->setDocument(nullptr);
+    if (m_materialsDialog != nullptr) {
+        m_materialsDialog->setDocument(nullptr);
+    }
     if (m_parametersDialog != nullptr) {
         m_parametersDialog->setDocument(nullptr);
     }
@@ -578,6 +619,14 @@ void MainWindow::defineCommands() {
         c.shortcuts = {QKeySequence::Delete};
         c.aliases = {tr("remove"), tr("erase")};
         c.run = [this](bool) {
+            if (m_workspace == Workspace::Drawing) {
+                m_drawings->deleteSelected();
+                return;
+            }
+            if (m_workspace == Workspace::Manufacture) {
+                m_machining->removeOperation();
+                return;
+            }
             const auto joints = m_browser->selectedJoints();
             const auto occurrences = m_browser->selectedOccurrences();
             if (!isSketching() && (!joints.empty() || !occurrences.empty())) {
@@ -610,6 +659,12 @@ void MainWindow::defineCommands() {
             }
         };
         c.isEnabled = [this] {
+            if (m_workspace == Workspace::Drawing) {
+                return m_drawings->view()->selected().kind != SheetView::Selected::Kind::None;
+            }
+            if (m_workspace == Workspace::Manufacture) {
+                return m_machining->operation() != nullptr;
+            }
             if (isSketching()) {
                 const viewport::SketchEditor* editor = m_viewport->sketchEditor();
                 return !editor->selectedEntities().empty() ||
@@ -626,8 +681,11 @@ void MainWindow::defineCommands() {
         c.shortcuts = {QKeySequence(Qt::Key_Escape)};
         c.aliases = {tr("escape"), tr("abort")};
         c.run = [this](bool) {
-            if (m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
-                m_measurePanel != nullptr || m_jointPanel != nullptr || m_movePanel != nullptr) {
+            if (m_workspace == Workspace::Drawing) {
+                m_drawings->setTool(DrawingWorkspace::Tool::Select);
+            } else if (m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
+                       m_measurePanel != nullptr || m_jointPanel != nullptr ||
+                       m_movePanel != nullptr) {
                 cancelCommand();
             } else if (isAnimating()) {
                 stopAnimation();
@@ -636,6 +694,9 @@ void MainWindow::defineCommands() {
             }
         };
         c.isEnabled = [this] {
+            if (m_workspace == Workspace::Drawing) {
+                return m_drawings->tool() != DrawingWorkspace::Tool::Select;
+            }
             return m_panel != nullptr || m_planePanel != nullptr || m_featurePanel != nullptr ||
                    m_measurePanel != nullptr || m_jointPanel != nullptr || m_movePanel != nullptr ||
                    isAnimating() || (isSketching() && m_viewport->sketchEditor()->canCancel());
@@ -1534,10 +1595,23 @@ void MainWindow::defineSketchCommands() {
         c.shortcuts = {QKeySequence(Qt::Key_D)};
         c.aliases = {tr("measure"),  tr("size"),   tr("length"),
                      tr("distance"), tr("radius"), tr("angle")};
-        // On what is selected, or else on what is clicked next.
-        c.run = [editor](bool) { editor()->addDimension(); };
-        c.isEnabled = sketching;
+        // On what is selected, or else on what is clicked next. On a sheet, the tool that puts
+        // dimensions there: one key for one idea.
+        c.run = [this, editor](bool) {
+            if (m_workspace == Workspace::Drawing) {
+                m_drawings->setTool(DrawingWorkspace::Tool::Dimension);
+            } else {
+                editor()->addDimension();
+            }
+        };
+        c.isEnabled = [this] {
+            return isSketching() ||
+                   (m_workspace == Workspace::Drawing && m_drawings->drawing() != nullptr);
+        };
         c.isChecked = [this, editor] {
+            if (m_workspace == Workspace::Drawing) {
+                return m_drawings->tool() == DrawingWorkspace::Tool::Dimension;
+            }
             return isSketching() && editor()->tool() == SketchTool::Dimension;
         };
         m_commands->add(std::move(c));
@@ -1766,6 +1840,46 @@ void MainWindow::createTopBar() {
         {action("window.browser"), action("window.properties"), action("window.timeline")});
     window->addSeparator();
     window->addActions({action("window.focus"), action("window.resetLayout")});
+    window->addSeparator();
+    window->addActions(
+        {action("workspace.design"), action("workspace.drawing"), action("workspace.manufacture")});
+
+    // The menu of the sheet, between Assemble and what follows it.
+    QMenu* sheet = new QMenu(tr("&Drawing"), m_menuBar);
+    sheet->setObjectName(QStringLiteral("menu.drawing"));
+    sheet->addActions({action("drawing.new"), action("drawing.delete")});
+    sheet->addSeparator();
+    QMenu* addView = sheet->addMenu(tr("Add &View"));
+    addView->setObjectName(QStringLiteral("menu.addView"));
+    for (const char* id :
+         {"drawing.view.front", "drawing.view.back", "drawing.view.top", "drawing.view.bottom",
+          "drawing.view.left", "drawing.view.right", "drawing.view.isometric"}) {
+        addView->addAction(action(id));
+    }
+    sheet->addActions(
+        {action("drawing.sectionUp"), action("drawing.sectionAcross"), action("drawing.detail")});
+    sheet->addSeparator();
+    sheet->addActions({action("sketch.dimension"), action("drawing.note")});
+    sheet->addSeparator();
+    sheet->addActions({action("drawing.exportPdf"), action("drawing.exportDxf")});
+    m_menuBar->insertMenu(window->menuAction(), sheet);
+    m_sheetMenu = sheet->menuAction();
+    m_sheetMenu->setVisible(false);
+    m_modelMenus = {create->menuAction(), modifyMenu->menuAction(), assembleMenu->menuAction(),
+                    sketchMenu->menuAction()};
+    m_viewMenu = view->menuAction();
+
+    QMenu* machining = new QMenu(tr("&Manufacture"), m_menuBar);
+    machining->setObjectName(QStringLiteral("menu.manufacture"));
+    machining->addAction(action("manufacture.setup"));
+    machining->addSeparator();
+    machining->addActions({action("manufacture.face"), action("manufacture.pocket"),
+                           action("manufacture.contour"), action("manufacture.drill")});
+    machining->addSeparator();
+    machining->addActions({action("manufacture.simulate"), action("manufacture.export")});
+    m_menuBar->insertMenu(window->menuAction(), machining);
+    m_machiningMenu = machining->menuAction();
+    m_machiningMenu->setVisible(false);
 
     QMenu* helpMenu = m_menuBar->addMenu(tr("&Help"));
     helpMenu->addAction(action("help.about"));
@@ -1777,11 +1891,29 @@ void MainWindow::createTopBar() {
         button->setAutoRaise(true);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         layout->addWidget(button);
+        if (QLatin1String(id) == QLatin1String("file.new") ||
+            QLatin1String(id) == QLatin1String("file.open")) {
+            m_foldingButtons.append(button);
+        }
         if (QLatin1String(id) == QLatin1String("file.save")) {
             layout->addSpacing(6);
         }
     }
     layout->addSpacing(10);
+
+    // The part of the work the window is set up for.
+    m_workspaceBox = new QComboBox(topBar);
+    m_workspaceBox->setObjectName(QStringLiteral("workspaceBox"));
+    m_workspaceBox->setToolTip(tr("The part of the work the window is set up for"));
+    m_workspaceBox->addItem(tr("Design"), static_cast<int>(Workspace::Design));
+    m_workspaceBox->addItem(tr("Drawing"), static_cast<int>(Workspace::Drawing));
+    m_workspaceBox->addItem(tr("Manufacture"), static_cast<int>(Workspace::Manufacture));
+    m_workspaceBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    connect(m_workspaceBox, &QComboBox::activated, this, [this](int index) {
+        setWorkspace(static_cast<Workspace>(m_workspaceBox->itemData(index).toInt()));
+    });
+    layout->addWidget(m_workspaceBox);
+    layout->addSpacing(6);
 
     // One tab per open document.
     m_tabs = new QTabBar(topBar);
@@ -1976,8 +2108,19 @@ void MainWindow::createSketchToolbar() {
 void MainWindow::updateMode() {
     const bool sketching = isSketching();
     const bool focused = isViewportFocused();
-    m_modelToolbar->setVisible(!sketching && !focused);
-    m_sketchToolbar->setVisible(sketching && !focused);
+    const bool designing = m_workspace == Workspace::Design;
+    m_modelToolbar->setVisible(designing && !sketching && !focused);
+    m_sketchToolbar->setVisible(designing && sketching && !focused);
+    m_drawingToolbar->setVisible(m_workspace == Workspace::Drawing && !focused);
+    m_machiningToolbar->setVisible(m_workspace == Workspace::Manufacture && !focused);
+    // The menus that the workspace has a use for.
+    for (QAction* menu : std::as_const(m_modelMenus)) {
+        menu->setVisible(designing);
+    }
+    m_viewMenu->setVisible(m_workspace != Workspace::Drawing);
+    m_sheetMenu->setVisible(m_workspace == Workspace::Drawing);
+    m_machiningMenu->setVisible(m_workspace == Workspace::Manufacture);
+    fitToolbar();
 }
 
 // A toolbar that does not fit hides what is left over behind an arrow. Before it comes to
@@ -1985,6 +2128,17 @@ void MainWindow::updateMode() {
 void MainWindow::fitToolbar() {
     if (m_modelToolbar == nullptr) {
         return;
+    }
+    // The menus before the tabs: where the top bar is short of room, tabs can scroll.
+    if (!m_menuBar->isNativeMenuBar()) {
+        m_menuBar->setMinimumWidth(m_menuBar->sizeHint().width());
+    }
+    // And the buttons for what the File menu and Ctrl+N and Ctrl+O have as well. A tab needs a
+    // hundred or so, besides the room for the other buttons.
+    const int menus = m_menuBar->isNativeMenuBar() ? 0 : m_menuBar->sizeHint().width();
+    const int taken = menus + m_workspaceBox->sizeHint().width() + 430;
+    for (QToolButton* button : std::as_const(m_foldingButtons)) {
+        button->setVisible(taken <= width());
     }
     // How wide a toolbar wants to be now. Its layout keeps the answer it last gave until told
     // that what is in it has changed.
@@ -2127,10 +2281,10 @@ void MainWindow::createDocks() {
     m_inspectorDock = new QDockWidget(tr("Properties"), this);
     m_inspectorDock->setObjectName(QStringLiteral("propertiesDock"));
     m_inspectorDock->setWidget(scroll);
-    m_inspectorDock->setMinimumWidth(240);
+    m_inspectorDock->setMinimumWidth(inspectorWidth);
     addDockWidget(Qt::RightDockWidgetArea, m_inspectorDock);
     // Narrow side panels and a thin timeline, so that the 3D view has most of the window.
-    resizeDocks({m_browserDock, m_inspectorDock}, {210, 240}, Qt::Horizontal);
+    resizeDocks({m_browserDock, m_inspectorDock}, {210, inspectorWidth}, Qt::Horizontal);
     resizeDocks({m_timelineDock}, {40}, Qt::Vertical);
 
     // The browser and the properties run the full height of the window; the timeline sits
@@ -2319,6 +2473,8 @@ void MainWindow::activate(int index) {
         m_materialsDialog->setDocument(session.document.get());
     }
     m_timeline->setDocument(session.document.get());
+    m_drawings->setDocument(session.document.get());
+    m_machining->setDocument(session.document.get());
     if (m_parametersDialog != nullptr) {
         m_parametersDialog->setDocument(session.document.get());
     }
@@ -2439,12 +2595,7 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     storeViewOf(m_current);
     int index = addSession(std::move(loaded), absolute);
     if (replaced >= 0) {
-        m_viewport->setDocument(nullptr);
-        m_browser->setDocument(nullptr, {});
-        m_timeline->setDocument(nullptr);
-        if (m_parametersDialog != nullptr) {
-            m_parametersDialog->setDocument(nullptr);
-        }
+        detachFromDocument();
         m_sessions.erase(m_sessions.begin() + replaced);
         {
             const QSignalBlocker blocker(m_tabs);
@@ -2542,13 +2693,7 @@ void MainWindow::closeDocument(int index) {
     }
     if (wasCurrent) {
         cancelCommand();
-        m_viewport->setDocument(nullptr);
-        m_browser->setDocument(nullptr, {});
-        m_timeline->setDocument(nullptr);
-        if (m_parametersDialog != nullptr) {
-            m_parametersDialog->setDocument(nullptr);
-        }
-        m_properties->refresh(nullptr, {}, {});
+        detachFromDocument();
     } else {
         storeViewOf(m_current);
     }
@@ -2970,9 +3115,33 @@ void MainWindow::showViewportMenu(const QPoint& position) {
 // ---------------------------------------------------------------------------------------------
 // Modeling commands
 
+void MainWindow::fitInspector() {
+    // A workspace's page can need more room across than the panel has beside a scroll bar, which
+    // would cut off the side of it. The 3D view stays where it is within a workspace.
+    const int needed = m_workspace == Workspace::Design
+                           ? 0
+                           : m_inspectorStack->minimumSizeHint().width() +
+                                 style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+    const int width = std::max(inspectorWidth, needed);
+    // As wide as it has to be, so it is narrowed again; a width the user chose is left alone.
+    const bool fitted = m_inspectorDock->width() <= m_inspectorDock->minimumWidth();
+    m_inspectorDock->setMinimumWidth(width);
+    if (fitted && m_inspectorDock->isVisible() && !m_inspectorDock->isFloating()) {
+        resizeDocks({m_inspectorDock}, {width}, Qt::Horizontal);
+    }
+}
+
 void MainWindow::showInspector() {
     QStackedWidget* stack = m_inspectorStack;
-    if (m_panel != nullptr) {
+    if (m_workspace == Workspace::Drawing) {
+        showWorkspacePage(m_drawings->panel());
+        m_inspectorDock->setWindowTitle(tr("Drawing"));
+        m_commandLabel->setText(m_drawings->panel()->promptText());
+    } else if (m_workspace == Workspace::Manufacture) {
+        showWorkspacePage(m_machining);
+        m_inspectorDock->setWindowTitle(tr("Manufacture"));
+        m_commandLabel->clear();
+    } else if (m_panel != nullptr) {
         stack->setCurrentWidget(m_panel);
         const QString title = tr("Create %1").arg(primitiveName(m_panel->kind()));
         m_inspectorDock->setWindowTitle(title);
@@ -3014,6 +3183,22 @@ void MainWindow::showInspector() {
         m_inspectorDock->setWindowTitle(tr("Properties"));
         m_commandLabel->clear();
     }
+    // These two are in the stack only while they are shown. A stack is as long and as wide as the
+    // largest page in it, even for a page that is not, and everything else would scroll by the
+    // length of the Manufacture page and be cut off by its width.
+    if (m_workspace != Workspace::Drawing) {
+        stack->removeWidget(m_drawings->panel());
+    }
+    if (m_workspace != Workspace::Manufacture) {
+        stack->removeWidget(m_machining);
+    }
+}
+
+void MainWindow::showWorkspacePage(QWidget* page) {
+    if (m_inspectorStack->indexOf(page) < 0) {
+        m_inspectorStack->addWidget(page);
+    }
+    m_inspectorStack->setCurrentWidget(page);
 }
 
 void MainWindow::startPrimitive(PrimitiveKind kind) {
