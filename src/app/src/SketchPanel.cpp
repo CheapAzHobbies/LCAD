@@ -268,7 +268,11 @@ SketchPanel::SketchPanel(viewport::SketchEditor* editor, QWidget* parent)
     m_sidesForm = new QFormLayout;
     m_sides->setObjectName(QStringLiteral("polygonSides"));
     m_sides->setRange(3, 64);
-    m_sidesForm->addRow(secondary(tr("Polygon sides"), this), m_sides);
+    // Not secondary(), which wraps: the row is hidden at times, and in Qt 6.4 a QFormLayout with
+    // a hidden row must have nothing that wraps. See docs/TESTING.md.
+    auto* sidesLabel = new QLabel(tr("Polygon sides"), this);
+    sidesLabel->setObjectName(QStringLiteral("secondary"));
+    m_sidesForm->addRow(sidesLabel, m_sides);
     layout->addLayout(m_sidesForm);
     layout->addSpacing(8);
 

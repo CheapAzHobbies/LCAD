@@ -356,6 +356,9 @@ Quantity_Color toOcct(const QColor& color) {
     return Quantity_Color(color.redF(), color.greenF(), color.blueF(), Quantity_TOC_sRGB);
 }
 
+// Whether another thread is using OCCT, so that no viewport may. See holdDrawing().
+bool drawingHeld = false;
+
 // How long the camera takes to turn to what was picked on the cube, in milliseconds.
 const int cubeTurnTime = 250;
 
@@ -956,6 +959,7 @@ public:
 
     // A left button press on the view cube is held back until it is known to be a click (which
     // OCCT turns into a change of view) or the start of a drag (which orbits).
+    std::uint64_t frames = 0;
     // Points that can be clicked, and whether the left button went down on one.
     PointsOverlay* pointsOverlay = nullptr;
     bool pressedPoint = false;
@@ -3333,12 +3337,13 @@ void ViewportWidget::initializeGL() {
 
 void ViewportWidget::paintGL() {
     QOpenGLFunctions* gl = context()->functions();
-    if (!m_impl->canRender() || m_impl->view->Window().IsNull()) {
+    if (drawingHeld || !m_impl->canRender() || m_impl->view->Window().IsNull()) {
         const QColor& background = m_impl->colors.background;
         gl->glClearColor(background.redF(), background.greenF(), background.blueF(), 1.0F);
         gl->glClear(GL_COLOR_BUFFER_BIT);
         return;
     }
+    ++m_impl->frames;
 
     // The pixel ratio changes when the window moves to a screen with different scaling.
     Handle(ViewportWindow) window = Handle(ViewportWindow)::DownCast(m_impl->view->Window());
@@ -3780,6 +3785,22 @@ void ViewportWidget::resizeEvent(QResizeEvent* event) {
     m_impl->pointsOverlay->setGeometry(rect());
     m_impl->cube->fitTo(size());
     m_impl->cube->move(width() - m_impl->cube->width() - 4, 4);
+}
+
+std::uint64_t ViewportWidget::framesDrawn() const {
+    return m_impl->frames;
+}
+
+void ViewportWidget::holdDrawing(bool held) {
+    drawingHeld = held;
+    if (held) {
+        return;
+    }
+    for (QWidget* widget : QApplication::allWidgets()) {
+        if (auto* view = qobject_cast<ViewportWidget*>(widget)) {
+            view->update();
+        }
+    }
 }
 
 void ViewportWidget::setPickablePoints(std::vector<PickablePoint> points) {

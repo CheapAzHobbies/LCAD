@@ -388,6 +388,13 @@ public:
     [[nodiscard]] QString graphicsInfo() const;
     /// Why the viewport cannot render, or an empty string when it is working.
     [[nodiscard]] QString errorString() const;
+    /// How many frames it has drawn.
+    [[nodiscard]] std::uint64_t framesDrawn() const;
+
+    /// Stops every viewport from drawing, or lets them again, and has them catch up. For while
+    /// another thread is using OCCT: OCCT is not to be used from two threads at once, and a
+    /// frame can come at any time, for a resize draws one on the spot, whatever else says.
+    static void holdDrawing(bool held);
 
 signals:
     void selectionChanged();

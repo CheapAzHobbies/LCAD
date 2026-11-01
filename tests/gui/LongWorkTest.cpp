@@ -8,16 +8,19 @@
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Stop.h>
 #include <lcad/sketch/Edit.h>
+#include <lcad/viewport/ViewportWidget.h>
 
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QTest>
 #include <QThread>
 #include <QTimer>
 
 #include <atomic>
+#include <cstdint>
 #include <cstddef>
 #include <cstdlib>
 #include <functional>
@@ -98,6 +101,7 @@ private slots:
     void aFaultLeavesThingsWorking();
     void aFeatureThatCrashesIsAFeatureThatFails();
     void aFeatureIsStoppedFromTheWindow();
+    void theViewIsNotDrawnWhileWorkGoesOn();
 };
 
 void LongWorkTest::cleanup() {
@@ -341,4 +345,33 @@ void LongWorkTest::aFeatureIsStoppedFromTheWindow() {
 }
 
 QTEST_MAIN(LongWorkTest)
+// A resize draws a frame on the spot, whether updates are on or not, and drawing uses OCCT, which
+// is not to be used from two threads at once.
+void LongWorkTest::theViewIsNotDrawnWhileWorkGoesOn() {
+    MainWindow window;
+    showAndWait(window);
+    lcad::viewport::ViewportWidget* view = window.viewport();
+    QTRY_VERIFY(view->framesDrawn() > 0);
+
+    // Any other time it does draw.
+    const std::uint64_t idle = view->framesDrawn();
+    QResizeEvent shrunk(view->size() - QSize(20, 10), view->size());
+    QApplication::sendEvent(view, &shrunk);
+    QVERIFY(view->framesDrawn() > idle);
+
+    std::uint64_t before = 0;
+    std::uint64_t after = 0;
+    QTimer::singleShot(300, view, [&] {
+        before = view->framesDrawn();
+        QResizeEvent grown(view->size(), view->size() - QSize(20, 10));
+        QApplication::sendEvent(view, &grown);
+        after = view->framesDrawn();
+    });
+    runLongWork(QStringLiteral("Slow"), [] { QThread::msleep(700); });
+    QVERIFY(before > 0);
+    QCOMPARE(after, before);
+    // And it catches up.
+    QTRY_VERIFY(view->framesDrawn() > before);
+}
+
 #include "LongWorkTest.moc"

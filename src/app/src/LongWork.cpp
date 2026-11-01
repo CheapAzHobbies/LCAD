@@ -15,6 +15,7 @@
 #include <lcad/document/Document.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/Stop.h>
+#include <lcad/viewport/ViewportWidget.h>
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -338,10 +339,12 @@ private:
 
 // The windows are not drawn while work goes on, for as long as this lasts. Drawing the 3D view
 // picks up where whatever asked for the work left off, which is still in the middle of something,
-// and it makes meshes for the shapes the work is reading, which OCCT does not allow.
+// and it uses OCCT, which is not to be used from two threads at once. The viewports are held by
+// name, for turning off updates does not stop them: a resize draws a frame all the same.
 class WindowsHeld {
 public:
     WindowsHeld() {
+        viewport::ViewportWidget::holdDrawing(true);
         for (QWidget* window : QApplication::topLevelWidgets()) {
             if (window->updatesEnabled()) {
                 window->setUpdatesEnabled(false);
@@ -355,6 +358,7 @@ public:
                 window->setUpdatesEnabled(true);
             }
         }
+        viewport::ViewportWidget::holdDrawing(false);
     }
     WindowsHeld(const WindowsHeld&) = delete;
     WindowsHeld& operator=(const WindowsHeld&) = delete;
