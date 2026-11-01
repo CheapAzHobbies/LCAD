@@ -102,6 +102,7 @@ private slots:
     void polygonSidesAreForThePolygonTool();
     void buttonsSayTheirNames();
     void groupNamesAreUnderTheTools();
+    void theViewKeepsItsSizeFromWorkspaceToWorkspace();
     void theBrowserListsSketches();
     void sketchesAreHiddenShownRenamedAndDeleted();
     void theContextMenuInASketchIsAboutTheSketch();
@@ -840,6 +841,22 @@ void SketchInterfaceTest::groupNamesAreUnderTheTools() {
                      qPrintable(entry->objectName()));
         }
     }
+}
+
+void SketchInterfaceTest::theViewKeepsItsSizeFromWorkspaceToWorkspace() {
+    MainWindow window;
+    show(window);
+    window.document()->addBody("Box", lcad::kernel::makeBox(40.0, 30.0, 20.0));
+    const int height = window.viewport()->height();
+    QVERIFY(trigger(window, "workspace.manufacture"));
+    QTest::qWait(50);
+    QCOMPARE(window.viewport()->height(), height);
+    QVERIFY(trigger(window, "workspace.design"));
+    QTest::qWait(50);
+    QCOMPARE(window.viewport()->height(), height);
+    startSketch(window);
+    QTest::qWait(50);
+    QCOMPARE(window.viewport()->height(), height);
 }
 
 void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {

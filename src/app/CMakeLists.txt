@@ -29,6 +29,7 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/ShortcutsDialog.h
     include/lcad/app/SketchPanel.h
     include/lcad/app/Theme.h
+    include/lcad/app/ToolbarCaptions.h
     include/lcad/app/TimelinePanel.h
     src/Application.cpp
     src/AssemblyCommands.cpp

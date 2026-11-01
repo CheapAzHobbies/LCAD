@@ -9,6 +9,7 @@
 #include <lcad/app/Icons.h>
 #include <lcad/app/MachiningWorkspace.h>
 #include <lcad/app/Theme.h>
+#include <lcad/app/ToolbarCaptions.h>
 
 #include <QComboBox>
 #include <QDockWidget>
@@ -176,6 +177,7 @@ void MainWindow::createMachiningToolbar() {
     toolbar->addSeparator();
     toolbar->addAction(action("manufacture.simulate"));
     toolbar->addAction(action("manufacture.export"));
+    new ToolbarCaptions(toolbar, {tr("Setup"), tr("Operations"), tr("Output")});
     toolbar->hide();
 }
 
@@ -367,6 +369,7 @@ void MainWindow::createDrawingToolbar() {
     toolbar->addSeparator();
     toolbar->addAction(action("drawing.exportPdf"));
     toolbar->addAction(action("drawing.exportDxf"));
+    new ToolbarCaptions(toolbar, {tr("Sheet"), tr("Add"), tr("Export")});
     toolbar->hide();
 }
 
