@@ -108,6 +108,196 @@ Loop closedFrom(const Loop& loop, const Point2D& place) {
     return out;
 }
 
+// A closed path the tool goes around, by the distance along it from where it starts. A distance
+// can run on past one lap.
+class Ring {
+public:
+    explicit Ring(Loop closed) : m_points(std::move(closed)) {
+        m_distances.push_back(0.0);
+        for (std::size_t i = 1; i < m_points.size(); ++i) {
+            m_distances.push_back(m_distances.back() + apart(m_points[i - 1], m_points[i]));
+        }
+    }
+
+    [[nodiscard]] double length() const { return m_distances.back(); }
+    [[nodiscard]] const std::vector<double>& distances() const { return m_distances; }
+
+    [[nodiscard]] Point2D at(double distance) const {
+        const double along = std::fmod(distance, length());
+        const auto after = std::upper_bound(m_distances.begin(), m_distances.end(), along);
+        if (after == m_distances.begin() || after == m_distances.end()) {
+            return m_points.front();
+        }
+        const auto next = static_cast<std::size_t>(after - m_distances.begin());
+        const double t = (along - m_distances[next - 1]) / (*after - m_distances[next - 1]);
+        return {m_points[next - 1].x + (m_points[next].x - m_points[next - 1].x) * t,
+                m_points[next - 1].y + (m_points[next].y - m_points[next - 1].y) * t};
+    }
+
+private:
+    Loop m_points;
+    std::vector<double> m_distances;
+};
+
+// The bridges of material a contour leaves, along its ring.
+struct Tabs {
+    // Where the middle of each lies.
+    std::vector<double> middles;
+    // How far along the ring the tool stays up over each: the bridge, and the tool on either side.
+    double span = 0.0;
+    // How high the bridges come.
+    double top = 0.0;
+};
+
+// How far along the ring the tool goes up the near side of a tab: all but straight up. It comes
+// down the far side at 45 degrees, which keeps it from plunging into what it has yet to cut.
+constexpr double tabRise = 0.01;
+
+// How high the tool has to stay at a distance along a ring, cutting at `z`.
+double heightOver(const Tabs& tabs, double along, double z, double length) {
+    double height = z;
+    if (z >= tabs.top) {
+        return height;
+    }
+    const double fall = tabs.top - z;
+    for (const double middle : tabs.middles) {
+        const double past = std::fmod(along - (middle - tabs.span / 2.0) + 2.0 * length, length);
+        if (past <= tabs.span) {
+            height = tabs.top;
+        } else if (past < tabs.span + fall) {
+            height = std::max(height, tabs.top - (past - tabs.span));
+        } else if (past > length - tabRise) {
+            height = std::max(height, z + fall * (past - (length - tabRise)) / tabRise);
+        }
+    }
+    return height;
+}
+
+// Around a ring from a distance along it, coming down at `slope` from `above` to `z`, and then
+// once all the way around at that depth, which takes away what the ramp left. No slope goes
+// straight down. Where the tool has to stay above tabs, it does. Ends where the lap ends, and says
+// how far along that is.
+double cutAround(Path& path, const Ring& ring, const Tabs& tabs, double from, double above,
+                 double z, double slope) {
+    const double length = ring.length();
+    const double rampEnd = slope > 0.0 ? from + (above - z) / slope : from;
+    const double end = rampEnd + length;
+    const auto height = [&](double distance) {
+        const double ramp = slope > 0.0 ? above - slope * (distance - from) : z;
+        return std::max(ramp, heightOver(tabs, std::fmod(distance, length), z, length));
+    };
+
+    // Where it has to change direction or height, each of them once.
+    std::vector<double> marks = ring.distances();
+    if (z < tabs.top) {
+        const double fall = tabs.top - z;
+        for (const double middle : tabs.middles) {
+            const double start = middle - tabs.span / 2.0;
+            for (const double mark :
+                 {start - tabRise, start, start + tabs.span, start + tabs.span + fall}) {
+                marks.push_back(std::fmod(mark + length, length));
+            }
+        }
+    }
+    std::vector<double> stops{rampEnd, end};
+    for (double lap = std::floor(from / length) * length; lap < end; lap += length) {
+        for (const double mark : marks) {
+            if (lap + mark > from && lap + mark < end) {
+                stops.push_back(lap + mark);
+            }
+        }
+    }
+    std::sort(stops.begin(), stops.end());
+    stops.erase(
+        std::unique(stops.begin(), stops.end(), [](double a, double b) { return b - a < 1e-7; }),
+        stops.end());
+
+    const Point2D start = ring.at(from);
+    path.plunge({start.x, start.y, height(from)});
+    for (const double stop : stops) {
+        if (stop <= from) {
+            continue;
+        }
+        const Point2D place = ring.at(stop);
+        const double high = height(stop);
+        if (high < path.z() - 1e-9) {
+            path.plunge({place.x, place.y, high});
+        } else {
+            path.feed({place.x, place.y, high});
+        }
+    }
+    return end;
+}
+
+// How steeply to go down around a ring, as height for distance. One too short to ramp around is
+// gone straight down into: the tool would only be turning on the spot.
+double slopeAround(const Ring& ring, const Tool& tool, const MachiningOperation& operation) {
+    if (operation.rampAngle <= 0.0 || ring.length() < tool.diameter / 2.0) {
+        return 0.0;
+    }
+    return std::tan(operation.rampAngle * pi / 180.0);
+}
+
+// A circle to spiral down around, for where the path has no ring long enough: half as wide as the
+// tool, so that it leaves nothing standing in the middle, or as much of that as there is room for.
+std::optional<Ring> entryCircle(const Area& room, const Point2D& middle, double toolRadius) {
+    constexpr int sides = 32;
+    for (double radius = toolRadius / 2.0; radius >= toolRadius / 8.0; radius /= 2.0) {
+        Loop circle;
+        bool fits = true;
+        for (int i = 0; i <= sides; ++i) {
+            const double angle = 2.0 * pi * (i % sides) / sides;
+            const Point2D point{middle.x + radius * std::cos(angle),
+                                middle.y + radius * std::sin(angle)};
+            fits = fits && pointInside(room, point);
+            circle.push_back(point);
+        }
+        if (fits) {
+            return Ring(std::move(circle));
+        }
+    }
+    return std::nullopt;
+}
+
+// Places for the tabs around a ring: evenly, and each moved onto the nearest stretch that is
+// straight for as long as it needs, where one is free. None if they do not all fit.
+std::vector<double> tabPlaces(const Ring& ring, int count, double span, double spacing) {
+    const double length = ring.length();
+    const std::vector<double>& distances = ring.distances();
+    const auto between = [length](double a, double b) {
+        const double away = std::abs(a - b);
+        return std::min(away, length - away);
+    };
+    std::vector<double> places;
+    for (int i = 0; i < count; ++i) {
+        const double wanted = length * (i + 0.5) / count;
+        const auto roomFor = [&](double place) {
+            return std::all_of(places.begin(), places.end(),
+                               [&](double other) { return between(place, other) >= spacing; });
+        };
+        std::optional<double> best;
+        for (std::size_t j = 1; j < distances.size(); ++j) {
+            if (distances[j] - distances[j - 1] < span) {
+                continue;
+            }
+            const double place =
+                std::clamp(wanted, distances[j - 1] + span / 2.0, distances[j] - span / 2.0);
+            if (roomFor(place) &&
+                (!best.has_value() || between(place, wanted) < between(*best, wanted))) {
+                best = place;
+            }
+        }
+        if (!best.has_value()) {
+            if (!roomFor(wanted)) {
+                return {};
+            }
+            best = wanted;
+        }
+        places.push_back(*best);
+    }
+    return places;
+}
+
 Point2D loopMiddle(const Loop& loop) {
     Point2D sum;
     for (const Point2D& p : loop) {
@@ -142,6 +332,14 @@ bool checkDepths(const Heights& heights, const Tool& tool, const MachiningOperat
         return false;
     }
     return good;
+}
+
+bool checkRamp(const MachiningOperation& operation, std::vector<std::string>& problems) {
+    if (operation.rampAngle < 0.0 || operation.rampAngle > 45.0) {
+        problems.push_back("The ramp has to be between 0 degrees, straight down, and 45.");
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -217,7 +415,7 @@ std::vector<Move> pocketMoves(const FlatRegion& region, const Heights& heights, 
                            "diameter, or ridges are left.");
         return {};
     }
-    if (!checkDepths(heights, tool, operation, problems)) {
+    if (!checkDepths(heights, tool, operation, problems) || !checkRamp(operation, problems)) {
         return {};
     }
     const double radius = tool.diameter / 2.0;
@@ -267,19 +465,33 @@ std::vector<Move> pocketMoves(const FlatRegion& region, const Heights& heights, 
             // Across to the next ring at depth if that stays in the pocket and is near, so that
             // it cuts only what is left between them; otherwise over the top.
             const bool close = !first && apart(path.at(), start) <= operation.stepover * 1.5 + 1e-6;
+            first = false;
             if (close && lineInside(room, path.at(), start)) {
                 path.feed({start.x, start.y, z});
-            } else {
-                path.travelTo(start);
-                if (above < heights.retract) {
-                    // What was cut before lets the tool down fast, nearly to the last depth.
-                    path.rapid({start.x, start.y, above + 0.5});
+                for (std::size_t i = 1; i < ring.size(); ++i) {
+                    path.feed({ring[i].x, ring[i].y, z});
                 }
-                path.plunge({start.x, start.y, z});
+                continue;
             }
-            first = false;
-            for (std::size_t i = 1; i < ring.size(); ++i) {
-                path.feed({ring[i].x, ring[i].y, z});
+            const Ring around(ring);
+            const bool wantsCircle = operation.rampAngle > 0.0 && around.length() < pi * radius;
+            const std::optional<Ring> circle =
+                wantsCircle ? entryCircle(room, loopMiddle(loop), radius) : std::nullopt;
+            const Point2D entry = circle.has_value() ? circle->at(0.0) : start;
+            path.travelTo(entry);
+            if (above < heights.retract) {
+                // What was cut before lets the tool down fast, nearly to the last depth.
+                path.rapid({entry.x, entry.y, above + 0.5});
+            }
+            const double from = std::min(above, heights.top);
+            if (circle.has_value()) {
+                cutAround(path, *circle, {}, 0.0, from, z, slopeAround(*circle, tool, operation));
+                path.feed({start.x, start.y, z});
+                for (std::size_t i = 1; i < ring.size(); ++i) {
+                    path.feed({ring[i].x, ring[i].y, z});
+                }
+            } else {
+                cutAround(path, around, {}, 0.0, from, z, slopeAround(around, tool, operation));
             }
         }
         above = z;
@@ -295,7 +507,16 @@ std::vector<Move> contourMoves(const FlatRegion& region, const Heights& heights,
         problems.push_back("A drill cuts straight down only: a contour takes an end mill.");
         return {};
     }
-    if (!checkDepths(heights, tool, operation, problems)) {
+    if (!checkDepths(heights, tool, operation, problems) || !checkRamp(operation, problems)) {
+        return {};
+    }
+    if (operation.tabs < 0 ||
+        (operation.tabs > 0 && (operation.tabWidth <= 0.0 || operation.tabHeight <= 0.0))) {
+        problems.push_back("Tabs have to have a width and a height.");
+        return {};
+    }
+    if (operation.tabs > 0 && operation.tabHeight >= heights.top - heights.bottom) {
+        problems.push_back("The tabs are as high as the cut is deep: nothing would be cut there.");
         return {};
     }
     const double radius = tool.diameter / 2.0;
@@ -318,13 +539,27 @@ std::vector<Move> contourMoves(const FlatRegion& region, const Heights& heights,
         if (outside) {
             std::reverse(ring.begin(), ring.end());
         }
-        const Point2D start = ring.front();
-        path.travelTo(start);
-        for (const double z : passDepths(heights.top, heights.bottom, operation.stepdown)) {
-            path.plunge({start.x, start.y, z});
-            for (std::size_t i = 1; i < ring.size(); ++i) {
-                path.feed({ring[i].x, ring[i].y, z});
+        const Ring around(ring);
+        Tabs tabs;
+        if (operation.tabs > 0) {
+            // The tool's middle stays a radius from a tab on either side of it.
+            tabs.span = operation.tabWidth + tool.diameter;
+            tabs.top = heights.bottom + operation.tabHeight;
+            tabs.middles = tabPlaces(around, operation.tabs, tabs.span,
+                                     tabs.span + operation.tabHeight + tabRise);
+            if (tabs.middles.empty()) {
+                problems.push_back(std::to_string(operation.tabs) +
+                                   " tabs do not fit around this outline.");
+                return {};
             }
+        }
+        const double slope = slopeAround(around, tool, operation);
+        path.travelTo(ring.front());
+        double along = 0.0;
+        double above = heights.top;
+        for (const double z : passDepths(heights.top, heights.bottom, operation.stepdown)) {
+            along = cutAround(path, around, tabs, along, above, z, slope);
+            above = z;
         }
     }
     path.finish();
@@ -595,6 +830,14 @@ Program planSetup(const document::Document& document, const Setup& setup) {
             say(operation.id,
                 operation.name + " goes " + millimeters(work.stock.min.z - lowest) +
                     " below the stock: put something under the work that can take it.",
+                Problem::Severity::Warning);
+        }
+        if (operation.kind == OperationKind::Contour && operation.tabs == 0 &&
+            lowest <= work.stock.min.z + 1e-6) {
+            say(operation.id,
+                operation.name +
+                    " cuts right through the stock, so what it cuts out comes loose: give it "
+                    "tabs, or hold it down some other way.",
                 Problem::Severity::Warning);
         }
         Toolpath toolpath;

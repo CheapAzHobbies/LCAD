@@ -638,6 +638,19 @@ each stage checks the one before it instead of being trusted:
 Writing G-code runs them all, every time, and writes nothing if any fails. A height field is
 enough for a tool that comes down along Z, and is simple enough to be sure of.
 
+**Ramps and tabs** are one idea. A ring is a closed path measured by distance along it, and a cut
+around one is a height at each distance: the higher of the ramp's line and of what the tool has to
+stay above, which is the depth of the pass, raised over each tab. The tool cannot cut into a tab
+even while ramping past it, since no code path treats the two separately. The simulation is what
+checks the result: the tests measure the width and height of what it leaves standing.
+
+**Arcs** are found when G-code is written, not planned. The toolpaths stay lines, since Clipper2
+gives lines, and the simulation runs on those. The writer replaces a run of level cuts that lies on
+a circle to within 0.003 mm, and `verifyGcode()` walks each arc back along the moves it stands for
+in the program, in order and in its direction. The center is written from the place the machine was
+told, to four decimals, so that rounding keeps the end on the circle: both controllers refuse an
+arc that does not end there.
+
 **Offsets** come from Clipper2, kept in `third_party/clipper2` at a pinned release, because
 nothing else here could be trusted as far: no distribution LCAD builds on packages it, and an
 offset that goes wrong on a self-touching outline would cut the part.

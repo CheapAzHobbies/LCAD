@@ -1276,6 +1276,10 @@ nlohmann::ordered_json writeOperation(const MachiningOperation& operation) {
     out["stockToLeave"] = operation.stockToLeave;
     out["side"] = operation.side == ContourSide::Outside ? "outside" : "inside";
     out["peck"] = operation.peck;
+    out["rampAngle"] = operation.rampAngle;
+    out["tabs"] = operation.tabs;
+    out["tabWidth"] = operation.tabWidth;
+    out["tabHeight"] = operation.tabHeight;
     out["suppressed"] = operation.suppressed;
     return out;
 }
@@ -1315,6 +1319,11 @@ MachiningOperation readOperation(const json& entry, const std::filesystem::path&
         damaged(path, where + " is on the unknown side \"" + side + "\"");
     }
     operation.peck = numberOr(entry, "peck", 0.0, where, path);
+    // A file from before there were ramps goes straight down, as it did.
+    operation.rampAngle = numberOr(entry, "rampAngle", 0.0, where, path);
+    operation.tabs = static_cast<int>(numberOr(entry, "tabs", 0.0, where, path));
+    operation.tabWidth = numberOr(entry, "tabWidth", operation.tabWidth, where, path);
+    operation.tabHeight = numberOr(entry, "tabHeight", operation.tabHeight, where, path);
     operation.suppressed = boolMember(entry, "suppressed", where, path);
     return operation;
 }
@@ -1329,7 +1338,8 @@ nlohmann::ordered_json writeSetup(const Setup& setup) {
         ordered_json{{"name", machine.name},       {"dialect", toString(machine.dialect)},
                      {"travelX", machine.travelX}, {"travelY", machine.travelY},
                      {"travelZ", machine.travelZ}, {"rapidRate", machine.rapidRate},
-                     {"maxFeed", machine.maxFeed}, {"maxSpindle", machine.maxSpindle}};
+                     {"maxFeed", machine.maxFeed}, {"maxSpindle", machine.maxSpindle},
+                     {"arcs", machine.arcs}};
     out["stock"] = ordered_json{
         {"side", setup.stock.side}, {"top", setup.stock.top}, {"bottom", setup.stock.bottom}};
     out["origin"] = toString(setup.origin);
@@ -1356,6 +1366,8 @@ Setup readSetup(const json& entry, const std::filesystem::path& path) {
     setup.machine.rapidRate = numberMember(machine, "rapidRate", at, path);
     setup.machine.maxFeed = numberMember(machine, "maxFeed", at, path);
     setup.machine.maxSpindle = numberMember(machine, "maxSpindle", at, path);
+    // A file from before there were arcs writes lines, as it did.
+    setup.machine.arcs = machine.contains("arcs") && boolMember(machine, "arcs", at, path);
     const json& stock = objectMember(entry, "stock", where, path);
     setup.stock.side = numberMember(stock, "side", where, path);
     setup.stock.top = numberMember(stock, "top", where, path);
