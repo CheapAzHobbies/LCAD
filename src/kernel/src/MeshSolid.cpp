@@ -8,18 +8,24 @@
 #include <lcad/kernel/occt/ShapeAccess.h>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
-#include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
 #include <BRepLib.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <Bnd_Box2d.hxx>
 #include <ElCLib.hxx>
+#include <ElSLib.hxx>
 #include <GProp_GProps.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <GeomAPI_IntSS.hxx>
+#include <GeomAdaptor_Curve.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <Geom2dAPI_Interpolate.hxx>
+#include <Geom2d_BSplineCurve.hxx>
+#include <Geom2d_Curve.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Geom_Circle.hxx>
 #include <Geom_ConicalSurface.hxx>
@@ -30,11 +36,13 @@
 #include <Geom_ToroidalSurface.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <Precision.hxx>
-#include <ShapeFix_Face.hxx>
-#include <ShapeFix_Shell.hxx>
 #include <ShapeFix_Solid.hxx>
-#include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColStd_HArray1OfReal.hxx>
+#include <TColgp_Array1OfPnt2d.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
+#include <TColgp_HArray1OfPnt2d.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -53,8 +61,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -72,6 +78,8 @@ constexpr Index none = std::numeric_limits<Index>::max();
 
 // A surface that closes up to within this angle is cut in two.
 const double smallestGap = 40.0 * pi / 180.0;
+// How many times over a part's surfaces are cut back to facets before all of it is.
+constexpr int mostFacetRounds = 4;
 // A piece of a sphere reaches at most this far from its middle, which keeps it off the poles.
 const double sphereReach = 75.0 * pi / 180.0;
 
@@ -137,6 +145,8 @@ struct Arc {
     std::vector<Index> corners;
     bool closed = false;
     TopoDS_Edge edge;
+    /// Where each of the corners is on the edge's curve, rising along it.
+    std::vector<double> parameters;
 };
 
 struct Step {
@@ -189,11 +199,31 @@ public:
             }
             TopoDS_Shell shell;
             try {
-                shell = exactShell(part);
-            } catch (const Standard_Failure& fail) {
+                // Once more with what would not come out as facets. Those can leave a neighbor
+                // short of the corners it had, so it can take a few rounds.
+                for (int round = 0; round < mostFacetRounds; ++round) {
+                    m_refused.clear();
+                    shell = exactShell(part);
+                    if (m_refused.empty()) {
+                        break;
+                    }
+                    for (const Index number : m_refused) {
+                        toFacets(number);
+                    }
+                }
+            } catch (const Standard_Failure&) {
                 // Whatever went wrong in there, the facets below are still a solid.
-                if (std::getenv("LCAD_MESH_DEBUG")) std::fprintf(stderr, "REJECT exception %s %s\n", fail.DynamicType()->Name(), fail.GetMessageString());
                 shell.Nullify();
+            }
+            // A solid that is not sound is worth less than one that is only faceted.
+            if (!shell.IsNull()) {
+                BRep_Builder builder;
+                TopoDS_Solid trial;
+                builder.MakeSolid(trial);
+                builder.Add(trial, shell);
+                if (!BRepCheck_Analyzer(trial).IsValid()) {
+                    shell.Nullify();
+                }
             }
             if (shell.IsNull()) {
                 shell = facetShell(part);
@@ -792,26 +822,36 @@ private:
         double first = 0.0;
         double last = 0.0;
         Handle(Geom_Curve) curve;
+        // How long the mesh says it is. A curve can run through all the corners and still be
+        // wrong, by going the long way round.
+        double length = 0.0;
+        for (std::size_t i = 1; i < points.size(); ++i) {
+            length += points[i - 1].Distance(points[i]);
+        }
+        const auto rightLength = [&]() {
+            if (curve.IsNull()) {
+                return false;
+            }
+            GeomAdaptor_Curve adaptor(curve, first, last);
+            const double along = GCPnts_AbscissaPoint::Length(adaptor);
+            return along >= length * 0.97 - m_tolerance && along <= length * 1.4 + m_tolerance * 4.0;
+        };
+        const auto attempt = [&](auto make) {
+            if (rightLength()) {
+                return;
+            }
+            try {
+                curve = make();
+            } catch (const Standard_Failure&) {
+                curve.Nullify();
+            }
+        };
         if (!arc.closed) {
-            curve = straight(points, arc, first, last);
+            attempt([&] { return straight(points, arc, first, last); });
         }
-        if (curve.IsNull()) {
-            curve = round(points, arc.closed, first, last);
-        }
-        if (curve.IsNull()) {
-            try {
-                curve = intersection(points, arc, first, last);
-            } catch (const Standard_Failure&) {
-                curve.Nullify();
-            }
-        }
-        if (curve.IsNull()) {
-            try {
-                curve = through(points, arc.closed, first, last);
-            } catch (const Standard_Failure&) {
-                curve.Nullify();
-            }
-        }
+        attempt([&] { return round(points, arc.closed, first, last); });
+        attempt([&] { return intersection(points, arc, first, last); });
+        attempt([&] { return through(points, arc.closed, first, last); });
         if (curve.IsNull()) {
             return false;
         }
@@ -828,7 +868,129 @@ private:
         builder.UpdateVertex(end, std::max(m_tolerance,
                                            curve->Value(last).Distance(BRep_Tool::Pnt(end)) * 1.1));
         arc.edge = edge;
+        arc.parameters = parametersOn(curve, points, first, last);
         return true;
+    }
+
+    // Where points along a curve are on it, from `first` to `last`.
+    static std::vector<double> parametersOn(const Handle(Geom_Curve)& curve,
+                                            const std::vector<gp_Pnt>& points, double first,
+                                            double last) {
+        std::vector<double> parameters(points.size(), first);
+        const Handle(Geom_Line) line = Handle(Geom_Line)::DownCast(curve);
+        const Handle(Geom_Circle) circle = Handle(Geom_Circle)::DownCast(curve);
+        for (std::size_t i = 1; i + 1 < points.size(); ++i) {
+            double t = 0.0;
+            if (!line.IsNull()) {
+                t = ElCLib::Parameter(line->Lin(), points[i]);
+            } else if (!circle.IsNull()) {
+                t = ElCLib::Parameter(circle->Circ(), points[i]);
+                while (t < parameters[i - 1]) {
+                    t += 2.0 * pi;
+                }
+            } else {
+                GeomAPI_ProjectPointOnCurve project(points[i], curve);
+                t = project.NbPoints() > 0
+                        ? project.LowerDistanceParameter()
+                        : first + (last - first) * double(i) / double(points.size() - 1);
+                // An ellipse, say: its projection knows nothing of which time round it is.
+                if (curve->IsPeriodic()) {
+                    t = ElCLib::InPeriod(t, parameters[i - 1], parameters[i - 1] + curve->Period());
+                }
+            }
+            parameters[i] = t;
+        }
+        parameters.back() = last;
+        // Rounding can put neighbors out of order, and a curve through them needs them in order.
+        const double step = (last - first) * 1e-9;
+        for (std::size_t i = 1; i + 1 < parameters.size(); ++i) {
+            parameters[i] = std::clamp(parameters[i], parameters[i - 1] + step,
+                                       last - step * double(parameters.size() - i));
+        }
+        return parameters;
+    }
+
+    // A point's parameters on a surface.
+    static gp_Pnt2d onSurface(const MeshSurface& s, const Handle(Geom_Surface)& surface,
+                              const gp_Pnt& p) {
+        double u = 0.0;
+        double v = 0.0;
+        switch (s.kind) {
+        case SurfaceKind::Plane:
+            ElSLib::Parameters(Handle(Geom_Plane)::DownCast(surface)->Pln(), p, u, v);
+            break;
+        case SurfaceKind::Cylinder:
+            ElSLib::Parameters(Handle(Geom_CylindricalSurface)::DownCast(surface)->Cylinder(), p, u,
+                               v);
+            break;
+        case SurfaceKind::Cone:
+            ElSLib::Parameters(Handle(Geom_ConicalSurface)::DownCast(surface)->Cone(), p, u, v);
+            break;
+        case SurfaceKind::Sphere:
+            ElSLib::Parameters(Handle(Geom_SphericalSurface)::DownCast(surface)->Sphere(), p, u, v);
+            break;
+        case SurfaceKind::Torus:
+            ElSLib::Parameters(Handle(Geom_ToroidalSurface)::DownCast(surface)->Torus(), p, u, v);
+            break;
+        }
+        return {u, v};
+    }
+
+    // What an edge is on a face, in the surface's parameters: through the corners of the mesh,
+    // which are on the surface, each at the parameter of the edge that it is at. This is worked
+    // out, not left to the projection OCCT does, which on a closed surface can come out a whole
+    // turn off, or go the long way round.
+    Handle(Geom2d_Curve) onFace(const Arc& arc, const std::vector<gp_Pnt2d>& at) const {
+        const auto count = static_cast<Standard_Integer>(at.size());
+        if (count == 2) {
+            // A straight line in the parameters, run through at the edge's own pace.
+            TColgp_Array1OfPnt2d poles(1, 2);
+            poles(1) = at[0];
+            poles(2) = at[1];
+            TColStd_Array1OfReal knots(1, 2);
+            knots(1) = arc.parameters.front();
+            knots(2) = arc.parameters.back();
+            TColStd_Array1OfInteger multiplicities(1, 2);
+            multiplicities.Init(2);
+            return new Geom2d_BSplineCurve(poles, knots, multiplicities, 1);
+        }
+        Handle(TColgp_HArray1OfPnt2d) points = new TColgp_HArray1OfPnt2d(1, count);
+        Handle(TColStd_HArray1OfReal) parameters = new TColStd_HArray1OfReal(1, count);
+        for (Standard_Integer i = 1; i <= count; ++i) {
+            points->SetValue(i, at[static_cast<std::size_t>(i - 1)]);
+            parameters->SetValue(i, arc.parameters[static_cast<std::size_t>(i - 1)]);
+        }
+        Geom2dAPI_Interpolate interpolate(points, parameters, Standard_False, 1e-9);
+        interpolate.Perform();
+        if (interpolate.IsDone()) {
+            const Handle(Geom2d_BSplineCurve) smooth = interpolate.Curve();
+            // Corners close together on the curve and far apart on the surface can throw a smooth
+            // curve wide of them.
+            Bnd_Box2d around;
+            for (const gp_Pnt2d& p : at) {
+                around.Add(p);
+            }
+            around.Enlarge(0.25);
+            bool stays = true;
+            const double first = arc.parameters.front();
+            const double last = arc.parameters.back();
+            for (int i = 0; stays && i <= 64; ++i) {
+                stays = !around.IsOut(smooth->Value(first + (last - first) * i / 64.0));
+            }
+            if (stays) {
+                return Handle(Geom2d_Curve)(smooth);
+            }
+        }
+        // Straight from corner to corner, then: never far off, and it can do no harm.
+        TColgp_Array1OfPnt2d poles(1, count);
+        TColStd_Array1OfReal knots(1, count);
+        TColStd_Array1OfInteger multiplicities(1, count);
+        for (Standard_Integer i = 1; i <= count; ++i) {
+            poles(i) = at[static_cast<std::size_t>(i - 1)];
+            knots(i) = arc.parameters[static_cast<std::size_t>(i - 1)];
+            multiplicities(i) = i == 1 || i == count ? 2 : 1;
+        }
+        return new Geom2d_BSplineCurve(poles, knots, multiplicities, 1);
     }
 
     // The direction around the axis in which the seam of a surface is out of the way of the
@@ -881,38 +1043,71 @@ private:
             return whole.IsDone() ? (turned ? TopoDS::Face(whole.Face().Reversed()) : whole.Face())
                                   : TopoDS_Face();
         }
+        const auto wires = [&](TopoDS_Face& face) {
+            for (const std::vector<Step>& loop : loops) {
+                TopoDS_Wire wire;
+                builder.MakeWire(wire);
+                const auto add = [&](const Step& step, bool backward) {
+                    const TopoDS_Edge& edge = arcs[step.arc].edge;
+                    builder.Add(wire, edge.Oriented(step.along != backward ? TopAbs_FORWARD
+                                                                           : TopAbs_REVERSED));
+                };
+                if (turned) {
+                    for (auto step = loop.rbegin(); step != loop.rend(); ++step) {
+                        add(*step, true);
+                    }
+                } else {
+                    for (const Step& step : loop) {
+                        add(step, false);
+                    }
+                }
+                wire.Closed(Standard_True);
+                builder.Add(face, wire);
+            }
+        };
         TopoDS_Face face;
         builder.MakeFace(face, surface, m_tolerance);
-        for (const std::vector<Step>& loop : loops) {
-            TopoDS_Wire wire;
-            builder.MakeWire(wire);
-            const auto add = [&](const Step& step, bool backward) {
-                const TopoDS_Edge& edge = arcs[step.arc].edge;
-                builder.Add(wire, edge.Oriented(step.along != backward ? TopAbs_FORWARD
-                                                                       : TopAbs_REVERSED));
+        wires(face);
+        // A plane works out the curves on it by itself, exactly.
+        if (s.kind != SurfaceKind::Plane) {
+            // Around the middle of the face, for it not to cross where the parameters wrap: the
+            // seam is where the face is not, but the tube of a torus has a seam of its own.
+            double sinU = 0.0;
+            double cosU = 0.0;
+            double sinV = 0.0;
+            double cosV = 0.0;
+            for (const Index t : s.triangles) {
+                const gp_Pnt2d at = onSurface(s, surface, middleOf(t));
+                sinU += std::sin(at.X());
+                cosU += std::cos(at.X());
+                sinV += std::sin(at.Y());
+                cosV += std::cos(at.Y());
+            }
+            const double middleU = std::atan2(sinU, cosU);
+            const double middleV = std::atan2(sinV, cosV);
+            const bool wrapsV = s.kind == SurfaceKind::Torus;
+            const auto around = [](double value, double middle) {
+                return value + 2.0 * pi * std::round((middle - value) / (2.0 * pi));
             };
-            if (turned) {
-                for (auto step = loop.rbegin(); step != loop.rend(); ++step) {
-                    add(*step, true);
-                }
-            } else {
+            for (const std::vector<Step>& loop : loops) {
                 for (const Step& step : loop) {
-                    add(step, false);
+                    const Arc& arc = arcs[step.arc];
+                    std::vector<gp_Pnt2d> at;
+                    at.reserve(arc.corners.size());
+                    for (const Index corner : arc.corners) {
+                        const gp_Pnt2d uv = onSurface(s, surface, pointAt(corner));
+                        at.emplace_back(around(uv.X(), middleU),
+                                        wrapsV ? around(uv.Y(), middleV) : uv.Y());
+                    }
+                    const Handle(Geom2d_Curve) curve = onFace(arc, at);
+                    if (curve.IsNull()) {
+                        return {};
+                    }
+                    builder.UpdateEdge(arc.edge, curve, face, m_tolerance);
                 }
             }
-            builder.Add(face, wire);
         }
-        ShapeFix_Face fix(face);
-        fix.SetPrecision(m_tolerance);
-        fix.SetMaxTolerance(std::max(m_tolerance * 50.0, 0.05));
-        // A sphere or torus with nothing but a hole in it has no outline of its own in the
-        // surface's parameters; the bounds of the surface are its outline.
-        fix.FixAddNaturalBoundMode() =
-            s.kind == SurfaceKind::Sphere || s.kind == SurfaceKind::Torus ? 1 : 0;
-        fix.Perform();
-        fix.FixOrientation();
-        TopoDS_Face fixed = fix.Face();
-        return turned ? TopoDS::Face(fixed.Reversed()) : fixed;
+        return turned ? TopoDS::Face(face.Reversed()) : face;
     }
 
     TopoDS_Shell exactShell(const std::vector<Index>& part) {
@@ -1024,41 +1219,56 @@ private:
             loops[surfaceOfSide(side)].push_back({stepOf[side]});
         }
 
-        BRepBuilderAPI_Sewing sewing(m_tolerance * 4.0);
+        TopoDS_Shell result;
+        BRep_Builder builder;
+        builder.MakeShell(result);
         for (const auto& [number, unused] : surfacesHere) {
             const auto found = loops.find(number);
             static const std::vector<std::vector<Step>> noLoops;
             const TopoDS_Face face =
                 makeFace(number, found == loops.end() ? noLoops : found->second, arcs);
             if (face.IsNull() || !keepsItsSide(face, m_surfaces[number])) {
-                if (std::getenv("LCAD_MESH_DEBUG")) {
-                    GProp_GProps pr;
-                    if (!face.IsNull()) BRepGProp::SurfaceProperties(face, pr);
-                    const MeshSurface& ms = m_surfaces[number];
-                    const auto f2 = loops.find(number);
-                    std::fprintf(stderr, "REJECT kind %d facet %d area %.4f mesh %.4f loops %zu r %.3f\n", (int)ms.kind, (int)ms.facet, face.IsNull()?-1.0:pr.Mass(), ms.area, f2==loops.end()?0:f2->second.size(), ms.radius);
-                }
-                return {};
+                m_refused.push_back(number);
+            } else {
+                builder.Add(result, face);
             }
-            sewing.Add(face);
         }
-        sewing.Perform();
-        const TopoDS_Shape sewn = sewing.SewedShape();
-        TopExp_Explorer shells(sewn, TopAbs_SHELL);
-        if (!shells.More()) {
+        if (!m_refused.empty()) {
             return {};
         }
-        TopoDS_Shell result = TopoDS::Shell(shells.Current());
-        shells.Next();
-        if (shells.More()) {
-            if (std::getenv("LCAD_MESH_DEBUG")) std::fprintf(stderr, "REJECT manyshells\n");
-            return {};
-        }
+        result.Closed(Standard_True);
         // An edge against a facet follows the facet, a little off the curved surface beside it.
         // The edge's tolerance says how far.
         BRepLib::SameParameter(result, m_tolerance, Standard_True);
-        if (std::getenv("LCAD_MESH_DEBUG") && !BRep_Tool::IsClosed(result)) std::fprintf(stderr, "REJECT notclosed\n");
         return BRep_Tool::IsClosed(result) ? result : TopoDS_Shell();
+    }
+
+    // A surface that would not come out is cut back to the flat triangles of the mesh, which
+    // always do. The rest of the part stays as exact as it was.
+    void toFacets(Index number) {
+        const std::vector<Index> triangles = m_surfaces[number].triangles;
+        MeshSurface facet;
+        facet.kind = SurfaceKind::Plane;
+        facet.facet = true;
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            const Index t = triangles[i];
+            const auto& c = m_mesh.triangles[t];
+            const gp_Vec cross = gp_Vec(pointAt(c[0]), pointAt(c[1]))
+                                     .Crossed(gp_Vec(pointAt(c[0]), pointAt(c[2])));
+            if (cross.Magnitude() > 0.0) {
+                const gp_Dir normal(cross);
+                facet.axis = {normal.X(), normal.Y(), normal.Z()};
+            }
+            facet.origin = m_mesh.vertices[c[0]];
+            facet.triangles = {t};
+            facet.area = triangleArea(t);
+            if (i == 0) {
+                m_surfaces[number] = facet;
+            } else {
+                m_surfaceOf[t] = static_cast<Index>(m_surfaces.size());
+                m_surfaces.push_back(facet);
+            }
+        }
     }
 
     // A face on a closed surface can come out as the rest of the surface, the outline being the
@@ -1155,13 +1365,9 @@ private:
         for (const TopoDS_Solid& solid : solids) {
             ShapeFix_Solid fix(solid);
             fix.Perform();
-            // The pieces of a surface that was cut, and of anything else that lies on one surface.
-            ShapeUpgrade_UnifySameDomain unify(fix.Solid(), Standard_True, Standard_True,
-                                               Standard_False);
-            unify.SetLinearTolerance(m_tolerance * 2.0);
-            unify.SetAngularTolerance(1e-3);
-            unify.Build();
-            out.push_back(occt::wrap(unify.Shape()));
+            // The pieces of surfaces that were cut stay apart: joining them up takes far longer
+            // than all the rest, and fails on some. The viewport shows no line between them.
+            out.push_back(occt::wrap(fix.Solid()));
         }
         return out;
     }
@@ -1172,6 +1378,8 @@ private:
     double m_tolerance;
     std::vector<MeshSurface> m_surfaces;
     std::vector<Index> m_surfaceOf;
+    // The surfaces that exactShell() could not make faces of.
+    std::vector<Index> m_refused;
 };
 
 } // namespace

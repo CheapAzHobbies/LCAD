@@ -33,6 +33,9 @@ const double smoothAngle = 40.0 * pi / 180.0;
 const double flatAngle = 1.0 * pi / 180.0;
 // A facet of a curved surface leans this far at most from the surface at its middle.
 const double leanAngle = 45.0 * pi / 180.0;
+// One facet of a curved surface spans at most this much of it, from corner to corner. All the
+// corners of a square lie on a sphere, and on a cylinder, and it is this that tells them apart.
+const double spanAngle = 50.0 * pi / 180.0;
 // A corner may be this many tolerances from a surface while the surface is being grown; a fit to
 // a few facets is less exact than the final one to all of them.
 constexpr double growSlack = 1.5;
@@ -534,6 +537,25 @@ private:
         return points;
     }
 
+    // Whether the triangles of a flat piece face the way a surface does there, and each is small
+    // enough on it to be a facet of it.
+    bool followed(const Surface& surface, const Patch& patch) const {
+        const double lean = std::cos(leanAngle);
+        const double span = std::cos(spanAngle);
+        return std::all_of(patch.triangles.begin(), patch.triangles.end(), [&](Index t) {
+            const auto& c = m_mesh.triangles[t];
+            const Vector3d a = m_points[c[0]];
+            const Vector3d b = m_points[c[1]];
+            const Vector3d d = m_points[c[2]];
+            const Vector3d na = surface.normal(a);
+            const Vector3d nb = surface.normal(b);
+            const Vector3d nd = surface.normal(d);
+            return m_areas[t] == 0.0 ||
+                   (std::abs(surface.normal((a + b + d) / 3.0).dot(m_normals[t])) > lean &&
+                    na.dot(nb) > span && nb.dot(nd) > span && nd.dot(na) > span);
+        });
+    }
+
     bool fits(const Surface& surface, const std::vector<Vector3d>& points) const {
         const double limit = m_tolerance * growSlack;
         return std::all_of(points.begin(), points.end(), [&](const Vector3d& p) {
@@ -697,7 +719,10 @@ private:
     Found grown(std::vector<Index> seed, const Fit& fit, const std::vector<char>& taken) {
         Found found;
         found.surface = fit(seed);
-        if (found.surface == nullptr || !fits(*found.surface, cornersOf(seed))) {
+        if (found.surface == nullptr || !fits(*found.surface, cornersOf(seed)) ||
+            !std::all_of(seed.begin(), seed.end(), [&](Index p) {
+                return followed(*found.surface, m_patches[p]);
+            })) {
             found.surface = nullptr;
             return found;
         }
@@ -720,7 +745,6 @@ private:
         }
         std::size_t sinceFit = 0;
         const double limit = m_tolerance * growSlack;
-        const double lean = std::cos(leanAngle);
         while (!frontier.empty()) {
             const Index candidate = frontier.back();
             frontier.pop_back();
@@ -732,14 +756,7 @@ private:
             if (!onIt) {
                 continue;
             }
-            const bool facesIt = std::all_of(
-                patch.triangles.begin(), patch.triangles.end(), [&](Index t) {
-                    const auto& c = m_mesh.triangles[t];
-                    const Vector3d middle = (m_points[c[0]] + m_points[c[1]] + m_points[c[2]]) / 3.0;
-                    return m_areas[t] == 0.0 ||
-                           std::abs(found.surface->normal(middle).dot(m_normals[t])) > lean;
-                });
-            if (!facesIt) {
+            if (!followed(*found.surface, patch)) {
                 continue;
             }
             found.patches.push_back(candidate);
@@ -947,6 +964,23 @@ private:
         return out;
     }
 
+    bool patchHasNoArea(Index p) const {
+        return m_patches[p].area <= m_tolerance * m_tolerance * 1e-3;
+    }
+
+    // The triangles of the patches with no area. Twice over: one may lie along another.
+    std::vector<Index> orderedSlivers() const {
+        std::vector<Index> slivers;
+        for (Index p = 0; p < m_patches.size(); ++p) {
+            if (patchHasNoArea(p)) {
+                slivers.push_back(m_patches[p].triangles.front());
+            }
+        }
+        const std::vector<Index> once = slivers;
+        slivers.insert(slivers.end(), once.begin(), once.end());
+        return slivers;
+    }
+
     MeshSurfaces result() {
         MeshSurfaces out;
         out.tolerance = m_tolerance;
@@ -956,8 +990,30 @@ private:
             out.surfaces.push_back(finished(found));
         }
         for (Index p = 0; p < m_patches.size(); ++p) {
-            if (m_surfaceOfPatch[p] == none) {
-                out.surfaces.push_back(flat(p));
+            if (m_surfaceOfPatch[p] != none) {
+                continue;
+            }
+            // A triangle with no area is no face of anything: a corner of the mesh left on a
+            // straight side. It goes with what lies along it.
+            if (patchHasNoArea(p)) {
+                continue;
+            }
+            m_surfaceOfPatch[p] = static_cast<Index>(out.surfaces.size());
+            out.surfaces.push_back(flat(p));
+        }
+        for (const Index t : orderedSlivers()) {
+            const Index p = m_patchOf[t];
+            if (m_surfaceOfPatch[p] != none) {
+                continue;
+            }
+            for (const Patch::Neighbour& n : m_patches[p].neighbours) {
+                if (m_surfaceOfPatch[n.patch] != none) {
+                    m_surfaceOfPatch[p] = m_surfaceOfPatch[n.patch];
+                    out.surfaces[m_surfaceOfPatch[p]].triangles.insert(
+                        out.surfaces[m_surfaceOfPatch[p]].triangles.end(),
+                        m_patches[p].triangles.begin(), m_patches[p].triangles.end());
+                    break;
+                }
             }
         }
         double real = 0.0;
