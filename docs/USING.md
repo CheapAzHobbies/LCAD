@@ -446,7 +446,10 @@ is cut from, the machine, and four tools to start from. The tool comes straight 
 model's Z, so turn the model so that what is to be cut faces up.
 
 1. Check the panel: **Stock** is how much is around, above, and below the part, **Zero at** is where
-   zero is on the machine, and **Machine** is what it can do and which G-code it takes.
+   zero is on the machine, and **Machine** is what it can do and which G-code it takes. Under
+   **Tools**, change the four to match your cutters, or click **Add Tool** for another: its kind,
+   diameter, how deep its **Flutes** cut, how far it sticks out of the holder, and its number. Every
+   check goes by these, so measure them. A tool an operation uses cannot be deleted.
 2. Add operations in the order they run. Each works with what is selected in the 3D view:
    - **Face** levels the top of the stock down to the top of the part.
    - **Pocket** clears down to the flat floor face selected, around any islands in it.
@@ -481,9 +484,8 @@ material, which are yours to set: the defaults are a starting point, not advice.
 in the air first, with the spindle off and the tool well above the work, and keep a hand near the
 stop button.
 
-Not there yet: 3-axis surfacing, adaptive clearing, chamfering, tools defined from the panel (four
-come with a setup), holders checked by their real shape, and tool libraries shared between
-documents.
+Not there yet: 3-axis surfacing, adaptive clearing, chamfering, holders checked by their real shape,
+and tool libraries shared between documents.
 
 ## Moving around the 3D view
 

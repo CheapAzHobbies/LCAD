@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 
 namespace lcad::app {
 
@@ -204,6 +205,49 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
     stockForm->addRow(tr("Zero at"), m_origin);
     layout->addWidget(stockBox);
 
+    auto* toolsBox = new QGroupBox(tr("Tools"), this);
+    m_toolForm = new QFormLayout(toolsBox);
+    m_toolBox = new QComboBox(this);
+    m_toolBox->setObjectName(QStringLiteral("toolBox"));
+    m_toolBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_toolBox->setMinimumContentsLength(8);
+    m_toolForm->addRow(tr("Tool"), m_toolBox);
+    m_toolName = new QLineEdit(this);
+    m_toolName->setObjectName(QStringLiteral("toolName"));
+    m_toolForm->addRow(tr("Name"), m_toolName);
+    m_toolKind = new QComboBox(this);
+    m_toolKind->setObjectName(QStringLiteral("toolKind"));
+    m_toolKind->addItem(tr("Flat end mill"), static_cast<int>(ToolKind::FlatEndMill));
+    m_toolKind->addItem(tr("Ball end mill"), static_cast<int>(ToolKind::BallEndMill));
+    m_toolKind->addItem(tr("Drill"), static_cast<int>(ToolKind::Drill));
+    m_toolKind->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_toolKind->setMinimumContentsLength(8);
+    m_toolForm->addRow(tr("Kind"), m_toolKind);
+    m_toolDiameter = numberField(this, 0.01, 1000.0, 0.5, tr(" mm"));
+    m_toolDiameter->setObjectName(QStringLiteral("toolDiameter"));
+    m_toolForm->addRow(tr("Diameter"), m_toolDiameter);
+    m_toolFluteLength = numberField(this, 0.01, 1000.0, 1.0, tr(" mm"));
+    m_toolFluteLength->setObjectName(QStringLiteral("toolFluteLength"));
+    m_toolForm->addRow(tr("Flutes"), m_toolFluteLength);
+    m_toolStickout = numberField(this, 0.01, 1000.0, 1.0, tr(" mm"));
+    m_toolStickout->setObjectName(QStringLiteral("toolStickout"));
+    m_toolForm->addRow(tr("Stickout"), m_toolStickout);
+    m_toolTipAngle = numberField(this, 30.0, 180.0, 1.0, tr("°"), 0);
+    m_toolTipAngle->setObjectName(QStringLiteral("toolTipAngle"));
+    m_toolForm->addRow(tr("Point"), m_toolTipAngle);
+    m_toolNumber = numberField(this, 1.0, 999.0, 1.0, QString(), 0);
+    m_toolNumber->setObjectName(QStringLiteral("toolNumber"));
+    m_toolForm->addRow(tr("Number"), m_toolNumber);
+    auto* toolAdd = new QPushButton(tr("Add Tool"), this);
+    toolAdd->setObjectName(QStringLiteral("addTool"));
+    m_toolRemove = new QPushButton(tr("Delete Tool"), this);
+    m_toolRemove->setObjectName(QStringLiteral("deleteTool"));
+    auto* toolButtons = new QHBoxLayout;
+    toolButtons->addWidget(toolAdd);
+    toolButtons->addWidget(m_toolRemove);
+    m_toolForm->addRow(toolButtons);
+    layout->addWidget(toolsBox);
+
     auto* machineBox = new QGroupBox(tr("Machine"), this);
     auto* machineForm = new QFormLayout(machineBox);
     machineForm->addRow(tr("Name"), m_machineName);
@@ -294,6 +338,37 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
             change(changed, tr("Change Work Zero"));
         }
     });
+
+    connect(m_toolBox, &QComboBox::activated, this, [this](int index) {
+        m_toolShown = ObjectId{m_toolBox->itemData(index).toULongLong()};
+        fill();
+    });
+    connect(m_toolName, &QLineEdit::editingFinished, this, [this] {
+        const std::string name = m_toolName->text().trimmed().toStdString();
+        if (name.empty()) {
+            fill();
+        } else {
+            editTool([&name](Tool& tool) { tool.name = name; });
+        }
+    });
+    connect(m_toolKind, &QComboBox::activated, this, [this](int index) {
+        const auto kind = static_cast<ToolKind>(m_toolKind->itemData(index).toInt());
+        editTool([kind](Tool& tool) { tool.kind = kind; });
+    });
+    const auto toolField = [this](QDoubleSpinBox* field, double Tool::*member) {
+        connect(field, &QDoubleSpinBox::valueChanged, this, [this, member](double value) {
+            editTool([member, value](Tool& tool) { tool.*member = value; });
+        });
+    };
+    toolField(m_toolDiameter, &Tool::diameter);
+    toolField(m_toolFluteLength, &Tool::fluteLength);
+    toolField(m_toolStickout, &Tool::stickout);
+    toolField(m_toolTipAngle, &Tool::tipAngle);
+    connect(m_toolNumber, &QDoubleSpinBox::valueChanged, this, [this](double value) {
+        editTool([value](Tool& tool) { tool.number = static_cast<int>(value); });
+    });
+    connect(toolAdd, &QPushButton::clicked, this, &MachiningWorkspace::addTool);
+    connect(m_toolRemove, &QPushButton::clicked, this, [this] { removeTool(); });
 
     const auto operationField = [this](QDoubleSpinBox* field, double MachiningOperation::*member) {
         connect(field, &QDoubleSpinBox::valueChanged, this, [this, member](double value) {
@@ -537,6 +612,39 @@ void MachiningWorkspace::fill() {
         m_arcs->setChecked(current->machine.arcs);
     }
 
+    {
+        const QSignalBlocker blocker(m_toolBox);
+        m_toolBox->clear();
+        if (m_document != nullptr) {
+            if (shownTool() == nullptr && !m_document->tools().empty()) {
+                m_toolShown = m_document->tools().front().id;
+            }
+            for (const Tool& each : m_document->tools()) {
+                m_toolBox->addItem(QString::fromStdString(each.name),
+                                   QVariant::fromValue<qulonglong>(each.id.value));
+                if (each.id == m_toolShown) {
+                    m_toolBox->setCurrentIndex(m_toolBox->count() - 1);
+                }
+            }
+        }
+        const Tool* tool = shownTool();
+        for (QWidget* field : std::initializer_list<QWidget*>{
+                 m_toolBox, m_toolName, m_toolKind, m_toolDiameter, m_toolFluteLength,
+                 m_toolStickout, m_toolTipAngle, m_toolNumber, m_toolRemove}) {
+            field->setEnabled(tool != nullptr);
+        }
+        m_toolForm->setRowVisible(m_toolTipAngle, tool != nullptr && tool->kind == ToolKind::Drill);
+        if (tool != nullptr) {
+            m_toolName->setText(QString::fromStdString(tool->name));
+            m_toolKind->setCurrentIndex(m_toolKind->findData(static_cast<int>(tool->kind)));
+            m_toolDiameter->setValue(tool->diameter);
+            m_toolFluteLength->setValue(tool->fluteLength);
+            m_toolStickout->setValue(tool->stickout);
+            m_toolTipAngle->setValue(tool->tipAngle);
+            m_toolNumber->setValue(tool->number);
+        }
+    }
+
     const MachiningOperation* selected = operation();
     m_operationBox->setVisible(selected != nullptr);
     if (selected != nullptr) {
@@ -641,6 +749,55 @@ void MachiningWorkspace::editOperation(const QString& label,
         }
     }
     change(changed, label);
+}
+
+const Tool* MachiningWorkspace::shownTool() const {
+    return m_document != nullptr ? m_document->findTool(m_toolShown) : nullptr;
+}
+
+void MachiningWorkspace::editTool(const std::function<void(Tool&)>& edit) {
+    const Tool* shown = shownTool();
+    if (m_filling || shown == nullptr) {
+        return;
+    }
+    Tool changed = *shown;
+    edit(changed);
+    m_document->changeTool(changed);
+}
+
+void MachiningWorkspace::addTool() {
+    if (m_document == nullptr) {
+        return;
+    }
+    Tool tool;
+    tool.number = 1;
+    for (const Tool& each : m_document->tools()) {
+        tool.number = std::max(tool.number, each.number + 1);
+    }
+    tool.name = tr("Tool %1").arg(tool.number).toStdString();
+    m_toolShown = m_document->addTool(std::move(tool));
+    fill();
+}
+
+bool MachiningWorkspace::removeTool() {
+    const Tool* shown = shownTool();
+    if (shown == nullptr) {
+        return false;
+    }
+    for (const Setup& each : m_document->setups()) {
+        for (const MachiningOperation& user : each.operations) {
+            if (user.tool == shown->id) {
+                emit message(tr("%1 uses %2, so it has to stay.")
+                                 .arg(QString::fromStdString(user.name),
+                                      QString::fromStdString(shown->name)));
+                return false;
+            }
+        }
+    }
+    const ObjectId id = shown->id;
+    m_toolShown = {};
+    m_document->removeTool(id);
+    return true;
 }
 
 void MachiningWorkspace::newSetup() {
