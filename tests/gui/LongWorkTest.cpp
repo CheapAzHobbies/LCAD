@@ -90,7 +90,10 @@ private slots:
     void workCanBeLetRunForAsLongAsItTakes();
     void nothingElseTakesInputMeanwhile();
     void workThatWillNotStopIsSaidToBe();
-    void aFaultInTheWorkDoesNotEndLcad();
+    void aWildPointerDoesNotEndLcad();
+    void runningOutOfStackDoesNotEndLcad();
+    void aLibraryGivingUpDoesNotEndLcad();
+    void aFaultLeavesThingsWorking();
     void aFeatureThatCrashesIsAFeatureThatFails();
     void aFeatureIsStoppedFromTheWindow();
 };
@@ -229,27 +232,44 @@ void LongWorkTest::workThatWillNotStopIsSaidToBe() {
     QVERIFY(waitHid);
 }
 
-void LongWorkTest::aFaultInTheWorkDoesNotEndLcad() {
+void LongWorkTest::aWildPointerDoesNotEndLcad() {
     int kept = 0;
     lcad::app::setLongWorkLastResort([&kept] { ++kept; });
-    // A wild pointer, the stack running out, and the library giving up.
-    const auto faulting = [&kept](const std::function<void()>& fault) {
-        const int before = kept;
-        QVERIFY_THROWS_EXCEPTION(kernel::Error, runLongWork(QStringLiteral("Fault"), fault));
-        QCOMPARE(kept, before + 1);
-    };
-    faulting([] {
-        volatile int* nowhere = nullptr;
-        *nowhere = 1;
-    });
-    faulting([] { (void)deep(1000000000); });
-#if !defined(Q_OS_WIN)
-    // On Windows the runtime ends the program itself, with no fault to catch.
-    faulting([] { std::abort(); });
-#endif
-
-    // All of which leaves things working.
+    QVERIFY_THROWS_EXCEPTION(kernel::Error, runLongWork(QStringLiteral("Fault"), [] {
+                                 volatile int* nowhere = nullptr;
+                                 *nowhere = 1;
+                             }));
     lcad::app::setLongWorkLastResort({});
+    QCOMPARE(kept, 1);
+}
+
+void LongWorkTest::runningOutOfStackDoesNotEndLcad() {
+    int kept = 0;
+    lcad::app::setLongWorkLastResort([&kept] { ++kept; });
+    QVERIFY_THROWS_EXCEPTION(kernel::Error,
+                             runLongWork(QStringLiteral("Fault"), [] { (void)deep(1000000000); }));
+    lcad::app::setLongWorkLastResort({});
+    QCOMPARE(kept, 1);
+}
+
+void LongWorkTest::aLibraryGivingUpDoesNotEndLcad() {
+#if defined(Q_OS_WIN)
+    QSKIP("On Windows the runtime ends the program itself, with no fault to catch.");
+#else
+    int kept = 0;
+    lcad::app::setLongWorkLastResort([&kept] { ++kept; });
+    QVERIFY_THROWS_EXCEPTION(kernel::Error,
+                             runLongWork(QStringLiteral("Fault"), [] { std::abort(); }));
+    lcad::app::setLongWorkLastResort({});
+    QCOMPARE(kept, 1);
+#endif
+}
+
+void LongWorkTest::aFaultLeavesThingsWorking() {
+    QVERIFY_THROWS_EXCEPTION(kernel::Error, runLongWork(QStringLiteral("Fault"), [] {
+                                 volatile int* nowhere = nullptr;
+                                 *nowhere = 1;
+                             }));
     bool done = false;
     runLongWork(QStringLiteral("After"), [&done] { done = true; });
     QVERIFY(done);

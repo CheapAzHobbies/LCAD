@@ -85,6 +85,10 @@ int faultFilter(unsigned long code) {
 }
 
 bool cameThrough(void (*call)(void*), void* argument) {
+    // Windows leaves a few KB to handle the stack running out in, which unwinding it can overrun,
+    // and that ends the program with no word.
+    ULONG reserved = 256 * 1024;
+    SetThreadStackGuarantee(&reserved);
     __try {
         call(argument);
         return true;
