@@ -142,10 +142,11 @@ public:
 
     // Other programs' files
 
-    /// Adds the solids and surfaces of a STEP or IGES file to the current document as bodies,
-    /// in one undo step, and shows them. On failure nothing changes and `error` receives the
+    /// Adds what a STEP or IGES file holds to the current document as bodies, or a mesh file (STL,
+    /// OBJ, 3MF) as far as it can be taken: as sketches and features if it can be read as those.
+    /// All in one undo step, and shown. On failure nothing changes and `error` receives the
     /// reason. `notes` receives what was done to the geometry on the way in, or is wrong
-    /// with it.
+    /// with it, and for a mesh what became of each part.
     bool importGeometry(const QString& path, QString* error = nullptr,
                         QStringList* notes = nullptr);
     /// Writes bodies to a file: those shown, or with `options.selectedOnly` those selected.
@@ -318,6 +319,7 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
+    bool importMesh(const QString& path, QString* error, QStringList* notes);
     struct Session {
         std::unique_ptr<document::Document> document;
         document::Document::ListenerId listener = 0;

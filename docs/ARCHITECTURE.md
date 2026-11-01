@@ -26,7 +26,8 @@ manufacturing. Each decision below rests on running code:
 - `kernel` also pulls and revolves outlines into solids, combines solids, rounds and bevels
   edges, hollows solids out, copies them for mirrors and patterns, and names every face it makes
   (section 11). It offsets, moves, and deletes faces of any solid, checks and repairs geometry,
-  reads STEP and IGES, and writes STEP, STL, OBJ, and 3MF (section 12).
+  reads STEP, IGES, and meshes (STL, OBJ, 3MF), finds the surfaces of a mesh and makes solids of
+  them, and writes STEP, STL, OBJ, and 3MF (section 12).
 - `viewport` shows a document in OCCT's viewer inside a Qt widget, with camera navigation, a
   navigation cube, and selection of bodies, faces, edges, vertices, and sketches. Its sketch
   editor opens one sketch for editing in place.
@@ -51,6 +52,7 @@ flowchart TD
     core["core<br/>log, version"]
     drawing["drawing<br/>sheets, DXF"]
     cam["cam<br/>toolpaths, simulation, G-code"]
+    recover["recover<br/>meshes into features"]
     qt(["Qt 6"])
     occt(["Open CASCADE"])
 
@@ -58,6 +60,9 @@ flowchart TD
     app --> document
     app --> drawing
     app --> cam
+    app --> recover
+    recover --> document
+    recover --> kernel
     drawing --> document
     drawing --> kernel
     cam --> document
@@ -83,6 +88,7 @@ flowchart TD
 | `viewport` | Displays the document's geometry and turns pointer input into picks and camera motion. Wraps OCCT's viewer in a Qt widget. Edits a sketch in place. | In place |
 | `drawing` | What a sheet of a drawing shows, as lines and labels, and DXF files. No Qt and no OCCT. | In place |
 | `cam` | Toolpaths, the simulation that checks them, and G-code. No Qt and no OCCT. | In place |
+| `recover` | Turns a mesh into a model: works out the sketches and features that make it, and checks them against the mesh. No Qt and no OCCT. | In place |
 | `app` | Main window, browser, timeline, toolbars, the command system, and interactive tools. | Window, primitive commands, and sketch commands in place |
 
 Scripting will be a module of its own when its phase starts, beside `app`, and using `document` and
@@ -104,7 +110,8 @@ Scripting will be a module of its own when its phase starts, beside `app`, and u
    ask it to change. They hold no model state of their own. What they do hold is state of the
    session, not of the model: the camera and the selection belong to the viewport.
 5. **Geometry is exact.** Measurement, validation, and export work on the B-rep. Triangle meshes
-   exist only for display and for mesh export.
+   exist for display, for mesh export, and on the way in from a mesh file, where they are turned
+   into exact geometry as far as that can be done.
 
 The cost of rule 2 is wrapper code: every OCCT capability LCAD uses needs a kernel function. The
 return is that OCCT's API changes (the move to 8.x is a large one) are absorbed in one module, and
@@ -417,6 +424,32 @@ triangles are left alone) with a deviation and an angle, and corners where faces
 into one vertex, so the mesh of a solid is closed. STL, OBJ, and 3MF are written by LCAD itself,
 numbers in a form that does not depend on the user's language, under a temporary name that is
 then put in place. 3MF is a zip package (libzip) with the core model namespace.
+
+**Meshes.** `kernel::readMesh()` reads STL, OBJ, and 3MF into one mesh, with corners in the same
+place merged. `kernel::findSurfaces()` then grows flat patches from the largest triangles, and
+curved surfaces from those, each fitted by least squares: a triangle belongs to a surface if its
+corners lie on it to within what single precision numbers allow. `kernel::solidsFromMesh()` makes a
+face for each surface, its boundary taken from the mesh; what will not come out becomes flat facets.
+`recover` then takes a part as far as it goes, in this order:
+
+1. Along one direction, every face is a side, a level, or a round or bevel. Cuts through the mesh
+   between levels give outlines of exact lines and arcs, and so sketches and Pulls, with the rounds
+   and bevels and holes put back as Fillets, Chamfers, and Holes.
+2. If that fails, rounds and bevels come off the mesh itself: their corners move to where the faces
+   beside them would meet, so that they fold up and those faces stretch to the edge, staying on
+   their surfaces. Holes come off by taking out the wall and closing the rims. Each surface stays
+   what it was found to be: finding them again on the stretched triangles loses them. What remains
+   is planned as in step 1, or else made a solid, and what came off goes back on as features.
+3. Otherwise the part is the solid `solidsFromMesh()` makes of the mesh as it is.
+
+What the first two make is built in a scratch document and measured against the mesh, by
+volume, area, box, and how far the mesh's points lie from its faces. Only then does it go into the
+real one, so that this long work happens on a thread of its own and touches no document. What cannot
+be put back as a feature stays on the shape under the features, and the part is tried again.
+
+OCCT's `BRepAlgoAPI_Defeaturing` was tried for taking rounds off the solid and refused nearly all
+of them on mesh-built solids, in seconds each. Booleans can fail on those solids too, and a fuzzy
+tolerance does not rescue them, which is why more is done on the mesh than on the solid.
 
 OCCT keeps its translators' settings in one global table that a translator fills in when it is
 first set up; a setting made before then is lost. The kernel sets them up first, and holds a lock

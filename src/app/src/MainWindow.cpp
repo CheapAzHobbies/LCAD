@@ -38,6 +38,7 @@
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Stop.h>
+#include <lcad/recover/Recover.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/Transform.h>
 #include <lcad/kernel/Version.h>
@@ -4407,6 +4408,98 @@ bool MainWindow::fileSaveAs() {
     return true;
 }
 
+namespace {
+
+// What became of a part of a mesh, in a sentence.
+QString meshReport(const recover::PartResult& part) {
+    const QString name = QString::fromStdString(part.name);
+    const QString why = QString::fromStdString(part.note);
+    QStringList made;
+    const auto count = [&made](int how, const QString& one, const QString& several) {
+        if (how == 1) {
+            made << one;
+        } else if (how > 1) {
+            made << several.arg(how);
+        }
+    };
+    count(part.pulls, MainWindow::tr("1 pull"), MainWindow::tr("%1 pulls"));
+    count(part.holes, MainWindow::tr("1 hole"), MainWindow::tr("%1 holes"));
+    count(part.fillets, MainWindow::tr("1 fillet"), MainWindow::tr("%1 fillets"));
+    count(part.chamfers, MainWindow::tr("1 chamfer"), MainWindow::tr("%1 chamfers"));
+    const QString features = made.join(QStringLiteral(", "));
+    switch (part.result) {
+    case recover::Result::Features:
+        return MainWindow::tr("%1 is rebuilt from sketches: %2.").arg(name, features);
+    case recover::Result::FeaturesOnSolid:
+        return MainWindow::tr("%1 is a solid with %2 in the timeline. The solid under them has no "
+                              "sketches, because %3.")
+            .arg(name, features, why);
+    case recover::Result::ExactSolid:
+        return MainWindow::tr("%1 is a solid of exact faces, without features, because %2.")
+            .arg(name, why);
+    case recover::Result::Facets:
+        return MainWindow::tr("%1 is a solid of flat facets, as in the mesh, because %2.")
+            .arg(name, why);
+    case recover::Result::Failed:
+        return MainWindow::tr("%1 was left out, because %2.").arg(name, why);
+    }
+    return {};
+}
+
+} // namespace
+
+bool MainWindow::importMesh(const QString& path, QString* error, QStringList* notes) {
+    const QString fileName = QFileInfo(path).fileName();
+    std::optional<recover::WorkedMesh> worked;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    kernel::clearStop();
+    try {
+        runLongWork(tr("reading %1").arg(fileName), [&] {
+            worked = recover::workOutMesh(kernel::readMesh(toPath(path)),
+                                          QFileInfo(path).completeBaseName().toStdString());
+        });
+    } catch (const kernel::Error& failure) {
+        QApplication::restoreOverrideCursor();
+        if (kernel::stopRequested()) {
+            kernel::clearStop();
+            statusBar()->showMessage(tr("Stopped reading %1.").arg(fileName), 6000);
+            return false;
+        }
+        if (error != nullptr) {
+            *error = tr("Could not %1.").arg(QString::fromStdString(failure.what()));
+        }
+        return false;
+    }
+    QApplication::restoreOverrideCursor();
+    if (isSketching()) {
+        finishSketch();
+    }
+    cancelCommand();
+    const recover::MeshResult result =
+        recover::addWorkedMesh(*document(), *worked, activeComponent());
+    QStringList report;
+    for (const recover::PartResult& part : result.parts) {
+        report.append(meshReport(part));
+    }
+    if (result.bodies.empty()) {
+        if (error != nullptr) {
+            *error = report.join(QLatin1Char('\n'));
+        }
+        return false;
+    }
+    if (notes != nullptr) {
+        *notes = report;
+    }
+    m_browser->setSelection(result.bodies, {});
+    m_viewport->fitAll();
+    statusBar()->showMessage((result.bodies.size() == 1
+                                  ? tr("Imported 1 body from %1.")
+                                  : tr("Imported %1 bodies from %2.").arg(result.bodies.size()))
+                                 .arg(fileName),
+                             12000);
+    return true;
+}
+
 bool MainWindow::importGeometry(const QString& path, QString* error, QStringList* notes) {
     const auto fail = [error](const QString& why) {
         if (error != nullptr) {
@@ -4415,6 +4508,10 @@ bool MainWindow::importGeometry(const QString& path, QString* error, QStringList
         return false;
     };
     const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QStringLiteral("stl") || suffix == QStringLiteral("obj") ||
+        suffix == QStringLiteral("3mf")) {
+        return importMesh(path, error, notes);
+    }
     const bool iges = suffix == QStringLiteral("igs") || suffix == QStringLiteral("iges");
     const bool step = suffix == QStringLiteral("step") || suffix == QStringLiteral("stp");
     kernel::ImportResult read;
@@ -4555,8 +4652,9 @@ bool MainWindow::fileImport() {
     }
     const QString path = QFileDialog::getOpenFileName(
         this, tr("Import"), directory,
-        tr("STEP and IGES files (*.step *.stp *.igs *.iges);;STEP files (*.step *.stp);;"
-           "IGES files (*.igs *.iges);;All files (*)"));
+        tr("Models and meshes (*.step *.stp *.igs *.iges *.stl *.obj *.3mf);;"
+           "STEP and IGES files (*.step *.stp *.igs *.iges);;STEP files (*.step *.stp);;"
+           "IGES files (*.igs *.iges);;Meshes (*.stl *.obj *.3mf);;All files (*)"));
     if (path.isEmpty()) {
         return false;
     }

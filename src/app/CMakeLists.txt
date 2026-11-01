@@ -65,7 +65,7 @@ add_library(lcad::app ALIAS lcad_app)
 target_include_directories(lcad_app PUBLIC include)
 target_link_libraries(lcad_app
     PUBLIC Qt6::Widgets lcad::viewport lcad::cam lcad::document lcad::drawing lcad::kernel
-    PRIVATE lcad::core)
+    PRIVATE lcad::core lcad::recover)
 lcad_target_defaults(lcad_app)
 
 # The window icon is compiled in, so that it shows however LCAD was started.
