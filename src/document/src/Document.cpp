@@ -5,7 +5,9 @@
 #include "Rebuild.h"
 
 #include <lcad/core/Expression.h>
+#include <lcad/kernel/Error.h>
 #include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Stop.h>
 #include <lcad/sketch/Edit.h>
 
 #include <algorithm>
@@ -31,6 +33,15 @@ void requireName(const std::string& name, const char* function) {
     if (isBlank(name)) {
         throw std::invalid_argument(std::string(function) + ": a name is needed");
     }
+}
+
+// What a feature comes to that the user stopped, and those after it, which were not tried.
+constexpr const char* stoppedText = "It was stopped before it finished.";
+constexpr const char* notTriedText = "It has not been built: what comes before it was stopped.";
+
+Document::WorkRunner& workRunner() {
+    static Document::WorkRunner runner;
+    return runner;
 }
 
 // Whether a feature makes a body of its own, as against changing one that is there.
@@ -300,6 +311,18 @@ Document::Document(DocumentState state)
 }
 
 Document::~Document() = default;
+
+void Document::setWorkRunner(WorkRunner runner) {
+    workRunner() = std::move(runner);
+}
+
+void Document::runWork(const std::string& name, const std::function<void()>& step) {
+    if (workRunner()) {
+        workRunner()(name, step);
+    } else {
+        step();
+    }
+}
 
 const Body* Document::findBody(ObjectId id) const {
     const std::size_t index = indexOf(id);
@@ -731,6 +754,16 @@ void Document::removeFeature(ObjectId id) {
             record(std::move(edit), "Delete Body");
         }
     });
+}
+
+void Document::buildAgain(ObjectId id) {
+    if (findFeature(id) == nullptr) {
+        throw std::invalid_argument("buildAgain: there is no feature with id " +
+                                    std::to_string(id.value));
+    }
+    touch(id);
+    rebuild();
+    settlePieces();
 }
 
 void Document::renameFeature(ObjectId id, std::string name) {
@@ -1201,11 +1234,21 @@ FeatureTrial Document::tryFeature(Feature feature) const {
         }
         return trial;
     }
+    kernel::clearStop();
     try {
-        trial.result = detail::evaluate(feature, *this, bodies, &trial.tool);
+        runWork(feature.name.empty() ? std::string(toString(feature.kind)) : feature.name,
+                [&] { trial.result = detail::evaluate(feature, *this, bodies, &trial.tool); });
     } catch (const detail::FeatureFailure& failure) {
         trial.result = {};
         trial.error = failure.what();
+    } catch (const kernel::Error& failure) {
+        trial.result = {};
+        trial.error = failure.reason();
+    }
+    if (kernel::stopRequested()) {
+        trial = {};
+        trial.stopped = true;
+        kernel::clearStop();
     }
     return trial;
 }
@@ -1463,8 +1506,9 @@ void Document::apply(const Edit& edit) {
         m_features.push_back(edit.feature);
         insertItem(edit.id, edit.place);
         m_marker = edit.newMarker;
+        // Not its body: what comes before it on that body stands as it is, however long that
+        // took to work out, and what comes after follows from this one being built.
         touch(edit.id);
-        touch(edit.feature.body);
         if (edit.hasBody) {
             m_bodies.insert(m_bodies.begin() + static_cast<std::ptrdiff_t>(edit.index), edit.body);
             notify(Change::Kind::BodyAdded, edit.body.id);
@@ -1490,8 +1534,11 @@ void Document::apply(const Edit& edit) {
         m_features[featureIndexOf(edit.id)] = edit.newFeature;
         if (!(renamed == edit.newFeature)) {
             touch(edit.id);
-            touch(edit.feature.body);
-            touch(edit.newFeature.body);
+            // A body it no longer works on is built without it, from the start.
+            if (edit.feature.body != edit.newFeature.body) {
+                touch(edit.feature.body);
+                touch(edit.newFeature.body);
+            }
         }
         if (edit.bodyChange > 0) {
             m_bodies.insert(m_bodies.begin() + static_cast<std::ptrdiff_t>(edit.index), edit.body);
@@ -1690,8 +1737,10 @@ void Document::revert(const Edit& edit) {
         m_features[featureIndexOf(edit.id)] = edit.feature;
         if (!(renamed == edit.feature)) {
             touch(edit.id);
-            touch(edit.feature.body);
-            touch(edit.newFeature.body);
+            if (edit.feature.body != edit.newFeature.body) {
+                touch(edit.feature.body);
+                touch(edit.newFeature.body);
+            }
         }
         if (edit.bodyChange > 0) {
             m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(indexOf(edit.body.id)));
@@ -1940,6 +1989,7 @@ void Document::rebuild() {
     const bool parametersChanged =
         valuesBefore != m_parameterValues || errorsBefore != m_parameterErrors;
 
+    kernel::clearStop();
     detail::BodyStates state;
     // Bodies whose state, at this point in the timeline, is not what it was last time.
     std::unordered_set<ObjectId> changed;
@@ -2158,18 +2208,54 @@ void Document::rebuild() {
             continue;
         }
         const std::string before = built.error;
+        // Stopped: this one is not tried now, and is the next time the model is built. What it
+        // last came to stands, so that the model stays as it was.
+        if (kernel::stopRequested()) {
+            built.done = false;
+            built.error = notTriedText;
+            if (built.applied) {
+                leave(feature, built);
+            }
+            statusChanged = statusChanged || before != built.error;
+            continue;
+        }
         try {
-            built.result = detail::evaluate(resolved(feature), *this, state);
-            built.solids = detail::solidsOf(built.result, state, feature.body);
+            const Feature given = resolved(feature);
+            kernel::NamedShape result;
+            std::vector<kernel::NamedShape> solids;
+            m_workingOn = feature.id;
+            try {
+                runWork(feature.name, [&] {
+                    result = detail::evaluate(given, *this, state);
+                    solids = detail::solidsOf(result, state, feature.body);
+                });
+            } catch (const kernel::Error& failure) {
+                // Not from the feature, which turns those into FeatureFailure: from running it.
+                m_workingOn = {};
+                throw detail::FeatureFailure(failure.reason());
+            }
+            m_workingOn = {};
+            if (kernel::stopRequested()) {
+                throw detail::FeatureFailure(stoppedText);
+            }
+            built.result = std::move(result);
+            built.solids = std::move(solids);
             built.applied = true;
             built.error.clear();
             leave(feature, built);
         } catch (const detail::FeatureFailure& failure) {
-            // Left out. The model carries on from what it was before this feature.
-            built.result = {};
-            built.solids.clear();
-            built.applied = false;
-            built.error = failure.what();
+            if (kernel::stopRequested()) {
+                built.error = stoppedText;
+                if (built.applied) {
+                    leave(feature, built);
+                }
+            } else {
+                // Left out. The model carries on from what it was before this feature.
+                built.result = {};
+                built.solids.clear();
+                built.applied = false;
+                built.error = failure.what();
+            }
         }
         built.done = true;
         statusChanged = statusChanged || before != built.error;

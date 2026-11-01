@@ -15,6 +15,7 @@ qt_add_library(lcad_app STATIC
     include/lcad/app/GeometryCheckDialog.h
     include/lcad/app/Icons.h
     include/lcad/app/JointPanel.h
+    include/lcad/app/LongWork.h
     include/lcad/app/MachiningWorkspace.h
     include/lcad/app/MainWindow.h
     include/lcad/app/MeasurePanel.h
@@ -44,6 +45,7 @@ qt_add_library(lcad_app STATIC
     src/GeometryCheckDialog.cpp
     src/Icons.cpp
     src/JointPanel.cpp
+    src/LongWork.cpp
     src/MachiningWorkspace.cpp
     src/MainWindow.cpp
     src/MeasurePanel.cpp

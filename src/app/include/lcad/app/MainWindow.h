@@ -293,6 +293,8 @@ public:
     void enableRecovery(const QString& folder, int seconds = 60);
     /// Writes the copies of unsaved work now, as the timer would.
     void autosave();
+    /// Saves a copy of all that has changed to recover from, leaving out what cannot be built.
+    void keepWhatCanBeKept();
     /// Offers to restore what was left behind; returns how many documents were restored.
     /// `ask` false restores without asking.
     int offerRecovery(bool ask = true);

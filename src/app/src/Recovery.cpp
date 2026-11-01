@@ -58,13 +58,16 @@ bool RecoveryStore::open() {
 }
 
 bool RecoveryStore::save(const QString& key, const document::Document& document,
-                         const QString& originalPath, const QString& title) {
+                         const QString& originalPath, const QString& title,
+                         document::ObjectId leftOut) {
     if (m_lock == nullptr) {
         return false;
     }
     const QString file = m_session + QLatin1Char('/') + key + QStringLiteral(".lcad");
     try {
-        document::saveDocument(document, toPath(file));
+        document::SaveOptions options;
+        options.leftOut = leftOut;
+        document::saveDocument(document, toPath(file), options);
     } catch (const document::FileError& error) {
         core::log(core::LogLevel::Warning, "recovery", error.what());
         return false;

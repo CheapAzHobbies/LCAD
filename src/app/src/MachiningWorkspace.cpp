@@ -2,10 +2,13 @@
 
 #include <lcad/app/MachiningWorkspace.h>
 
+#include <lcad/app/LongWork.h>
 #include <lcad/app/Paths.h>
 #include <lcad/cam/Gcode.h>
 #include <lcad/cam/Planner.h>
+#include <lcad/kernel/Error.h>
 #include <lcad/kernel/Primitives.h>
+#include <lcad/kernel/Stop.h>
 #include <lcad/kernel/Transform.h>
 #include <lcad/viewport/ViewportWidget.h>
 
@@ -904,9 +907,25 @@ void MachiningWorkspace::simulate() {
         return;
     }
     m_simulated = std::make_unique<cam::Program>(m_program);
-    m_mesh = partMesh();
-    m_simulation = std::make_unique<cam::Simulation>(*m_simulated, m_mesh, setup()->machine);
-    m_report = m_simulation->run();
+    const document::Machine machine = setup()->machine;
+    kernel::clearStop();
+    try {
+        runLongWork(tr("the simulation"), [this, &machine] {
+            m_mesh = partMesh();
+            m_simulation = std::make_unique<cam::Simulation>(*m_simulated, m_mesh, machine);
+            m_report = m_simulation->run();
+        });
+    } catch (const kernel::Error& failure) {
+        if (!kernel::stopRequested()) {
+            emit message(QString::fromStdString(failure.what()));
+        }
+    }
+    if (m_simulation == nullptr || kernel::stopRequested()) {
+        kernel::clearStop();
+        endSimulation();
+        emit message(tr("The simulation was stopped."));
+        return;
+    }
     {
         const QSignalBlocker blocker(m_slider);
         m_slider->setEnabled(true);
@@ -926,7 +945,12 @@ void MachiningWorkspace::showMove(std::size_t move) {
         // The stock cannot grow back: start over.
         m_simulation = std::make_unique<cam::Simulation>(*m_simulated, m_mesh, setup()->machine);
     }
-    m_simulation->runTo(move);
+    kernel::clearStop();
+    try {
+        runLongWork(tr("the simulation"), [this, move] { m_simulation->runTo(move); });
+    } catch (const kernel::Error& failure) {
+        emit message(QString::fromStdString(failure.what()));
+    }
     showSimulationAt(move);
 }
 
@@ -978,9 +1002,23 @@ std::optional<std::string> MachiningWorkspace::gcode(QString* error) {
         }
     }
     // What it would do to the stock, every time: the model may have changed since it was run.
-    const kernel::Mesh mesh = partMesh();
-    cam::Simulation simulation(m_program, mesh, current->machine);
-    const cam::SimulationReport report = simulation.run();
+    cam::SimulationReport report;
+    kernel::clearStop();
+    try {
+        runLongWork(tr("checking the program"), [this, current, &report] {
+            const kernel::Mesh mesh = partMesh();
+            cam::Simulation simulation(m_program, mesh, current->machine);
+            report = simulation.run();
+        });
+    } catch (const kernel::Error& failure) {
+        if (!kernel::stopRequested()) {
+            return refuse(QString::fromStdString(failure.what()));
+        }
+    }
+    if (report.stopped || kernel::stopRequested()) {
+        kernel::clearStop();
+        return refuse(tr("The checks were stopped, so no G-code was written."));
+    }
     if (report.hasErrors()) {
         return refuse(QString::fromStdString(report.problems.front().text));
     }

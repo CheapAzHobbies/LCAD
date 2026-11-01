@@ -3,6 +3,7 @@
 // The main window's assembly tools: components, joints, moving and animating them, checking
 // for overlaps, weighing, linked files, and the copies of unsaved work kept against a crash.
 
+#include <lcad/app/LongWork.h>
 #include <lcad/app/MainWindow.h>
 
 #include <lcad/app/AssemblyDialogs.h>
@@ -1361,6 +1362,24 @@ void MainWindow::autosave() {
     }
 }
 
+void MainWindow::keepWhatCanBeKept() {
+    if (m_recovery == nullptr) {
+        return;
+    }
+    for (int i = 0; i < documentCount(); ++i) {
+        Session& session = *m_sessions[static_cast<std::size_t>(i)];
+        const document::ObjectId stuck = session.document->workingOn();
+        if (!session.document->isModified() && !stuck.isValid()) {
+            continue;
+        }
+        if (session.recoveryKey.isEmpty()) {
+            session.recoveryKey = QString::number(m_nextRecoveryKey++);
+        }
+        m_recovery->save(session.recoveryKey, *session.document, session.filePath, documentName(i),
+                         stuck);
+    }
+}
+
 int MainWindow::offerRecovery(bool ask) {
     if (m_recovery == nullptr) {
         return 0;
@@ -1401,7 +1420,14 @@ int MainWindow::offerRecovery(bool ask) {
     QStringList failed;
     for (const RecoveryStore::Entry& entry : entries) {
         try {
-            document::LoadedDocument loaded = document::loadDocument(toPath(entry.file));
+            document::LoadedDocument loaded;
+            try {
+                runLongWork(tr("recovering your work"), [&loaded, &entry] {
+                    loaded = document::loadDocument(toPath(entry.file));
+                });
+            } catch (const kernel::Error& failure) {
+                throw document::FileError(failure.what());
+            }
             loaded.document->markModified();
             storeViewOf(m_current);
             const int index = addSession(std::move(loaded.document), entry.originalPath);

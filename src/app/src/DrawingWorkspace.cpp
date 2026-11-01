@@ -2,8 +2,11 @@
 
 #include <lcad/app/DrawingWorkspace.h>
 
+#include <lcad/app/LongWork.h>
 #include <lcad/app/Paths.h>
 #include <lcad/drawing/Dxf.h>
+#include <lcad/kernel/Error.h>
+#include <lcad/kernel/Stop.h>
 
 #include <QFileInfo>
 #include <QPageSize>
@@ -182,7 +185,15 @@ void DrawingWorkspace::rebuild() {
         emit stateChanged();
         return;
     }
-    drawing::Sheet sheet = m_builder->build(*current);
+    drawing::Sheet sheet;
+    kernel::clearStop();
+    try {
+        runLongWork(tr("the views of the drawing"),
+                    [this, current, &sheet] { sheet = m_builder->build(*current); });
+    } catch (const kernel::Error& failure) {
+        sheet.problems.emplace_back(failure.what());
+    }
+    kernel::clearStop();
     QStringList problems;
     for (const std::string& problem : sheet.problems) {
         problems.append(QString::fromStdString(problem));
@@ -566,7 +577,24 @@ bool DrawingWorkspace::exportTo(const QString& path, QString* error) {
         }
         return false;
     }
-    const drawing::Sheet sheet = m_builder->build(*current);
+    drawing::Sheet sheet;
+    kernel::clearStop();
+    try {
+        runLongWork(tr("the views of the drawing"),
+                    [this, current, &sheet] { sheet = m_builder->build(*current); });
+    } catch (const kernel::Error& failure) {
+        if (error != nullptr) {
+            *error = QString::fromStdString(failure.what());
+        }
+        return false;
+    }
+    if (kernel::stopRequested()) {
+        kernel::clearStop();
+        if (error != nullptr) {
+            *error = tr("It was stopped before the views were all drawn.");
+        }
+        return false;
+    }
     if (QFileInfo(path).suffix().compare(QStringLiteral("pdf"), Qt::CaseInsensitive) != 0) {
         try {
             drawing::writeDxf(sheet, toPath(path));

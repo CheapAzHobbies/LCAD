@@ -4,6 +4,7 @@
 
 #include <lcad/kernel/occt/Guard.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
+#include <lcad/kernel/occt/Stoppable.h>
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -26,6 +27,7 @@
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffset_Mode.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
@@ -351,7 +353,8 @@ NamedShape sweepRegion(const Plane& plane, const Region& region, const gp_Trsf* 
     }
 
     auto maker = sweep(face);
-    maker->Build();
+    const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+    maker->Build(stoppable->Start());
     if (!maker->IsDone()) {
         throw Error(operation, "the outline could not be made into a solid");
     }
@@ -737,16 +740,17 @@ NamedShape combine(const NamedShape& body, const NamedShape& tool, Combination h
     return occt::guarded("combine", [&] {
         const TopoDS_Shape& first = occt::unwrap(body.shape);
         const TopoDS_Shape& second = occt::unwrap(tool.shape);
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
         std::unique_ptr<BRepAlgoAPI_BooleanOperation> operation;
         switch (how) {
         case Combination::Join:
-            operation = std::make_unique<BRepAlgoAPI_Fuse>(first, second);
+            operation = std::make_unique<BRepAlgoAPI_Fuse>(first, second, stoppable->Start());
             break;
         case Combination::Cut:
-            operation = std::make_unique<BRepAlgoAPI_Cut>(first, second);
+            operation = std::make_unique<BRepAlgoAPI_Cut>(first, second, stoppable->Start());
             break;
         case Combination::Intersect:
-            operation = std::make_unique<BRepAlgoAPI_Common>(first, second);
+            operation = std::make_unique<BRepAlgoAPI_Common>(first, second, stoppable->Start());
             break;
         }
         if (!operation->IsDone() || operation->HasErrors()) {
@@ -783,7 +787,8 @@ NamedShape fillet(const NamedShape& body, const std::vector<int>& edges, double 
         for (const int edge : edges) {
             maker.Add(radius, edgeAt(all, edge, "fillet"));
         }
-        maker.Build();
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        maker.Build(stoppable->Start());
         if (!maker.IsDone() || !hasSolid(maker.Shape())) {
             throw Error("fillet", "the radius does not fit these edges");
         }
@@ -806,7 +811,8 @@ NamedShape chamfer(const NamedShape& body, const std::vector<int>& edges, double
         for (const int edge : edges) {
             maker.Add(distance, edgeAt(all, edge, "chamfer"));
         }
-        maker.Build();
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        maker.Build(stoppable->Start());
         if (!maker.IsDone() || !hasSolid(maker.Shape())) {
             throw Error("chamfer", "the distance does not fit these edges");
         }
@@ -832,8 +838,9 @@ NamedShape shell(const NamedShape& body, const std::vector<int>& openFaces, doub
         }
         BRepOffsetAPI_MakeThickSolid maker;
         // Inward, so that the outside keeps its size.
-        maker.MakeThickSolidByJoin(solid, open, -thickness, 1e-6);
-        maker.Build();
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        maker.MakeThickSolidByJoin(solid, open, -thickness, 1e-6, BRepOffset_Skin, Standard_False,
+                                   Standard_False, GeomAbs_Arc, Standard_False, stoppable->Start());
         if (!maker.IsDone() || !hasSolid(maker.Shape())) {
             throw Error("shell", "the walls are too thick for this body");
         }
@@ -1235,7 +1242,8 @@ NamedShape removeFaces(const NamedShape& body, const std::vector<int>& faces,
         maker.SetShape(solid);
         maker.AddFacesToRemove(chosen);
         maker.SetToFillHistory(Standard_True);
-        maker.Build();
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        maker.Build(stoppable->Start());
         const auto cannot = [] {
             return Error("delete faces",
                          "the faces around them cannot be extended to close the gap");
@@ -1352,7 +1360,8 @@ NamedShape repaired(const NamedShape& body, const std::string& tag, double gap) 
         if (open) {
             BRepBuilderAPI_Sewing sewing(gap);
             sewing.Add(current);
-            sewing.Perform();
+            const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+            sewing.Perform(stoppable->Start());
             for (TopoDS_Shape& face : became) {
                 if (sewing.IsModified(face)) {
                     face = sewing.Modified(face);

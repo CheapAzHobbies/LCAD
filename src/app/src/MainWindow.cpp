@@ -12,6 +12,7 @@
 #include <lcad/app/GeometryCheckDialog.h>
 #include <lcad/app/Icons.h>
 #include <lcad/app/JointPanel.h>
+#include <lcad/app/LongWork.h>
 #include <lcad/app/MachiningWorkspace.h>
 #include <lcad/app/MeasurePanel.h>
 #include <lcad/app/MovePanel.h>
@@ -34,6 +35,7 @@
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
+#include <lcad/kernel/Stop.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/Transform.h>
 #include <lcad/kernel/Version.h>
@@ -141,6 +143,8 @@ constexpr int inspectorWidth = 240;
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_viewport(new viewport::ViewportWidget(this)),
       m_commands(new CommandRegistry(this)) {
+    installLongWork();
+    setLongWorkLastResort([this] { keepWhatCanBeKept(); });
     // Within the screen, with room for the title bar: Windows lets a window start larger than
     // it, with the bottom of the window behind the taskbar.
     resize(QSize(1280, 800).boundedTo(screen()->availableSize() - QSize(0, 40)));
@@ -464,6 +468,7 @@ MainWindow::MainWindow(QWidget* parent)
 }
 
 MainWindow::~MainWindow() {
+    setLongWorkLastResort({});
     // A command's panel would report to a window that is half gone.
     closeFeaturePanel();
     // The viewport and the panels are destroyed after the documents, as child widgets. Detach
@@ -1068,6 +1073,20 @@ void MainWindow::defineCommands() {
             const document::Feature* feature = selectedFeature();
             return feature != nullptr && feature->suppressed ? tr("Re&store Feature")
                                                              : tr("&Suppress Feature");
+        };
+        m_commands->add(std::move(c));
+
+        c = make("timeline.buildAgain", tr("&Build Again"), timelineGroup,
+                 tr("Build a feature again that was stopped or failed"));
+        c.aliases = {tr("retry"), tr("try again"), tr("recompute")};
+        c.run = [this, selectedFeature](bool) {
+            if (const document::Feature* feature = selectedFeature()) {
+                document()->buildAgain(feature->id);
+            }
+        };
+        c.isEnabled = [this, selectedFeature] {
+            const document::Feature* feature = selectedFeature();
+            return feature != nullptr && !document()->featureError(feature->id).empty();
         };
         m_commands->add(std::move(c));
 
@@ -1751,8 +1770,8 @@ void MainWindow::createTopBar() {
     modifyMenu->addSeparator();
     modifyMenu->addAction(action("model.parameters"));
     QMenu* timelineMenu = modifyMenu->addMenu(tr("&Timeline"));
-    timelineMenu->addActions(
-        {action("timeline.edit"), action("timeline.rename"), action("timeline.suppress")});
+    timelineMenu->addActions({action("timeline.edit"), action("timeline.rename"),
+                              action("timeline.suppress"), action("timeline.buildAgain")});
     timelineMenu->addSeparator();
     timelineMenu->addActions({action("timeline.rollBack"), action("timeline.rollToEnd")});
 
@@ -2575,12 +2594,19 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     }
     std::unique_ptr<document::Document> loaded;
     try {
-        document::LoadedDocument result = document::loadDocument(toPath(path));
+        document::LoadedDocument result;
+        runLongWork(tr("opening %1").arg(QFileInfo(path).fileName()),
+                    [&result, &path] { result = document::loadDocument(toPath(path)); });
         for (const std::string& warning : result.warnings) {
             m_loadWarnings.append(QString::fromStdString(warning));
         }
         loaded = std::move(result.document);
     } catch (const document::FileError& failure) {
+        if (error != nullptr) {
+            *error = QString::fromStdString(failure.what());
+        }
+        return false;
+    } catch (const kernel::Error& failure) {
         if (error != nullptr) {
             *error = QString::fromStdString(failure.what());
         }
@@ -3788,6 +3814,10 @@ void MainWindow::updateFeaturePreview() {
     }
     const document::FeatureTrial trial = document()->tryFeature(feature);
     m_featurePanel->setError(QString::fromStdString(trial.error));
+    if (trial.stopped) {
+        statusBar()->showMessage(tr("Preview stopped. OK still makes it, however long it takes."),
+                                 6000);
+    }
     if (usesProfiles(feature.kind)) {
         // The body as the feature leaves it, in place of the body; and the solid itself, seen
         // through, where it takes something away or does not work.
@@ -3958,8 +3988,8 @@ void MainWindow::showTimelineMenu(document::ObjectId item, const QPoint& where) 
     menu->setAttribute(Qt::WA_DeleteOnClose);
     const auto action = [this](const char* id) { return m_commands->action(QLatin1String(id)); };
     if (document()->findFeature(item) != nullptr) {
-        menu->addActions(
-            {action("timeline.edit"), action("timeline.rename"), action("timeline.suppress")});
+        menu->addActions({action("timeline.edit"), action("timeline.rename"),
+                          action("timeline.suppress"), action("timeline.buildAgain")});
     } else if (document()->findSketch(item) != nullptr) {
         menu->addAction(action("timeline.edit"));
     }
@@ -4369,22 +4399,31 @@ bool MainWindow::importGeometry(const QString& path, QString* error, QStringList
     const bool step = suffix == QStringLiteral("step") || suffix == QStringLiteral("stp");
     kernel::ImportResult read;
     QApplication::setOverrideCursor(Qt::WaitCursor);
+    kernel::clearStop();
     try {
-        if (iges) {
-            read = kernel::importIges(toPath(path));
-        } else {
-            try {
-                read = kernel::importStep(toPath(path));
-            } catch (const kernel::Error&) {
-                // A file whose name does not say what it is may still be IGES.
-                if (step) {
-                    throw;
-                }
+        runLongWork(tr("reading %1").arg(QFileInfo(path).fileName()), [&] {
+            if (iges) {
                 read = kernel::importIges(toPath(path));
+            } else {
+                try {
+                    read = kernel::importStep(toPath(path));
+                } catch (const kernel::Error&) {
+                    // A file whose name does not say what it is may still be IGES.
+                    if (step || kernel::stopRequested()) {
+                        throw;
+                    }
+                    read = kernel::importIges(toPath(path));
+                }
             }
-        }
+        });
     } catch (const kernel::Error& failure) {
         QApplication::restoreOverrideCursor();
+        if (kernel::stopRequested()) {
+            kernel::clearStop();
+            statusBar()->showMessage(tr("Stopped reading %1.").arg(QFileInfo(path).fileName()),
+                                     6000);
+            return false;
+        }
         return fail(tr("Could not %1.").arg(QString::fromStdString(failure.what())));
     }
     QApplication::restoreOverrideCursor();
@@ -4448,23 +4487,32 @@ bool MainWindow::exportGeometry(const QString& path, const ExportOptions& option
         bodies.push_back({body.name.toStdString(), body.shape});
     }
     QApplication::setOverrideCursor(Qt::WaitCursor);
+    kernel::clearStop();
     try {
-        switch (options.format) {
-        case ExportFormat::Step:
-            kernel::exportStep(bodies, toPath(path));
-            break;
-        case ExportFormat::Stl:
-            kernel::exportStl(bodies, toPath(path), options.mesh, options.stlEncoding);
-            break;
-        case ExportFormat::ThreeMf:
-            kernel::export3mf(bodies, toPath(path), options.mesh);
-            break;
-        case ExportFormat::Obj:
-            kernel::exportObj(bodies, toPath(path), options.mesh);
-            break;
-        }
+        runLongWork(tr("writing %1").arg(QFileInfo(path).fileName()), [&] {
+            switch (options.format) {
+            case ExportFormat::Step:
+                kernel::exportStep(bodies, toPath(path));
+                break;
+            case ExportFormat::Stl:
+                kernel::exportStl(bodies, toPath(path), options.mesh, options.stlEncoding);
+                break;
+            case ExportFormat::ThreeMf:
+                kernel::export3mf(bodies, toPath(path), options.mesh);
+                break;
+            case ExportFormat::Obj:
+                kernel::exportObj(bodies, toPath(path), options.mesh);
+                break;
+            }
+        });
     } catch (const kernel::Error& failure) {
         QApplication::restoreOverrideCursor();
+        if (kernel::stopRequested()) {
+            kernel::clearStop();
+            statusBar()->showMessage(tr("Stopped writing %1.").arg(QFileInfo(path).fileName()),
+                                     6000);
+            return false;
+        }
         return fail(tr("Could not %1.").arg(QString::fromStdString(failure.what())));
     } catch (const std::invalid_argument& failure) {
         QApplication::restoreOverrideCursor();

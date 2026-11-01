@@ -669,12 +669,49 @@ offset that goes wrong on a self-touching outline would cut the part.
 
 ## Threads
 
-The interface thread never runs a long geometry operation. Recompute runs on a worker thread and
-hands finished shapes back, and long operations can be canceled and report progress.
+Long work runs on a thread of its own through `runLongWork()`: building a feature, a preview,
+opening, importing, and exporting a file, the views of a drawing, a simulation, and the mesh a
+body needs before it can be drawn. The document stays Qt-free by asking through
+`Document::runWork()`, which does the work on the spot unless the interface has set a runner, as
+in the tests of the document.
 
-One constraint from OCCT shapes this: meshing a shape for display stores the mesh inside the
-shape's shared data, so a shape must not be meshed on one thread while another thread reads it.
-The design for recompute in Phase 3 has to respect that.
+This is not a background queue. The main thread waits for the step to finish and carries on from
+exactly where it was, so everything that asks for work still gets its answer in order, and no
+caller had to change. What makes it worth doing is what the main thread does while it waits:
+
+| Time | What happens |
+|---|---|
+| Under 150 ms | The main thread simply waits. Nothing else can happen, which is how most work goes |
+| After that | It runs an event loop, with input refused and the windows not drawn |
+| After 700 ms | A box says what is going on and for how long, with a Stop button |
+| Asked to stop | `kernel::requestStop()`, which OCCT looks at through `occt::Stoppable` |
+| Not stopped 8 s later | The box says so, and offers to wait or to save and close |
+
+There is no time limit. A long step is the user's to end, not LCAD's.
+
+**The windows are not drawn meanwhile** because drawing is what is not safe. Painting the 3D view
+carries on with viewer state that whatever asked for the work is in the middle of, and meshing a
+shape for display stores the mesh inside the shape's shared data, so a shape must not be meshed on
+one thread while another reads it. Input is refused for the same reason, and so that the document
+is not edited under the work. Work only reads the document.
+
+**A stopped feature keeps what it last came to**, so that the model stays as it was. It says so in
+the timeline, those after it are not tried, and Build Again tries it. A stopped preview has not
+failed: OK still makes the feature.
+
+**A fault in the work is caught** on that thread: a signal handler on Linux and macOS, structured
+exceptions on Windows. Such faults are real on hard shapes in a geometry kernel, and the thread's
+256 MB stack heads off the commonest. What was going on is abandoned without unwinding it, so
+locks and memory may be left in a bad way, and LCAD treats it as a warning to get out: it saves a
+recovery copy at once, and the feature fails with a message saying to save and restart. Faults on
+OCCT's own worker threads are not caught. Nor is a stack frame larger than the guard page that
+happens to step over it at the very end of the stack, which writes into whatever lies below.
+
+**What it cannot do.** OCCT cannot be interrupted except where it looks up, so Stop is a request:
+hidden lines and draft do not look up at all, and a drawing stops only between its views. A thread
+cannot be killed safely, so for work that never stops, the last resort is to save and exit the
+process. The feature it was stuck on is suppressed in the recovery copy, or the copy could never be
+opened.
 
 ## Source layout
 
