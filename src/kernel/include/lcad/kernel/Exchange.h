@@ -65,6 +65,12 @@ struct Mesh {
 /// Cuts the faces of a shape into triangles. Throws kernel::Error if the shape has no faces.
 [[nodiscard]] Mesh triangulate(const Shape& shape, const MeshSettings& settings);
 
+/// Reads the triangles of an STL (binary or text), OBJ, or 3MF file. Corners in the same place
+/// become one vertex, and triangles that have collapsed are left out. A 3MF file says what its
+/// unit is and comes back in millimeters; the numbers of the other two are taken as they stand,
+/// since those formats do not say. Throws kernel::Error for a file without triangles.
+[[nodiscard]] Mesh readMesh(const std::filesystem::path& path);
+
 /// How an STL file is written.
 enum class StlEncoding {
     Binary, ///< compact; what most programs expect
