@@ -460,6 +460,8 @@ MainWindow::MainWindow(QWidget* parent)
         Qt::QueuedConnection);
     connect(m_viewport->sketchEditor(), &viewport::SketchEditor::changed, this,
             [this] { updateSelectionState(); });
+    connect(m_viewport, &viewport::ViewportWidget::projectionChanged, this,
+            [this] { m_commands->refresh(); });
     connect(m_viewport, &viewport::ViewportWidget::pointPicked, this,
             [this](document::ObjectId sketch, std::uint32_t point) {
                 if (m_featurePanel != nullptr) {

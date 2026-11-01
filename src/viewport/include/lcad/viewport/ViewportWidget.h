@@ -121,6 +121,8 @@ struct CameraState {
     Projection projection = Projection::Orthographic;
 };
 
+class NavigationCube;
+
 /// A point of a sketch that can be clicked in the 3D view, whatever is in front of it.
 struct PickablePoint {
     document::ObjectId sketch;
@@ -283,6 +285,7 @@ public:
     [[nodiscard]] QPointF project(double x, double y, double z) const;
     /// The middle of the view cube, in the widget's coordinates.
     [[nodiscard]] QPointF viewCubeCenter() const;
+    [[nodiscard]] NavigationCube* navigationCube() const;
     /// Where the line of sight through a position in the widget meets a plane, in the plane's
     /// own coordinates (u, v). Nothing if the plane is seen edge-on.
     [[nodiscard]] std::optional<QPointF> positionOnPlane(const kernel::Plane& plane,
@@ -388,6 +391,8 @@ public:
 
 signals:
     void selectionChanged();
+    /// Perspective was switched on or off, by whatever means.
+    void projectionChanged();
     /// One of the points of setPickablePoints() was clicked.
     void pointPicked(lcad::document::ObjectId sketch, std::uint32_t point);
     /// A sketch was opened for editing, or closed.
