@@ -6,6 +6,7 @@
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Primitives.h>
+#include <lcad/kernel/Stop.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/sketch/Edit.h>
 
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1730,5 +1732,129 @@ TEST_CASE("Solids that do not touch are bodies of their own", "[document][featur
         }
         REQUIRE(found.size() == 1);
         CHECK_THAT(lcad::kernel::volume(found.front()->shape), WithinAbs(500.0, 1e-6));
+    }
+}
+
+TEST_CASE("Only what a change reaches is built again", "[document][feature]") {
+    Bracket made;
+    makeBracket(made);
+    Document& document = made.document;
+    std::vector<std::string> built;
+    Document::setWorkRunner([&built](const std::string& name, const std::function<void()>& work) {
+        built.push_back(name);
+        work();
+    });
+    Feature chamfer;
+    chamfer.kind = FeatureKind::Chamfer;
+    chamfer.body = made.body().id;
+    chamfer.edges = {lcad::kernel::edgeNames(document.namedBody(chamfer.body)).front()};
+    chamfer.size = 0.5;
+    chamfer.name = "Chamfer";
+
+    // The new feature alone: not the plate, the hole, and the rounds before it.
+    const ObjectId id = document.addFeature(chamfer);
+    CHECK(built == std::vector<std::string>{"Chamfer"});
+
+    // Changed, the same.
+    built.clear();
+    Feature larger = *document.findFeature(id);
+    larger.size = 0.75;
+    document.changeFeature(id, larger);
+    CHECK(built == std::vector<std::string>{"Chamfer"});
+
+    // Further back, it and all that comes after.
+    built.clear();
+    Feature wider = *document.findFeature(made.rounds);
+    wider.size = 4.0;
+    document.changeFeature(made.rounds, wider);
+    CHECK(built == std::vector<std::string>{document.findFeature(made.rounds)->name, "Chamfer"});
+    Document::setWorkRunner({});
+}
+
+TEST_CASE("Long work can be stopped, and what was there stays", "[document][feature]") {
+    Bracket made;
+    makeBracket(made);
+    Document& document = made.document;
+    const double whole = made.volume();
+
+    // Lets the rest of a test go on as usual, whatever became of it.
+    struct Restore {
+        Restore() = default;
+        Restore(const Restore&) = delete;
+        Restore& operator=(const Restore&) = delete;
+        ~Restore() {
+            Document::setWorkRunner({});
+            lcad::kernel::clearStop();
+        }
+    } restore;
+    // The user presses Stop as each step of work gets going.
+    int steps = 0;
+    const auto stopEachStep = [&steps](const std::string&, const std::function<void()>& work) {
+        ++steps;
+        lcad::kernel::requestStop();
+        work();
+    };
+
+    SECTION("A feature being added stops, and is there to be built again") {
+        Feature rounds;
+        rounds.kind = FeatureKind::Chamfer;
+        rounds.body = made.body().id;
+        const std::vector<std::string> names =
+            lcad::kernel::edgeNames(document.namedBody(rounds.body));
+        REQUIRE_FALSE(names.empty());
+        rounds.edges = {names.front()};
+        rounds.size = 0.5;
+        Document::setWorkRunner(stopEachStep);
+        const ObjectId id = document.addFeature(rounds);
+        CHECK(steps == 1);
+        CHECK_THAT(document.featureError(id), ContainsSubstring("stopped before it finished"));
+        // The model is what it was before this step.
+        CHECK_THAT(made.volume(), WithinRel(whole, 1e-9));
+
+        // Later, it is built after all: nothing has changed, and it goes through.
+        Document::setWorkRunner({});
+        document.buildAgain(id);
+        CHECK(document.featureError(id).empty());
+        CHECK(made.volume() < whole);
+        // Or the user changes their mind.
+        document.undo();
+        CHECK(document.findFeature(id) == nullptr);
+        CHECK_THAT(made.volume(), WithinRel(whole, 1e-9));
+    }
+    SECTION("A rebuild stops where it was, and tries none of what comes after") {
+        Document::setWorkRunner(stopEachStep);
+        made.setWidth(70.0);
+        CHECK(steps == 1);
+        CHECK_THAT(document.featureError(made.plate), ContainsSubstring("stopped"));
+        CHECK_THAT(document.featureError(made.hole), ContainsSubstring("has not been built"));
+        CHECK_THAT(document.featureError(made.rounds), ContainsSubstring("has not been built"));
+        // What was there stays there, until it can be replaced.
+        CHECK_THAT(made.volume(), WithinRel(whole, 1e-9));
+
+        // Built again from there, all of it follows.
+        Document::setWorkRunner({});
+        document.buildAgain(made.plate);
+        CHECK(document.featureError(made.plate).empty());
+        CHECK(document.featureError(made.hole).empty());
+        CHECK(document.featureError(made.rounds).empty());
+        CHECK_THAT(made.volume(), WithinRel(bracketVolume(70.0, 40.0), 1e-6));
+    }
+    SECTION("Undo takes a stopped change away") {
+        Document::setWorkRunner(stopEachStep);
+        made.setWidth(70.0);
+        Document::setWorkRunner({});
+        document.undo();
+        CHECK(document.featureError(made.plate).empty());
+        CHECK(document.featureError(made.rounds).empty());
+        CHECK_THAT(made.volume(), WithinRel(whole, 1e-9));
+    }
+    SECTION("A trial that stops has not failed") {
+        Feature hole = pullOf(made.holes, 8.0, Operation::Cut, made.body().id);
+        Document::setWorkRunner(stopEachStep);
+        const FeatureTrial trial = document.tryFeature(hole);
+        CHECK(trial.stopped);
+        CHECK(trial.error.empty());
+        CHECK(trial.result.shape.isNull());
+        CHECK_FALSE(lcad::kernel::stopRequested());
     }
 }

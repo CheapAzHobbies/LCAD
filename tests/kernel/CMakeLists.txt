@@ -10,6 +10,7 @@ add_executable(lcad_kernel_tests
     PlaneTest.cpp
     PrimitivesTest.cpp
     ProjectionTest.cpp
+    StopTest.cpp
     SerializationTest.cpp
     ShapeTest.cpp
     SubShapesTest.cpp

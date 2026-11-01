@@ -12,6 +12,7 @@
 #include <lcad/app/GeometryCheckDialog.h>
 #include <lcad/app/Icons.h>
 #include <lcad/app/JointPanel.h>
+#include <lcad/app/LongWork.h>
 #include <lcad/app/MachiningWorkspace.h>
 #include <lcad/app/MeasurePanel.h>
 #include <lcad/app/MovePanel.h>
@@ -141,6 +142,7 @@ constexpr int inspectorWidth = 240;
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_viewport(new viewport::ViewportWidget(this)),
       m_commands(new CommandRegistry(this)) {
+    installLongWork();
     // Within the screen, with room for the title bar: Windows lets a window start larger than
     // it, with the bottom of the window behind the taskbar.
     resize(QSize(1280, 800).boundedTo(screen()->availableSize() - QSize(0, 40)));
@@ -1071,6 +1073,20 @@ void MainWindow::defineCommands() {
         };
         m_commands->add(std::move(c));
 
+        c = make("timeline.buildAgain", tr("&Build Again"), timelineGroup,
+                 tr("Build a feature again that was stopped or failed"));
+        c.aliases = {tr("retry"), tr("try again"), tr("recompute")};
+        c.run = [this, selectedFeature](bool) {
+            if (const document::Feature* feature = selectedFeature()) {
+                document()->buildAgain(feature->id);
+            }
+        };
+        c.isEnabled = [this, selectedFeature] {
+            const document::Feature* feature = selectedFeature();
+            return feature != nullptr && !document()->featureError(feature->id).empty();
+        };
+        m_commands->add(std::move(c));
+
         c = make("timeline.rename", tr("Re&name Feature…"), timelineGroup,
                  tr("Give the feature selected in the timeline another name"));
         c.run = [this, selectedFeature](bool) {
@@ -1751,8 +1767,8 @@ void MainWindow::createTopBar() {
     modifyMenu->addSeparator();
     modifyMenu->addAction(action("model.parameters"));
     QMenu* timelineMenu = modifyMenu->addMenu(tr("&Timeline"));
-    timelineMenu->addActions(
-        {action("timeline.edit"), action("timeline.rename"), action("timeline.suppress")});
+    timelineMenu->addActions({action("timeline.edit"), action("timeline.rename"),
+                              action("timeline.suppress"), action("timeline.buildAgain")});
     timelineMenu->addSeparator();
     timelineMenu->addActions({action("timeline.rollBack"), action("timeline.rollToEnd")});
 
@@ -3788,6 +3804,10 @@ void MainWindow::updateFeaturePreview() {
     }
     const document::FeatureTrial trial = document()->tryFeature(feature);
     m_featurePanel->setError(QString::fromStdString(trial.error));
+    if (trial.stopped) {
+        statusBar()->showMessage(tr("Preview stopped. OK still makes it, however long it takes."),
+                                 6000);
+    }
     if (usesProfiles(feature.kind)) {
         // The body as the feature leaves it, in place of the body; and the solid itself, seen
         // through, where it takes something away or does not work.
@@ -3958,8 +3978,8 @@ void MainWindow::showTimelineMenu(document::ObjectId item, const QPoint& where) 
     menu->setAttribute(Qt::WA_DeleteOnClose);
     const auto action = [this](const char* id) { return m_commands->action(QLatin1String(id)); };
     if (document()->findFeature(item) != nullptr) {
-        menu->addActions(
-            {action("timeline.edit"), action("timeline.rename"), action("timeline.suppress")});
+        menu->addActions({action("timeline.edit"), action("timeline.rename"),
+                          action("timeline.suppress"), action("timeline.buildAgain")});
     } else if (document()->findSketch(item) != nullptr) {
         menu->addAction(action("timeline.edit"));
     }

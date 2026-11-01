@@ -13,6 +13,7 @@ add_library(lcad_kernel STATIC
     src/Projection.cpp
     src/Serialization.cpp
     src/Shape.cpp
+    src/Stop.cpp
     src/SubShapes.cpp
     src/Transform.cpp
     src/Version.cpp)

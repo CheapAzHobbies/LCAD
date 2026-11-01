@@ -193,6 +193,9 @@ struct FeatureTrial {
     kernel::NamedShape tool;
     /// Why the feature fails, in a sentence fit to show, or empty.
     std::string error;
+    /// The user stopped it before it finished. There is no result, and it has not failed: the
+    /// feature may well work, given the time.
+    bool stopped = false;
     /// For a construction plane: where it would be.
     std::optional<PlaneState> plane;
     /// For a construction axis: where it would be.
@@ -225,6 +228,14 @@ enum class ItemKind { Body, Sketch, Feature };
 /// Not thread-safe: use a document from one thread.
 class Document {
 public:
+    /// How the interface wants long work done, so that it can stay alive and offer to stop it. It
+    /// is given what the work is called, and returns when the work has been done. Anything the
+    /// work throws comes out of it the same way. Not set, work is simply done where it is asked
+    /// for, which is what tests of the document do. Set it once, at the start.
+    using WorkRunner =
+        std::function<void(const std::string& name, const std::function<void()>& work)>;
+    static void setWorkRunner(WorkRunner runner);
+
     Document();
     /// Rebuilds a document from saved state, with an empty undo history and no unsaved changes.
     /// Throws std::invalid_argument when the state is inconsistent.
@@ -297,6 +308,8 @@ public:
     /// Replaces what a feature does, keeping its id and its place.
     void changeFeature(ObjectId id, Feature definition);
     void removeFeature(ObjectId id);
+    /// Builds a feature again that stopped, or failed for a reason that may have gone.
+    void buildAgain(ObjectId id);
     void renameFeature(ObjectId id, std::string name);
     void setFeatureSuppressed(ObjectId id, bool suppressed);
     /// Why a feature could not be applied, or an attached sketch could not follow what it is
@@ -681,6 +694,8 @@ private:
     };
 
     void record(Edit edit, const std::string& label);
+    /// Runs a step of long work the way the interface wants it run.
+    static void runWork(const std::string& name, const std::function<void()>& step);
     /// Makes a body for each solid that has none, as part of the step that split them.
     void settlePieces();
     /// The bodies that hold the solids a feature leaves past the first, in order.

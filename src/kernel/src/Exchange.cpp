@@ -7,6 +7,7 @@
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/occt/Guard.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
+#include <lcad/kernel/occt/Stoppable.h>
 
 #include <APIHeaderSection_MakeHeader.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
@@ -443,7 +444,8 @@ ImportResult importStep(const std::filesystem::path& path) {
         if (reader.ReadFile(core::toUtf8(path).c_str()) != IFSelect_RetDone) {
             throw Error(operation, "it is not a STEP file, or it is damaged");
         }
-        reader.TransferRoots();
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        reader.TransferRoots(stoppable->Start());
         const TopoDS_Shape all = reader.OneShape();
         if (all.IsNull() || countOf(all, TopAbs_FACE) == 0) {
             throw Error(operation, "it has no solids or surfaces in it");
@@ -467,7 +469,8 @@ ImportResult importIges(const std::filesystem::path& path) {
             reader.NbRootsForTransfer() == 0) {
             throw Error(operation, "it is not an IGES file, or it has no geometry in it");
         }
-        reader.TransferRoots();
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        reader.TransferRoots(stoppable->Start());
         const TopoDS_Shape all = reader.OneShape();
         if (all.IsNull() || countOf(all, TopAbs_FACE) == 0) {
             throw Error(operation, "it has no solids or surfaces in it");
@@ -531,9 +534,12 @@ Mesh triangulate(const Shape& shape, const MeshSettings& settings) {
         // view draws.
         const TopoDS_Shape copy =
             BRepBuilderAPI_Copy(occt::unwrap(shape), Standard_True, Standard_False).Shape();
-        const BRepMesh_IncrementalMesh mesher(copy, settings.deviation, Standard_False,
-                                              settings.angle * std::numbers::pi / 180.0,
-                                              Standard_True);
+        IMeshTools_Parameters parameters;
+        parameters.Deflection = settings.deviation;
+        parameters.Angle = settings.angle * std::numbers::pi / 180.0;
+        parameters.InParallel = Standard_True;
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        const BRepMesh_IncrementalMesh mesher(copy, parameters, stoppable->Start());
         Mesh mesh;
         VertexMerger merger(mesh);
         int faces = 0;
