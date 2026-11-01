@@ -28,8 +28,8 @@ manufacturing. Each decision below rests on running code:
   (section 11). It offsets, moves, and deletes faces of any solid, checks and repairs geometry,
   reads STEP and IGES, and writes STEP, STL, OBJ, and 3MF (section 12).
 - `viewport` shows a document in OCCT's viewer inside a Qt widget, with camera navigation, a
-  view cube, and selection of bodies, faces, edges, vertices, and sketches. Its sketch editor
-  opens one sketch for editing in place.
+  navigation cube, and selection of bodies, faces, edges, vertices, and sketches. Its sketch
+  editor opens one sketch for editing in place.
 - `app` is the main window and everything in it: the command registry and search, the theme
   and icons, document tabs, the toolbars, browser, the properties, sketch, feature, and measure
   panels, and the timeline.
@@ -157,10 +157,13 @@ views, toolbars, and menus, which is what Widgets is built for, and embedding OC
 
 **Why.** OCCT's viewer already does most of what Phase 1 asks of the viewport, and does it
 directly from the B-rep: display meshes that follow the exact shape, picking of faces, edges, and
-vertices with hover highlighting, a view cube, section planes, manipulators, and dimensions. A
+vertices with hover highlighting, section planes, manipulators, and dimensions. A
 custom renderer would spend months reaching the point where a face can be picked reliably. The
 spike in this repository had a box on screen with orbit, pan, zoom, and hover highlighting in a
-day, and it runs unchanged on all four tested distributions.
+day, and it runs unchanged on all four tested distributions. Its view cube was used at first; the
+navigation cube took its place because hovering, naming, and turning each of its 26 parts is
+easier to get right in a Qt widget lying over the view, which follows the camera, than inside
+OCCT's cube.
 
 **What it costs.**
 

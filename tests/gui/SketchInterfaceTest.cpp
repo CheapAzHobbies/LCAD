@@ -24,6 +24,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
+#include <QFrame>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSpinBox>
@@ -728,6 +729,21 @@ void SketchInterfaceTest::thePanelIsAboutACornerAndKeepsItsSelection() {
              qPrintable(rows.join(QStringLiteral(", "))));
     QVERIFY2(rows.filter(QStringLiteral("Line 5")).size() >= 1,
              qPrintable(rows.join(QStringLiteral(", "))));
+
+    // Clicked, a row stays shown in the sketch; clicked again, it lets go.
+    QFrame* row = nullptr;
+    for (QFrame* candidate : panel->findChildren<QFrame*>(QStringLiteral("constraintRow"))) {
+        // Rows from before the list was last filled may still be waiting to be deleted.
+        if (candidate->isVisible()) {
+            row = candidate;
+        }
+    }
+    QVERIFY(row != nullptr);
+    QTest::mouseClick(row, Qt::LeftButton, Qt::NoModifier, QPoint(5, 5));
+    QVERIFY(editor(window)->pinnedConstraint() != 0);
+    QVERIFY(row->property("pinned").toBool());
+    QTest::mouseClick(row, Qt::LeftButton, Qt::NoModifier, QPoint(5, 5));
+    QCOMPARE(editor(window)->pinnedConstraint(), lcad::sketch::ConstraintId{0});
 
     // One disconnected, and the corner is still selected, for the next.
     const std::vector<lcad::sketch::EntityId> selected = editor(window)->selectedEntities();

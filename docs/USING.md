@@ -98,9 +98,11 @@ you click in the 3D view.
 
 ## Holes
 
-Draw points where the holes go, in a sketch on the face to drill into. Then press **H**, or click
-**Hole**: the panel takes the points of the sketch that was open, or click another sketch in the
-3D view. Choose **Simple**, **Counterbore**, or **Countersink**, the diameter, and a depth (with
+Draw where the holes go in a sketch on the face to drill into: points, or circles. Then press **H**,
+or click **Hole**. Every point of the sketch shows as a large dot over the part, those that will
+be drilled filled in, and any point counts: points you drew, the ends of lines, the centers of
+circles. Click as many as you want; a click on a filled one takes it out again. To begin with it
+takes the points you drew, or if there are none the centers of the circles. Choose **Simple**, **Counterbore**, or **Countersink**, the diameter, and a depth (with
 the point a drill leaves) or **Through all**. **Flip Direction** drills the other way, for a
 sketch that is not on the face itself.
 
@@ -321,10 +323,10 @@ in the 3D view.
 | Ellipse | | Click the center, then the end of the major axis, then how far out it reaches across (its minor radius). The dimension tool gives it its minor radius; its major radius is the distance from the center to the end of the major axis. |
 | Spline | | Click the points it goes through first and last, and the ones it is drawn toward in between. Enter, a double-click, or Esc ends it. Drag its points to reshape it. |
 
-While drawing, the pointer catches on what is already there: ends, middles of lines, and curves.
-What it catches on, the new geometry stays attached to. A line that is nearly level or upright
-becomes exactly so. **Pick up constraints while drawing**, in the panel, switches all of that
-off.
+While drawing, the pointer catches on what is already there: ends, middles of lines and arcs, and
+curves. What it catches on, the new geometry stays attached to. A line that is nearly level or
+upright becomes exactly so. **Pick up constraints while drawing**, in the panel, switches all of
+that off. A slot keeps to angles 15° apart. Hold **Shift** for any angle, for a slot or a line.
 
 **Typing a size.** While a line, a rectangle, or a circle is being drawn, type a number and
 press Enter: the length of the line (in the direction the pointer gives), the width and height
@@ -358,14 +360,26 @@ constraint first and then what it is about.
 | Tangent | A line and a circle or arc; or two circles or arcs |
 | Equal | Two lines (same length); or two circles or arcs (same radius) |
 | Concentric | Two circles or arcs |
-| Midpoint | A point and a line |
+| Midpoint | A point and a line or an arc. A line or an arc alone, or clicked twice, gets a new point at its middle |
 | Symmetric | Two points and the line between them |
-| Fix | Points, or curves, which stay where they are |
+| Lock | Points, or curves, which stay where they are |
 
-Each constraint shows as a small marker by its geometry. Click a marker to select the
-constraint, and press Delete to remove it. The markers of joined ends appear when the pointer is
-on the point. The panel on the right lists every constraint on what is selected, each with a
-button that removes it.
+Each constraint shows as a small symbol by its geometry, on the outside of a shape. Drag a symbol
+to move it: along its line or curve, where it comes to rest in the middle when it gets near, or
+across to the other side. Click a symbol to select the constraint, and press Delete to remove
+it. The symbols of joined ends appear when the pointer is on the point.
+
+The panel on the right lists every constraint on what is selected, or with nothing selected on
+what the pointer is on, and says what each is on: `Coincident · Line 1 end, Line 2 start`,
+`Length 40 mm · Line 3`. The lines are numbered in the order they were drawn.
+
+- Point at a row and what it is about flashes in the sketch, with its name on it. Click the row
+  to keep it showing.
+- Point at something in the sketch and the rows about it light up.
+- Click a point where lines meet to list everything that holds it. The button on a row
+  disconnects that one, and the point stays selected for the next.
+
+If a constraint or a dimension will not go in, what stops it flashes red.
 
 LCAD does not add a constraint that the others already imply, or one that contradicts them. It
 says which, in the status bar.
@@ -411,17 +425,21 @@ coincident with it), then add dimensions until nothing is blue.
 
 | Tool | Key | How |
 |---|---|---|
-| Trim | T | Click the part of a curve to remove. It goes up to where other curves cross it. |
+| Cut | T | Click the part of a curve to remove. It goes up to where other curves cross it. |
 | Extend | | Click a line or an arc near an end. It grows to the next curve it meets. |
 | Offset | O | Click a curve, which takes the whole outline it belongs to. Then click where the copy should go. |
 | Mirror | | Select what to mirror, choose Mirror, and click the line to mirror in. |
 | Project | P | Click an edge or a corner of a body. It comes into the sketch as reference geometry, in its own color, and does not move. |
 
 Not there yet: tangent arcs in a chain of lines; patterns in a sketch; moving a dimension's
-value somewhere else; trimming, extending, or offsetting an ellipse or a spline, and
-constraining a point onto one. Curves that cross are not split where
-they cross, so an outline is closed only where curves meet at their ends: trim first. A
-projected edge is a copy, and does not follow its body if the body changes.
+value somewhere else; cutting, extending, or offsetting an ellipse or a spline, and
+constraining a point onto one. A curve that crosses another is not split there unless it is part
+of a closed outline: an open line across a shape does not divide it, so cut first. A projected
+edge is a copy, and does not follow its body if the body changes.
+
+**Outlines that overlap.** Where closed outlines cross, each area they make can be picked on its
+own for a pull: either shape without the other, or just what they share. With nothing picked, a
+pull takes the outlines whole, as one solid. Ellipses and splines do not take part in this.
 
 ## Drawings
 
@@ -509,13 +527,14 @@ and tool libraries shared between documents.
 | To | Do this |
 |---|---|
 | Zoom | Roll the wheel. The view zooms about the pointer. |
-| Pan | Drag with the middle button. |
-| Orbit | Hold Shift and drag with the middle button, or drag the view cube. |
+| Pan | Hold the middle button: the pointer becomes a hand. |
+| Orbit | Hold the right button and drag, or drag the navigation cube. Shift + middle button does it too. |
+| Open the menu | Click the right button without moving. |
 | Zoom by dragging | Hold Ctrl + Shift and drag with the middle button. |
 | Fit everything in view | Double-click the middle button, or press F6. |
 | Zoom to what is selected | Press Shift + F6. |
 | Go to the home view | Press Home. |
-| Look from the front, top, and so on | Click a side, edge, or corner of the view cube, or use the View menu. The cube's sides are three different shades and its edges are dark, so that it shows which way the model is turned at a glance. |
+| Look from the front, top, and so on | Use the navigation cube, or the View menu. |
 
 **View > Mouse** changes this:
 
@@ -524,7 +543,24 @@ and tool libraries shared between documents.
 - **Reverse Zoom Direction** makes rolling the wheel away from you zoom out instead of in.
 
 **View > Perspective** switches between perspective and the default orthographic projection.
-**View > Animate View Changes** can be turned off to make the view cube turn the camera at once.
+**View > Animate View Changes** can be turned off to make the cube turn the camera at once.
+
+### The navigation cube
+
+The cube in the top right corner is turned as the model is. All of it can be clicked, and what
+the pointer is on lights up and is named underneath, without moving anything.
+
+- A **face** gives the straight view from that side.
+- An **edge** gives the view halfway between its two faces.
+- A **corner** gives the isometric view from there.
+- A **double-click** does that and frames the model.
+- Clicking the view you are in goes back to **Home**.
+- **Drag** it to turn the view freely.
+- With the pointer near it, **arrows** appear around it, each turning the view 45° toward the side
+  it points at.
+
+Below it are **Home** and the switch between orthographic and perspective. The small X, Y, and Z
+beside it show how the axes lie.
 
 ## How the model is drawn
 
