@@ -66,12 +66,13 @@ QPushButton* button(QWidget* in, const char* name) {
     return in->findChild<QPushButton*>(QLatin1String(name));
 }
 
-// Uses up the stack: about 4 KB a call.
+// Uses up the stack: about 4 KB a call. Its room is read after the call, for a compiler not to be
+// able to make a loop of it.
 std::size_t deep(std::size_t calls) {
     volatile char room[4096] = {};
     room[calls % sizeof(room)] = 1;
-    const auto here = static_cast<std::size_t>(room[calls % sizeof(room)]);
-    return calls == 0 ? here : deep(calls - 1) + here;
+    const std::size_t below = calls == 0 ? 0 : deep(calls - 1);
+    return below + static_cast<std::size_t>(room[calls % sizeof(room)]);
 }
 
 } // namespace
