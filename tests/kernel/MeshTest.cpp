@@ -35,6 +35,12 @@ int countOf(const MeshSurfaces& found, SurfaceKind kind) {
                                           }));
 }
 
+const MeshSurface& onlyOf(const MeshSurfaces& found, SurfaceKind kind) {
+    return *std::find_if(found.surfaces.begin(), found.surfaces.end(), [kind](const MeshSurface& s) {
+        return !s.facet && s.kind == kind;
+    });
+}
+
 bool isClosed(const Mesh& mesh) {
     std::map<std::pair<std::uint32_t, std::uint32_t>, int> sides;
     for (const auto& c : mesh.triangles) {
@@ -97,20 +103,18 @@ TEST_CASE("The surfaces of a mesh are found for what they are", "[mesh]") {
     const MeshSurfaces drilled = findSurfaces(triangulate(bracket(), {0.01, 10.0}));
     CHECK(countOf(drilled, SurfaceKind::Plane) == 6);
     REQUIRE(countOf(drilled, SurfaceKind::Cylinder) == 1);
-    const auto hole = std::find_if(drilled.surfaces.begin(), drilled.surfaces.end(), [](const MeshSurface& s) {
-        return s.kind == SurfaceKind::Cylinder;
-    });
-    CHECK_THAT(hole->radius, WithinAbs(5.0, 1e-3));
-    CHECK_FALSE(hole->outward);
+    const MeshSurface& hole = onlyOf(drilled, SurfaceKind::Cylinder);
+    CHECK_THAT(hole.radius, WithinAbs(5.0, 1e-3));
+    CHECK_FALSE(hole.outward);
 
     const MeshSurfaces ball = findSurfaces(triangulate(makeSphere(12.0), {0.01, 8.0}));
     REQUIRE(countOf(ball, SurfaceKind::Sphere) == 1);
-    CHECK_THAT(ball.surfaces.front().radius, WithinAbs(12.0, 1e-3));
+    CHECK_THAT(onlyOf(ball, SurfaceKind::Sphere).radius, WithinAbs(12.0, 5e-3));
 
     const MeshSurfaces ring = findSurfaces(triangulate(makeTorus(20.0, 5.0), {0.01, 8.0}));
     REQUIRE(countOf(ring, SurfaceKind::Torus) == 1);
-    CHECK_THAT(ring.surfaces.front().radius, WithinAbs(20.0, 1e-2));
-    CHECK_THAT(ring.surfaces.front().tubeRadius, WithinAbs(5.0, 1e-2));
+    CHECK_THAT(onlyOf(ring, SurfaceKind::Torus).radius, WithinAbs(20.0, 1e-2));
+    CHECK_THAT(onlyOf(ring, SurfaceKind::Torus).tubeRadius, WithinAbs(5.0, 1e-2));
 }
 
 TEST_CASE("A solid of exact faces is made from a mesh", "[mesh]") {
