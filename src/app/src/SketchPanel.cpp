@@ -7,7 +7,9 @@
 #include <lcad/sketch/Edit.h>
 
 #include <QCheckBox>
+#include <QEnterEvent>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeyEvent>
@@ -17,12 +19,14 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QMouseEvent>
 #include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace lcad::app {
 
@@ -43,6 +47,70 @@ QString capitalized(QString text) {
     }
     return text;
 }
+
+// The icon a kind of constraint goes by on the toolbar.
+QString iconOf(sketch::ConstraintKind kind) {
+    using Kind = sketch::ConstraintKind;
+    switch (kind) {
+    case Kind::Coincident:
+    case Kind::PointOnLine:
+    case Kind::PointOnCircle:
+        return QStringLiteral("c-coincident");
+    case Kind::Horizontal:
+        return QStringLiteral("c-horizontal");
+    case Kind::Vertical:
+        return QStringLiteral("c-vertical");
+    case Kind::Parallel:
+        return QStringLiteral("c-parallel");
+    case Kind::Perpendicular:
+        return QStringLiteral("c-perpendicular");
+    case Kind::Tangent:
+        return QStringLiteral("c-tangent");
+    case Kind::Equal:
+        return QStringLiteral("c-equal");
+    case Kind::Concentric:
+        return QStringLiteral("c-concentric");
+    case Kind::Midpoint:
+        return QStringLiteral("c-midpoint");
+    case Kind::Symmetric:
+        return QStringLiteral("c-symmetric");
+    case Kind::Collinear:
+        return QStringLiteral("c-collinear");
+    case Kind::Fix:
+        return QStringLiteral("c-fix");
+    default:
+        return QStringLiteral("dimension");
+    }
+}
+
+// A line of the constraint list, which says when the pointer comes onto it and when it is clicked.
+class ConstraintRow : public QFrame {
+public:
+    ConstraintRow(QWidget* parent, std::function<void(bool)> hovered, std::function<void()> clicked)
+        : QFrame(parent), m_hovered(std::move(hovered)), m_clicked(std::move(clicked)) {
+        setObjectName(QStringLiteral("constraintRow"));
+    }
+
+protected:
+    void enterEvent(QEnterEvent* event) override {
+        QFrame::enterEvent(event);
+        m_hovered(true);
+    }
+    void leaveEvent(QEvent* event) override {
+        QFrame::leaveEvent(event);
+        m_hovered(false);
+    }
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        QFrame::mouseReleaseEvent(event);
+        if (event->button() == Qt::LeftButton && rect().contains(event->position().toPoint())) {
+            m_clicked();
+        }
+    }
+
+private:
+    std::function<void(bool)> m_hovered;
+    std::function<void()> m_clicked;
+};
 
 // What pressing D does to these: "Press D to give it a length". Empty if it does nothing.
 QString dimensionPrompt(const sketch::Sketch& geometry,
@@ -139,6 +207,27 @@ QString describeConstraint(const sketch::Constraint& constraint) {
     return SketchPanel::tr("%1 %2 mm").arg(name, formatNumber(constraint.value));
 }
 
+QString describeConstraint(const sketch::Sketch& geometry, const sketch::Constraint& constraint) {
+    using Kind = sketch::ConstraintKind;
+    const sketch::Entity* first = geometry.find(constraint.first);
+    const sketch::Entity* second = geometry.find(constraint.second);
+    // The length of a line is a distance between its own ends: that is what the user calls it.
+    if (constraint.kind == Kind::Distance && first != nullptr && second != nullptr &&
+        first->owner != 0 && first->owner == second->owner) {
+        return SketchPanel::tr("Length %1 mm · %2")
+            .arg(formatNumber(constraint.value),
+                 viewport::SketchEditor::entityName(geometry, first->owner));
+    }
+    QStringList names;
+    for (const sketch::EntityId id : {constraint.first, constraint.second, constraint.third}) {
+        if (geometry.find(id) != nullptr) {
+            names << viewport::SketchEditor::entityName(geometry, id);
+        }
+    }
+    return SketchPanel::tr("%1 · %2").arg(describeConstraint(constraint),
+                                          names.join(QStringLiteral(", ")));
+}
+
 SketchPanel::SketchPanel(viewport::SketchEditor* editor, QWidget* parent)
     : QWidget(parent), m_editor(editor), m_heading(new QLabel(this)), m_state(new QLabel(this)),
       m_profiles(secondary(QString(), this)), m_prompt(new QLabel(this)),
@@ -176,11 +265,11 @@ SketchPanel::SketchPanel(viewport::SketchEditor* editor, QWidget* parent)
         tr("Construction geometry guides the sketch and is left out of its outlines."));
     layout->addWidget(m_inference);
     layout->addWidget(m_construction);
-    auto* form = new QFormLayout;
+    m_sidesForm = new QFormLayout;
     m_sides->setObjectName(QStringLiteral("polygonSides"));
     m_sides->setRange(3, 64);
-    form->addRow(secondary(tr("Polygon sides"), this), m_sides);
-    layout->addLayout(form);
+    m_sidesForm->addRow(secondary(tr("Polygon sides"), this), m_sides);
+    layout->addLayout(m_sidesForm);
     layout->addSpacing(8);
 
     layout->addWidget(secondary(tr("Selection"), this));
@@ -201,6 +290,12 @@ SketchPanel::SketchPanel(viewport::SketchEditor* editor, QWidget* parent)
     connect(m_sides, &QSpinBox::valueChanged, this,
             [this](int sides) { m_editor->setPolygonSides(sides); });
     connect(m_finish, &QPushButton::clicked, this, &SketchPanel::finishRequested);
+    connect(m_editor, &viewport::SketchEditor::hoverChanged, this, [this] {
+        if (m_editor->isActive()) {
+            rebuildConstraints();
+            markRows();
+        }
+    });
 }
 
 QString SketchPanel::heading() const {
@@ -244,6 +339,7 @@ void SketchPanel::refresh(const QString& name) {
         m_construction->setChecked(m_editor->constructionMode());
         m_sides->setValue(m_editor->polygonSides());
     }
+    m_sidesForm->setRowVisible(m_sides, m_editor->tool() == viewport::SketchTool::Polygon);
 
     const std::vector<sketch::EntityId> entities = m_editor->selectedEntities();
     const std::vector<sketch::ConstraintId> constraints = m_editor->selectedConstraints();
@@ -279,12 +375,22 @@ void SketchPanel::refresh(const QString& name) {
 
 void SketchPanel::rebuildConstraints() {
     const sketch::Sketch& geometry = m_editor->geometry();
-    const std::vector<sketch::EntityId> entities = m_editor->selectedEntities();
+    std::vector<sketch::EntityId> entities = m_editor->selectedEntities();
     const std::vector<sketch::ConstraintId> chosen = m_editor->selectedConstraints();
+    // With nothing selected, what the pointer is on says what is wanted.
+    if (entities.empty() && chosen.empty() && m_editor->hoveredEntity() != 0) {
+        entities = {m_editor->hoveredEntity()};
+    }
     // The constraints that are selected, and those on anything that is: on a curve, also those
-    // on its points.
+    // on its points; on a point, those on every point in that place, which is what holds a
+    // corner together.
     std::vector<sketch::EntityId> about = entities;
     for (const sketch::EntityId id : entities) {
+        const sketch::Entity* selected = geometry.find(id);
+        if (selected != nullptr && selected->kind == sketch::EntityKind::Point) {
+            const auto together = sketch::pointsTogether(geometry, id);
+            about.insert(about.end(), together.begin(), together.end());
+        }
         for (const sketch::Entity& entity : geometry.entities()) {
             if (entity.owner == id) {
                 about.push_back(entity.id);
@@ -302,13 +408,16 @@ void SketchPanel::rebuildConstraints() {
         if (std::find(chosen.begin(), chosen.end(), constraint.id) != chosen.end() ||
             touches(constraint)) {
             listed.push_back(constraint);
-            signature += QStringLiteral("%1:%2;").arg(constraint.id).arg(constraint.value);
+            signature += QStringLiteral("%1:%2;").arg(constraint.id).arg(
+                describeConstraint(geometry, constraint));
         }
     }
     if (signature == m_signature) {
         return;
     }
     m_signature = signature;
+    // The row the pointer was on may be going.
+    m_editor->showConstraint(0);
     while (QLayoutItem* item = m_constraintList->takeAt(0)) {
         if (QWidget* widget = item->widget()) {
             // Out of sight at once. It is deleted later because this may be running inside a
@@ -320,22 +429,41 @@ void SketchPanel::rebuildConstraints() {
     }
     m_rows.clear();
     m_listed.clear();
+    m_rowWidgets.clear();
     for (const sketch::Constraint& constraint : listed) {
-        auto* row = new QWidget(this);
+        const sketch::ConstraintId id = constraint.id;
+        auto* row = new ConstraintRow(
+            this,
+            [this, id](bool on) {
+                m_editor->showConstraint(on ? id : 0);
+                markRows();
+            },
+            [this, id] {
+                m_editor->pinConstraint(m_editor->pinnedConstraint() == id ? 0 : id);
+                markRows();
+            });
         auto* line = new QHBoxLayout(row);
-        line->setContentsMargins(0, 0, 0, 0);
-        const QString text = describeConstraint(constraint);
-        line->addWidget(new QLabel(text, row), 1);
+        line->setContentsMargins(4, 2, 0, 2);
+        const QString text = describeConstraint(geometry, constraint);
+        const qsizetype split = text.indexOf(QStringLiteral(" · "));
+        auto* symbol = new QLabel(row);
+        symbol->setPixmap(icon(iconOf(constraint.kind)).pixmap(16, 16));
+        line->addWidget(symbol, 0, Qt::AlignTop);
+        auto* words = new QVBoxLayout;
+        words->setSpacing(0);
+        words->addWidget(new QLabel(text.left(split), row));
+        words->addWidget(secondary(text.mid(split + 3), row));
+        line->addLayout(words, 1);
         auto* remove = new QToolButton(row);
         remove->setObjectName(QStringLiteral("removeConstraint"));
         remove->setAutoRaise(true);
         remove->setIcon(icon(QStringLiteral("delete")));
-        remove->setToolTip(tr("Remove this constraint"));
+        remove->setToolTip(constraint.kind == sketch::ConstraintKind::Coincident
+                               ? tr("Disconnect")
+                               : tr("Remove this constraint"));
         remove->setAccessibleName(tr("Remove %1").arg(text));
-        const sketch::ConstraintId id = constraint.id;
         connect(remove, &QToolButton::clicked, this, [this, id] {
-            m_editor->setSelection({}, {id});
-            m_editor->deleteSelection();
+            m_editor->removeConstraint(id);
         });
         line->addWidget(remove);
         m_constraintList->addWidget(row);
@@ -343,15 +471,68 @@ void SketchPanel::rebuildConstraints() {
         row->show();
         m_rows << text;
         m_listed.push_back(id);
+        m_rowWidgets.push_back(row);
     }
+    markRows();
+}
+
+void SketchPanel::markRows() {
+    if (!m_editor->isActive()) {
+        return;
+    }
+    const sketch::Sketch& geometry = m_editor->geometry();
+    const sketch::EntityId hovered = m_editor->hoveredEntity();
+    // The point the pointer is on, and every other in that place; or the curve and its points.
+    std::vector<sketch::EntityId> about;
+    if (hovered != 0) {
+        const sketch::Entity* entity = geometry.find(hovered);
+        if (entity != nullptr && entity->kind == sketch::EntityKind::Point) {
+            about = sketch::pointsTogether(geometry, hovered);
+        } else {
+            about = {hovered};
+            for (const sketch::Entity& other : geometry.entities()) {
+                if (other.owner == hovered) {
+                    about.push_back(other.id);
+                }
+            }
+        }
+    }
+    for (std::size_t i = 0; i < m_rowWidgets.size(); ++i) {
+        const sketch::Constraint* constraint = geometry.findConstraint(m_listed[i]);
+        if (constraint == nullptr) {
+            continue;
+        }
+        const bool lit = constraint->id == m_editor->hoveredConstraint() ||
+                         std::any_of(about.begin(), about.end(), [constraint](sketch::EntityId id) {
+                             return constraint->first == id || constraint->second == id ||
+                                    constraint->third == id;
+                         });
+        const bool pinned = constraint->id == m_editor->pinnedConstraint();
+        QWidget* row = m_rowWidgets[i];
+        if (row->property("lit").toBool() != lit || row->property("pinned").toBool() != pinned) {
+            row->setProperty("lit", lit);
+            row->setProperty("pinned", pinned);
+            row->style()->unpolish(row);
+            row->style()->polish(row);
+        }
+    }
+}
+
+QList<int> SketchPanel::litRows() const {
+    QList<int> lit;
+    for (std::size_t i = 0; i < m_rowWidgets.size(); ++i) {
+        if (m_rowWidgets[i]->property("lit").toBool()) {
+            lit << static_cast<int>(i);
+        }
+    }
+    return lit;
 }
 
 void SketchPanel::removeConstraint(int row) {
     if (row < 0 || row >= static_cast<int>(m_listed.size())) {
         return;
     }
-    m_editor->setSelection({}, {m_listed[static_cast<std::size_t>(row)]});
-    m_editor->deleteSelection();
+    m_editor->removeConstraint(m_listed[static_cast<std::size_t>(row)]);
 }
 
 SketchPlanePanel::SketchPlanePanel(QWidget* parent) : QWidget(parent) {

@@ -121,6 +121,14 @@ struct CameraState {
     Projection projection = Projection::Orthographic;
 };
 
+/// A point of a sketch that can be clicked in the 3D view, whatever is in front of it.
+struct PickablePoint {
+    document::ObjectId sketch;
+    std::uint32_t point = 0;
+    kernel::Point at;
+    bool chosen = false;
+};
+
 /// One entry of the selection: a whole body, one face, edge, or vertex of a body, or a sketch.
 struct SelectedItem {
     enum class Kind { Body, Face, Edge, Vertex, Sketch };
@@ -364,6 +372,10 @@ public:
     /// Everything the filter lets be picked at a position in the widget, nearest first: also
     /// what lies behind the item a click there would select.
     [[nodiscard]] std::vector<SelectedItem> itemsAt(const QPoint& position);
+    /// Shows these points over everything, and makes each a thing to click: pointPicked() says
+    /// which. None ends that.
+    void setPickablePoints(std::vector<PickablePoint> points);
+    [[nodiscard]] const std::vector<PickablePoint>& pickablePoints() const;
 
     // Diagnostics
 
@@ -376,6 +388,8 @@ public:
 
 signals:
     void selectionChanged();
+    /// One of the points of setPickablePoints() was clicked.
+    void pointPicked(lcad::document::ObjectId sketch, std::uint32_t point);
     /// A sketch was opened for editing, or closed.
     void sketchEditingChanged();
     /// The user double-clicked something that can be picked.
@@ -406,6 +420,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void leaveEvent(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
 private:

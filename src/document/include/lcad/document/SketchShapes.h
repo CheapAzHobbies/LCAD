@@ -39,6 +39,11 @@ enum class SketchPart {
 /// A construction axis as a line to draw: centered where it is drawn, of its length.
 [[nodiscard]] kernel::Shape axisShape(const AxisState& state);
 
+/// The points of a sketch that a hole feature drills at: the ones it names; or with none named,
+/// the free-standing points; or with none of those, the centers of the circles.
+[[nodiscard]] std::vector<sketch::EntityId> holePoints(const Feature& feature,
+                                                       const SketchItem& sketch);
+
 /// The box around all of a sketch's geometry in model space, or nothing for an empty sketch.
 [[nodiscard]] std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch);
 

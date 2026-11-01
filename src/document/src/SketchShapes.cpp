@@ -168,6 +168,34 @@ kernel::Shape axisShape(const AxisState& state) {
                                {c.x + d.x * half, c.y + d.y * half, c.z + d.z * half});
 }
 
+std::vector<sketch::EntityId> holePoints(const Feature& feature, const SketchItem& sketch) {
+    const sketch::Sketch& geometry = sketch.geometry;
+    std::vector<sketch::EntityId> points;
+    if (!feature.points.empty()) {
+        for (const sketch::EntityId id : feature.points) {
+            const sketch::Entity* entity = geometry.find(id);
+            if (entity != nullptr && entity->kind == sketch::EntityKind::Point) {
+                points.push_back(id);
+            }
+        }
+        return points;
+    }
+    for (const sketch::Entity& entity : geometry.entities()) {
+        if (entity.kind == sketch::EntityKind::Point && entity.owner == 0 &&
+            entity.id != geometry.origin() && !entity.construction) {
+            points.push_back(entity.id);
+        }
+    }
+    if (points.empty()) {
+        for (const sketch::Entity& entity : geometry.entities()) {
+            if (entity.kind == sketch::EntityKind::Circle && !entity.construction) {
+                points.push_back(entity.center);
+            }
+        }
+    }
+    return points;
+}
+
 std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch) {
     const sketch::Sketch& geometry = sketch.geometry;
     std::optional<kernel::BoundingBox> box;

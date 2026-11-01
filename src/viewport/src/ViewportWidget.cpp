@@ -43,7 +43,18 @@
 #include <Aspect_NeutralWindow.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRep_Builder.hxx>
@@ -60,6 +71,7 @@
 #include <Prs3d_DatumAspect.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <Prs3d_PointAspect.hxx>
 #include <Prs3d_Presentation.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 #include <Prs3d_TextAspect.hxx>
@@ -81,6 +93,8 @@
 #include <gp_XYZ.hxx>
 
 #include <QApplication>
+#include <QCursor>
+#include <QPainter>
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -93,6 +107,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <cmath>
 #include <map>
@@ -106,6 +121,145 @@ namespace lcad::viewport {
 namespace {
 
 // The view cube sits this far in from the top right corner and is this large, in logical pixels.
+// Points to click, drawn over the model: a point on a face is otherwise a speck in its color.
+class PointsOverlay : public QWidget {
+public:
+    using Project = std::function<QPointF(const kernel::Point&)>;
+
+    PointsOverlay(QWidget* parent, Project project)
+        : QWidget(parent), m_project(std::move(project)) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        setFocusPolicy(Qt::NoFocus);
+        setObjectName(QStringLiteral("pointsOverlay"));
+        hide();
+    }
+
+    void show(std::vector<PickablePoint> points, const QColor& plain, const QColor& chosen) {
+        m_points = std::move(points);
+        m_plain = plain;
+        m_chosen = chosen;
+        m_hovered = -1;
+        setVisible(!m_points.empty());
+        update();
+    }
+
+    [[nodiscard]] const std::vector<PickablePoint>& points() const { return m_points; }
+
+    /// The number of the point nearest to a position, in reach of it, or -1.
+    [[nodiscard]] int pointAt(const QPointF& position) const {
+        int best = -1;
+        double nearest = reach;
+        for (std::size_t i = 0; i < m_points.size(); ++i) {
+            const QPointF at = m_project(m_points[i].at);
+            const double away = std::hypot(at.x() - position.x(), at.y() - position.y());
+            if (away <= nearest) {
+                nearest = away;
+                best = static_cast<int>(i);
+            }
+        }
+        return best;
+    }
+
+    void setHovered(int point) {
+        if (point != m_hovered) {
+            m_hovered = point;
+            update();
+        }
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        for (std::size_t i = 0; i < m_points.size(); ++i) {
+            const QPointF at = m_project(m_points[i].at);
+            const bool hovered = static_cast<int>(i) == m_hovered;
+            const double radius = hovered ? 7.5 : 6.0;
+            // A dark ring, which shows on a light part, around a bright dot, which shows on a dark
+            // one.
+            painter.setPen(QPen(QColor(0, 0, 0, 170), 1.5));
+            painter.setBrush(m_points[i].chosen ? m_chosen : QColor(255, 255, 255, 215));
+            painter.drawEllipse(at, radius, radius);
+            if (!m_points[i].chosen) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(m_plain);
+                painter.drawEllipse(at, 2.2, 2.2);
+            }
+        }
+    }
+
+private:
+    static constexpr double reach = 11.0;
+
+    Project m_project;
+    std::vector<PickablePoint> m_points;
+    QColor m_plain;
+    QColor m_chosen;
+    int m_hovered = -1;
+};
+
+// A body. It is what AIS_Shape is, but for what can be picked of it: a round surface is one
+// smooth thing, and the edge it closes on, with the corner at its end, is nothing that anyone
+// aimed at. See smoothSeams().
+class BodyObject final : public AIS_Shape {
+public:
+    using AIS_Shape::AIS_Shape;
+
+protected:
+    void ComputeSelection(const Handle(SelectMgr_Selection)& selection,
+                          const Standard_Integer mode) override {
+        const TopAbs_ShapeEnum type = AIS_Shape::SelectionType(mode);
+        if (type != TopAbs_EDGE && type != TopAbs_VERTEX) {
+            AIS_Shape::ComputeSelection(selection, mode);
+            return;
+        }
+        // The same as ever, of a shape with those left out.
+        const TopoDS_Shape whole = myshape;
+        myshape = pickable(whole, type);
+        AIS_Shape::ComputeSelection(selection, mode);
+        myshape = whole;
+    }
+
+private:
+    static TopoDS_Shape pickable(const TopoDS_Shape& whole, TopAbs_ShapeEnum type) {
+        BRep_Builder builder;
+        TopoDS_Compound kept;
+        builder.MakeCompound(kept);
+        const auto seam = [](const TopoDS_Edge& edge) {
+            return BRep_Tool::Degenerated(edge) || BRep_Tool::MaxContinuity(edge) == GeomAbs_CN;
+        };
+        if (type == TopAbs_EDGE) {
+            TopTools_IndexedMapOfShape edges;
+            TopExp::MapShapes(whole, TopAbs_EDGE, edges);
+            for (Standard_Integer i = 1; i <= edges.Extent(); ++i) {
+                if (!seam(TopoDS::Edge(edges(i)))) {
+                    builder.Add(kept, edges(i));
+                }
+            }
+            return kept;
+        }
+        // A corner counts if a real edge ends there. A closed circle has no end: the corner on it
+        // is where its parameter starts, as arbitrary a place as a seam.
+        TopTools_IndexedDataMapOfShapeListOfShape edgesAt;
+        TopExp::MapShapesAndAncestors(whole, TopAbs_VERTEX, TopAbs_EDGE, edgesAt);
+        for (Standard_Integer i = 1; i <= edgesAt.Extent(); ++i) {
+            bool real = edgesAt(i).IsEmpty();
+            for (TopTools_ListOfShape::Iterator edge(edgesAt(i)); edge.More(); edge.Next()) {
+                const TopoDS_Edge& candidate = TopoDS::Edge(edge.Value());
+                TopoDS_Vertex first;
+                TopoDS_Vertex last;
+                TopExp::Vertices(candidate, first, last);
+                real = real || (!seam(candidate) && !first.IsSame(last));
+            }
+            if (real) {
+                builder.Add(kept, edgesAt.FindKey(i));
+            }
+        }
+        return kept;
+    }
+};
+
 // Lines in space that nothing can pick: toolpaths and the like.
 class LinesObject : public AIS_InteractiveObject {
     DEFINE_STANDARD_RTTI_INLINE(LinesObject, AIS_InteractiveObject)
@@ -811,6 +965,25 @@ public:
     bool cubeDragging = false;
     QPointF cubePressPosition;
     Qt::KeyboardModifiers cubePressModifiers;
+    // Points that can be clicked, and whether the left button went down on one.
+    PointsOverlay* pointsOverlay = nullptr;
+    bool pressedPoint = false;
+    // Where the camera was when the things drawn over the view last followed it.
+    CameraState overlaidCamera;
+    // The right button: a click opens the menu, held and moved it orbits.
+    bool rightPressed = false;
+    bool rightDragging = false;
+    QPointF rightPressPosition;
+    // The middle button is panning, and the pointer is a hand.
+    bool panning = false;
+
+    // Whether the middle button pans with these keys held, rather than orbiting or zooming.
+    [[nodiscard]] bool middlePans(Qt::KeyboardModifiers modifiers) const {
+        const Qt::KeyboardModifiers held =
+            modifiers & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier);
+        return preset == NavigationPreset::MiddlePans ? held == Qt::NoModifier
+                                                      : held == Qt::ShiftModifier;
+    }
 
     [[nodiscard]] bool isOverViewCube() const {
         return !context.IsNull() && context->HasDetected() &&
@@ -826,6 +999,8 @@ public:
         const Handle(Prs3d_Drawer)& drawer = object->Attributes();
         drawer->SetFaceBoundaryDraw(style == DisplayStyle::ShadedWithEdges ||
                                     style == DisplayStyle::Transparent);
+        // Not the edges that smoothSeams() marked: a round surface shows no line of its own.
+        drawer->SetFaceBoundaryUpperContinuity(GeomAbs_C3);
         drawer->SetFaceBoundaryAspect(
             new Prs3d_LineAspect(toOcct(colors.bodyEdge), Aspect_TOL_SOLID, 1.0));
         if (wires) {
@@ -1439,6 +1614,8 @@ public:
         drawer->SetFreeBoundaryAspect(line());
         drawer->SetUnFreeBoundaryAspect(line());
         drawer->SetSeenLineAspect(line());
+        // Large enough to find on a part: holes and the like go by these.
+        drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, color, 2.2));
     }
 
     void hideSketch(document::ObjectId id) {
@@ -1535,11 +1712,68 @@ public:
     // `reshaped` for a body that was shown before with another shape: that one leaves the
     // camera alone even if it is the only body.
     // Shows a body at each visible appearance of its component where it is not shown yet.
+    // Whether two faces lie on one round surface, as the halves of a cut cylinder do.
+    [[nodiscard]] static bool onOneRoundSurface(const TopoDS_Face& a, const TopoDS_Face& b) {
+        const BRepAdaptor_Surface first(a, Standard_False);
+        const BRepAdaptor_Surface second(b, Standard_False);
+        if (first.GetType() != second.GetType()) {
+            return false;
+        }
+        constexpr double near = 1e-7;
+        const auto sameAxis = [](const gp_Ax1& p, const gp_Ax1& q) {
+            return p.IsCoaxial(q, 1e-7, near) || p.IsCoaxial(q.Reversed(), 1e-7, near);
+        };
+        switch (first.GetType()) {
+        case GeomAbs_Cylinder:
+            return std::abs(first.Cylinder().Radius() - second.Cylinder().Radius()) < near &&
+                   sameAxis(first.Cylinder().Axis(), second.Cylinder().Axis());
+        case GeomAbs_Sphere:
+            return std::abs(first.Sphere().Radius() - second.Sphere().Radius()) < near &&
+                   first.Sphere().Location().IsEqual(second.Sphere().Location(), near);
+        case GeomAbs_Torus:
+            return std::abs(first.Torus().MajorRadius() - second.Torus().MajorRadius()) < near &&
+                   std::abs(first.Torus().MinorRadius() - second.Torus().MinorRadius()) < near &&
+                   first.Torus().Location().IsEqual(second.Torus().Location(), near) &&
+                   sameAxis(first.Torus().Axis(), second.Torus().Axis());
+        case GeomAbs_Cone:
+            return std::abs(first.Cone().SemiAngle() - second.Cone().SemiAngle()) < near &&
+                   first.Cone().Apex().IsEqual(second.Cone().Apex(), near) &&
+                   sameAxis(first.Cone().Axis(), second.Cone().Axis());
+        default:
+            return false;
+        }
+    }
+
+    // A cylinder, a sphere, or a torus closes on an edge of its own, and one cut in two has
+    // an edge between its halves. Those edges are what the faces are bounded by, and stay, for
+    // selecting and for the edits that work on them; but nothing is to be seen there, for the
+    // surface runs smoothly across. This says so of them, and styleBody() leaves out the edges
+    // that are that smooth. It changes no geometry.
+    static void smoothSeams(const TopoDS_Shape& shape) {
+        TopTools_IndexedDataMapOfShapeListOfShape facesOfEdge;
+        TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, facesOfEdge);
+        BRep_Builder builder;
+        for (Standard_Integer i = 1; i <= facesOfEdge.Extent(); ++i) {
+            const TopoDS_Edge& edge = TopoDS::Edge(facesOfEdge.FindKey(i));
+            const TopTools_ListOfShape& faces = facesOfEdge(i);
+            if (faces.Extent() != 2 || BRep_Tool::Degenerated(edge) ||
+                BRep_Tool::MaxContinuity(edge) == GeomAbs_CN) {
+                continue;
+            }
+            const TopoDS_Face& a = TopoDS::Face(faces.First());
+            const TopoDS_Face& b = TopoDS::Face(faces.Last());
+            if (a.IsSame(b) ? BRep_Tool::IsClosed(edge, a) : onOneRoundSurface(a, b)) {
+                builder.Continuity(edge, a, b, GeomAbs_CN);
+            }
+        }
+    }
+
     // The triangles of a shape are worked out when it is first drawn, which on a big part takes
     // far longer than anything else. Done here first they can be stopped, and the window stays
     // alive. Stopped, the body goes undrawn, for drawing it would do the rest with no way out.
     [[nodiscard]] bool meshedForDrawing(const document::Body& body) const {
         const TopoDS_Shape& shape = kernel::occt::unwrap(body.shape);
+        smoothSeams(shape);
         const Handle(Prs3d_Drawer)& drawer = context->DefaultDrawer();
         if (StdPrs_ToolTriangulatedShape::IsTessellated(shape, drawer)) {
             return true;
@@ -1581,7 +1815,7 @@ public:
             if (!meshedForDrawing(body)) {
                 return;
             }
-            Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(body.shape));
+            Handle(AIS_Shape) object = new BodyObject(kernel::occt::unwrap(body.shape));
             place(object, instance.placement);
             styleBody(object);
             if (ghosted(body.id)) {
@@ -1790,6 +2024,9 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setFormat(surfaceFormat());
     m_impl->editor = new SketchEditor(this);
+    m_impl->pointsOverlay = new PointsOverlay(this, [this](const kernel::Point& p) {
+        return project(p.x, p.y, p.z);
+    });
     // Whether bodies can be pointed at while a sketch is open depends on the sketch tool.
     connect(m_impl->editor, &SketchEditor::changed, this, [this] {
         const bool projecting =
@@ -3129,12 +3366,35 @@ void ViewportWidget::paintGL() {
         // The sketch is drawn over this frame, and has to follow the camera.
         m_impl->editor->overlay()->update();
     }
+    if (m_impl->pointsOverlay->isVisible()) {
+        m_impl->pointsOverlay->update();
+    }
 }
 
 void ViewportWidget::mousePressEvent(QMouseEvent* event) {
     QOpenGLWidget::mousePressEvent(event);
     if (!m_impl->canRender()) {
         return;
+    }
+    if (event->button() == Qt::RightButton) {
+        // Wait and see: held and moved it turns the view, let go it opens the menu.
+        m_impl->rightPressed = true;
+        m_impl->rightDragging = false;
+        m_impl->rightPressPosition = event->position();
+        return;
+    }
+    if (event->button() == Qt::MiddleButton && m_impl->middlePans(event->modifiers())) {
+        m_impl->panning = true;
+        setCursor(Qt::ClosedHandCursor);
+    }
+    if (event->button() == Qt::LeftButton && m_impl->pointsOverlay->isVisible()) {
+        if (const int point = m_impl->pointsOverlay->pointAt(event->position()); point >= 0) {
+            m_impl->pressedPoint = true;
+            const PickablePoint picked =
+                m_impl->pointsOverlay->points()[static_cast<std::size_t>(point)];
+            emit pointPicked(picked.sketch, picked.point);
+            return;
+        }
     }
     if (event->button() == Qt::LeftButton && !m_impl->sketching() &&
         m_impl->overHandle(event->position())) {
@@ -3229,6 +3489,26 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (!m_impl->canRender()) {
         return;
     }
+    if (event->button() == Qt::RightButton && m_impl->rightPressed) {
+        m_impl->rightPressed = false;
+        if (m_impl->rightDragging) {
+            m_impl->rightDragging = false;
+            m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(event->position()),
+                                       Aspect_VKeyMouse_NONE, Aspect_VKeyFlags_NONE, false);
+            update();
+        } else {
+            emit customContextMenuRequested(event->position().toPoint());
+        }
+        return;
+    }
+    if (event->button() == Qt::MiddleButton && m_impl->panning) {
+        m_impl->panning = false;
+        unsetCursor();
+    }
+    if (event->button() == Qt::LeftButton && m_impl->pressedPoint) {
+        m_impl->pressedPoint = false;
+        return;
+    }
     if (m_impl->handle.dragging && event->button() == Qt::LeftButton) {
         m_impl->handle.dragging = false;
         setCursor(m_impl->overHandle(event->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
@@ -3299,6 +3579,15 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
     if (!m_impl->canRender()) {
         return;
     }
+    if (m_impl->pointsOverlay->isVisible()) {
+        const int point = m_impl->pointsOverlay->pointAt(event->position());
+        m_impl->pointsOverlay->setHovered(point);
+        if (point >= 0) {
+            setCursor(Qt::PointingHandCursor);
+        } else {
+            unsetCursor();
+        }
+    }
     if (m_impl->handle.dragging) {
         if (const auto along = m_impl->handleParameterAt(event->position())) {
             // To a tenth of a millimeter: the box beside it takes any value.
@@ -3318,18 +3607,22 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
             m_impl->redraw();
         }
     }
-    if (m_impl->cubePressed) {
-        // Dragging the view cube orbits, as the orbit buttons would from the same spot.
+    if (m_impl->cubePressed || m_impl->rightPressed) {
+        // Dragging the view cube, or anywhere with the right button held, orbits, as the orbit
+        // buttons would from the same spot.
         const Aspect_VKeyMouse orbitButton = Aspect_VKeyMouse_MiddleButton;
-        if (!m_impl->cubeDragging) {
-            const QPointF moved = event->position() - m_impl->cubePressPosition;
+        bool& orbiting = m_impl->cubePressed ? m_impl->cubeDragging : m_impl->rightDragging;
+        const QPointF& pressedAt =
+            m_impl->cubePressed ? m_impl->cubePressPosition : m_impl->rightPressPosition;
+        if (!orbiting) {
+            const QPointF moved = event->position() - pressedAt;
             if (moved.manhattanLength() < QApplication::startDragDistance()) {
                 return;
             }
-            m_impl->cubeDragging = true;
+            orbiting = true;
             m_impl->AbortViewAnimation();
-            m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(m_impl->cubePressPosition),
-                                       orbitButton, m_impl->orbitModifiers, false);
+            m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(pressedAt), orbitButton,
+                                       m_impl->orbitModifiers, false);
         }
         m_impl->UpdateMousePosition(m_impl->toFramebufferPixels(event->position()), orbitButton,
                                     m_impl->orbitModifiers, false);
@@ -3378,12 +3671,34 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event) {
         event->accept();
         return;
     }
+    if (event->key() == Qt::Key_Menu) {
+        emit customContextMenuRequested(mapFromGlobal(QCursor::pos()));
+        event->accept();
+        return;
+    }
     QOpenGLWidget::keyPressEvent(event);
+}
+
+void ViewportWidget::leaveEvent(QEvent* event) {
+    QOpenGLWidget::leaveEvent(event);
+    m_impl->editor->pointerLeft();
 }
 
 void ViewportWidget::resizeEvent(QResizeEvent* event) {
     QOpenGLWidget::resizeEvent(event);
     m_impl->editor->overlay()->setGeometry(rect());
+    m_impl->pointsOverlay->setGeometry(rect());
+}
+
+void ViewportWidget::setPickablePoints(std::vector<PickablePoint> points) {
+    m_impl->pointsOverlay->setGeometry(rect());
+    m_impl->pointsOverlay->show(std::move(points), m_impl->colors.selection,
+                                m_impl->colors.selection);
+    m_impl->pointsOverlay->raise();
+}
+
+const std::vector<PickablePoint>& ViewportWidget::pickablePoints() const {
+    return m_impl->pointsOverlay->points();
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* event) {

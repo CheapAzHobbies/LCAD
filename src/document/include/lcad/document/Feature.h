@@ -181,6 +181,9 @@ struct Feature {
     /// Drilled along the sketch's normal rather than against it: from the sketch's front, the
     /// side it is looked at from, toward its back is the usual way.
     bool flipped = false;
+    /// The points of the sketch to drill at, any points, such as the centers of circles. Empty
+    /// means what holePoints() goes by.
+    std::vector<sketch::EntityId> points;
 
     /// Values worked out from parameters: the name of the value ("distance", "distanceBack",
     /// "taper", "angle", "size", "count", "count2", "spacing", "spacing2", "tipAngle",

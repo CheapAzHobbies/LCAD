@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <random>
@@ -327,6 +328,12 @@ nlohmann::ordered_json writeSketch(const SketchItem& item) {
         c["entities"] = {constraint.first, constraint.second, constraint.third};
         c["value"] = constraint.value;
         c["value2"] = constraint.value2;
+        // Only for a symbol that was moved: most never are.
+        if (constraint.markerSide != std::array<int, 2>{0, 0} ||
+            constraint.markerShift != std::array<double, 2>{0.0, 0.0}) {
+            c["markers"] = {constraint.markerShift[0], constraint.markerSide[0],
+                            constraint.markerShift[1], constraint.markerSide[1]};
+        }
         out["constraints"].push_back(std::move(c));
     }
     return out;
@@ -455,6 +462,16 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
         constraint.third = on[2].get<std::uint32_t>();
         constraint.value = numberMember(c, "value", in, path);
         constraint.value2 = numberMember(c, "value2", in, path);
+        if (c.contains("markers")) {
+            const json& markers = c["markers"];
+            if (!markers.is_array() || markers.size() != 4 ||
+                !std::all_of(markers.begin(), markers.end(),
+                             [](const json& number) { return number.is_number(); })) {
+                damaged(path, "\"markers\" of " + in + " is not four numbers");
+            }
+            constraint.markerShift = {markers[0].get<double>(), markers[2].get<double>()};
+            constraint.markerSide = {markers[1].get<int>(), markers[3].get<int>()};
+        }
         constraints.push_back(constraint);
     }
 
@@ -577,6 +594,9 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     }
     if (feature.kind == FeatureKind::Hole) {
         out["holeKind"] = toString(feature.holeKind);
+        if (!feature.points.empty()) {
+            out["points"] = feature.points;
+        }
         out["throughAll"] = feature.throughAll;
         out["tipAngle"] = feature.tipAngle;
         out["headDiameter"] = feature.headDiameter;
@@ -686,6 +706,17 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     }
     if (feature.kind == FeatureKind::Hole) {
         const std::string holeKind = stringMember(entry, "holeKind", where, path);
+        if (entry.contains("points")) {
+            const json& points = entry["points"];
+            if (!points.is_array() ||
+                !std::all_of(points.begin(), points.end(),
+                             [](const json& point) { return point.is_number_unsigned(); })) {
+                damaged(path, "\"points\" in " + where + " is not a list of points");
+            }
+            for (const json& point : points) {
+                feature.points.push_back(point.get<sketch::EntityId>());
+            }
+        }
         const auto knownHole = holeKindFromString(holeKind);
         if (!knownHole.has_value()) {
             damaged(path, where + " is a hole of the unknown kind \"" + holeKind + "\"");

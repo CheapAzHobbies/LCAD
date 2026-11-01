@@ -2,6 +2,8 @@
 
 #include <lcad/app/FeaturePanel.h>
 
+#include <lcad/document/SketchShapes.h>
+
 #include <lcad/app/ExpressionBox.h>
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
@@ -580,11 +582,33 @@ void FeaturePanel::setExtentFace(document::ObjectId body, const std::string& fac
     readFields();
 }
 
+void FeaturePanel::togglePoint(document::ObjectId sketch, sketch::EntityId point) {
+    if (m_feature.kind != FeatureKind::Hole) {
+        return;
+    }
+    if (sketch != m_feature.sketch) {
+        setSketch(sketch);
+        m_feature.points = {point};
+    } else if (const document::SketchItem* item = m_document->findSketch(sketch)) {
+        std::vector<sketch::EntityId> points = document::holePoints(m_feature, *item);
+        const auto found = std::find(points.begin(), points.end(), point);
+        if (found == points.end()) {
+            points.push_back(point);
+        } else if (points.size() > 1) {
+            // A hole feature has one point at least, and none would mean its usual ones.
+            points.erase(found);
+        }
+        m_feature.points = std::move(points);
+    }
+    readFields();
+}
+
 void FeaturePanel::setSketch(document::ObjectId sketch) {
     if (m_sketch == nullptr) {
         return;
     }
     m_feature.sketch = sketch;
+    m_feature.points.clear();
     fillSketches();
     // A sketch on a face is drilled into that face's body.
     if (const document::SketchItem* item = m_document->findSketch(sketch);
@@ -1001,8 +1025,13 @@ void FeaturePanel::readFields() {
         }
     }
     if (m_feature.kind == FeatureKind::Hole) {
-        m_feature.sketch =
-            document::ObjectId{m_sketch->count() > 0 ? m_sketch->currentData().toULongLong() : 0};
+        const document::ObjectId sketch{m_sketch->count() > 0 ? m_sketch->currentData().toULongLong()
+                                                              : 0};
+        // Picked points are points of the sketch they were picked in.
+        if (sketch != m_feature.sketch) {
+            m_feature.points.clear();
+        }
+        m_feature.sketch = sketch;
         m_feature.body =
             document::ObjectId{m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
         m_feature.holeKind = static_cast<document::HoleKind>(m_holeKind->currentData().toInt());
@@ -1153,18 +1182,13 @@ void FeaturePanel::updatePicked() {
     case FeatureKind::Hole: {
         const document::SketchItem* sketch = m_document->findSketch(m_feature.sketch);
         if (sketch == nullptr) {
-            text = tr("Holes go at the points of a sketch. Draw a point where each hole goes, "
-                      "on the face to drill into, then pick that sketch.");
+            text = tr("Click the points in the 3D view where the holes go: points you drew, the "
+                      "ends of lines, the centers of circles.");
         } else {
-            int count = 0;
-            for (const sketch::Entity& e : sketch->geometry.entities()) {
-                count += e.kind == sketch::EntityKind::Point && e.owner == 0 && !e.construction &&
-                                 e.id != sketch->geometry.origin()
-                             ? 1
-                             : 0;
-            }
-            text = (count == 1 ? tr("1 hole, at the point of %1.")
-                               : tr("%1 holes, at the points of %2.").arg(count))
+            const auto count = static_cast<int>(document::holePoints(m_feature, *sketch).size());
+            text = (count == 1 ? tr("1 hole, in %1. Click more points to add them.")
+                               : tr("%1 holes, in %2. Click a point to add or take it away.")
+                                     .arg(count))
                        .arg(QString::fromStdString(sketch->name));
         }
         break;

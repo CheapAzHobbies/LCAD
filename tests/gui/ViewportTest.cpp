@@ -44,6 +44,14 @@ bool sameDirection(const QVector3D& a, const QVector3D& b) {
     return (a - b).length() < 1e-3F;
 }
 
+bool sameCamera(const CameraState& a, const CameraState& b) {
+    const auto near = [](const std::array<double, 3>& p, const std::array<double, 3>& q) {
+        return std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-6;
+    };
+    return near(a.eye, b.eye) && near(a.center, b.center) && near(a.up, b.up) &&
+           std::abs(a.scale - b.scale) < 1e-9;
+}
+
 } // namespace
 
 // The frame checks here establish that the rendering and input paths work. Whether geometry is
@@ -82,6 +90,9 @@ private slots:
     void colorsCanBeReplaced();
     void displayStylesChangeHowBodiesAreDrawn();
     void gridAndAxesCanBeSwitched();
+    void roundSurfacesShowNoSeam_data();
+    void roundSurfacesShowNoSeam();
+    void aSeamIsNothingToPick();
     void originPlanesAndAxesCanBeShown();
     void middleButtonPans();
     void shiftMiddleButtonOrbits();
@@ -89,6 +100,8 @@ private slots:
     void wheelZoomsAndCanBeReversed();
     void middleDoubleClickFitsTheView();
     void leftButtonDoesNotMoveTheCamera();
+    void theRightButtonOrbitsWhenHeldAndOpensTheMenuWhenClicked();
+    void theMiddleButtonIsAHandWhilePanning();
 
     // Selection
     void hoveringHighlightsWhatIsUnderThePointer();
@@ -163,6 +176,31 @@ void ViewportTest::drag(Qt::MouseButton button, Qt::KeyboardModifiers modifiers,
     }
     QTest::mouseRelease(m_viewport, button, modifiers, to);
     render();
+}
+
+void ViewportTest::theRightButtonOrbitsWhenHeldAndOpensTheMenuWhenClicked() {
+    m_document->addBody("Box", lcad::kernel::makeBox(10.0, 10.0, 10.0));
+    render();
+    QSignalSpy menu(m_viewport, &QWidget::customContextMenuRequested);
+    const CameraState before = m_viewport->cameraState();
+
+    QTest::mouseClick(m_viewport, Qt::RightButton, Qt::NoModifier, QPoint(200, 200));
+    QCOMPARE(menu.count(), 1);
+    QCOMPARE(menu.first().first().toPoint(), QPoint(200, 200));
+    QVERIFY(sameCamera(m_viewport->cameraState(), before));
+
+    drag(Qt::RightButton, Qt::NoModifier, QPoint(200, 200), QPoint(280, 240));
+    QCOMPARE(menu.count(), 1);
+    QVERIFY(!sameCamera(m_viewport->cameraState(), before));
+}
+
+void ViewportTest::theMiddleButtonIsAHandWhilePanning() {
+    render();
+    QVERIFY(m_viewport->cursor().shape() != Qt::ClosedHandCursor);
+    QTest::mousePress(m_viewport, Qt::MiddleButton, Qt::NoModifier, QPoint(200, 200));
+    QCOMPARE(m_viewport->cursor().shape(), Qt::ClosedHandCursor);
+    QTest::mouseRelease(m_viewport, Qt::MiddleButton, Qt::NoModifier, QPoint(200, 200));
+    QVERIFY(m_viewport->cursor().shape() != Qt::ClosedHandCursor);
 }
 
 void ViewportTest::startsWithoutError() {
@@ -555,11 +593,12 @@ void ViewportTest::displayStylesChangeHowBodiesAreDrawn() {
     // wireframe does not have, and none of the seam that runs around its back.
     QVERIFY(differingFraction(wireframe, hiddenLine) > 0.002);
 
-    // Shaded without edges: as filled as before, minus the outline.
+    // Shaded without edges: as filled as before. A ball has no edges to leave out: the one it
+    // closes on is not drawn in either.
     m_viewport->setDisplayStyle(DisplayStyle::Shaded);
     const QImage shaded = m_viewport->grabFramebuffer();
     QVERIFY(qAbs(drawnFraction(shaded, background) - solid) < 0.02);
-    QVERIFY(differingFraction(withEdges, shaded) > 0.0005);
+    QVERIFY(differingFraction(withEdges, shaded) < 0.001);
 
     // Transparent: the same outline, with the background showing through.
     m_viewport->setDisplayStyle(DisplayStyle::Transparent);
@@ -576,6 +615,71 @@ void ViewportTest::displayStylesChangeHowBodiesAreDrawn() {
     m_document->removeBody(m_document->bodies()[0].id);
     m_document->addBody("Ball", lcad::kernel::makeSphere(40.0));
     QVERIFY(drawnFraction(m_viewport->grabFramebuffer(), background) < solid * 0.3);
+}
+
+void ViewportTest::roundSurfacesShowNoSeam_data() {
+    QTest::addColumn<int>("kind");
+    QTest::newRow("cylinder") << 0;
+    QTest::newRow("sphere") << 1;
+    QTest::newRow("torus") << 2;
+}
+
+void ViewportTest::roundSurfacesShowNoSeam() {
+    QFETCH(int, kind);
+    using namespace lcad::kernel;
+    // Each closes on the side that faces +X, so the seam is turned straight at the camera.
+    m_document->addBody("Round", kind == 0   ? makeCylinder(30.0, 60.0)
+                                 : kind == 1 ? makeSphere(30.0)
+                                             : makeTorus(30.0, 10.0));
+    render();
+    CameraState camera = m_viewport->cameraState();
+    camera.center = {0.0, 0.0, kind == 0 ? 30.0 : 0.0};
+    camera.eye = {500.0, 0.0, camera.center[2]};
+    camera.up = {0.0, 0.0, 1.0};
+    m_viewport->setCameraState(camera);
+    const QImage picture = m_viewport->grabFramebuffer();
+    keepFrame(picture, QString(QStringLiteral("viewport-seam-%1")).arg(kind).toLatin1().constData());
+
+    // Along a row across the seam the shade changes smoothly: no pixel stands out from those on
+    // either side, as a drawn line or a break in the shading would.
+    const QPointF seam = m_viewport->project(kind == 2 ? 40.0 : 30.0, 0.0, camera.center[2] + 5.0);
+    const double scale = m_viewport->devicePixelRatioF();
+    const int y = static_cast<int>(seam.y() * scale);
+    const int middle = static_cast<int>(seam.x() * scale);
+    double worst = 0.0;
+    for (int x = middle - 12; x <= middle + 12; ++x) {
+        const double here = QColor(picture.pixel(x, y)).valueF();
+        const double around =
+            (QColor(picture.pixel(x - 3, y)).valueF() + QColor(picture.pixel(x + 3, y)).valueF()) /
+            2.0;
+        worst = std::max(worst, std::abs(here - around));
+    }
+    QVERIFY2(worst < 0.02, qPrintable(QString::number(worst)));
+}
+
+void ViewportTest::aSeamIsNothingToPick() {
+    using namespace lcad::kernel;
+    m_document->addBody("Rod", makeCylinder(30.0, 60.0));
+    render();
+    m_viewport->setSelectionFilter(SelectionFilter::Edges);
+    CameraState camera = m_viewport->cameraState();
+    camera.center = {0.0, 0.0, 30.0};
+    camera.eye = {500.0, 0.0, 30.0};
+    camera.up = {0.0, 0.0, 1.0};
+    m_viewport->setCameraState(camera);
+    render();
+
+    // The middle of the side, where the seam runs: nothing there to be an edge.
+    const QPoint onTheSeam = m_viewport->project(30.0, 0.0, 30.0).toPoint();
+    QVERIFY(m_viewport->itemsAt(onTheSeam).empty());
+    // The rim is one, and there is one corner too few for it to have ends.
+    const QPoint onTheRim = m_viewport->project(30.0, 0.0, 60.0).toPoint();
+    const std::vector<SelectedItem> rim = m_viewport->itemsAt(onTheRim);
+    QVERIFY(!rim.empty());
+    QCOMPARE(rim.front().kind, SelectedItem::Kind::Edge);
+    m_viewport->setSelectionFilter(SelectionFilter::Vertices);
+    render();
+    QVERIFY(m_viewport->itemsAt(onTheRim).empty());
 }
 
 void ViewportTest::gridAndAxesCanBeSwitched() {

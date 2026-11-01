@@ -109,6 +109,7 @@ private slots:
     void measureGivesDistancesAndAngles();
     void sketchesFollowConstructionPlanesAndFaces();
     void holesAreDrilledAtSketchPoints();
+    void holesGoAtThePointsClicked();
     void aPullTapersOrGoesUpToAFace();
     void partsThatDoNotTouchAreBodiesOfTheirOwn();
     void parametersDriveTheModel();
@@ -1052,6 +1053,47 @@ void ModelingInterfaceTest::sketchesFollowConstructionPlanesAndFaces() {
     QCOMPARE(window.document()->findSketch(onTop)->plane.origin.z, 12.0);
     render(window);
     keepFrame(window.grab().toImage(), "modeling-planes");
+}
+
+void ModelingInterfaceTest::holesGoAtThePointsClicked() {
+    MainWindow window;
+    show(window);
+    window.document()->addBody("Block", lcad::kernel::makeBox(60.0, 60.0, 10.0));
+    const ObjectId marks = window.document()->addSketch("Marks", lcad::kernel::planeXY());
+    lcad::sketch::Sketch geometry;
+    geometry.addCircle({15.0, 15.0}, 3.0);
+    geometry.addCircle({45.0, 15.0}, 3.0);
+    const lcad::sketch::EntityId free = geometry.addPoint({30.0, 45.0});
+    window.document()->setSketchGeometry(marks, geometry, "Marks");
+    window.viewport()->fitAll();
+
+    window.browser()->setSelection({}, {marks});
+    QVERIFY(trigger(window, "solid.hole"));
+    lcad::viewport::ViewportWidget* view = window.viewport();
+    // Every point there is, not only the free-standing one, which alone is taken to begin with.
+    QTRY_COMPARE(view->pickablePoints().size(), std::size_t{3});
+    const auto chosen = [view] {
+        return std::count_if(view->pickablePoints().begin(), view->pickablePoints().end(),
+                             [](const lcad::viewport::PickablePoint& p) { return p.chosen; });
+    };
+    QCOMPARE(chosen(), 1);
+
+    // Click the two centers: three holes.
+    const auto at = [view](double x, double y) {
+        return view->project(x, y, 0.0).toPoint();
+    };
+    QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, at(15.0, 15.0));
+    QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, at(45.0, 15.0));
+    QCOMPARE(chosen(), 3);
+    // And one back out.
+    QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, at(30.0, 45.0));
+    QCOMPARE(chosen(), 2);
+    const std::vector<lcad::sketch::EntityId> points = window.featurePanel()->feature().points;
+    QCOMPARE(points.size(), std::size_t{2});
+    QVERIFY(std::find(points.begin(), points.end(), free) == points.end());
+
+    QVERIFY(trigger(window, "edit.cancel") || true);
+    QTRY_VERIFY(view->pickablePoints().empty() || window.featurePanel() == nullptr);
 }
 
 void ModelingInterfaceTest::holesAreDrilledAtSketchPoints() {

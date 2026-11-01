@@ -419,7 +419,7 @@ kernel::NamedShape copiesOf(const Feature& feature, const Document& document,
     return result;
 }
 
-// Holes drilled into the body at the free-standing points of the feature's sketch.
+// Holes drilled into the body at the feature's points of its sketch.
 kernel::NamedShape drilled(const Feature& feature, const Document& document,
                            const kernel::NamedShape& body) {
     const std::string tag = tagOf(feature);
@@ -428,11 +428,8 @@ kernel::NamedShape drilled(const Feature& feature, const Document& document,
         throw FeatureFailure("The sketch that says where the holes go is gone.");
     }
     std::vector<const sketch::Entity*> points;
-    for (const sketch::Entity& entity : sketch->geometry.entities()) {
-        if (entity.kind == sketch::EntityKind::Point && entity.owner == 0 &&
-            entity.id != sketch->geometry.origin() && !entity.construction) {
-            points.push_back(&entity);
-        }
+    for (const sketch::EntityId id : holePoints(feature, *sketch)) {
+        points.push_back(sketch->geometry.find(id));
     }
     if (points.empty()) {
         throw FeatureFailure("Its sketch, " + sketch->name +

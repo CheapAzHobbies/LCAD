@@ -298,6 +298,52 @@ TEST_CASE("Sketches reopen with their plane, geometry, and constraints", "[docum
     }
 }
 
+TEST_CASE("A hole keeps the points it was given", "[document][file]") {
+    const TempDir directory;
+    const std::filesystem::path path = directory.file("holes.lcad");
+    Document document;
+    const ObjectId body = document.addBody("Block", makeBox(40.0, 40.0, 10.0));
+    const ObjectId marks = document.addSketch("Marks", lcad::kernel::planeXY());
+    lcad::sketch::Sketch geometry;
+    const lcad::sketch::EntityId first = geometry.addPoint({10.0, 10.0});
+    const lcad::sketch::EntityId second = geometry.addPoint({30.0, 30.0});
+    document.setSketchGeometry(marks, geometry, "Points");
+    Feature hole;
+    hole.kind = FeatureKind::Hole;
+    hole.sketch = marks;
+    hole.body = body;
+    hole.points = {second, first};
+    const ObjectId id = document.addFeature(hole);
+
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.document->findFeature(id)->points == hole.points);
+}
+
+TEST_CASE("A constraint's symbol stays where it was moved to", "[document][file]") {
+    const TempDir directory;
+    const std::filesystem::path path = directory.file("symbols.lcad");
+    Document document;
+    const ObjectId id = document.addSketch("Outline", lcad::kernel::planeXY());
+    lcad::sketch::Sketch geometry;
+    const lcad::sketch::EntityId line = geometry.addLine({0.0, 0.0}, {10.0, 0.0});
+    const lcad::sketch::EntityId other = geometry.addLine({0.0, 5.0}, {10.0, 6.0});
+    const lcad::sketch::ConstraintId level =
+        geometry.addConstraint(lcad::sketch::ConstraintKind::Horizontal, line);
+    const lcad::sketch::ConstraintId parallel =
+        geometry.addConstraint(lcad::sketch::ConstraintKind::Parallel, line, other);
+    geometry.setConstraintMarker(parallel, 1, 0.25, -1);
+    document.setSketchGeometry(id, std::move(geometry), "Draw");
+
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    const lcad::sketch::Sketch& read = loaded.document->findSketch(id)->geometry;
+    CHECK(read.findConstraint(parallel)->markerShift[1] == 0.25);
+    CHECK(read.findConstraint(parallel)->markerSide[1] == -1);
+    CHECK(read.findConstraint(parallel)->markerShift[0] == 0.0);
+    CHECK(read.findConstraint(level)->markerSide[0] == 0);
+}
+
 TEST_CASE("A document with a damaged sketch is refused", "[document][file]") {
     using Change = std::function<void(json&)>;
     struct Damage {

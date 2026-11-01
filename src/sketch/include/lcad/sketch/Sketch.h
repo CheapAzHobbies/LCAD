@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -108,6 +109,13 @@ struct Constraint {
     double value = 0.0;
     /// For Fix: the point's Y.
     double value2 = 0.0;
+    /// Where the symbol drawn for a constraint sits on each of the up to two curves it hangs on:
+    /// how far from the curve's middle, as a share of the curve, from -0.5 to 0.5. Nothing to do
+    /// with the geometry, and the solver does not look at it.
+    std::array<double, 2> markerShift{0.0, 0.0};
+    /// And on which side: for a line +1 is left of the way it runs and -1 right, for a circle or
+    /// an arc +1 is outside and -1 inside. 0 is where the symbol goes by itself.
+    std::array<int, 2> markerSide{0, 0};
 };
 
 enum class SolveStatus {
@@ -215,6 +223,9 @@ public:
     void removeConstraint(ConstraintId id);
     /// Changes a dimension's value. Does not solve.
     void setConstraintValue(ConstraintId id, double value);
+    /// Puts the symbol of a constraint elsewhere on the curve it hangs on: `index` is 0 or 1 for
+    /// the first or second of its curves. See Constraint::markerShift and markerSide.
+    void setConstraintMarker(ConstraintId id, int index, double shift, int side);
     [[nodiscard]] const std::vector<Constraint>& constraints() const { return m_constraints; }
     [[nodiscard]] const Constraint* findConstraint(ConstraintId id) const;
     /// What a dimension would read if it were measured now, whatever its stored value.

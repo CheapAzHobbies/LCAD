@@ -477,9 +477,11 @@ void Sketch::validate(const Constraint& c) const {
         ok = point(a) && point(b) && a != b;
         break;
     case ConstraintKind::PointOnLine:
-    case ConstraintKind::Midpoint:
     case ConstraintKind::PointLineDistance:
         ok = point(a) && line(b);
+        break;
+    case ConstraintKind::Midpoint:
+        ok = point(a) && (line(b) || isKind(b, EntityKind::Arc));
         break;
     case ConstraintKind::PointOnCircle:
         ok = point(a) && isRound(b);
@@ -564,6 +566,21 @@ void Sketch::removeConstraint(ConstraintId id) {
         throw std::invalid_argument("removeConstraint: there is no constraint " +
                                     std::to_string(id));
     }
+}
+
+void Sketch::setConstraintMarker(ConstraintId id, int index, double shift, int side) {
+    if (index < 0 || index > 1) {
+        throw std::invalid_argument("setConstraintMarker: a constraint has two symbols at most");
+    }
+    for (Constraint& constraint : m_constraints) {
+        if (constraint.id == id) {
+            constraint.markerShift[static_cast<std::size_t>(index)] = shift;
+            constraint.markerSide[static_cast<std::size_t>(index)] = side;
+            return;
+        }
+    }
+    throw std::invalid_argument("setConstraintMarker: there is no constraint " +
+                                std::to_string(id));
 }
 
 void Sketch::setConstraintValue(ConstraintId id, double value) {

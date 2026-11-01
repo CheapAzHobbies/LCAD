@@ -434,6 +434,21 @@ public:
         }
         case ConstraintKind::Midpoint: {
             const PointSlots p = point(block, c.first);
+            if (second->kind == EntityKind::Arc) {
+                const PointSlots center = point(block, second->center);
+                const PointSlots start = point(block, second->start);
+                const PointSlots end = point(block, second->end);
+                // On the arc, and as far from one end as from the other. So is the point opposite;
+                // tryConstraint() starts the point on the arc, and the solver stays near.
+                block.rows = 2;
+                block.evaluate = [=](const Dual* local, Dual* out) {
+                    out[0] = length(at(local, p) - at(local, center)) -
+                             length(at(local, start) - at(local, center));
+                    out[1] = length(at(local, p) - at(local, start)) -
+                             length(at(local, p) - at(local, end));
+                };
+                break;
+            }
             const auto [a, b] = line(block, c.second);
             block.rows = 2;
             block.evaluate = [=](const Dual* local, Dual* out) {

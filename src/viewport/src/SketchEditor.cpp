@@ -14,6 +14,7 @@
 #include <QPainterPath>
 #include <QRegularExpression>
 #include <QStyle>
+#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
@@ -42,6 +43,15 @@ constexpr double curveReach = 7.0;
 constexpr double dimensionOffset = 38.0;
 constexpr double arrowLength = 8.0;
 constexpr double markerSize = 14.0;
+// How far a symbol stands off the curve it hangs on.
+constexpr double markerOffset = 7.0;
+// A symbol dragged along a curve comes to rest in the middle from this near, in logical pixels.
+constexpr double markerCenterReach = 14.0;
+// The slot tool holds its direction to multiples of this.
+constexpr double slotAngleStep = pi / 12.0;
+// How long a flash stays on or off, and how many changes a red one lasts.
+constexpr int flashInterval = 130;
+constexpr int refusedFlashes = 8;
 
 Point2 operator+(Point2 a, Point2 b) {
     return {a.x + b.x, a.y + b.y};
@@ -214,12 +224,17 @@ struct Snap {
     // For the end of a line: level with, or straight above or below, where the line starts.
     bool horizontal = false;
     bool vertical = false;
+    // Held to a whole number of angle steps from where it starts.
+    bool locked = false;
 };
 
 // What is under the pointer.
 struct Hit {
     EntityId entity = 0;
     ConstraintId constraint = 0;
+    // Of a constraint's symbol that can be dragged along its curve: which of the two. -1 for one
+    // that cannot.
+    int marker = -1;
 };
 
 // How a constraint is drawn: a dimension with its lines and its value, or a small marker.
@@ -231,6 +246,9 @@ struct Annotation {
     QString text;
     QPainterPath lines;
     std::vector<QPolygonF> arrows;
+    // A symbol: which of the constraint's two, and on what. -1 for one that stays where it is.
+    int marker = -1;
+    EntityId on = 0;
 };
 
 // The sketch is drawn on a widget of its own that lies over the 3D view and lets the pointer
@@ -261,8 +279,11 @@ private:
 class SketchEditor::Impl {
 public:
     Impl(SketchEditor* editor, ViewportWidget* viewport)
-        : q(editor), view(viewport), overlay(new Overlay(viewport, editor)) {
+        : q(editor), view(viewport), overlay(new Overlay(viewport, editor)),
+          flashTimer(new QTimer(editor)) {
         overlay->hide();
+        flashTimer->setInterval(flashInterval);
+        QObject::connect(flashTimer, &QTimer::timeout, editor, [this] { flashTick(); });
     }
 
     SketchEditor* q;
@@ -285,6 +306,16 @@ public:
     std::vector<ConstraintId> selectedConstraints;
     EntityId hover = 0;
     ConstraintId hoverConstraint = 0;
+    // What the panel points at: the row the pointer is on, and the row that was clicked.
+    ConstraintId shown = 0;
+    ConstraintId pinned = 0;
+    // What stopped the last constraint from going in, for as long as it flashes.
+    std::vector<ConstraintId> refused;
+    int refusedLeft = 0;
+    QTimer* flashTimer = nullptr;
+    bool flashOn = false;
+    // Shift held: a tool that holds to angles leaves off.
+    bool freeAngle = false;
 
     // A tool at work: the places clicked so far, and where the pointer is.
     std::vector<Snap> clicks;
@@ -308,6 +339,11 @@ public:
     bool dragging = false;
     bool boxing = false;
     QPointF boxEnd;
+    // A constraint's symbol being dragged along its curve.
+    ConstraintId markerDrag = 0;
+    int markerDragIndex = 0;
+    double markerDragShift = 0.0;
+    int markerDragSide = 0;
     EntityId dragEntity = 0;
     Point2 dragLast;
     std::optional<sketch::Sketch> dragBefore;
@@ -354,6 +390,12 @@ public:
         }
         if (g.findConstraint(hoverConstraint) == nullptr) {
             hoverConstraint = 0;
+        }
+        if (g.findConstraint(shown) == nullptr) {
+            shown = 0;
+        }
+        if (g.findConstraint(pinned) == nullptr) {
+            pinned = 0;
         }
         if (g.find(chainEnd) == nullptr) {
             chainEnd = 0;
@@ -532,6 +574,74 @@ public:
         return ConstraintKind::Distance;
     }
 
+    // Whether a point lies inside a closed outline.
+    [[nodiscard]] static bool inside(const std::vector<Point2>& outline, Point2 p) {
+        bool in = false;
+        for (std::size_t i = 0, j = outline.size() - 1; i < outline.size(); j = i++) {
+            const Point2 a = outline[i];
+            const Point2 b = outline[j];
+            if ((a.y > p.y) != (b.y > p.y) &&
+                p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) {
+                in = !in;
+            }
+        }
+        return in;
+    }
+
+    // The side of a line a symbol goes by itself: away from the outline it is part of, which
+    // keeps the inside of a shape clear; for a line that bounds nothing, up on the screen.
+    [[nodiscard]] int sideOf(const sketch::Sketch& g, const Entity& line,
+                             const std::map<EntityId, std::vector<Point2>>& outlines) const {
+        const Point2 s = g.position(line.start);
+        const Point2 e = g.position(line.end);
+        const Point2 d = unit(e - s);
+        const Point2 left{-d.y, d.x};
+        const Point2 middle = (s + e) * 0.5;
+        if (const auto found = outlines.find(line.id); found != outlines.end()) {
+            const double step = std::max(apart(s, e) * 1e-3, 1e-6);
+            return inside(found->second, middle + left * step) ? -1 : 1;
+        }
+        const QPointF away = toWidget(middle + left * millimetersPerPixel()) - toWidget(middle);
+        return std::abs(away.y()) > 1e-3 ? (away.y() < 0.0 ? 1 : -1) : (away.x() > 0.0 ? 1 : -1);
+    }
+
+    [[nodiscard]] static bool symbolMoves(const Entity& entity) {
+        return entity.kind == EntityKind::Line || entity.kind == EntityKind::Arc ||
+               entity.kind == EntityKind::Circle;
+    }
+
+    // Where a constraint's symbol goes on a curve, and which way along it the next one beside it
+    // would be.
+    [[nodiscard]] std::pair<QPointF, QPointF>
+    symbolPlace(const sketch::Sketch& g, const Entity& entity, double shift, int side,
+                const std::map<EntityId, std::vector<Point2>>& outlines) const {
+        const double mm = millimetersPerPixel();
+        Point2 on;
+        Point2 out;
+        if (entity.kind == EntityKind::Line) {
+            const Point2 s = g.position(entity.start);
+            const Point2 e = g.position(entity.end);
+            const Point2 d = unit(e - s);
+            on = s + (e - s) * (0.5 + shift);
+            out = Point2{-d.y, d.x} * static_cast<double>(side != 0 ? side
+                                                                    : sideOf(g, entity, outlines));
+        } else {
+            const Stroke stroke = strokeOf(g, entity);
+            const double angle = entity.kind == EntityKind::Arc
+                                     ? stroke.from + stroke.sweep * (0.5 + shift)
+                                     : 0.75 * pi + 2.0 * pi * shift;
+            const Point2 radial = direction(angle);
+            on = stroke.center + radial * stroke.radius;
+            out = radial * (side < 0 ? -1.0 : 1.0);
+        }
+        const QPointF at = toWidget(on);
+        const QPointF away = toWidget(on + out * mm) - at;
+        const double length = std::max(std::hypot(away.x(), away.y()), 1e-9);
+        const QPointF unitAway = away / length;
+        return {at + unitAway * (markerSize / 2.0 + markerOffset),
+                QPointF(-unitAway.y(), unitAway.x())};
+    }
+
     [[nodiscard]] std::vector<Annotation> layout() const {
         std::vector<Annotation> annotations;
         if (!active() || item() == nullptr) {
@@ -549,8 +659,39 @@ public:
             path.moveTo(toWidget(from));
             path.lineTo(toWidget(to));
         };
-        // How many markers already hang on an entity, so that the next goes beside them.
-        std::map<EntityId, int> hung;
+        // How many markers already hang at a place, so that the next goes beside them. By where
+        // they are, not by entity: the ends of curves that meet at a corner are different points
+        // in one place, and their markers would lie exactly on top of each other.
+        std::map<std::pair<int, int>, int> hung;
+        // The outline each curve is part of, to tell the outside of a shape.
+        std::map<EntityId, std::vector<Point2>> outlines;
+        for (const sketch::Profile& profile : g.profiles()) {
+            const std::vector<Point2> polygon = g.outlinePolygon(profile.curves);
+            for (const EntityId curve : profile.curves) {
+                outlines[curve] = polygon;
+            }
+        }
+        // Where the things that matter now are: at a corner, every point there counts.
+        std::vector<Point2> spots;
+        const auto addSpot = [&g, &spots](EntityId id) {
+            const Entity* entity = g.find(id);
+            if (entity != nullptr && entity->kind == EntityKind::Point) {
+                spots.push_back({entity->x, entity->y});
+            }
+        };
+        addSpot(hover);
+        for (const EntityId id : selected) {
+            addSpot(id);
+        }
+        for (const EntityId id : pending) {
+            addSpot(id);
+        }
+        const auto atSpot = [&spots](const Entity* entity) {
+            return entity != nullptr && entity->kind == EntityKind::Point &&
+                   std::any_of(spots.begin(), spots.end(), [entity](Point2 spot) {
+                       return apart(spot, {entity->x, entity->y}) < 1e-6;
+                   });
+        };
 
         for (const Constraint& c : g.constraints()) {
             const Entity* first = g.find(c.first);
@@ -573,8 +714,10 @@ public:
                     };
                     const bool wanted =
                         concerns(c.first) || concerns(c.second) || concerns(first->owner) ||
-                        (second != nullptr && concerns(second->owner)) || c.id == hoverConstraint ||
-                        contains(selectedConstraints, c.id);
+                        (second != nullptr && concerns(second->owner)) || atSpot(first) ||
+                        atSpot(second) || c.id == hoverConstraint || c.id == shown ||
+                        c.id == pinned || contains(selectedConstraints, c.id) ||
+                        contains(refused, c.id);
                     if (!wanted) {
                         continue;
                     }
@@ -590,12 +733,31 @@ public:
                 if (both && second != nullptr) {
                     marked.push_back(second);
                 }
-                for (const Entity* entity : marked) {
-                    const int place = hung[entity->id]++;
-                    const QPointF at = toWidget(anchorOf(g, *entity)) +
-                                       QPointF(9.0 + place * (markerSize + 2.0), -markerSize - 6.0);
+                for (std::size_t i = 0; i < marked.size(); ++i) {
+                    const Entity* entity = marked[i];
                     Annotation marker = a;
-                    marker.rect = QRectF(at, QSizeF(markerSize, markerSize));
+                    if (symbolMoves(*entity)) {
+                        const auto index = static_cast<int>(i);
+                        const bool dragged = c.id == markerDrag && index == markerDragIndex;
+                        const auto [center, beside] = symbolPlace(
+                            g, *entity, dragged ? markerDragShift : c.markerShift[i],
+                            dragged ? markerDragSide : c.markerSide[i], outlines);
+                        const int place = hung[{qRound(center.x()), qRound(center.y())}]++;
+                        // One to this side, the next to that, around the middle.
+                        const double aside = (place + 1) / 2 * (place % 2 == 0 ? -1.0 : 1.0);
+                        const QPointF at = center + beside * aside * (markerSize + 2.0);
+                        marker.rect =
+                            QRectF(at - QPointF(markerSize, markerSize) / 2.0,
+                                   QSizeF(markerSize, markerSize));
+                        marker.marker = index;
+                        marker.on = entity->id;
+                    } else {
+                        const QPointF anchor = toWidget(anchorOf(g, *entity));
+                        const int place = hung[{qRound(anchor.x()), qRound(anchor.y())}]++;
+                        const QPointF at =
+                            anchor + QPointF(9.0 + place * (markerSize + 2.0), -markerSize - 6.0);
+                        marker.rect = QRectF(at, QSizeF(markerSize, markerSize));
+                    }
                     annotations.push_back(marker);
                 }
                 continue;
@@ -768,6 +930,7 @@ public:
             for (auto it = annotations.rbegin(); it != annotations.rend(); ++it) {
                 if (it->rect.adjusted(-2.0, -2.0, 2.0, 2.0).contains(position)) {
                     hit.constraint = it->id;
+                    hit.marker = it->marker;
                     return hit;
                 }
             }
@@ -794,10 +957,10 @@ public:
             return snap;
         }
         for (const Entity& entity : g.entities()) {
-            if (entity.kind != EntityKind::Line) {
+            if (entity.kind != EntityKind::Line && entity.kind != EntityKind::Arc) {
                 continue;
             }
-            const Point2 middle = (g.position(entity.start) + g.position(entity.end)) * 0.5;
+            const Point2 middle = g.pointAt(entity.id, 0.5);
             const QPointF there = toWidget(middle);
             if (std::hypot(there.x() - position.x(), there.y() - position.y()) <= pointReach) {
                 snap.kind = Snap::Kind::Midpoint;
@@ -812,7 +975,19 @@ public:
             snap.position = sketch::nearestOn(g, curve, at);
             return snap;
         }
-        if (anchor.has_value() && tool == SketchTool::Line) {
+        if (anchor.has_value() && tool == SketchTool::Slot && clicks.size() == 1 && !freeAngle) {
+            const Point2 d = at - *anchor;
+            const double length = norm(d);
+            if (length > 1e-9) {
+                const auto steps = std::lround(std::atan2(d.y, d.x) / slotAngleStep);
+                snap.position = *anchor + direction(static_cast<double>(steps) * slotAngleStep) * length;
+                snap.locked = true;
+                snap.horizontal = steps % 12 == 0;
+                snap.vertical = steps % 12 == 6 || steps % 12 == -6;
+            }
+            return snap;
+        }
+        if (anchor.has_value() && tool == SketchTool::Line && !freeAngle) {
             const double reach = pointReach * millimetersPerPixel(position);
             const double dx = std::abs(at.x - anchor->x);
             const double dy = std::abs(at.y - anchor->y);
@@ -1116,6 +1291,11 @@ public:
         }
         attach(g, g.find(parts.firstArc)->center, first);
         attach(g, g.find(parts.secondArc)->center, second);
+        if (inference && second.horizontal) {
+            sketch::tryConstraint(g, ConstraintKind::Horizontal, parts.firstLine);
+        } else if (inference && second.vertical) {
+            sketch::tryConstraint(g, ConstraintKind::Vertical, parts.firstLine);
+        }
         commit(std::move(g), tr("Slot"));
         clicks.clear();
     }
@@ -1279,7 +1459,10 @@ public:
             return tr("%1 points").arg(clicks.size() + 1);
         case SketchTool::Slot:
             return clicks.size() == 1
-                       ? tr("%1 mm").arg(formatValue(apart(first, at)))
+                       ? tr("%1 mm  %2°")
+                             .arg(formatValue(apart(first, at)),
+                                  formatValue(turn(std::atan2(at.y - first.y, at.x - first.x)) *
+                                              180.0 / pi))
                        : tr("width %1 mm")
                              .arg(formatValue(2.0 * slotRadius(first, clicks[1].position, at)));
         default:
@@ -1293,6 +1476,7 @@ public:
         if (!at.has_value()) {
             return;
         }
+        const EntityId hoveredBefore = hoveredNow();
         const bool draws = tool == SketchTool::Line || tool == SketchTool::Rectangle ||
                            tool == SketchTool::Circle || tool == SketchTool::Arc ||
                            tool == SketchTool::Point || tool == SketchTool::Polygon ||
@@ -1321,6 +1505,32 @@ public:
             hover = takesPoints ? hitAt(position, true).entity : curveAt(position, curveReach);
         }
         cursorValid = true;
+        if (hoveredNow() != hoveredBefore) {
+            emit q->hoverChanged();
+        }
+    }
+
+    // What the pointer is on: under a drawing tool, what a click would land on.
+    [[nodiscard]] EntityId hoveredNow() const {
+        if (hover != 0) {
+            return hover;
+        }
+        return cursorValid && cursor.kind == Snap::Kind::Point ? cursor.entity : 0;
+    }
+
+    // Adds a point held at the middle of a line or an arc.
+    void addMiddlePoint(EntityId curve) {
+        sketch::Sketch g = geometry();
+        const Point2 middle = g.pointAt(curve, 0.5);
+        const EntityId made = g.addPoint(middle);
+        finishCurve(g, made);
+        const sketch::Outcome outcome =
+            sketch::tryConstraint(g, ConstraintKind::Midpoint, made, curve);
+        if (!outcome.ok()) {
+            emit q->message(refusalText(outcome.refusal, nameOf(ConstraintKind::Midpoint)));
+            return;
+        }
+        commit(std::move(g), nameOf(ConstraintKind::Midpoint));
     }
 
     void toolClick(const QPointF& position) {
@@ -1425,6 +1635,14 @@ public:
                 pending.clear();
                 break;
             }
+            // The same line or arc clicked again: a new point goes on its middle.
+            if (constraintKind == ConstraintKind::Midpoint && pending.size() == 1 &&
+                pending.front() == hover && g.find(hover)->kind != EntityKind::Point) {
+                const EntityId curve = hover;
+                pending.clear();
+                addMiddlePoint(curve);
+                break;
+            }
             if (!contains(pending, hover)) {
                 pending.push_back(hover);
             }
@@ -1451,10 +1669,10 @@ public:
                                   : sketch::extend(next, hover, cursor.position);
             if (done) {
                 hover = 0;
-                commit(std::move(next), tool == SketchTool::Trim ? tr("Trim") : tr("Extend"));
+                commit(std::move(next), tool == SketchTool::Trim ? tr("Cut") : tr("Extend"));
             } else {
                 emit q->message(tool == SketchTool::Trim
-                                    ? tr("Nothing crosses that curve, so there is nothing to trim.")
+                                    ? tr("Nothing crosses that curve, so there is nothing to cut.")
                                     : tr("That end meets no other curve if it is lengthened."));
             }
             break;
@@ -1568,7 +1786,7 @@ public:
         case ConstraintKind::Collinear:
             return tr("Collinear");
         case ConstraintKind::Fix:
-            return tr("Fix");
+            return tr("Lock");
         default:
             return tr("Dimension");
         }
@@ -1597,11 +1815,12 @@ public:
         case ConstraintKind::Concentric:
             return tr("Concentric takes two circles or arcs.");
         case ConstraintKind::Midpoint:
-            return tr("Midpoint takes a point and a line.");
+            return tr("Midpoint takes a point and a line or an arc. Or click a line or an arc "
+                      "twice for a new point at its middle.");
         case ConstraintKind::Symmetric:
             return tr("Symmetric takes two points and the line between them.");
         case ConstraintKind::Fix:
-            return tr("Fix takes a point.");
+            return tr("Lock takes a point.");
         default:
             return tr("A dimension takes a line, a circle, an arc, two points, a point and a "
                       "line, or two lines.");
@@ -1629,24 +1848,53 @@ public:
     bool applyChoices(const std::vector<sketch::ConstraintChoice>& choices, const QString& name) {
         sketch::Sketch g = geometry();
         int added = 0;
-        sketch::Refusal refused = sketch::Refusal::None;
+        sketch::Refusal refusal = sketch::Refusal::None;
         for (const sketch::ConstraintChoice& choice : choices) {
             const sketch::Outcome outcome = sketch::tryConstraint(
                 g, choice.kind, choice.first, choice.second, choice.third, choice.value);
             if (outcome.ok()) {
                 ++added;
             } else {
-                refused = outcome.refusal;
+                refusal = outcome.refusal;
+                flashWhatRefused(g, choice, outcome.refusal);
             }
         }
-        if (refused != sketch::Refusal::None) {
-            emit q->message(refusalText(refused, name));
+        if (refusal != sketch::Refusal::None) {
+            emit q->message(refusalText(refusal, name));
         }
         if (added == 0) {
             return false;
         }
         commit(std::move(g), name);
         return true;
+    }
+
+    // Flashes red what kept a constraint out, so that it can be seen, not just read about.
+    void flashWhatRefused(const sketch::Sketch& g, const sketch::ConstraintChoice& choice,
+                          sketch::Refusal refusal) {
+        if (refusal != sketch::Refusal::Redundant && refusal != sketch::Refusal::Conflicting) {
+            return;
+        }
+        refused = sketch::blockedBy(g, choice.kind, choice.first, choice.second, choice.third,
+                                    choice.value);
+        refusedLeft = refused.empty() ? 0 : refusedFlashes;
+        if (refusedLeft > 0) {
+            flashOn = true;
+            flashTimer->start();
+            update();
+        }
+    }
+
+    void flashTick() {
+        flashOn = !flashOn;
+        if (refusedLeft > 0 && --refusedLeft == 0) {
+            refused.clear();
+        }
+        if (refusedLeft == 0 && shown == 0 && pinned == 0) {
+            flashOn = false;
+            flashTimer->stop();
+        }
+        update();
     }
 
     // The distance the Dimension tool would add if its value were put where the pointer is,
@@ -1705,6 +1953,7 @@ public:
         const sketch::Outcome outcome = sketch::tryConstraint(
             g, choice->kind, choice->first, choice->second, choice->third, choice->value);
         if (!outcome.ok()) {
+            flashWhatRefused(g, *choice, outcome.refusal);
             emit q->message(outcome.refusal == sketch::Refusal::Redundant
                                 ? tr("That is already fixed by the other dimensions and "
                                      "constraints. A dimension there would over-constrain the "
@@ -1936,26 +2185,85 @@ public:
         dragBefore.reset();
     }
 
+    // Follows the pointer along the curve a symbol hangs on, to whichever side the pointer is on,
+    // coming to rest in the middle when it gets near.
+    void dragSymbolTo(const QPointF& position) {
+        const auto at = toSketch(position);
+        const sketch::Sketch& g = geometry();
+        const Constraint* c = g.findConstraint(markerDrag);
+        if (!at.has_value() || c == nullptr) {
+            return;
+        }
+        const Entity* entity = g.find(markerDragIndex == 0 ? c->first : c->second);
+        if (entity == nullptr) {
+            return;
+        }
+        const double mm = millimetersPerPixel();
+        double shift = 0.0;
+        double length = 0.0;
+        if (entity->kind == EntityKind::Line) {
+            const Point2 s = g.position(entity->start);
+            const Point2 e = g.position(entity->end);
+            length = apart(s, e);
+            const Point2 d = unit(e - s);
+            const Point2 fromStart = *at - s;
+            shift = (fromStart.x * d.x + fromStart.y * d.y) / length - 0.5;
+            markerDragSide = d.x * fromStart.y - d.y * fromStart.x >= 0.0 ? 1 : -1;
+        } else {
+            const Stroke stroke = strokeOf(g, *entity);
+            const Point2 fromCenter = *at - stroke.center;
+            const double angle = std::atan2(fromCenter.y, fromCenter.x);
+            const bool isArc = entity->kind == EntityKind::Arc;
+            const double middle = isArc ? stroke.from + stroke.sweep / 2.0 : 0.75 * pi;
+            const double sweep = isArc ? stroke.sweep : 2.0 * pi;
+            length = sweep * stroke.radius;
+            shift = wrap(angle - middle) / sweep;
+            markerDragSide = norm(fromCenter) >= stroke.radius ? 1 : -1;
+        }
+        shift = std::clamp(shift, -0.5, 0.5);
+        markerDragShift = std::abs(shift) * length < markerCenterReach * mm ? 0.0 : shift;
+        update();
+    }
+
+    void finishSymbolDrag() {
+        if (markerDrag != 0) {
+            sketch::Sketch next = geometry();
+            next.setConstraintMarker(markerDrag, markerDragIndex, markerDragShift, markerDragSide);
+            markerDrag = 0;
+            commit(std::move(next), tr("Move Constraint Symbol"));
+        }
+    }
+
     void selectInBox(const QRectF& box, bool add) {
         const sketch::Sketch& g = geometry();
         if (!add) {
             selected.clear();
             selectedConstraints.clear();
         }
+        const auto take = [this](EntityId id) {
+            if (!contains(selected, id)) {
+                selected.push_back(id);
+            }
+        };
+        // Curves that lie wholly in the box.
+        std::vector<EntityId> whole;
         for (const Entity& entity : g.entities()) {
-            if (entity.id == g.origin() || entity.owner != 0) {
+            if (entity.kind == EntityKind::Point) {
                 continue;
             }
-            bool inside = true;
-            if (entity.kind == EntityKind::Point) {
-                inside = box.contains(toWidget({entity.x, entity.y}));
-            } else {
-                // By its corners: a level line's box has no height, and is in no rectangle.
-                const QRectF bounds = pathOf(strokeOf(g, entity)).boundingRect();
-                inside = box.contains(bounds.topLeft()) && box.contains(bounds.bottomRight());
+            // By its corners: a level line's box has no height, and is in no rectangle.
+            const QRectF bounds = pathOf(strokeOf(g, entity)).boundingRect();
+            if (box.contains(bounds.topLeft()) && box.contains(bounds.bottomRight())) {
+                whole.push_back(entity.id);
+                take(entity.id);
             }
-            if (inside && !contains(selected, entity.id)) {
-                selected.push_back(entity.id);
+        }
+        // And points, whether free-standing or the ends and centers of curves. Those of a curve
+        // that is taken whole go with it: a constraint given to the selection is meant for it.
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind == EntityKind::Point && entity.id != g.origin() &&
+                !contains(whole, entity.owner) && box.contains(toWidget({entity.x, entity.y}))) {
+                take(entity.id);
             }
         }
     }
@@ -2031,13 +2339,46 @@ public:
         painter.setRenderHint(QPainter::Antialiasing);
 
         // What a constraint under the pointer, or a selected one, is about.
+        const auto withCurves = [&g](std::vector<EntityId>& ids, const Constraint& c) {
+            for (const EntityId id : {c.first, c.second, c.third}) {
+                const Entity* entity = g.find(id);
+                if (entity != nullptr) {
+                    ids.push_back(id);
+                    if (entity->owner != 0) {
+                        ids.push_back(entity->owner);
+                    }
+                }
+            }
+        };
         std::vector<EntityId> involved;
+        // Of those, what the panel points at, flashing and with its name on it. Not what is
+        // selected, for that is known: the row is about what it is joined to.
+        std::vector<EntityId> pointedAt;
+        std::vector<EntityId> named;
+        // And what kept a constraint out.
+        std::vector<EntityId> refusing;
         for (const Constraint& c : g.constraints()) {
             if (c.id == hoverConstraint || contains(selectedConstraints, c.id)) {
-                involved.insert(involved.end(), {c.first, c.second, c.third});
+                withCurves(involved, c);
+            }
+            if (c.id == shown || c.id == pinned) {
+                withCurves(involved, c);
+                withCurves(pointedAt, c);
+                for (const EntityId id : {c.first, c.second, c.third}) {
+                    if (g.find(id) != nullptr) {
+                        named.push_back(id);
+                    }
+                }
+            }
+            if (contains(refused, c.id)) {
+                withCurves(refusing, c);
             }
         }
         const auto colorOf = [&](const Entity& entity) {
+            if (flashOn && (contains(refusing, entity.id) ||
+                            (entity.owner != 0 && contains(refusing, entity.owner)))) {
+                return colors.sketchConflict;
+            }
             const EntityId top = entity.owner != 0 && entity.kind == EntityKind::Point &&
                                          !contains(selected, entity.id) && entity.id != hover &&
                                          !contains(pending, entity.id) &&
@@ -2111,7 +2452,9 @@ public:
             }
             const bool strong = contains(selected, entity.id) || entity.id == hover ||
                                 contains(pending, entity.id) || contains(involved, entity.id);
-            QPen pen(colorOf(entity), strong ? 2.6 : 1.7);
+            const bool pulsing = flashOn && contains(pointedAt, entity.id) &&
+                                 !contains(selected, entity.id);
+            QPen pen(colorOf(entity), pulsing ? 4.2 : strong ? 2.6 : 1.7);
             if (entity.construction) {
                 pen.setStyle(Qt::CustomDashLine);
                 pen.setDashPattern({6.0, 4.0});
@@ -2145,6 +2488,7 @@ public:
             const QPointF at = toWidget({entity.x, entity.y});
             const bool strong = contains(selected, entity.id) || entity.id == hover ||
                                 contains(pending, entity.id) || contains(involved, entity.id);
+            const bool pulsing = flashOn && contains(pointedAt, entity.id);
             const QColor color = colorOf(entity);
             if (entity.id == g.origin()) {
                 painter.setPen(QPen(strong ? color : colors.sketchReference, 1.6));
@@ -2156,7 +2500,7 @@ public:
             }
             painter.setPen(Qt::NoPen);
             painter.setBrush(color);
-            const double radius = strong ? 4.2 : 2.8;
+            const double radius = pulsing ? 6.0 : strong ? 4.2 : 2.8;
             painter.drawEllipse(at, radius, radius);
         }
 
@@ -2165,9 +2509,10 @@ public:
         for (const Annotation& a : layout()) {
             const bool conflicting = contains(state.conflicting, a.id);
             const bool isSelected = contains(selectedConstraints, a.id);
-            const bool isHovered = a.id == hoverConstraint;
+            const bool isHovered = a.id == hoverConstraint || a.id == shown || a.id == pinned;
+            const bool isRefusing = flashOn && contains(refused, a.id);
             QColor ink = colors.sketchDimension;
-            if (conflicting) {
+            if (conflicting || isRefusing) {
                 ink = colors.sketchConflict;
             } else if (isSelected) {
                 ink = colors.selection;
@@ -2195,11 +2540,31 @@ public:
             if (a.id == editing && field != nullptr) {
                 continue;
             }
-            painter.setPen(QPen(isSelected || isHovered || conflicting ? ink : colors.label, 1.0));
+            painter.setPen(QPen(isSelected || isHovered || conflicting || isRefusing
+                                    ? ink
+                                    : colors.label,
+                                1.0));
             painter.setBrush(colors.label);
             painter.drawRoundedRect(a.rect, 3.0, 3.0);
-            painter.setPen(conflicting ? colors.sketchConflict : colors.line);
+            painter.setPen(conflicting || isRefusing ? colors.sketchConflict : colors.line);
             painter.drawText(a.rect, Qt::AlignCenter, a.text);
+        }
+
+        // The names the panel's row uses, on what it means by them.
+        std::map<std::pair<int, int>, int> tagged;
+        const QFontMetricsF tagMetrics(labelFont());
+        for (const EntityId id : named) {
+            const Entity* entity = g.find(id);
+            const QPointF at = toWidget(anchorOf(g, *entity));
+            const int place = tagged[{qRound(at.x()), qRound(at.y())}]++;
+            const QString text = SketchEditor::entityName(g, id);
+            const QRectF box(at.x() + 12.0, at.y() + 10.0 + place * (tagMetrics.height() + 7.0),
+                             tagMetrics.horizontalAdvance(text) + 12.0, tagMetrics.height() + 4.0);
+            painter.setPen(QPen(colors.hover, 1.0));
+            painter.setBrush(colors.label);
+            painter.drawRoundedRect(box, 3.0, 3.0);
+            painter.setPen(colors.line);
+            painter.drawText(box, Qt::AlignCenter, text);
         }
 
         // The tool at work.
@@ -2255,7 +2620,7 @@ public:
             case Snap::Kind::None:
                 break;
             }
-            if ((cursor.horizontal || cursor.vertical) && !clicks.empty()) {
+            if ((cursor.horizontal || cursor.vertical || cursor.locked) && !clicks.empty()) {
                 // A guide through the start of the line, to say what it lined up with.
                 QPen guide(colors.preview, 1.0, Qt::DotLine);
                 painter.setPen(guide);
@@ -2473,6 +2838,14 @@ bool SketchEditor::constrain(sketch::ConstraintKind kind) {
         }
     } else if (const auto choice = sketch::constraintFor(g, kind, selected)) {
         choices.push_back(*choice);
+    }
+    if (kind == ConstraintKind::Midpoint && selected.size() == 1 && choices.empty()) {
+        const Entity* entity = g.find(selected.front());
+        if (entity != nullptr &&
+            (entity->kind == EntityKind::Line || entity->kind == EntityKind::Arc)) {
+            m_impl->addMiddlePoint(entity->id);
+            return true;
+        }
     }
     if (choices.empty()) {
         // Not a selection this constraint takes: wait for clicks instead.
@@ -2766,7 +3139,7 @@ QString SketchEditor::hint() const {
         return placed == 0 ? tr("Polygon: click the center") : tr("Polygon: click a corner");
     case SketchTool::Slot:
         return placed == 0   ? tr("Slot: click the first center")
-               : placed == 1 ? tr("Slot: click the second center")
+               : placed == 1 ? tr("Slot: click the second center. Hold Shift for any angle")
                              : tr("Slot: click to set the width");
     case SketchTool::Ellipse:
         return placed == 0   ? tr("Ellipse: click the center")
@@ -2790,7 +3163,7 @@ QString SketchEditor::hint() const {
         return tr("%1: %2").arg(Impl::nameOf(m_impl->constraintKind),
                                 Impl::needsOf(m_impl->constraintKind));
     case SketchTool::Trim:
-        return tr("Trim: click the part of a curve to remove");
+        return tr("Cut: click the part of a curve to remove");
     case SketchTool::Extend:
         return tr("Extend: click a line or an arc near the end to lengthen");
     case SketchTool::Offset:
@@ -2810,6 +3183,118 @@ sketch::EntityId SketchEditor::entityAt(const QPointF& position) const {
 
 sketch::ConstraintId SketchEditor::constraintAt(const QPointF& position) const {
     return isActive() ? m_impl->hitAt(position).constraint : 0;
+}
+
+QString SketchEditor::entityName(const sketch::Sketch& geometry, sketch::EntityId id) {
+    const Entity* entity = geometry.find(id);
+    if (entity == nullptr) {
+        return {};
+    }
+    if (id == geometry.origin()) {
+        return tr("Origin");
+    }
+    if (entity->kind == EntityKind::Point && entity->owner != 0) {
+        const Entity* owner = geometry.find(entity->owner);
+        if (owner == nullptr) {
+            return {};
+        }
+        const QString curve = entityName(geometry, owner->id);
+        if (id == owner->center) {
+            return tr("%1 center").arg(curve);
+        }
+        if (id == owner->start) {
+            return tr("%1 start").arg(curve);
+        }
+        if (id == owner->end) {
+            return tr("%1 end").arg(curve);
+        }
+        return tr("%1 point").arg(curve);
+    }
+    int number = 0;
+    for (const Entity& other : geometry.entities()) {
+        if (other.kind == entity->kind && other.owner == 0 && other.id != geometry.origin()) {
+            ++number;
+        }
+        if (other.id == id) {
+            break;
+        }
+    }
+    switch (entity->kind) {
+    case EntityKind::Point:
+        return tr("Point %1").arg(number);
+    case EntityKind::Line:
+        return tr("Line %1").arg(number);
+    case EntityKind::Circle:
+        return tr("Circle %1").arg(number);
+    case EntityKind::Arc:
+        return tr("Arc %1").arg(number);
+    case EntityKind::Ellipse:
+        return tr("Ellipse %1").arg(number);
+    case EntityKind::Spline:
+        return tr("Spline %1").arg(number);
+    }
+    return {};
+}
+
+sketch::EntityId SketchEditor::hoveredEntity() const {
+    return isActive() ? m_impl->hoveredNow() : 0;
+}
+
+sketch::ConstraintId SketchEditor::hoveredConstraint() const {
+    return isActive() ? m_impl->hoverConstraint : 0;
+}
+
+void SketchEditor::showConstraint(sketch::ConstraintId constraint) {
+    if (!isActive() || m_impl->shown == constraint) {
+        return;
+    }
+    m_impl->shown = constraint;
+    if (constraint != 0) {
+        m_impl->flashOn = true;
+        m_impl->flashTimer->start();
+    }
+    m_impl->update();
+}
+
+void SketchEditor::pinConstraint(sketch::ConstraintId constraint) {
+    if (!isActive() || m_impl->pinned == constraint) {
+        return;
+    }
+    m_impl->pinned = constraint;
+    if (constraint != 0) {
+        m_impl->flashOn = true;
+        m_impl->flashTimer->start();
+    }
+    m_impl->update();
+}
+
+sketch::ConstraintId SketchEditor::pinnedConstraint() const {
+    return isActive() ? m_impl->pinned : 0;
+}
+
+std::vector<sketch::ConstraintId> SketchEditor::refusedBy() const {
+    return m_impl->refused;
+}
+
+void SketchEditor::pointerLeft() {
+    if (!isActive() || (m_impl->hoveredNow() == 0 && m_impl->hoverConstraint == 0)) {
+        return;
+    }
+    m_impl->hover = 0;
+    m_impl->hoverConstraint = 0;
+    m_impl->cursorValid = false;
+    m_impl->update();
+    emit hoverChanged();
+}
+
+bool SketchEditor::removeConstraint(sketch::ConstraintId constraint) {
+    if (!isActive() || geometry().findConstraint(constraint) == nullptr) {
+        return false;
+    }
+    sketch::Sketch g = geometry();
+    g.removeConstraint(constraint);
+    m_impl->commit(std::move(g), tr("Delete"));
+    return true;
 }
 
 QString SketchEditor::constraintName(sketch::ConstraintKind kind) {
@@ -2865,6 +3350,12 @@ void SketchEditor::end() {
     m_impl->dragTransaction.reset();
     m_impl->pressed = false;
     m_impl->boxing = false;
+    m_impl->markerDrag = 0;
+    m_impl->shown = 0;
+    m_impl->pinned = 0;
+    m_impl->refused.clear();
+    m_impl->refusedLeft = 0;
+    m_impl->flashTimer->stop();
     m_impl->resetTool();
     m_impl->selected.clear();
     m_impl->selectedConstraints.clear();
@@ -2886,11 +3377,11 @@ void SketchEditor::documentChanged(const document::Change& change) {
 }
 
 void SketchEditor::mousePress(const QPointF& position, Qt::KeyboardModifiers modifiers) {
-    Q_UNUSED(modifiers)
     if (!isActive()) {
         return;
     }
     m_impl->lastPosition = position;
+    m_impl->freeAngle = modifiers.testFlag(Qt::ShiftModifier);
     if (m_impl->field != nullptr && m_impl->editing != 0) {
         m_impl->closeField();
     }
@@ -2908,11 +3399,11 @@ void SketchEditor::mousePress(const QPointF& position, Qt::KeyboardModifiers mod
 
 void SketchEditor::mouseMove(const QPointF& position, Qt::MouseButtons buttons,
                              Qt::KeyboardModifiers modifiers) {
-    Q_UNUSED(modifiers)
     if (!isActive()) {
         return;
     }
     m_impl->lastPosition = position;
+    m_impl->freeAngle = modifiers.testFlag(Qt::ShiftModifier);
     if (m_impl->tool != SketchTool::Select) {
         m_impl->moveCursor(position);
         m_impl->update();
@@ -2926,10 +3417,20 @@ void SketchEditor::mouseMove(const QPointF& position, Qt::MouseButtons buttons,
                 m_impl->startDrag();
             } else if (m_impl->pressHit.constraint == 0) {
                 m_impl->boxing = true;
+            } else if (m_impl->pressHit.marker >= 0) {
+                const Constraint* c = geometry().findConstraint(m_impl->pressHit.constraint);
+                const auto index = static_cast<std::size_t>(m_impl->pressHit.marker);
+                m_impl->markerDrag = c->id;
+                m_impl->markerDragIndex = m_impl->pressHit.marker;
+                m_impl->markerDragShift = c->markerShift[index];
+                m_impl->markerDragSide = c->markerSide[index];
             }
         }
         if (m_impl->dragging) {
             m_impl->dragTo(position);
+        }
+        if (m_impl->markerDrag != 0) {
+            m_impl->dragSymbolTo(position);
         }
         if (m_impl->boxing) {
             m_impl->boxEnd = position;
@@ -2942,6 +3443,7 @@ void SketchEditor::mouseMove(const QPointF& position, Qt::MouseButtons buttons,
         m_impl->hover = hit.entity;
         m_impl->hoverConstraint = hit.constraint;
         m_impl->update();
+        emit hoverChanged();
     }
 }
 
@@ -2952,6 +3454,10 @@ void SketchEditor::mouseRelease(const QPointF& position, Qt::KeyboardModifiers m
     m_impl->pressed = false;
     const bool add =
         modifiers.testFlag(Qt::ShiftModifier) || modifiers.testFlag(Qt::ControlModifier);
+    if (m_impl->markerDrag != 0) {
+        m_impl->finishSymbolDrag();
+        return;
+    }
     if (m_impl->dragging) {
         m_impl->finishDrag(true);
         m_impl->update();

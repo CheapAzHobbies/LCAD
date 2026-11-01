@@ -3,6 +3,7 @@
 #include <lcad/sketch/Edit.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -55,6 +56,9 @@ bool isLine(const Entity* entity) {
 }
 bool isPoint(const Entity* entity) {
     return entity != nullptr && entity->kind == EntityKind::Point;
+}
+bool isKind(const Entity* entity, EntityKind kind) {
+    return entity != nullptr && entity->kind == kind;
 }
 // An ellipse or a spline: a curve the tools that work things out exactly (crossings, trim,
 // offset) do not take.
@@ -423,6 +427,20 @@ std::vector<EntityId> entitiesAt(const Sketch& sketch, Point2 position, double t
     return found;
 }
 
+std::vector<EntityId> pointsTogether(const Sketch& sketch, EntityId point) {
+    const Entity* entity = sketch.find(point);
+    if (!isPoint(entity)) {
+        return {};
+    }
+    std::vector<EntityId> together;
+    for (const Entity& other : sketch.entities()) {
+        if (isPoint(&other) && std::hypot(other.x - entity->x, other.y - entity->y) <= 1e-6) {
+            together.push_back(other.id);
+        }
+    }
+    return together;
+}
+
 std::vector<Point2> intersections(const Sketch& sketch, EntityId first, EntityId second) {
     const Entity* a = sketch.find(first);
     const Entity* b = sketch.find(second);
@@ -635,9 +653,10 @@ std::optional<ConstraintChoice> constraintFor(const Sketch& sketch, ConstraintKi
         if (count != 2) {
             return std::nullopt;
         }
-        const auto [point, line] = ordered(isPoint);
-        if (isPoint(point) && isLine(line) && point->owner != line->id) {
-            return choice(tool, point, line);
+        const auto [point, curve] = ordered(isPoint);
+        if (isPoint(point) && (isLine(curve) || isKind(curve, EntityKind::Arc)) &&
+            point->owner != curve->id) {
+            return choice(tool, point, curve);
         }
         return std::nullopt;
     }
@@ -769,6 +788,14 @@ Outcome tryConstraint(Sketch& sketch, ConstraintKind kind, EntityId first, Entit
     Sketch work = sketch;
     ConstraintId added = 0;
     try {
+        // The middle of an arc: the solver looks near where a point is, and from just anywhere
+        // it could as well settle on the opposite side of the circle.
+        if (kind == ConstraintKind::Midpoint && isKind(sketch.find(second), EntityKind::Arc) &&
+            isPoint(sketch.find(first))) {
+            const Point2 here = sketch.position(first);
+            const Point2 middle = sketch.pointAt(second, 0.5);
+            work.dragBy(first, middle.x - here.x, middle.y - here.y);
+        }
         added = work.addConstraint(kind, first, second, third, value);
     } catch (const std::invalid_argument&) {
         outcome.refusal = Refusal::Invalid;
@@ -787,6 +814,42 @@ Outcome tryConstraint(Sketch& sketch, ConstraintKind kind, EntityId first, Entit
     outcome.constraint = added;
     outcome.result = after;
     return outcome;
+}
+
+std::vector<ConstraintId> blockedBy(const Sketch& sketch, ConstraintKind kind, EntityId first,
+                                    EntityId second, EntityId third, double value) {
+    const auto entitiesOf = [](EntityId a, EntityId b, EntityId c) {
+        std::array<EntityId, 3> sorted{a, b, c};
+        std::sort(sorted.begin(), sorted.end());
+        return sorted;
+    };
+    const auto wanted = entitiesOf(first, second, third);
+    for (const Constraint& c : sketch.constraints()) {
+        if (c.kind == kind && entitiesOf(c.first, c.second, c.third) == wanted) {
+            return {c.id};
+        }
+    }
+    std::vector<ConstraintId> blockers;
+    for (const Constraint& c : sketch.constraints()) {
+        Sketch without = sketch;
+        without.removeConstraint(c.id);
+        without.solve();
+        if (tryConstraint(without, kind, first, second, third, value).ok()) {
+            blockers.push_back(c.id);
+        }
+    }
+    if (isDimension(kind)) {
+        std::vector<ConstraintId> dimensions;
+        for (const ConstraintId id : blockers) {
+            if (isDimension(sketch.findConstraint(id)->kind)) {
+                dimensions.push_back(id);
+            }
+        }
+        if (!dimensions.empty()) {
+            return dimensions;
+        }
+    }
+    return blockers;
 }
 
 Outcome tryDimensionValue(Sketch& sketch, ConstraintId dimension, double value) {
