@@ -35,7 +35,6 @@ using document::Operation;
 using kernel::Mesh;
 using sketch::ConstraintKind;
 
-constexpr double pi = 3.14159265358979323846;
 // How far a sketch's sizes go to round numbers: a thousandth of a millimeter.
 constexpr double roundTo = 0.001;
 // A rebuilt part has this much of the mesh's volume and its area, give or take.
@@ -96,7 +95,8 @@ std::vector<sketch::EntityId> draw(sketch::Sketch& g, const Outline& outline, do
     }
     // What a designer would have said, as far as it holds: the sketch moves if a size is changed.
     for (std::size_t i = 0; i < curves.size(); ++i) {
-        const sketch::Entity& entity = *g.find(curves[i]);
+        // A copy: a constraint that goes in can leave the sketch's own storage elsewhere.
+        const sketch::Entity entity = *g.find(curves[i]);
         if (entity.kind == sketch::EntityKind::Line) {
             const sketch::Point2 a = g.position(entity.start);
             const sketch::Point2 b = g.position(entity.end);

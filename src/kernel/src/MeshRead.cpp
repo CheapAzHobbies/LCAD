@@ -5,6 +5,7 @@
 #include <lcad/core/Path.h>
 #include <lcad/kernel/Error.h>
 
+#include <Standard_CString.hxx>
 #include <zip.h>
 
 #include <algorithm>
@@ -18,6 +19,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -46,13 +48,16 @@ std::string bytesOf(const std::filesystem::path& path, const std::string& operat
     return bytes;
 }
 
+// Four bytes as a binary STL file has them, the lowest first, whatever this machine does.
+std::uint32_t countAt(const char* bytes) {
+    const auto byte = [bytes](std::size_t i) {
+        return std::uint32_t{static_cast<unsigned char>(bytes[i])};
+    };
+    return byte(0) | (byte(1) << 8U) | (byte(2) << 16U) | (byte(3) << 24U);
+}
+
 float floatAt(const char* bytes) {
-    std::uint32_t raw = 0;
-    std::memcpy(&raw, bytes, sizeof raw);
-    if constexpr (std::endian::native == std::endian::big) {
-        raw = __builtin_bswap32(raw);
-    }
-    return std::bit_cast<float>(raw);
+    return std::bit_cast<float>(countAt(bytes));
 }
 
 bool isSpace(char c) {
@@ -74,9 +79,14 @@ std::optional<double> numberIn(std::string_view word) {
     if (!word.empty() && word.front() == '+') {
         word.remove_prefix(1);
     }
-    double value = 0.0;
-    const auto [end, code] = std::from_chars(word.data(), word.data() + word.size(), value);
-    if (code != std::errc{} || end != word.data() + word.size() || !std::isfinite(value)) {
+    if (word.empty()) {
+        return std::nullopt;
+    }
+    // Not the C library's: it reads numbers by the user's language, and a file's do not change.
+    const std::string text(word);
+    char* end = nullptr;
+    const double value = Strtod(text.c_str(), &end);
+    if (end != text.c_str() + text.size() || !std::isfinite(value)) {
         return std::nullopt;
     }
     return value;
@@ -92,11 +102,7 @@ bool sameWord(std::string_view word, std::string_view lowercase) {
 std::vector<Triangle> binaryStl(const std::string& bytes) {
     constexpr std::size_t header = 84;
     constexpr std::size_t record = 50;
-    std::uint32_t count = 0;
-    std::memcpy(&count, bytes.data() + 80, sizeof count);
-    if constexpr (std::endian::native == std::endian::big) {
-        count = __builtin_bswap32(count);
-    }
+    const std::uint32_t count = countAt(bytes.data() + 80);
     std::vector<Triangle> triangles;
     triangles.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
@@ -149,12 +155,7 @@ std::vector<Triangle> stl(const std::string& bytes, const std::string& operation
     // A binary file's size follows from the count in its header. A text file can start with the
     // word "solid", but so can a binary one, so the size is what tells them apart.
     if (bytes.size() >= 84) {
-        std::uint32_t count = 0;
-        std::memcpy(&count, bytes.data() + 80, sizeof count);
-        if constexpr (std::endian::native == std::endian::big) {
-            count = __builtin_bswap32(count);
-        }
-        if (84 + std::uint64_t{count} * 50 == bytes.size()) {
+        if (84 + std::uint64_t{countAt(bytes.data() + 80)} * 50 == bytes.size()) {
             return binaryStl(bytes);
         }
     }

@@ -313,9 +313,9 @@ std::unique_ptr<Surface> polished(std::unique_ptr<Surface> surface,
     for (int step = 0; step < steps; ++step) {
         residuals(*surface, residual);
         for (int p = 0; p < parameters; ++p) {
-            const std::unique_ptr<Surface> near = surface->stepped(p, h);
+            const std::unique_ptr<Surface> nearby = surface->stepped(p, h);
             Eigen::VectorXd moved(rows);
-            residuals(*near, moved);
+            residuals(*nearby, moved);
             jacobian.col(p) = (moved - residual) / h;
         }
         const Eigen::VectorXd change = jacobian.colPivHouseholderQr().solve(-residual);
@@ -824,20 +824,20 @@ private:
                 continue;
             }
             const double sizeLimit = m_patches[p].area * seedSizeRatio + 1e-12;
-            std::vector<Index> near{p};
+            std::vector<Index> nearby{p};
             for (const Patch::Neighbour& n : m_patches[p].neighbours) {
                 if (n.angle < smoothAngle && taken[n.patch] == 0 &&
                     m_patches[n.patch].area < sizeLimit) {
-                    near.push_back(n.patch);
+                    nearby.push_back(n.patch);
                 }
             }
-            if (near.size() < 2) {
+            if (nearby.size() < 2) {
                 continue;
             }
             // A second ring, for the surfaces that curve both ways and need more to go on.
-            std::vector<Index> wide = near;
-            for (std::size_t i = 1; i < near.size(); ++i) {
-                for (const Patch::Neighbour& n : m_patches[near[i]].neighbours) {
+            std::vector<Index> wide = nearby;
+            for (std::size_t i = 1; i < nearby.size(); ++i) {
+                for (const Patch::Neighbour& n : m_patches[nearby[i]].neighbours) {
                     if (n.angle < smoothAngle && taken[n.patch] == 0 &&
                         m_patches[n.patch].area < sizeLimit &&
                         std::find(wide.begin(), wide.end(), n.patch) == wide.end()) {
@@ -848,7 +848,7 @@ private:
             Found best;
             double bestArea = 0.0;
             for (const Candidate& candidate : candidates) {
-                const std::vector<Index>& seed = candidate.wide ? wide : near;
+                const std::vector<Index>& seed = candidate.wide ? wide : nearby;
                 if (seed.size() < candidate.fewest) {
                     continue;
                 }
