@@ -1814,25 +1814,25 @@ public:
         if (first.GetType() != second.GetType()) {
             return false;
         }
-        constexpr double near = 1e-7;
+        constexpr double within = 1e-7;
         const auto sameAxis = [](const gp_Ax1& p, const gp_Ax1& q) {
-            return p.IsCoaxial(q, 1e-7, near) || p.IsCoaxial(q.Reversed(), 1e-7, near);
+            return p.IsCoaxial(q, 1e-7, within) || p.IsCoaxial(q.Reversed(), 1e-7, within);
         };
         switch (first.GetType()) {
         case GeomAbs_Cylinder:
-            return std::abs(first.Cylinder().Radius() - second.Cylinder().Radius()) < near &&
+            return std::abs(first.Cylinder().Radius() - second.Cylinder().Radius()) < within &&
                    sameAxis(first.Cylinder().Axis(), second.Cylinder().Axis());
         case GeomAbs_Sphere:
-            return std::abs(first.Sphere().Radius() - second.Sphere().Radius()) < near &&
-                   first.Sphere().Location().IsEqual(second.Sphere().Location(), near);
+            return std::abs(first.Sphere().Radius() - second.Sphere().Radius()) < within &&
+                   first.Sphere().Location().IsEqual(second.Sphere().Location(), within);
         case GeomAbs_Torus:
-            return std::abs(first.Torus().MajorRadius() - second.Torus().MajorRadius()) < near &&
-                   std::abs(first.Torus().MinorRadius() - second.Torus().MinorRadius()) < near &&
-                   first.Torus().Location().IsEqual(second.Torus().Location(), near) &&
+            return std::abs(first.Torus().MajorRadius() - second.Torus().MajorRadius()) < within &&
+                   std::abs(first.Torus().MinorRadius() - second.Torus().MinorRadius()) < within &&
+                   first.Torus().Location().IsEqual(second.Torus().Location(), within) &&
                    sameAxis(first.Torus().Axis(), second.Torus().Axis());
         case GeomAbs_Cone:
-            return std::abs(first.Cone().SemiAngle() - second.Cone().SemiAngle()) < near &&
-                   first.Cone().Apex().IsEqual(second.Cone().Apex(), near) &&
+            return std::abs(first.Cone().SemiAngle() - second.Cone().SemiAngle()) < within &&
+                   first.Cone().Apex().IsEqual(second.Cone().Apex(), within) &&
                    sameAxis(first.Cone().Axis(), second.Cone().Axis());
         default:
             return false;

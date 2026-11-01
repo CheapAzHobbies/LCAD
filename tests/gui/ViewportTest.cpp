@@ -49,10 +49,10 @@ bool sameDirection(const QVector3D& a, const QVector3D& b) {
 }
 
 bool sameCamera(const CameraState& a, const CameraState& b) {
-    const auto near = [](const std::array<double, 3>& p, const std::array<double, 3>& q) {
+    const auto same = [](const std::array<double, 3>& p, const std::array<double, 3>& q) {
         return std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-6;
     };
-    return near(a.eye, b.eye) && near(a.center, b.center) && near(a.up, b.up) &&
+    return same(a.eye, b.eye) && same(a.center, b.center) && same(a.up, b.up) &&
            std::abs(a.scale - b.scale) < 1e-9;
 }
 
