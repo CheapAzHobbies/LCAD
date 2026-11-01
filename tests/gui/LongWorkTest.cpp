@@ -70,7 +70,8 @@ QPushButton* button(QWidget* in, const char* name) {
 std::size_t deep(std::size_t calls) {
     volatile char room[4096] = {};
     room[calls % sizeof(room)] = 1;
-    return calls == 0 ? static_cast<std::size_t>(room[0]) : deep(calls - 1) + room[calls % 4096];
+    const auto here = static_cast<std::size_t>(room[calls % sizeof(room)]);
+    return calls == 0 ? here : deep(calls - 1) + here;
 }
 
 } // namespace
