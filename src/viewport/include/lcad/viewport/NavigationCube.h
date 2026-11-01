@@ -50,6 +50,12 @@ public:
     [[nodiscard]] static std::vector<Part> parts();
     /// What a part is called: "Top", "Top + Front", "Top + Front + Right".
     [[nodiscard]] static QString nameOf(Part part);
+    /// The part looked straight at from this direction. Not valid if the view lies between parts.
+    [[nodiscard]] static Part partFacing(const QVector3D& from);
+    /// How far a spin around the line of sight goes from this direction, in radians: as far as it
+    /// takes for the cube to look the same again. A quarter turn at a face, a third at a corner, a
+    /// half at an edge, and a quarter when the view lies between them.
+    [[nodiscard]] static double spinStep(const QVector3D& from);
 
     /// Where the camera is: which ways the right of the screen and its top lie in the model.
     void setView(const QVector3D& right, const QVector3D& up);
@@ -74,6 +80,8 @@ public:
     [[nodiscard]] QRectF projectionButton() const;
     /// The arrow that turns the view a step: 0 up, 1 right, 2 down, 3 left.
     [[nodiscard]] QRectF arrow(int which) const;
+    /// The curved arrow that spins the view: 0 counter-clockwise, 1 clockwise.
+    [[nodiscard]] QRectF spinArrow(int which) const;
 
 signals:
     /// A part was clicked: look at the model from this direction.
@@ -85,6 +93,8 @@ signals:
     /// An arrow was clicked: turn the view this far around the right of the screen and its top,
     /// in radians.
     void turnAsked(double aroundRight, double aroundUp);
+    /// A curved arrow was clicked: spin what is on the screen around the line of sight.
+    void spinAsked(bool clockwise);
     /// The cube is being dragged, to turn the view freely. Positions are in the parent.
     void orbitStarted(const QPointF& position);
     void orbitMoved(const QPointF& position);
@@ -101,7 +111,18 @@ protected:
     bool event(QEvent* event) override;
 
 private:
-    enum class Control { None, Cube, Home, Projection, ArrowUp, ArrowRight, ArrowDown, ArrowLeft };
+    enum class Control {
+        None,
+        Cube,
+        Home,
+        Projection,
+        ArrowUp,
+        ArrowRight,
+        ArrowDown,
+        ArrowLeft,
+        SpinLeft,
+        SpinRight,
+    };
 
     [[nodiscard]] QPointF project(const QVector3D& point) const;
     [[nodiscard]] Control controlAt(const QPointF& position) const;
@@ -109,6 +130,7 @@ private:
     void hover(const QPointF& position);
     void drawFace(class QPainter& painter, int axis, int sign) const;
     void drawArrow(QPainter& painter, int which, bool lit) const;
+    void drawSpin(QPainter& painter, int which, bool lit) const;
     void drawButtons(QPainter& painter) const;
     void drawAxes(QPainter& painter) const;
 

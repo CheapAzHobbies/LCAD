@@ -1083,11 +1083,29 @@ public:
         turnToView(QVector3D(1.0F, -1.0F, 1.0F).normalized(), true);
     }
 
+    // Where the view is headed: a step taken while it turns adds to the one under way, and so
+    // lands where steps taken one after the other would.
+    [[nodiscard]] gp_Quaternion heading() const {
+        return turn != nullptr && turn->state() == QAbstractAnimation::Running ? turnTo
+                                                                                : orientation();
+    }
+
     // Turns the view around the right of the screen and its top.
     void turnBy(double aroundRight, double aroundUp) {
         gp_Quaternion aboutRight(gp_Vec(1.0, 0.0, 0.0), aroundRight);
         gp_Quaternion aboutUp(gp_Vec(0.0, 1.0, 0.0), aroundUp);
-        turnToOrientation(orientation().Multiplied(aboutRight).Multiplied(aboutUp), false);
+        turnToOrientation(heading().Multiplied(aboutRight).Multiplied(aboutUp), false);
+    }
+
+    // Spins the view around the line of sight, by as much as makes the cube look the same again.
+    // A camera spun one way spins what is on the screen the other way.
+    void spin(bool clockwise) {
+        const gp_Quaternion from = heading();
+        const gp_Vec back = from.Multiply(gp_Vec(0.0, 0.0, 1.0));
+        const double step = NavigationCube::spinStep(QVector3D(
+            static_cast<float>(back.X()), static_cast<float>(back.Y()), static_cast<float>(back.Z())));
+        const gp_Quaternion around(gp_Vec(0.0, 0.0, 1.0), clockwise ? step : -step);
+        turnToOrientation(from.Multiplied(around), false);
     }
 
     void followCamera() const {
@@ -2147,6 +2165,8 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     connect(m_impl->cube, &NavigationCube::homeChosen, this, [this] { m_impl->turnHome(); });
     connect(m_impl->cube, &NavigationCube::turnAsked, this,
             [this](double aroundRight, double aroundUp) { m_impl->turnBy(aroundRight, aroundUp); });
+    connect(m_impl->cube, &NavigationCube::spinAsked, this,
+            [this](bool clockwise) { m_impl->spin(clockwise); });
     connect(m_impl->cube, &NavigationCube::projectionToggled, this, [this] {
         setProjection(projection() == Projection::Perspective ? Projection::Orthographic
                                                               : Projection::Perspective);
