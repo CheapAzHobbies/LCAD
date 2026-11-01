@@ -23,7 +23,9 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFile>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QPushButton>
 #include <QSettings>
 #include <QSlider>
 #include <QTemporaryDir>
@@ -115,6 +117,7 @@ private slots:
     void operationsTakeWhatIsSelected();
     void gCodeIsRefusedWhenSomethingIsWrong();
     void rampsAndTabsAreOffered();
+    void toolsAreDefinedInThePanel();
     void setupsAreSavedAndUndone();
 
 private:
@@ -407,6 +410,81 @@ void ManufactureInterfaceTest::rampsAndTabsAreOffered() {
     QVERIFY(choose(OperationKind::Pocket) != nullptr);
     QVERIFY(ramp->isVisible());
     QVERIFY(!tabs->isVisible());
+}
+
+void ManufactureInterfaceTest::toolsAreDefinedInThePanel() {
+    MainWindow window;
+    show(window);
+    const ObjectId body = window.document()->addBody("Bracket", bracket());
+    window.setWorkspace(Workspace::Manufacture);
+    planBracket(window, body);
+    MachiningWorkspace* machining = window.machining();
+    QCOMPARE(window.document()->tools().size(), std::size_t{4});
+    auto* name = machining->findChild<QLineEdit*>(QStringLiteral("toolName"));
+    auto* kind = machining->findChild<QComboBox*>(QStringLiteral("toolKind"));
+    auto* diameter = machining->findChild<QDoubleSpinBox*>(QStringLiteral("toolDiameter"));
+    auto* point = machining->findChild<QDoubleSpinBox*>(QStringLiteral("toolTipAngle"));
+    auto* toolOfOperation = machining->findChild<QComboBox*>(QStringLiteral("operationTool"));
+    auto* add = machining->findChild<QPushButton*>(QStringLiteral("addTool"));
+    QVERIFY(name != nullptr && kind != nullptr && diameter != nullptr && point != nullptr);
+    QVERIFY(toolOfOperation != nullptr && add != nullptr);
+    QVERIFY(machining->shownTool() != nullptr);
+
+    // A new one, numbered after the others, and its sizes.
+    add->click();
+    QCOMPARE(window.document()->tools().size(), std::size_t{5});
+    QCOMPARE(machining->shownTool()->number, 5);
+    name->setText(QStringLiteral("10 mm mill"));
+    emit name->editingFinished();
+    diameter->setValue(10.0);
+    QCOMPARE(machining->shownTool()->name, std::string("10 mm mill"));
+    QCOMPARE(machining->shownTool()->diameter, 10.0);
+
+    // Offered to the operations at once, and the contour stands off by its radius.
+    const auto leftOfContour = [machining] {
+        double left = 1e300;
+        for (const lcad::cam::Move& move : machining->program().paths[2].moves) {
+            left = std::min(left, move.to.x);
+        }
+        return left;
+    };
+    machining->operationList()->setCurrentRow(2);
+    const int offered = toolOfOperation->findText(QStringLiteral("10 mm mill"));
+    QVERIFY(offered >= 0);
+    toolOfOperation->setCurrentIndex(offered);
+    emit toolOfOperation->activated(offered);
+    QVERIFY2(!machining->program().hasErrors(), qPrintable(machining->problemsText()));
+    QVERIFY(qAbs(leftOfContour() + 5.0) < 1e-3);
+    // The toolpaths follow its size, and undo takes it back.
+    diameter->setValue(8.0);
+    QVERIFY(qAbs(leftOfContour() + 4.0) < 1e-3);
+    window.document()->undo();
+    QVERIFY(qAbs(leftOfContour() + 5.0) < 1e-3);
+    QCOMPARE(diameter->value(), 10.0);
+
+    // A drill has a point.
+    QVERIFY(!point->isVisible());
+
+    // In use, it stays; once it is not, it can go.
+    QVERIFY(!machining->removeTool());
+    QCOMPARE(window.document()->tools().size(), std::size_t{5});
+    const int first = toolOfOperation->findData(
+        QVariant::fromValue<qulonglong>(window.document()->tools().front().id.value));
+    toolOfOperation->setCurrentIndex(first);
+    emit toolOfOperation->activated(first);
+    QVERIFY(machining->removeTool());
+    QCOMPARE(window.document()->tools().size(), std::size_t{4});
+    QVERIFY(machining->shownTool() != nullptr);
+    window.document()->undo();
+    QCOMPARE(window.document()->tools().size(), std::size_t{5});
+
+    // What kind it is, which the checks go by.
+    machining->addTool();
+    const int drilling = kind->findData(static_cast<int>(lcad::document::ToolKind::Drill));
+    kind->setCurrentIndex(drilling);
+    emit kind->activated(drilling);
+    QCOMPARE(machining->shownTool()->kind, lcad::document::ToolKind::Drill);
+    QVERIFY(point->isVisible());
 }
 
 void ManufactureInterfaceTest::setupsAreSavedAndUndone() {

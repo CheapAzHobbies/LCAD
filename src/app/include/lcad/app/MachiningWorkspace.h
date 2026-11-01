@@ -62,6 +62,13 @@ public:
     /// Gives the operation selected these faces to work on.
     void setTargets(const std::vector<document::OperationTarget>& targets);
 
+    /// The tool shown in the panel, or nullptr.
+    [[nodiscard]] const document::Tool* shownTool() const;
+    /// Adds a tool and shows it, for its sizes to be set.
+    void addTool();
+    /// Removes the tool shown. Returns false, and says why, if an operation uses it.
+    bool removeTool();
+
     /// What the setup comes to now.
     [[nodiscard]] const cam::Program& program() const { return m_program; }
 
@@ -104,6 +111,7 @@ private:
     void change(const document::Setup& setup, const QString& label);
     void editOperation(const QString& label,
                        const std::function<void(document::MachiningOperation&)>& edit);
+    void editTool(const std::function<void(document::Tool&)>& edit);
     void showSimulationAt(std::size_t move);
     void showTool();
     /// The part as the simulation holds the tool to.
@@ -114,6 +122,7 @@ private:
     document::Document::ListenerId m_listener = 0;
     document::ObjectId m_current;
     document::ObjectId m_selected;
+    document::ObjectId m_toolShown;
     bool m_shown = false;
     bool m_filling = false;
     cam::Program m_program;
@@ -137,6 +146,16 @@ private:
     QDoubleSpinBox* m_maxFeed;
     QDoubleSpinBox* m_maxSpindle;
     QCheckBox* m_arcs;
+    QComboBox* m_toolBox = nullptr;
+    QFormLayout* m_toolForm = nullptr;
+    QLineEdit* m_toolName = nullptr;
+    QComboBox* m_toolKind = nullptr;
+    QDoubleSpinBox* m_toolDiameter = nullptr;
+    QDoubleSpinBox* m_toolFluteLength = nullptr;
+    QDoubleSpinBox* m_toolStickout = nullptr;
+    QDoubleSpinBox* m_toolTipAngle = nullptr;
+    QDoubleSpinBox* m_toolNumber = nullptr;
+    QPushButton* m_toolRemove = nullptr;
     QListWidget* m_operations;
     QGroupBox* m_operationBox;
     QFormLayout* m_operationForm = nullptr;
