@@ -71,7 +71,14 @@ struct SimulationReport {
     std::vector<Problem> problems;
 
     [[nodiscard]] double seconds() const { return cuttingSeconds + rapidSeconds; }
+    /// It was stopped before it got to the end, which is as good as an error: what came after
+    /// has not been checked.
+    bool stopped = false;
+
     [[nodiscard]] bool hasErrors() const {
+        if (stopped) {
+            return true;
+        }
         for (const Problem& problem : problems) {
             if (problem.severity == Problem::Severity::Error) {
                 return true;

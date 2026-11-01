@@ -725,7 +725,9 @@ TEST_CASE("The preview image is stored and can be read on its own", "[document][
     Document document;
     document.addBody("Box", makeBox(1.0, 2.0, 3.0));
 
-    saveDocument(document, path, SaveOptions{image, {}, {}});
+    SaveOptions options;
+    options.thumbnailPng = image;
+    saveDocument(document, path, options);
 
     CHECK(readThumbnail(path) == image);
     CHECK(loadDocument(path).document->bodies().size() == 1);
@@ -999,4 +1001,28 @@ TEST_CASE("A file with solids apart in one body opens with a body for each", "[d
     // That is not a change of the user's.
     CHECK_FALSE(loaded.document->isModified());
     CHECK_FALSE(loaded.document->canUndo());
+}
+
+TEST_CASE("A copy can leave out the feature that could not be built", "[document][file]") {
+    const TempDir directory;
+    const std::filesystem::path path = directory.file("recovered.lcad");
+    Document document;
+    const ObjectId sketch = document.addSketch("Square", lcad::kernel::planeXY());
+    lcad::sketch::Sketch square;
+    (void)lcad::sketch::addRectangle(square, {0.0, 0.0}, {10.0, 10.0});
+    document.setSketchGeometry(sketch, square, "Rectangle");
+    Feature pull;
+    pull.kind = FeatureKind::Pull;
+    pull.sketch = sketch;
+    pull.distance = 5.0;
+    const ObjectId made = document.addFeature(pull);
+
+    SaveOptions options;
+    options.leftOut = made;
+    saveDocument(document, path, options);
+    // The document itself is as it was.
+    CHECK_FALSE(document.findFeature(made)->suppressed);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.document->findFeature(made)->suppressed);
+    CHECK(loaded.document->findBody(loaded.document->findFeature(made)->body)->shape.isNull());
 }

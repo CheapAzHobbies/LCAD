@@ -71,6 +71,23 @@ body leaves two bodies the same way, and so do pattern or mirror copies that do 
 original. Delete one body and the others stay; delete the Pull from the timeline and all of them
 go.
 
+### When something takes a long time
+
+LCAD never gives up on a hard shape by itself, and the window stays alive while it works. After a
+moment a small box says what it is working on and for how long. Leave it as long as you like, or
+click **Stop**:
+
+- A feature you stop keeps what it last came to, so the model stays as it was, and the timeline says
+  it was stopped. Change it, undo it, or choose **Build Again** on its menu in the timeline to give
+  it another go.
+- A preview you stop has not failed. **OK** still makes the feature, however long that takes.
+- Some work takes a while to notice. If it has not stopped after a few seconds, the box says so, and
+  you can keep waiting or choose **Save and Close LCAD**. Your work comes back the next time you
+  start LCAD, with that one step left out.
+
+If the geometry library crashes on a shape, LCAD catches it where it can: that feature is marked as
+failed, a copy of your work is kept, and you are told to save and restart.
+
 **Revolve** turns closed areas about a line of the same sketch (draw that line as construction
 geometry if it is not part of the outline), an origin axis, or a construction axis: choose it
 under **Axis** in the panel. **Mirror**, **Rectangular Pattern**, and **Circular

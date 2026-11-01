@@ -3,6 +3,7 @@
 #include <lcad/drawing/Sheet.h>
 
 #include <lcad/kernel/Error.h>
+#include <lcad/kernel/Stop.h>
 #include <lcad/kernel/Transform.h>
 
 #include <algorithm>
@@ -826,6 +827,10 @@ struct SheetBuilder::Impl {
         }
 
         for (const DrawingView* viewPointer : ordered) {
+            if (kernel::stopRequested()) {
+                sheet.problems.push_back("It was stopped before all the views were drawn.");
+                break;
+            }
             const DrawingView& view = *viewPointer;
             const auto frame = frameOf(drawing, view);
             if (!frame.has_value()) {

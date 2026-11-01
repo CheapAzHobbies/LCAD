@@ -1620,7 +1620,9 @@ void saveDocument(const Document& document, const std::filesystem::path& path,
     }
     model["features"] = ordered_json::array();
     for (const Feature& feature : document.features()) {
-        model["features"].push_back(writeFeature(feature));
+        Feature written = feature;
+        written.suppressed = written.suppressed || feature.id == options.leftOut;
+        model["features"].push_back(writeFeature(written));
     }
     if (!document.parameters().empty()) {
         model["parameters"] = ordered_json::array();

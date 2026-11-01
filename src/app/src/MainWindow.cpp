@@ -35,6 +35,7 @@
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
+#include <lcad/kernel/Stop.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/Transform.h>
 #include <lcad/kernel/Version.h>
@@ -143,6 +144,7 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_viewport(new viewport::ViewportWidget(this)),
       m_commands(new CommandRegistry(this)) {
     installLongWork();
+    setLongWorkLastResort([this] { keepWhatCanBeKept(); });
     // Within the screen, with room for the title bar: Windows lets a window start larger than
     // it, with the bottom of the window behind the taskbar.
     resize(QSize(1280, 800).boundedTo(screen()->availableSize() - QSize(0, 40)));
@@ -466,6 +468,7 @@ MainWindow::MainWindow(QWidget* parent)
 }
 
 MainWindow::~MainWindow() {
+    setLongWorkLastResort({});
     // A command's panel would report to a window that is half gone.
     closeFeaturePanel();
     // The viewport and the panels are destroyed after the documents, as child widgets. Detach
@@ -2591,12 +2594,19 @@ bool MainWindow::loadFrom(const QString& path, QString* error) {
     }
     std::unique_ptr<document::Document> loaded;
     try {
-        document::LoadedDocument result = document::loadDocument(toPath(path));
+        document::LoadedDocument result;
+        runLongWork(tr("opening %1").arg(QFileInfo(path).fileName()),
+                    [&result, &path] { result = document::loadDocument(toPath(path)); });
         for (const std::string& warning : result.warnings) {
             m_loadWarnings.append(QString::fromStdString(warning));
         }
         loaded = std::move(result.document);
     } catch (const document::FileError& failure) {
+        if (error != nullptr) {
+            *error = QString::fromStdString(failure.what());
+        }
+        return false;
+    } catch (const kernel::Error& failure) {
         if (error != nullptr) {
             *error = QString::fromStdString(failure.what());
         }
@@ -4389,22 +4399,31 @@ bool MainWindow::importGeometry(const QString& path, QString* error, QStringList
     const bool step = suffix == QStringLiteral("step") || suffix == QStringLiteral("stp");
     kernel::ImportResult read;
     QApplication::setOverrideCursor(Qt::WaitCursor);
+    kernel::clearStop();
     try {
-        if (iges) {
-            read = kernel::importIges(toPath(path));
-        } else {
-            try {
-                read = kernel::importStep(toPath(path));
-            } catch (const kernel::Error&) {
-                // A file whose name does not say what it is may still be IGES.
-                if (step) {
-                    throw;
-                }
+        runLongWork(tr("reading %1").arg(QFileInfo(path).fileName()), [&] {
+            if (iges) {
                 read = kernel::importIges(toPath(path));
+            } else {
+                try {
+                    read = kernel::importStep(toPath(path));
+                } catch (const kernel::Error&) {
+                    // A file whose name does not say what it is may still be IGES.
+                    if (step || kernel::stopRequested()) {
+                        throw;
+                    }
+                    read = kernel::importIges(toPath(path));
+                }
             }
-        }
+        });
     } catch (const kernel::Error& failure) {
         QApplication::restoreOverrideCursor();
+        if (kernel::stopRequested()) {
+            kernel::clearStop();
+            statusBar()->showMessage(tr("Stopped reading %1.").arg(QFileInfo(path).fileName()),
+                                     6000);
+            return false;
+        }
         return fail(tr("Could not %1.").arg(QString::fromStdString(failure.what())));
     }
     QApplication::restoreOverrideCursor();
@@ -4468,23 +4487,32 @@ bool MainWindow::exportGeometry(const QString& path, const ExportOptions& option
         bodies.push_back({body.name.toStdString(), body.shape});
     }
     QApplication::setOverrideCursor(Qt::WaitCursor);
+    kernel::clearStop();
     try {
-        switch (options.format) {
-        case ExportFormat::Step:
-            kernel::exportStep(bodies, toPath(path));
-            break;
-        case ExportFormat::Stl:
-            kernel::exportStl(bodies, toPath(path), options.mesh, options.stlEncoding);
-            break;
-        case ExportFormat::ThreeMf:
-            kernel::export3mf(bodies, toPath(path), options.mesh);
-            break;
-        case ExportFormat::Obj:
-            kernel::exportObj(bodies, toPath(path), options.mesh);
-            break;
-        }
+        runLongWork(tr("writing %1").arg(QFileInfo(path).fileName()), [&] {
+            switch (options.format) {
+            case ExportFormat::Step:
+                kernel::exportStep(bodies, toPath(path));
+                break;
+            case ExportFormat::Stl:
+                kernel::exportStl(bodies, toPath(path), options.mesh, options.stlEncoding);
+                break;
+            case ExportFormat::ThreeMf:
+                kernel::export3mf(bodies, toPath(path), options.mesh);
+                break;
+            case ExportFormat::Obj:
+                kernel::exportObj(bodies, toPath(path), options.mesh);
+                break;
+            }
+        });
     } catch (const kernel::Error& failure) {
         QApplication::restoreOverrideCursor();
+        if (kernel::stopRequested()) {
+            kernel::clearStop();
+            statusBar()->showMessage(tr("Stopped writing %1.").arg(QFileInfo(path).fileName()),
+                                     6000);
+            return false;
+        }
         return fail(tr("Could not %1.").arg(QString::fromStdString(failure.what())));
     } catch (const std::invalid_argument& failure) {
         QApplication::restoreOverrideCursor();

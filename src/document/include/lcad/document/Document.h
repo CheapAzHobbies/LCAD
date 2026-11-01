@@ -235,6 +235,10 @@ public:
     using WorkRunner =
         std::function<void(const std::string& name, const std::function<void()>& work)>;
     static void setWorkRunner(WorkRunner runner);
+    /// Runs a step of long work the way the interface wants it run.
+    static void runWork(const std::string& name, const std::function<void()>& step);
+    /// The feature being built this moment, if one is.
+    [[nodiscard]] ObjectId workingOn() const { return m_workingOn; }
 
     Document();
     /// Rebuilds a document from saved state, with an empty undo history and no unsaved changes.
@@ -694,8 +698,6 @@ private:
     };
 
     void record(Edit edit, const std::string& label);
-    /// Runs a step of long work the way the interface wants it run.
-    static void runWork(const std::string& name, const std::function<void()>& step);
     /// Makes a body for each solid that has none, as part of the step that split them.
     void settlePieces();
     /// The bodies that hold the solids a feature leaves past the first, in order.
@@ -800,6 +802,7 @@ private:
         std::string error;
     };
     std::unordered_map<ObjectId, Built> m_built;
+    ObjectId m_workingOn;
     std::unordered_map<ObjectId, PlaneState> m_planes;
     std::unordered_map<ObjectId, AxisState> m_axes;
     std::unordered_set<ObjectId> m_touched;

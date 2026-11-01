@@ -2,7 +2,18 @@
 
 #include <lcad/app/LongWork.h>
 
+#include <QtGlobal>
+
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#else
+#include <csetjmp>
+#include <csignal>
+#include <signal.h>
+#endif
+
 #include <lcad/document/Document.h>
+#include <lcad/kernel/Error.h>
 #include <lcad/kernel/Stop.h>
 
 #include <QApplication>
@@ -24,10 +35,13 @@
 #include <QVBoxLayout>
 #include <QWindow>
 
+#include <array>
 #include <cstddef>
 #include <cstdlib>
 #include <exception>
+#include <mutex>
 #include <utility>
+#include <vector>
 
 namespace lcad::app {
 
@@ -50,6 +64,97 @@ std::function<void()>& lastResort() {
     return keep;
 }
 
+// Whether a call came through without a fault: a wild pointer, or the stack running out. The
+// geometry library has such faults on hard shapes, and they would otherwise end the program with
+// everything the user has not saved. What it was in the middle of is lost, and it may have left
+// things in a bad way, so this is for keeping the program up long enough to save and say so.
+#if defined(Q_OS_WIN)
+
+int faultFilter(unsigned long code) {
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:
+    case EXCEPTION_STACK_OVERFLOW:
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+    case EXCEPTION_IN_PAGE_ERROR:
+        return EXCEPTION_EXECUTE_HANDLER;
+    default:
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+}
+
+bool cameThrough(void (*call)(void*), void* argument) {
+    __try {
+        call(argument);
+        return true;
+    } __except (faultFilter(GetExceptionCode())) {
+        return false;
+    }
+}
+
+#else
+
+constexpr std::array<int, 5> faults{SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT};
+// Where a signal handler can run when the stack has run out.
+constexpr std::size_t signalStack = 64 * 1024;
+
+thread_local sigjmp_buf* guarded = nullptr;
+std::array<struct sigaction, faults.size()>& previous() {
+    static std::array<struct sigaction, faults.size()> handlers{};
+    return handlers;
+}
+
+void onFault(int signal) {
+    if (guarded != nullptr) {
+        siglongjmp(*guarded, signal);
+    }
+    // Nothing to do with the work: as if this were not here.
+    for (std::size_t i = 0; i < faults.size(); ++i) {
+        if (faults[i] == signal) {
+            sigaction(signal, &previous()[i], nullptr);
+        }
+    }
+    raise(signal);
+}
+
+void watchForFaults() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        struct sigaction action {};
+        action.sa_handler = onFault;
+        action.sa_flags = SA_NODEFER | SA_ONSTACK;
+        sigemptyset(&action.sa_mask);
+        for (std::size_t i = 0; i < faults.size(); ++i) {
+            sigaction(faults[i], &action, &previous()[i]);
+        }
+    });
+}
+
+bool cameThrough(void (*call)(void*), void* argument) {
+    watchForFaults();
+    std::vector<char> room(signalStack);
+    stack_t stack{};
+    stack.ss_sp = room.data();
+    stack.ss_size = room.size();
+    stack_t before{};
+    sigaltstack(&stack, &before);
+
+    bool through = false;
+    sigjmp_buf here;
+    guarded = &here;
+    if (sigsetjmp(here, 1) == 0) {
+        call(argument);
+        through = true;
+    }
+    guarded = nullptr;
+
+    sigaltstack(&before, nullptr);
+    return through;
+}
+
+#endif
+
 class WorkThread final : public QThread {
 public:
     explicit WorkThread(const std::function<void()>& work) : m_work(work) {
@@ -57,19 +162,26 @@ public:
     }
 
     [[nodiscard]] std::exception_ptr failure() const { return m_failure; }
+    [[nodiscard]] bool faulted() const { return m_faulted; }
 
 protected:
     void run() override {
-        try {
-            m_work();
-        } catch (...) {
-            m_failure = std::current_exception();
-        }
+        m_faulted = !cameThrough(
+            [](void* self) {
+                auto* thread = static_cast<WorkThread*>(self);
+                try {
+                    thread->m_work();
+                } catch (...) {
+                    thread->m_failure = std::current_exception();
+                }
+            },
+            this);
     }
 
 private:
     const std::function<void()>& m_work;
     std::exception_ptr m_failure;
+    bool m_faulted = false;
 };
 
 class WorkBox final : public QDialog {
@@ -273,6 +385,14 @@ void runLongWork(const QString& name, const std::function<void()>& work) {
         qApp->removeEventFilter(&blocker);
     }
     running = false;
+    if (thread.faulted()) {
+        if (lastResort()) {
+            lastResort()();
+        }
+        throw kernel::Error(name.toStdString(),
+                            "the geometry library crashed. LCAD caught it and kept a copy of your "
+                            "work to recover, but save now and restart LCAD soon");
+    }
     if (thread.failure()) {
         std::rethrow_exception(thread.failure());
     }

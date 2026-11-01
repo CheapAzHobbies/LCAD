@@ -42,9 +42,10 @@ public:
 
     /// Writes a copy of a document, under `key`, which tells the documents of this session
     /// apart. `originalPath` is the file it belongs to (empty if none), `title` what it is
-    /// called. Returns false, and keeps the previous copy, if it cannot be written.
+    /// called. `leftOut`, if any, is a feature to leave out of the copy, for it to open at all.
+    /// Returns false, and keeps the previous copy, if it cannot be written.
     bool save(const QString& key, const document::Document& document, const QString& originalPath,
-              const QString& title);
+              const QString& title, document::ObjectId leftOut = {});
     /// Forgets the copy of a document: it was saved, or closed without its changes.
     void discard(const QString& key);
     /// Forgets every copy of this session and its folder: LCAD is closing properly.

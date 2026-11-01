@@ -5,6 +5,7 @@
 #include "Rebuild.h"
 
 #include <lcad/core/Expression.h>
+#include <lcad/kernel/Error.h>
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Stop.h>
 #include <lcad/sketch/Edit.h>
@@ -1240,6 +1241,9 @@ FeatureTrial Document::tryFeature(Feature feature) const {
     } catch (const detail::FeatureFailure& failure) {
         trial.result = {};
         trial.error = failure.what();
+    } catch (const kernel::Error& failure) {
+        trial.result = {};
+        trial.error = failure.reason();
     }
     if (kernel::stopRequested()) {
         trial = {};
@@ -2219,10 +2223,18 @@ void Document::rebuild() {
             const Feature given = resolved(feature);
             kernel::NamedShape result;
             std::vector<kernel::NamedShape> solids;
-            runWork(feature.name, [&] {
-                result = detail::evaluate(given, *this, state);
-                solids = detail::solidsOf(result, state, feature.body);
-            });
+            m_workingOn = feature.id;
+            try {
+                runWork(feature.name, [&] {
+                    result = detail::evaluate(given, *this, state);
+                    solids = detail::solidsOf(result, state, feature.body);
+                });
+            } catch (const kernel::Error& failure) {
+                // Not from the feature, which turns those into FeatureFailure: from running it.
+                m_workingOn = {};
+                throw detail::FeatureFailure(failure.reason());
+            }
+            m_workingOn = {};
             if (kernel::stopRequested()) {
                 throw detail::FeatureFailure(stoppedText);
             }

@@ -17,13 +17,17 @@ namespace lcad::app {
 /// kernel::requestStop(), and the work ends as soon as it next looks up. Should it not, the box
 /// offers to wait on, or to keep what can be kept and close LCAD.
 ///
+/// A fault in the work, such as a wild pointer in the geometry library or the stack running out,
+/// comes out as a kernel::Error, not as the end of the program. What was kept by
+/// setLongWorkLastResort() is kept then too, since things may not be sound after that.
+///
 /// Called from within long work, or from another thread, the work is simply done there.
 void runLongWork(const QString& name, const std::function<void()>& work);
 
 /// Has the document's long work go through runLongWork().
 void installLongWork();
 
-/// What to do if work that was asked to stop never does, before LCAD closes.
+/// What to do if work that was asked to stop never does, before LCAD closes, or if it faults.
 void setLongWorkLastResort(std::function<void()> keepWhatCanBeKept);
 
 /// How long work has to stop before the box says it has not, in milliseconds.

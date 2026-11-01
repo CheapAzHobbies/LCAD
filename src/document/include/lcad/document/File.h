@@ -33,6 +33,9 @@ struct SaveOptions {
     std::map<ObjectId, std::string> links;
     /// Likewise the stamps of the files they lead to (see Component::linkStamp).
     std::map<ObjectId, std::string> linkStamps;
+    /// A feature to write as suppressed, whatever it is: one that could not be built, in a copy
+    /// to recover work from, which would otherwise never open.
+    ObjectId leftOut;
 };
 
 /// Writes `document` to `path`, replacing any file there in one step: after a crash or power

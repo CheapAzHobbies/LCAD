@@ -22,11 +22,14 @@
 
 #include <lcad/document/Document.h>
 #include <lcad/document/SketchShapes.h>
+#include <lcad/kernel/Error.h>
 #include <lcad/kernel/Plane.h>
+#include <lcad/kernel/Stop.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/Transform.h>
 #include <lcad/kernel/occt/PlacementAccess.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
+#include <lcad/kernel/occt/Stoppable.h>
 #include <lcad/viewport/SketchEditor.h>
 
 #include <AIS_AnimationCamera.hxx>
@@ -40,6 +43,7 @@
 #include <Aspect_NeutralWindow.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRep_Builder.hxx>
@@ -64,6 +68,7 @@
 #include <SelectMgr_IndexedMapOfOwner.hxx>
 #include <SelectMgr_Selection.hxx>
 #include <Standard_Failure.hxx>
+#include <StdPrs_ToolTriangulatedShape.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TColStd_IndexedDataMapOfStringString.hxx>
 #include <TopoDS_Compound.hxx>
@@ -1530,6 +1535,33 @@ public:
     // `reshaped` for a body that was shown before with another shape: that one leaves the
     // camera alone even if it is the only body.
     // Shows a body at each visible appearance of its component where it is not shown yet.
+    // The triangles of a shape are worked out when it is first drawn, which on a big part takes
+    // far longer than anything else. Done here first they can be stopped, and the window stays
+    // alive. Stopped, the body goes undrawn, for drawing it would do the rest with no way out.
+    [[nodiscard]] bool meshedForDrawing(const document::Body& body) const {
+        const TopoDS_Shape& shape = kernel::occt::unwrap(body.shape);
+        const Handle(Prs3d_Drawer)& drawer = context->DefaultDrawer();
+        if (StdPrs_ToolTriangulatedShape::IsTessellated(shape, drawer)) {
+            return true;
+        }
+        kernel::clearStop();
+        try {
+            document::Document::runWork("drawing " + body.name, [&shape, &drawer] {
+                IMeshTools_Parameters parameters;
+                parameters.Deflection = StdPrs_ToolTriangulatedShape::GetDeflection(shape, drawer);
+                parameters.Angle = drawer->DeviationAngle();
+                parameters.InParallel = Standard_True;
+                const Handle(kernel::occt::Stoppable) stoppable = new kernel::occt::Stoppable();
+                const BRepMesh_IncrementalMesh mesher(shape, parameters, stoppable->Start());
+            });
+        } catch (const kernel::Error&) {
+            return false;
+        }
+        const bool stopped = kernel::stopRequested();
+        kernel::clearStop();
+        return !stopped;
+    }
+
     void showBody(const document::Body& body, bool reshaped = false) {
         if (context.IsNull() || body.shape.isNull() ||
             (body.id == previewReplaces && !previewGhost)) {
@@ -1546,6 +1578,9 @@ public:
                 continue;
             }
             const bool wasEmpty = bodyObjects.empty() && !reshaped;
+            if (!meshedForDrawing(body)) {
+                return;
+            }
             Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(body.shape));
             place(object, instance.placement);
             styleBody(object);

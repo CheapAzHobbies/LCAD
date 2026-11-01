@@ -3,6 +3,7 @@
 #include <lcad/app/LongWork.h>
 #include <lcad/app/MainWindow.h>
 #include <lcad/document/Document.h>
+#include <lcad/kernel/Error.h>
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Stop.h>
@@ -18,6 +19,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdlib>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -87,6 +89,8 @@ private slots:
     void workCanBeLetRunForAsLongAsItTakes();
     void nothingElseTakesInputMeanwhile();
     void workThatWillNotStopIsSaidToBe();
+    void aFaultInTheWorkDoesNotEndLcad();
+    void aFeatureThatCrashesIsAFeatureThatFails();
     void aFeatureIsStoppedFromTheWindow();
 };
 
@@ -222,6 +226,61 @@ void LongWorkTest::workThatWillNotStopIsSaidToBe() {
     });
     QVERIFY(offered);
     QVERIFY(waitHid);
+}
+
+void LongWorkTest::aFaultInTheWorkDoesNotEndLcad() {
+    int kept = 0;
+    lcad::app::setLongWorkLastResort([&kept] { ++kept; });
+    // A wild pointer, the stack running out, and the library giving up.
+    const auto faulting = [&kept](const std::function<void()>& fault) {
+        const int before = kept;
+        QVERIFY_THROWS_EXCEPTION(kernel::Error, runLongWork(QStringLiteral("Fault"), fault));
+        QCOMPARE(kept, before + 1);
+    };
+    faulting([] {
+        volatile int* nowhere = nullptr;
+        *nowhere = 1;
+    });
+    faulting([] { (void)deep(1000000000); });
+#if !defined(Q_OS_WIN)
+    // On Windows the runtime ends the program itself, with no fault to catch.
+    faulting([] { std::abort(); });
+#endif
+
+    // All of which leaves things working.
+    lcad::app::setLongWorkLastResort({});
+    bool done = false;
+    runLongWork(QStringLiteral("After"), [&done] { done = true; });
+    QVERIFY(done);
+}
+
+void LongWorkTest::aFeatureThatCrashesIsAFeatureThatFails() {
+    MainWindow window;
+    showAndWait(window);
+    Document* document = window.document();
+    const ObjectId sketch = document->addSketch("Square", kernel::planeXY());
+    lcad::sketch::Sketch square;
+    (void)lcad::sketch::addRectangle(square, {0.0, 0.0}, {10.0, 10.0});
+    document->setSketchGeometry(sketch, square, "Rectangle");
+    Feature pull;
+    pull.kind = FeatureKind::Pull;
+    pull.sketch = sketch;
+    pull.distance = 5.0;
+
+    Document::setWorkRunner([](const std::string& name, const std::function<void()>&) {
+        runLongWork(QString::fromStdString(name), [] {
+            volatile int* nowhere = nullptr;
+            *nowhere = 1;
+        });
+    });
+    const ObjectId made = document->addFeature(pull);
+    QVERIFY(
+        QString::fromStdString(document->featureError(made)).contains(QStringLiteral("crashed")));
+
+    // With the library well again, it builds.
+    lcad::app::installLongWork();
+    document->buildAgain(made);
+    QVERIFY(document->featureError(made).empty());
 }
 
 void LongWorkTest::aFeatureIsStoppedFromTheWindow() {

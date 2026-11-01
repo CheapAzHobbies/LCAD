@@ -2,6 +2,8 @@
 
 #include <lcad/cam/Simulation.h>
 
+#include <lcad/kernel/Stop.h>
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -119,6 +121,9 @@ struct Simulation::Impl {
     // The highest the part is over the middle of each cell.
     void rasterize(const kernel::Mesh& mesh) {
         for (const auto& triangle : mesh.triangles) {
+            if (kernel::stopRequested()) {
+                return;
+            }
             const Point& a = mesh.vertices[triangle[0]];
             const Point& b = mesh.vertices[triangle[1]];
             const Point& c = mesh.vertices[triangle[2]];
@@ -297,13 +302,19 @@ std::size_t Simulation::movesDone() const {
 
 void Simulation::runTo(std::size_t moves) {
     while (m_impl->done < std::min(moves, m_impl->steps.size())) {
+        if (kernel::stopRequested()) {
+            m_impl->report.stopped = true;
+            return;
+        }
         m_impl->runOne();
     }
 }
 
 SimulationReport Simulation::run() {
     runTo(m_impl->steps.size());
-    m_impl->measureWhatIsLeft();
+    if (!m_impl->report.stopped) {
+        m_impl->measureWhatIsLeft();
+    }
     return m_impl->report;
 }
 
