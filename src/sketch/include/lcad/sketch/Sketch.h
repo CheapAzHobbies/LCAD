@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -108,6 +109,13 @@ struct Constraint {
     double value = 0.0;
     /// For Fix: the point's Y.
     double value2 = 0.0;
+    /// Where the symbol drawn for a constraint sits on each of the up to two curves it hangs on:
+    /// how far from the curve's middle, as a share of the curve, from -0.5 to 0.5. Nothing to do
+    /// with the geometry, and the solver does not look at it.
+    std::array<double, 2> markerShift{0.0, 0.0};
+    /// And on which side: for a line +1 is left of the way it runs and -1 right, for a circle or
+    /// an arc +1 is outside and -1 inside. 0 is where the symbol goes by itself.
+    std::array<int, 2> markerSide{0, 0};
 };
 
 enum class SolveStatus {
@@ -144,15 +152,31 @@ struct Profile {
     double area = 0.0;
 };
 
+/// A piece of a curve, between two places where other curves cross it. On an arc or a circle it
+/// runs counter-clockwise from `start` to `end`.
+struct CurvePiece {
+    EntityId curve = 0;
+    Point2 start;
+    Point2 end;
+};
+
 /// A part of the plane to make a solid from: the inside of one closed outline, less the insides
-/// of the outlines that lie directly within it.
+/// of the outlines that lie directly within it. Where outlines cross, the areas they cut each
+/// other into are regions of their own.
 struct Region {
-    /// The outline around the region, as Profile::curves.
+    /// The outline around the region, as Profile::curves. For an area of outlines that cross,
+    /// the curves of `pieces`, each once.
     std::vector<EntityId> outer;
     /// The outlines of the holes in it.
     std::vector<std::vector<EntityId>> holes;
     /// The area of the region itself: what the outer outline encloses, less its holes.
     double area = 0.0;
+    /// For an area of outlines that cross: the pieces of curves around it, in order. Empty for
+    /// any other region, which is bounded by whole curves.
+    std::vector<CurvePiece> pieces;
+    /// What tells the region from every other, sorted: its curves, and where outlines cross,
+    /// which of them it lies in, after a 0. This is how a feature refers to it.
+    std::vector<EntityId> key;
 };
 
 /// A sketch. It is a value: copying one copies its geometry and constraints, which is how an
@@ -215,6 +239,9 @@ public:
     void removeConstraint(ConstraintId id);
     /// Changes a dimension's value. Does not solve.
     void setConstraintValue(ConstraintId id, double value);
+    /// Puts the symbol of a constraint elsewhere on the curve it hangs on: `index` is 0 or 1 for
+    /// the first or second of its curves. See Constraint::markerShift and markerSide.
+    void setConstraintMarker(ConstraintId id, int index, double shift, int side);
     [[nodiscard]] const std::vector<Constraint>& constraints() const { return m_constraints; }
     [[nodiscard]] const Constraint* findConstraint(ConstraintId id) const;
     /// What a dimension would read if it were measured now, whatever its stored value.
@@ -237,10 +264,13 @@ public:
 
     /// The closed outlines among the sketch's ordinary (not construction) curves.
     [[nodiscard]] std::vector<Profile> profiles() const;
-    /// The regions the closed outlines divide the plane into, one per outline, in the order of
-    /// profiles(). A circle inside a rectangle gives two: the rectangle with a round hole, and
-    /// the disc.
+    /// The regions the closed outlines divide the plane into. A circle inside a rectangle gives
+    /// two: the rectangle with a round hole, and the disc. Two circles that overlap give three:
+    /// each without the other, and what they share.
     [[nodiscard]] std::vector<Region> regions() const;
+    /// One region per outline, in the order of profiles(), whether outlines cross or not: what
+    /// a shape made of all the outlines is made of.
+    [[nodiscard]] std::vector<Region> outlineRegions() const;
     /// The points of a closed outline, in order around it, with arcs and circles cut into
     /// short chords. For telling what lies inside it, and for drawing it filled.
     [[nodiscard]] std::vector<Point2> outlinePolygon(const std::vector<EntityId>& curves) const;

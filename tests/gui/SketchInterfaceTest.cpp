@@ -24,6 +24,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
+#include <QFrame>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSpinBox>
@@ -96,6 +97,12 @@ private slots:
     void aRectangleIsDrawnConstrainedDimensionedSavedAndReopened();
     void escapeStepsBackAndDeleteRemovesWhatIsSelected();
     void thePanelShowsTheStateAndTheConstraints();
+    void thePanelIsAboutACornerAndKeepsItsSelection();
+    void thePanelFollowsThePointer();
+    void polygonSidesAreForThePolygonTool();
+    void buttonsSayTheirNames();
+    void groupNamesAreUnderTheTools();
+    void theViewKeepsItsSizeFromWorkspaceToWorkspace();
     void theBrowserListsSketches();
     void sketchesAreHiddenShownRenamedAndDeleted();
     void theContextMenuInASketchIsAboutTheSketch();
@@ -695,6 +702,163 @@ void SketchInterfaceTest::escapeStepsBackAndDeleteRemovesWhatIsSelected() {
     QCOMPARE(lines(geometry()).size(), std::size_t{2});
 }
 
+void SketchInterfaceTest::thePanelIsAboutACornerAndKeepsItsSelection() {
+    MainWindow window;
+    show(window);
+    const ObjectId id = startSketch(window);
+    lcad::app::SketchPanel* panel = window.sketchPanel();
+    const auto geometry = [&window, id]() -> const lcad::sketch::Sketch& {
+        return window.document()->findSketch(id)->geometry;
+    };
+    QVERIFY(trigger(window, "sketch.rectangle"));
+    click(window, at(window, 10.0, 10.0));
+    click(window, at(window, 70.0, 50.0));
+    trigger(window, "edit.cancel");
+    // A third line from one corner.
+    QVERIFY(trigger(window, "sketch.line"));
+    click(window, at(window, 10.0, 10.0));
+    click(window, at(window, -20.0, -20.0));
+    trigger(window, "edit.cancel");
+    trigger(window, "edit.cancel");
+    trigger(window, "edit.cancel");
+
+    // The corner clicked: everything that holds it, each saying what it joins.
+    click(window, at(window, 10.0, 10.0));
+    QCOMPARE(editor(window)->selectedEntities().size(), std::size_t{1});
+    const QStringList rows = panel->constraintRows();
+    QVERIFY2(rows.filter(QStringLiteral("Coincident")).size() >= 2,
+             qPrintable(rows.join(QStringLiteral(", "))));
+    QVERIFY2(rows.filter(QStringLiteral("Line 5")).size() >= 1,
+             qPrintable(rows.join(QStringLiteral(", "))));
+
+    // Clicked, a row stays shown in the sketch; clicked again, it lets go.
+    QFrame* row = nullptr;
+    for (QFrame* candidate : panel->findChildren<QFrame*>(QStringLiteral("constraintRow"))) {
+        // Rows from before the list was last filled may still be waiting to be deleted.
+        if (candidate->isVisible()) {
+            row = candidate;
+        }
+    }
+    QVERIFY(row != nullptr);
+    QTest::mouseClick(row, Qt::LeftButton, Qt::NoModifier, QPoint(5, 5));
+    QVERIFY(editor(window)->pinnedConstraint() != 0);
+    QVERIFY(row->property("pinned").toBool());
+    QTest::mouseClick(row, Qt::LeftButton, Qt::NoModifier, QPoint(5, 5));
+    QCOMPARE(editor(window)->pinnedConstraint(), lcad::sketch::ConstraintId{0});
+
+    // One disconnected, and the corner is still selected, for the next.
+    const std::vector<lcad::sketch::EntityId> selected = editor(window)->selectedEntities();
+    const auto before = geometry().constraints().size();
+    panel->removeConstraint(static_cast<int>(rows.indexOf(rows.filter(QStringLiteral("Line 5")).first())));
+    QCOMPARE(geometry().constraints().size(), before - 1);
+    QCOMPARE(editor(window)->selectedEntities(), selected);
+    QCOMPARE(panel->constraintRows().size(), rows.size() - 1);
+}
+
+void SketchInterfaceTest::thePanelFollowsThePointer() {
+    MainWindow window;
+    show(window);
+    startSketch(window);
+    lcad::app::SketchPanel* panel = window.sketchPanel();
+    QVERIFY(trigger(window, "sketch.rectangle"));
+    click(window, at(window, 10.0, 10.0));
+    click(window, at(window, 70.0, 50.0));
+    trigger(window, "edit.cancel");
+    trigger(window, "edit.cancel");
+    editor(window)->clearSelection();
+    QVERIFY(panel->constraintRows().isEmpty());
+
+    // With nothing selected, what the pointer is on is listed.
+    lcad::test::movePointer(window.viewport(), at(window, 40.0, 10.0));
+    QVERIFY(!panel->constraintRows().isEmpty());
+    lcad::test::movePointer(window.viewport(), QPoint(30, 30));
+    QVERIFY(panel->constraintRows().isEmpty());
+
+    // With a line selected, the rows about the end the pointer is on light up.
+    click(window, at(window, 40.0, 10.0));
+    QVERIFY(panel->litRows().size() >= 1);
+    lcad::test::movePointer(window.viewport(), QPoint(30, 30));
+    QVERIFY(panel->litRows().isEmpty());
+    lcad::test::movePointer(window.viewport(), at(window, 10.0, 10.0));
+    QCOMPARE(panel->litRows().size(), 1);
+    QVERIFY(panel->constraintRows()[panel->litRows().front()].startsWith(
+        QStringLiteral("Coincident")));
+}
+
+void SketchInterfaceTest::polygonSidesAreForThePolygonTool() {
+    MainWindow window;
+    show(window);
+    startSketch(window);
+    lcad::app::SketchPanel* panel = window.sketchPanel();
+    QVERIFY(!panel->sidesField()->isVisible());
+    QVERIFY(trigger(window, "sketch.line"));
+    QVERIFY(!panel->sidesField()->isVisible());
+    QVERIFY(trigger(window, "sketch.polygon"));
+    QVERIFY(panel->sidesField()->isVisible());
+    QVERIFY(trigger(window, "sketch.circle"));
+    QVERIFY(!panel->sidesField()->isVisible());
+}
+
+void SketchInterfaceTest::buttonsSayTheirNames() {
+    MainWindow window;
+    QCOMPARE(action(window, "sketch.trim")->toolTip(), QStringLiteral("Cut (T)"));
+    QCOMPARE(action(window, "sketch.offset")->toolTip(), QStringLiteral("Offset (O)"));
+    QCOMPARE(action(window, "sketch.project")->toolTip(), QStringLiteral("Project (P)"));
+    QCOMPARE(action(window, "sketch.mirror")->toolTip(), QStringLiteral("Mirror"));
+    QCOMPARE(action(window, "sketch.midpoint")->toolTip(), QStringLiteral("Midpoint"));
+    QCOMPARE(action(window, "sketch.collinear")->toolTip(), QStringLiteral("Collinear"));
+    QCOMPARE(action(window, "sketch.symmetric")->toolTip(), QStringLiteral("Symmetric"));
+    QCOMPARE(action(window, "sketch.fix")->toolTip(), QStringLiteral("Lock"));
+    // What it does in more words is where the eye goes next, not in the name.
+    QVERIFY(action(window, "sketch.trim")->statusTip().startsWith(QStringLiteral("Remove")));
+    // The old names still find them.
+    QCOMPARE(window.commands()->search(QStringLiteral("trim")).first().id,
+             QStringLiteral("sketch.trim"));
+    const auto finds = [&window](const char* word, const char* id) {
+        const auto matches = window.commands()->search(QLatin1String(word), 40);
+        return std::any_of(matches.begin(), matches.end(), [id](const auto& match) {
+            return match.id == QLatin1String(id);
+        });
+    };
+    QVERIFY(finds("lock", "sketch.fix"));
+    QVERIFY(finds("fix", "sketch.fix"));
+}
+
+void SketchInterfaceTest::groupNamesAreUnderTheTools() {
+    MainWindow window;
+    show(window);
+    startSketch(window);
+    auto* toolbar = window.findChild<QToolBar*>(QStringLiteral("sketchToolbar"));
+    QVERIFY(toolbar->isVisible());
+    const QWidget* captions = toolbar->findChild<QWidget*>(QStringLiteral("toolbarCaptions"));
+    QVERIFY(captions != nullptr);
+    QTRY_VERIFY(captions->isVisible());
+    QVERIFY(toolbar->rect().contains(captions->geometry()));
+    for (QAction* entry : toolbar->actions()) {
+        const QWidget* widget = toolbar->widgetForAction(entry);
+        if (widget != nullptr && widget->isVisible()) {
+            QVERIFY2(widget->geometry().bottom() <= captions->geometry().top(),
+                     qPrintable(entry->objectName()));
+        }
+    }
+}
+
+void SketchInterfaceTest::theViewKeepsItsSizeFromWorkspaceToWorkspace() {
+    MainWindow window;
+    show(window);
+    window.document()->addBody("Box", lcad::kernel::makeBox(40.0, 30.0, 20.0));
+    const int height = window.viewport()->height();
+    QVERIFY(trigger(window, "workspace.manufacture"));
+    QTest::qWait(50);
+    QCOMPARE(window.viewport()->height(), height);
+    QVERIFY(trigger(window, "workspace.design"));
+    QTest::qWait(50);
+    QCOMPARE(window.viewport()->height(), height);
+    startSketch(window);
+    QTest::qWait(50);
+    QCOMPARE(window.viewport()->height(), height);
+}
+
 void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
     MainWindow window;
     show(window);
@@ -724,9 +888,16 @@ void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
              qPrintable(panel->selectionText()));
     QStringList rows = panel->constraintRows();
     // Level, and joined to its neighbors at both ends.
-    QCOMPARE(rows.count(QStringLiteral("Horizontal")), 1);
-    QCOMPARE(rows.count(QStringLiteral("Coincident")), 2);
+    const auto starting = [&rows](const char* words) {
+        return rows.filter(QRegularExpression(QStringLiteral("^") + QLatin1String(words)));
+    };
+    QCOMPARE(starting("Horizontal").size(), 1);
+    QCOMPARE(starting("Coincident").size(), 2);
     QCOMPARE(rows.size(), 3);
+    // Each says what it is on, so that two of a kind can be told apart.
+    QCOMPARE(starting("Horizontal").first(), QStringLiteral("Horizontal · Line 1"));
+    QVERIFY2(starting("Coincident").first().contains(QStringLiteral("Line 1 ")),
+             qPrintable(rows.join(QStringLiteral(", "))));
 
     // Each row is on screen, with a button that removes its constraint.
     const QList<QToolButton*> removers =
@@ -739,7 +910,7 @@ void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
 
     // Take the Horizontal away with its button: the side can tilt again.
     const int before = static_cast<int>(geometry().constraints().size());
-    panel->removeConstraint(static_cast<int>(rows.indexOf(QStringLiteral("Horizontal"))));
+    panel->removeConstraint(static_cast<int>(rows.indexOf(starting("Horizontal").first())));
     QCOMPARE(static_cast<int>(geometry().constraints().size()), before - 1);
     QCOMPARE(panel->stateText(), QStringLiteral("5 degrees of freedom"));
     QVERIFY(action(window, "edit.undo")->text().contains(QStringLiteral("Delete")));
@@ -760,7 +931,7 @@ void SketchInterfaceTest::thePanelShowsTheStateAndTheConstraints() {
     QTest::keyClicks(editor(window)->valueField(), QStringLiteral("64"));
     QTest::keyClick(editor(window)->valueField(), Qt::Key_Return);
     editor(window)->setSelection({lines(geometry())[0].id});
-    QVERIFY2(panel->constraintRows().contains(QStringLiteral("Distance 64 mm")),
+    QVERIFY2(panel->constraintRows().contains(QStringLiteral("Length 64 mm · Line 1")),
              qPrintable(panel->constraintRows().join(QStringLiteral(", "))));
     // With nothing selected, Dimension becomes the tool, and the panel says what it waits for.
     editor(window)->clearSelection();

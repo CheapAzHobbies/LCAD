@@ -158,7 +158,8 @@ MachiningWorkspace::MachiningWorkspace(viewport::ViewportWidget* viewport, QWidg
     m_tool->setMinimumContentsLength(8);
     operationForm->addRow(tr("Tool"), m_tool);
     m_targets->setObjectName(QStringLiteral("secondary"));
-    m_targets->setWordWrap(true);
+    // Not word-wrapped. In Qt 6.4 a QFormLayout with a hidden row writes past the end of its own
+    // buffer if anything in it wraps, as this form would: see docs/TESTING.md.
     auto* use = new QPushButton(tr("Use Selected Faces"), this);
     use->setObjectName(QStringLiteral("useFaces"));
     operationForm->addRow(m_targets);

@@ -10,6 +10,7 @@
 #include <QWidget>
 
 class QCheckBox;
+class QFormLayout;
 class QLabel;
 class QPushButton;
 class QSpinBox;
@@ -30,6 +31,11 @@ namespace lcad::app {
 
 /// What one constraint is, with its value if it has one: "Parallel", "Distance 60 mm".
 [[nodiscard]] QString describeConstraint(const sketch::Constraint& constraint);
+
+/// The same, and what it is on, so that two of a kind can be told apart: "Horizontal · Line 2",
+/// "Length 60 mm · Line 1", "Coincident · Line 1 end, Line 2 start".
+[[nodiscard]] QString describeConstraint(const sketch::Sketch& geometry,
+                                         const sketch::Constraint& constraint);
 
 /// What the right-hand panel shows while a sketch is open: whether the sketch is fully
 /// constrained, what the tool in use waits for, the options of the drawing tools, what is
@@ -53,8 +59,11 @@ public:
     [[nodiscard]] QString promptText() const { return m_promptText; }
     /// What is said about the selection: "Line · length 40 mm", "3 items selected".
     [[nodiscard]] QString selectionText() const;
-    /// The constraints listed for the selection, as the user reads them.
+    /// The constraints listed for the selection, or with nothing selected for what the pointer
+    /// is on, as the user reads them.
     [[nodiscard]] QStringList constraintRows() const { return m_rows; }
+    /// The rows that are lit, for being about what the pointer is on in the sketch.
+    [[nodiscard]] QList<int> litRows() const;
     /// Removes the constraint in a row of the list, as its button does.
     void removeConstraint(int row);
 
@@ -68,6 +77,8 @@ signals:
 
 private:
     void rebuildConstraints();
+    /// Lights the rows about what the pointer is on, and the one that was clicked.
+    void markRows();
 
     viewport::SketchEditor* m_editor;
     QLabel* m_heading;
@@ -79,10 +90,12 @@ private:
     QCheckBox* m_inference;
     QCheckBox* m_construction;
     QSpinBox* m_sides;
+    QFormLayout* m_sidesForm = nullptr;
     QVBoxLayout* m_constraintList;
     QPushButton* m_finish;
     QStringList m_rows;
     std::vector<sketch::ConstraintId> m_listed;
+    std::vector<QWidget*> m_rowWidgets;
     // What the list was last built from, so that it is rebuilt only when that changes.
     QString m_signature;
 };

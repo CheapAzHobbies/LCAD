@@ -164,6 +164,30 @@ public:
     [[nodiscard]] sketch::ConstraintId constraintAt(const QPointF& position) const;
     /// The name a kind of constraint goes by in the interface: "Parallel", "Distance".
     [[nodiscard]] static QString constraintName(sketch::ConstraintKind kind);
+    /// What to call an entity so that it can be told from the others: "Line 3", "Arc 1 center",
+    /// "Line 2 end". The numbers go by the order they were drawn in, for each kind.
+    [[nodiscard]] static QString entityName(const sketch::Sketch& geometry, sketch::EntityId id);
+
+    // What is being looked at
+
+    /// The curve or point the pointer is on in the sketch, or that a drawing tool would snap to.
+    /// 0 for none.
+    [[nodiscard]] sketch::EntityId hoveredEntity() const;
+    /// The constraint whose symbol or value the pointer is on, or 0.
+    [[nodiscard]] sketch::ConstraintId hoveredConstraint() const;
+    /// Shows in the sketch what a constraint is about, flashing it, with names on it: for when
+    /// the pointer is on its row in the panel. 0 ends that.
+    void showConstraint(sketch::ConstraintId constraint);
+    /// The same until told otherwise, for a constraint whose row was clicked. 0 ends that.
+    void pinConstraint(sketch::ConstraintId constraint);
+    [[nodiscard]] sketch::ConstraintId pinnedConstraint() const;
+    /// The constraints that stopped the last one from going in, while they flash red.
+    [[nodiscard]] std::vector<sketch::ConstraintId> refusedBy() const;
+    /// The pointer has left the view.
+    void pointerLeft();
+    /// Takes a constraint away and leaves the selection as it is, so that one line after another
+    /// can be disconnected at a corner.
+    bool removeConstraint(sketch::ConstraintId constraint);
 
     // For the viewport
 
@@ -191,6 +215,8 @@ signals:
     void changed();
     /// Something the user should be told: why a constraint was not added, what a tool needs.
     void message(const QString& text);
+    /// What hoveredEntity() or hoveredConstraint() says changed.
+    void hoverChanged();
 
 private:
     class Impl;

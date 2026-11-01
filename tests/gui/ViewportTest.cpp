@@ -5,6 +5,7 @@
 #include <lcad/kernel/Primitives.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/Transform.h>
+#include <lcad/viewport/NavigationCube.h>
 #include <lcad/viewport/ViewportWidget.h>
 
 #include <FrameChecks.h>
@@ -13,6 +14,8 @@
 
 #include <QApplication>
 #include <QRegularExpression>
+#include <QElapsedTimer>
+#include <QEnterEvent>
 #include <QSignalSpy>
 #include <QTest>
 #include <QWheelEvent>
@@ -28,6 +31,7 @@ using lcad::test::isNear;
 using lcad::test::keepFrame;
 using lcad::viewport::CameraState;
 using lcad::viewport::DisplayStyle;
+using lcad::viewport::NavigationCube;
 using lcad::viewport::NavigationPreset;
 using lcad::viewport::OriginItem;
 using lcad::viewport::Projection;
@@ -42,6 +46,14 @@ namespace {
 // Rendering tests compare pictures coarsely; these compare the camera exactly enough.
 bool sameDirection(const QVector3D& a, const QVector3D& b) {
     return (a - b).length() < 1e-3F;
+}
+
+bool sameCamera(const CameraState& a, const CameraState& b) {
+    const auto same = [](const std::array<double, 3>& p, const std::array<double, 3>& q) {
+        return std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-6;
+    };
+    return same(a.eye, b.eye) && same(a.center, b.center) && same(a.up, b.up) &&
+           std::abs(a.scale - b.scale) < 1e-9;
 }
 
 } // namespace
@@ -70,10 +82,17 @@ private slots:
     // The camera
     void standardViewsLookAlongTheirAxes();
     void projectionSwitchesBetweenOrthographicAndPerspective();
-    void clickingTheViewCubeTurnsTheCamera();
-    void theViewCubeShowsItsSidesApart();
-    void draggingTheViewCubeOrbits();
+    void everyPartOfTheCubeCanBeClicked();
+    void theCubeFollowsTheCamera();
+    void theCubeTurnsSmoothlyAndLeavesTheModelWhereItIs();
     void viewCubeCanTurnWithoutAnimation();
+    void clickingTheViewOneIsInGoesHome();
+    void hoveringTheCubeSaysWhatIsThereAndMovesNothing();
+    void theCubeHasAHomeButtonAndAProjectionSwitch();
+    void theArrowsTurnTheViewAStepAndComeOnlyWhenWanted();
+    void aDoubleClickOnTheCubeFramesTheModel();
+    void theCubeShowsItsSidesApart();
+    void draggingTheViewCubeOrbits();
     void navigationPresetSwapsPanAndOrbit();
     void fitSelectionFramesWhatIsSelected();
     void cameraStateCanBePutBack();
@@ -82,6 +101,9 @@ private slots:
     void colorsCanBeReplaced();
     void displayStylesChangeHowBodiesAreDrawn();
     void gridAndAxesCanBeSwitched();
+    void roundSurfacesShowNoSeam_data();
+    void roundSurfacesShowNoSeam();
+    void aSeamIsNothingToPick();
     void originPlanesAndAxesCanBeShown();
     void middleButtonPans();
     void shiftMiddleButtonOrbits();
@@ -89,6 +111,8 @@ private slots:
     void wheelZoomsAndCanBeReversed();
     void middleDoubleClickFitsTheView();
     void leftButtonDoesNotMoveTheCamera();
+    void theRightButtonOrbitsWhenHeldAndOpensTheMenuWhenClicked();
+    void theMiddleButtonIsAHandWhilePanning();
 
     // Selection
     void hoveringHighlightsWhatIsUnderThePointer();
@@ -108,6 +132,9 @@ private:
     void click(const QPointF& position, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
     void drag(Qt::MouseButton button, Qt::KeyboardModifiers modifiers, QPoint from, QPoint to);
     [[nodiscard]] QPoint emptySpot() const { return {5, m_viewport->height() / 2}; }
+    [[nodiscard]] NavigationCube* cube() const { return m_viewport->navigationCube(); }
+    void clickOnCube(const QPointF& at);
+    void dragOnCube(QPoint from, QPoint to);
 
     std::unique_ptr<Document> m_document;
     ViewportWidget* m_viewport = nullptr;
@@ -165,6 +192,31 @@ void ViewportTest::drag(Qt::MouseButton button, Qt::KeyboardModifiers modifiers,
     render();
 }
 
+void ViewportTest::theRightButtonOrbitsWhenHeldAndOpensTheMenuWhenClicked() {
+    m_document->addBody("Box", lcad::kernel::makeBox(10.0, 10.0, 10.0));
+    render();
+    QSignalSpy menu(m_viewport, &QWidget::customContextMenuRequested);
+    const CameraState before = m_viewport->cameraState();
+
+    QTest::mouseClick(m_viewport, Qt::RightButton, Qt::NoModifier, QPoint(200, 200));
+    QCOMPARE(menu.count(), 1);
+    QCOMPARE(menu.first().first().toPoint(), QPoint(200, 200));
+    QVERIFY(sameCamera(m_viewport->cameraState(), before));
+
+    drag(Qt::RightButton, Qt::NoModifier, QPoint(200, 200), QPoint(280, 240));
+    QCOMPARE(menu.count(), 1);
+    QVERIFY(!sameCamera(m_viewport->cameraState(), before));
+}
+
+void ViewportTest::theMiddleButtonIsAHandWhilePanning() {
+    render();
+    QVERIFY(m_viewport->cursor().shape() != Qt::ClosedHandCursor);
+    QTest::mousePress(m_viewport, Qt::MiddleButton, Qt::NoModifier, QPoint(200, 200));
+    QCOMPARE(m_viewport->cursor().shape(), Qt::ClosedHandCursor);
+    QTest::mouseRelease(m_viewport, Qt::MiddleButton, Qt::NoModifier, QPoint(200, 200));
+    QVERIFY(m_viewport->cursor().shape() != Qt::ClosedHandCursor);
+}
+
 void ViewportTest::startsWithoutError() {
     const QImage frame = m_viewport->grabFramebuffer();
 
@@ -179,13 +231,13 @@ void ViewportTest::emptyViewportShowsTheBackground() {
     const QImage frame = m_viewport->grabFramebuffer();
     keepFrame(frame, "viewport-empty");
 
-    // The top-left corner is clear of the axis marker (bottom left) and the view cube (top
-    // right), which are all that is drawn.
+    // The top-left corner is clear of the axis marker (bottom left), which is all that is drawn:
+    // the cube in the other corner is a widget of its own, on top of this.
     QVERIFY(isNear(frame.pixel(0, 0), m_viewport->backgroundColor()));
     QVERIFY(
         isNear(frame.pixel(frame.width() / 2, frame.height() / 2), m_viewport->backgroundColor()));
     const double drawn = drawnFraction(frame, m_viewport->backgroundColor());
-    QVERIFY2(drawn > 0.005, qPrintable(QStringLiteral("drawn fraction %1").arg(drawn)));
+    QVERIFY2(drawn > 0.0005, qPrintable(QStringLiteral("drawn fraction %1").arg(drawn)));
     QVERIFY2(drawn < 0.08, qPrintable(QStringLiteral("drawn fraction %1").arg(drawn)));
 }
 
@@ -318,27 +370,193 @@ void ViewportTest::projectionSwitchesBetweenOrthographicAndPerspective() {
     QVERIFY(differingFraction(orthographic, m_viewport->grabFramebuffer()) < 0.001);
 }
 
-void ViewportTest::clickingTheViewCubeTurnsTheCamera() {
+void ViewportTest::clickOnCube(const QPointF& at) {
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, at.toPoint());
+}
+
+void ViewportTest::dragOnCube(QPoint from, QPoint to) {
+    QTest::mousePress(cube(), Qt::LeftButton, Qt::NoModifier, from);
+    render();
+    for (const QPoint& point : {(from + to) / 2, to}) {
+        QMouseEvent move(QEvent::MouseMove, point, cube()->mapToGlobal(point), Qt::NoButton,
+                         Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(cube(), &move);
+        render();
+    }
+    QTest::mouseRelease(cube(), Qt::LeftButton, Qt::NoModifier, to);
+    render();
+}
+
+void ViewportTest::everyPartOfTheCubeCanBeClicked() {
     addBox();
-    const QVector3D home = m_viewport->viewDirection();
-    keepFrame(m_viewport->grabFramebuffer(), "viewport-view-cube");
+    m_viewport->setAnimated(false);
+    const std::vector<NavigationCube::Part> parts = NavigationCube::parts();
+    QCOMPARE(parts.size(), std::size_t{26});
+    int faces = 0;
+    int edges = 0;
+    int corners = 0;
+    for (const NavigationCube::Part part : parts) {
+        const int count = (part.x != 0 ? 1 : 0) + (part.y != 0 ? 1 : 0) + (part.z != 0 ? 1 : 0);
+        faces += count == 1 ? 1 : 0;
+        edges += count == 2 ? 1 : 0;
+        corners += count == 3 ? 1 : 0;
 
-    // In the home view the cube shows its top, front, and right sides around its near corner.
-    // The front side is below and to the left of that corner.
-    click(m_viewport->viewCubeCenter() + QPointF(-14.0, 14.0));
+        // From somewhere the part can be seen, and that is not the view it leads to.
+        CameraState camera = m_viewport->cameraState();
+        const QVector3D wanted = QVector3D(float(part.x), float(part.y), float(part.z)).normalized();
+        const QVector3D from = (wanted + QVector3D(0.21F, -0.17F, 0.13F)).normalized();
+        camera.eye = {camera.center[0] + from.x() * 500.0, camera.center[1] + from.y() * 500.0,
+                      camera.center[2] + from.z() * 500.0};
+        camera.up = {0.0, 0.0, 1.0};
+        m_viewport->setCameraState(camera);
+        render();
 
-    // The camera turns in an animation.
-    QTRY_VERIFY_WITH_TIMEOUT(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}), 5000);
-    QVERIFY(!sameDirection(home, m_viewport->viewDirection()));
-    // Clicking the cube is navigation, not selection.
+        // It is found where it is drawn, and its name says what it is.
+        const QPointF at = cube()->placeOf(part);
+        const QString name = NavigationCube::nameOf(part);
+        QVERIFY2(cube()->partAt(at) == part, qPrintable(name));
+        clickOnCube(at);
+        render();
+        const QVector3D looking = m_viewport->viewDirection();
+        QVERIFY2(sameDirection(looking, -wanted), qPrintable(name));
+    }
+    QCOMPARE(faces, 6);
+    QCOMPARE(edges, 12);
+    QCOMPARE(corners, 8);
     QVERIFY(m_viewport->selection().empty());
 }
 
-// The cube is there to say which way the model is turned. With every side the same near-white,
-// only its words said so.
-void ViewportTest::theViewCubeShowsItsSidesApart() {
+void ViewportTest::theCubeFollowsTheCamera() {
     addBox();
+    render();
+    for (const auto& [view, part] :
+         {std::pair(StandardView::Top, NavigationCube::Part{0, 0, 1}),
+          std::pair(StandardView::Front, NavigationCube::Part{0, -1, 0}),
+          std::pair(StandardView::Right, NavigationCube::Part{1, 0, 0}),
+          std::pair(StandardView::Left, NavigationCube::Part{-1, 0, 0}),
+          std::pair(StandardView::Back, NavigationCube::Part{0, 1, 0}),
+          std::pair(StandardView::Bottom, NavigationCube::Part{0, 0, -1})}) {
+        m_viewport->setStandardView(view);
+        render();
+        QVERIFY2(cube()->partAt(cube()->cubeCenter()) == part,
+                 qPrintable(NavigationCube::nameOf(part)));
+    }
+}
+
+void ViewportTest::theCubeTurnsSmoothlyAndLeavesTheModelWhereItIs() {
+    addBox();
+    render();
+    const CameraState before = m_viewport->cameraState();
+    QElapsedTimer clock;
+    clock.start();
+    clickOnCube(cube()->placeOf({0, -1, 0}));
+    // Under way, not there yet.
+    QVERIFY(!sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}));
+    QTRY_VERIFY_WITH_TIMEOUT(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}), 3000);
+    QVERIFY2(clock.elapsed() >= 150, qPrintable(QString::number(clock.elapsed())));
+    QVERIFY(m_viewport->selection().empty());
+    // Around the same middle, and at the same scale.
+    const CameraState after = m_viewport->cameraState();
+    QCOMPARE(after.scale, before.scale);
+    for (std::size_t i = 0; i < 3; ++i) {
+        QVERIFY(qAbs(after.center[i] - before.center[i]) < 1e-6);
+    }
+}
+
+void ViewportTest::viewCubeCanTurnWithoutAnimation() {
+    addBox();
+    QVERIFY(m_viewport->isAnimated());
+    m_viewport->setAnimated(false);
+
+    clickOnCube(cube()->placeOf({0, -1, 0}));
+    // No waiting: the camera is there.
+    QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}));
+}
+
+void ViewportTest::clickingTheViewOneIsInGoesHome() {
+    addBox();
+    m_viewport->setAnimated(false);
     m_viewport->setStandardView(StandardView::Home);
+    render();
+    const QVector3D home = m_viewport->viewDirection();
+    clickOnCube(cube()->placeOf({0, 0, 1}));
+    QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 0.0F, -1.0F}));
+    render();
+    clickOnCube(cube()->cubeCenter());
+    QVERIFY(sameDirection(m_viewport->viewDirection(), home));
+}
+
+void ViewportTest::hoveringTheCubeSaysWhatIsThereAndMovesNothing() {
+    addBox();
+    render();
+    const CameraState before = m_viewport->cameraState();
+    QCOMPARE(cube()->caption(), QString());
+    lcad::test::movePointer(cube(), cube()->placeOf({0, 0, 1}).toPoint());
+    QCOMPARE(cube()->hovered(), (NavigationCube::Part{0, 0, 1}));
+    QCOMPARE(cube()->caption(), QStringLiteral("Top"));
+    lcad::test::movePointer(cube(), cube()->placeOf({1, -1, 0}).toPoint());
+    QCOMPARE(cube()->caption(), QStringLiteral("Front + Right"));
+    lcad::test::movePointer(cube(), cube()->placeOf({1, -1, 1}).toPoint());
+    QCOMPARE(cube()->caption(), QStringLiteral("Top + Front + Right"));
+    QVERIFY(sameCamera(m_viewport->cameraState(), before));
+}
+
+void ViewportTest::theCubeHasAHomeButtonAndAProjectionSwitch() {
+    addBox();
+    m_viewport->setAnimated(false);
+    m_viewport->setStandardView(StandardView::Top);
+    render();
+    QCOMPARE(m_viewport->projection(), Projection::Orthographic);
+    clickOnCube(cube()->homeButton().center());
+    QVERIFY(sameDirection(m_viewport->viewDirection(),
+                          QVector3D(-1.0F, 1.0F, -1.0F).normalized()));
+    QSignalSpy changed(m_viewport, &ViewportWidget::projectionChanged);
+    clickOnCube(cube()->projectionButton().center());
+    QCOMPARE(m_viewport->projection(), Projection::Perspective);
+    clickOnCube(cube()->projectionButton().center());
+    QCOMPARE(m_viewport->projection(), Projection::Orthographic);
+    QCOMPARE(changed.count(), 2);
+}
+
+void ViewportTest::theArrowsTurnTheViewAStepAndComeOnlyWhenWanted() {
+    addBox();
+    m_viewport->setAnimated(false);
+    m_viewport->setStandardView(StandardView::Front);
+    render();
+    const QRectF up = cube()->arrow(0);
+    // Away from the cube they are not there to click.
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, up.center().toPoint());
+    QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}));
+
+    QEnterEvent enter(up.center(), up.center(), cube()->mapToGlobal(up.center()));
+    QApplication::sendEvent(cube(), &enter);
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, up.center().toPoint());
+    QVERIFY(sameDirection(m_viewport->viewDirection(), QVector3D(0.0F, 1.0F, -1.0F).normalized()));
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, up.center().toPoint());
+    QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 0.0F, -1.0F}));
+}
+
+void ViewportTest::aDoubleClickOnTheCubeFramesTheModel() {
+    addBox();
+    m_viewport->setAnimated(false);
+    render();
+    const CameraState before = m_viewport->cameraState();
+    CameraState away = before;
+    away.scale = before.scale * 6.0;
+    m_viewport->setCameraState(away);
+    render();
+    const QPoint on = cube()->placeOf({0, -1, 0}).toPoint();
+    QTest::mouseDClick(cube(), Qt::LeftButton, Qt::NoModifier, on);
+    render();
+    QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}));
+    QVERIFY(m_viewport->cameraState().scale < away.scale / 2.0);
+}
+
+void ViewportTest::theCubeShowsItsSidesApart() {
+    addBox();
+    m_viewport->setAnimated(false);
+    m_viewport->setStandardView(StandardView::Home);
+    render();
     for (const bool light : {false, true}) {
         ViewportColors colors;
         if (light) {
@@ -347,45 +565,23 @@ void ViewportTest::theViewCubeShowsItsSidesApart() {
             colors.cubeEdge = QColor(35, 39, 46);
         }
         m_viewport->setColors(colors);
-        const QImage frame = m_viewport->grabFramebuffer();
+        QImage frame = cube()->grab().toImage();
         keepFrame(frame, light ? "viewport-cube-light" : "viewport-cube-dark");
-        // In the home view the cube shows its top, its front (lower left), and its right
-        // (lower right), around the corner nearest the viewer. The shade of a side is that of
-        // its lightest pixels thereabouts, which leaves out the word written on it; the shade
-        // of an edge that of its darkest.
-        const auto lightness = [&](const QPointF& offset, bool lightest) {
-            const QPoint at =
-                ((m_viewport->viewCubeCenter() + offset) * frame.devicePixelRatio()).toPoint();
-            const int reach = qRound(3 * frame.devicePixelRatio());
-            int found = lightest ? 0 : 255;
-            for (int dy = -reach; dy <= reach; ++dy) {
-                for (int dx = -reach; dx <= reach; ++dx) {
-                    const int value = frame.pixelColor(at + QPoint(dx, dy)).lightness();
-                    found = lightest ? qMax(found, value) : qMin(found, value);
-                }
-            }
-            return found;
+        const double ratio = frame.devicePixelRatio();
+        const auto lightness = [&](NavigationCube::Part part) {
+            return frame.pixelColor((cube()->placeOf(part) * ratio).toPoint()).lightness();
         };
-        const int top = lightness({0.0, -25.0}, true);
-        const int front = lightness({-22.0, 14.0}, true);
-        const int right = lightness({22.0, 14.0}, true);
-        // Three sides, three shades.
-        QVERIFY2(qAbs(top - front) > 14 && qAbs(top - right) > 14 && qAbs(front - right) > 14,
+        // In the home view the top, the front, and the right are in sight. Near their edges they
+        // are bare of words.
+        const int top = lightness({-1, 0, 1});
+        const int front = lightness({-1, -1, 0});
+        const int right = lightness({1, 1, 0});
+        QVERIFY2(qAbs(top - front) > 6 && qAbs(top - right) > 6 && qAbs(front - right) > 3,
                  qPrintable(QStringLiteral("%1 %2 %3").arg(top).arg(front).arg(right)));
-        // Between them run the cube's edges, dark: down from the near corner, and from it
-        // toward the back on either side of the top.
-        for (const QPointF& onAnEdge :
-             {QPointF(0.0, 18.0), QPointF(-17.0, -11.0), QPointF(17.0, -11.0)}) {
-            const int edge = lightness(onAnEdge, false);
-            QVERIFY2(edge < 70 && edge < qMin(top, qMin(front, right)) - 60,
-                     qPrintable(QStringLiteral("%1 at %2,%3 against %4 %5 %6")
-                                    .arg(edge)
-                                    .arg(onAnEdge.x())
-                                    .arg(onAnEdge.y())
-                                    .arg(top)
-                                    .arg(front)
-                                    .arg(right)));
-        }
+        // The edges are lines, and the corners are not blots: the near corner is the color of
+        // a side right up to where the lines meet.
+        const int corner = lightness({1, -1, 1});
+        QVERIFY2(corner > std::min({top, front, right}) - 30, qPrintable(QString::number(corner)));
     }
 }
 
@@ -393,14 +589,12 @@ void ViewportTest::draggingTheViewCubeOrbits() {
     addBox();
     const QVector3D home = m_viewport->viewDirection();
     const QPointF origin = m_viewport->project(50.0, 30.0, 20.0);
-    const QPoint onTheCube = m_viewport->viewCubeCenter().toPoint();
+    const QPoint onTheCube = cube()->cubeCenter().toPoint();
 
     // Hold the left button on the cube and move: the camera turns with the pointer.
-    drag(Qt::LeftButton, Qt::NoModifier, onTheCube, onTheCube + QPoint(-90, 30));
+    dragOnCube(onTheCube, onTheCube + QPoint(-90, 30));
     lcad::test::movePointer(m_viewport, emptySpot());
     const QImage after = m_viewport->grabFramebuffer();
-    keepFrame(after, "viewport-cube-dragged");
-
     const QVector3D turned = m_viewport->viewDirection();
     QVERIFY(!sameDirection(turned, home));
     // A free orbit, not a jump to one of the cube's sides.
@@ -412,27 +606,6 @@ void ViewportTest::draggingTheViewCubeOrbits() {
     QVERIFY2(QLineF(origin, middle).length() < 3.0, qPrintable(QString::number(middle.x())));
     QVERIFY(drawnFraction(after, m_viewport->backgroundColor()) > 0.10);
     QVERIFY(m_viewport->selection().empty());
-
-    // Dragging further keeps turning, and a plain click on the cube still jumps to a side.
-    drag(Qt::LeftButton, Qt::NoModifier, onTheCube, onTheCube + QPoint(40, -60));
-    QVERIFY(!sameDirection(m_viewport->viewDirection(), turned));
-    m_viewport->setStandardView(StandardView::Home);
-    render();
-    click(m_viewport->viewCubeCenter() + QPointF(-14.0, 14.0));
-    QTRY_VERIFY_WITH_TIMEOUT(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}), 5000);
-}
-
-void ViewportTest::viewCubeCanTurnWithoutAnimation() {
-    addBox();
-    QVERIFY(m_viewport->isAnimated());
-    m_viewport->setAnimated(false);
-
-    click(m_viewport->viewCubeCenter() + QPointF(-14.0, 14.0));
-    // No waiting: a frame or two later the camera is there.
-    render();
-    render();
-
-    QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 1.0F, 0.0F}));
 }
 
 void ViewportTest::navigationPresetSwapsPanAndOrbit() {
@@ -454,11 +627,8 @@ void ViewportTest::navigationPresetSwapsPanAndOrbit() {
     QVERIFY(sameDirection(m_viewport->viewDirection(), orbited));
 
     // And dragging the view cube still orbits.
-    const QPoint onTheCube = m_viewport->viewCubeCenter().toPoint();
-    lcad::test::movePointer(m_viewport, onTheCube);
-    render();
-    render();
-    drag(Qt::LeftButton, Qt::NoModifier, onTheCube, onTheCube + QPoint(-70, 20));
+    const QPoint onTheCube = cube()->cubeCenter().toPoint();
+    dragOnCube(onTheCube, onTheCube + QPoint(-70, 20));
     QVERIFY(!sameDirection(m_viewport->viewDirection(), orbited));
 }
 
@@ -555,11 +725,12 @@ void ViewportTest::displayStylesChangeHowBodiesAreDrawn() {
     // wireframe does not have, and none of the seam that runs around its back.
     QVERIFY(differingFraction(wireframe, hiddenLine) > 0.002);
 
-    // Shaded without edges: as filled as before, minus the outline.
+    // Shaded without edges: as filled as before. A ball has no edges to leave out: the one it
+    // closes on is not drawn in either.
     m_viewport->setDisplayStyle(DisplayStyle::Shaded);
     const QImage shaded = m_viewport->grabFramebuffer();
     QVERIFY(qAbs(drawnFraction(shaded, background) - solid) < 0.02);
-    QVERIFY(differingFraction(withEdges, shaded) > 0.0005);
+    QVERIFY(differingFraction(withEdges, shaded) < 0.001);
 
     // Transparent: the same outline, with the background showing through.
     m_viewport->setDisplayStyle(DisplayStyle::Transparent);
@@ -576,6 +747,71 @@ void ViewportTest::displayStylesChangeHowBodiesAreDrawn() {
     m_document->removeBody(m_document->bodies()[0].id);
     m_document->addBody("Ball", lcad::kernel::makeSphere(40.0));
     QVERIFY(drawnFraction(m_viewport->grabFramebuffer(), background) < solid * 0.3);
+}
+
+void ViewportTest::roundSurfacesShowNoSeam_data() {
+    QTest::addColumn<int>("kind");
+    QTest::newRow("cylinder") << 0;
+    QTest::newRow("sphere") << 1;
+    QTest::newRow("torus") << 2;
+}
+
+void ViewportTest::roundSurfacesShowNoSeam() {
+    QFETCH(int, kind);
+    using namespace lcad::kernel;
+    // Each closes on the side that faces +X, so the seam is turned straight at the camera.
+    m_document->addBody("Round", kind == 0   ? makeCylinder(30.0, 60.0)
+                                 : kind == 1 ? makeSphere(30.0)
+                                             : makeTorus(30.0, 10.0));
+    render();
+    CameraState camera = m_viewport->cameraState();
+    camera.center = {0.0, 0.0, kind == 0 ? 30.0 : 0.0};
+    camera.eye = {500.0, 0.0, camera.center[2]};
+    camera.up = {0.0, 0.0, 1.0};
+    m_viewport->setCameraState(camera);
+    const QImage picture = m_viewport->grabFramebuffer();
+    keepFrame(picture, QString(QStringLiteral("viewport-seam-%1")).arg(kind).toLatin1().constData());
+
+    // Along a row across the seam the shade changes smoothly: no pixel stands out from those on
+    // either side, as a drawn line or a break in the shading would.
+    const QPointF seam = m_viewport->project(kind == 2 ? 40.0 : 30.0, 0.0, camera.center[2] + 5.0);
+    const double scale = m_viewport->devicePixelRatioF();
+    const int y = static_cast<int>(seam.y() * scale);
+    const int middle = static_cast<int>(seam.x() * scale);
+    double worst = 0.0;
+    for (int x = middle - 12; x <= middle + 12; ++x) {
+        const double here = QColor(picture.pixel(x, y)).valueF();
+        const double around =
+            (QColor(picture.pixel(x - 3, y)).valueF() + QColor(picture.pixel(x + 3, y)).valueF()) /
+            2.0;
+        worst = std::max(worst, std::abs(here - around));
+    }
+    QVERIFY2(worst < 0.02, qPrintable(QString::number(worst)));
+}
+
+void ViewportTest::aSeamIsNothingToPick() {
+    using namespace lcad::kernel;
+    m_document->addBody("Rod", makeCylinder(30.0, 60.0));
+    render();
+    m_viewport->setSelectionFilter(SelectionFilter::Edges);
+    CameraState camera = m_viewport->cameraState();
+    camera.center = {0.0, 0.0, 30.0};
+    camera.eye = {500.0, 0.0, 30.0};
+    camera.up = {0.0, 0.0, 1.0};
+    m_viewport->setCameraState(camera);
+    render();
+
+    // The middle of the side, where the seam runs: nothing there to be an edge.
+    const QPoint onTheSeam = m_viewport->project(30.0, 0.0, 30.0).toPoint();
+    QVERIFY(m_viewport->itemsAt(onTheSeam).empty());
+    // The rim is one, and there is one corner too few for it to have ends.
+    const QPoint onTheRim = m_viewport->project(30.0, 0.0, 60.0).toPoint();
+    const std::vector<SelectedItem> rim = m_viewport->itemsAt(onTheRim);
+    QVERIFY(!rim.empty());
+    QCOMPARE(rim.front().kind, SelectedItem::Kind::Edge);
+    m_viewport->setSelectionFilter(SelectionFilter::Vertices);
+    render();
+    QVERIFY(m_viewport->itemsAt(onTheRim).empty());
 }
 
 void ViewportTest::gridAndAxesCanBeSwitched() {

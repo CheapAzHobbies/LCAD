@@ -27,6 +27,10 @@ namespace lcad::sketch {
 [[nodiscard]] std::vector<EntityId> entitiesAt(const Sketch& sketch, Point2 position,
                                                double tolerance);
 
+/// The points in one place with a point, that point among them: the ends of the curves that meet
+/// at a corner, say.
+[[nodiscard]] std::vector<EntityId> pointsTogether(const Sketch& sketch, EntityId point);
+
 /// Where two curves cross or touch, within the extent of each. Empty for anything but lines,
 /// circles, and arcs.
 [[nodiscard]] std::vector<Point2> intersections(const Sketch& sketch, EntityId first,
@@ -113,6 +117,14 @@ struct Outcome {
 /// others, is refused, and the sketch stays exactly as it was.
 Outcome tryConstraint(Sketch& sketch, ConstraintKind kind, EntityId first, EntityId second = 0,
                       EntityId third = 0, double value = 0.0);
+
+/// What stands in the way of a constraint that tryConstraint() refuses. If the same thing is
+/// already said, that; otherwise every constraint without which it would go in, and of those,
+/// when it is a dimension that is refused, the dimensions if there are any: they are what the
+/// user set, and the rest is how the sketch holds together.
+[[nodiscard]] std::vector<ConstraintId> blockedBy(const Sketch& sketch, ConstraintKind kind,
+                                                  EntityId first, EntityId second = 0,
+                                                  EntityId third = 0, double value = 0.0);
 
 /// Changes a dimension's value and solves. If the geometry cannot follow, the value is refused
 /// and the sketch stays exactly as it was.

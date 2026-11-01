@@ -339,6 +339,20 @@ documents.
 Acceptance: produce a dimensioned drawing from a model, create a machining operation, simulate it, and
 export G-code through a validated postprocessor.
 
+## Sketcher and navigation, from use (2026-11-01)
+
+From trying the app. Branch `sketch-feedback`.
+
+- [x] The sketch panel names what each constraint is on, follows the pointer both ways, and keeps
+      the selection when something is disconnected. What stops a constraint flashes red.
+- [x] Constraint symbols sit outside a shape and can be moved along their curve or across it.
+- [x] Midpoint on arcs, and a new point at a middle. Slot holds to angles, Shift for any. A box picks
+      points. Holes go at any points that are clicked.
+- [x] Where closed outlines cross, each area is a region of its own to pick.
+- [x] Short tool names. Hold the right button to orbit, a hand while panning, captions under the
+      toolbars, and no seam on round surfaces, drawn or picked.
+- [x] A navigation cube of 26 parts in place of OCCT's view cube.
+
 ## Phase 7: Advanced capabilities (2028-01-16 onward)
 
 Surface modeling, sheet metal, advanced mesh repair, advanced assembly motion, rendering, simulation

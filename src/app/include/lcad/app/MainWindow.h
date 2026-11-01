@@ -506,16 +506,14 @@ private:
     bool m_settingPicks = false;
     QToolBar* m_modelToolbar = nullptr;
     QToolBar* m_sketchToolbar = nullptr;
+    /// While a hole is being placed: every point it could go at, to be clicked.
+    void showHolePoints();
     /// The sketch toolbar's buttons for single constraints, and the one that lists them all.
     QList<QAction*> m_constraintButtons;
     QAction* m_constraintsFolded = nullptr;
     /// The toolbar's buttons for New Component and Joint, which a narrow window puts away: the
     /// assembly list beside them has both.
     QList<QAction*> m_assemblyButtons;
-    /// The names of the modeling toolbar's groups, which go when the window is narrow.
-    QList<QAction*> m_modelGroupLabels;
-    /// The names of the sketch toolbar's groups, which go when the window is too narrow.
-    QList<QAction*> m_sketchGroupLabels;
     QToolButton* m_finishButton = nullptr;
     QLabel* m_selectionLabel = nullptr;
     QLabel* m_commandLabel = nullptr;

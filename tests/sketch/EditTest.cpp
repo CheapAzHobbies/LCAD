@@ -620,6 +620,74 @@ TEST_CASE("Offset copies an outline at a distance, joined at its corners", "[ske
     }
 }
 
+TEST_CASE("The points in one place are found together", "[sketch][edit]") {
+    Sketch sketch;
+    const EntityId first = sketch.addLine({1.0, 2.0}, {10.0, 0.0});
+    const EntityId second = sketch.addLine({10.0, 0.0}, {10.0, 10.0});
+    const EntityId third = sketch.addLine({10.0, 0.0}, {20.0, 5.0});
+    const std::vector<EntityId> together = pointsTogether(sketch, sketch.find(first)->end);
+    CHECK(together.size() == 3);
+    for (const EntityId id : {sketch.find(second)->start, sketch.find(third)->start}) {
+        CHECK(std::find(together.begin(), together.end(), id) != together.end());
+    }
+    CHECK(pointsTogether(sketch, sketch.find(first)->start).size() == 1);
+    CHECK(pointsTogether(sketch, first).empty());
+}
+
+TEST_CASE("What keeps a constraint out is found", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts box = addRectangle(sketch, {0.0, 0.0}, {40.0, 20.0});
+    const Entity bottom = *sketch.find(box.bottom);
+    const Entity top = *sketch.find(box.top);
+    const Outcome width = tryConstraint(sketch, ConstraintKind::Distance, bottom.start, bottom.end,
+                                        0, 40.0);
+    REQUIRE(width.ok());
+
+    SECTION("The same thing said twice") {
+        CHECK(blockedBy(sketch, ConstraintKind::Distance, bottom.end, bottom.start, 0, 40.0) ==
+              std::vector<ConstraintId>{width.constraint});
+    }
+    SECTION("A dimension that follows from another") {
+        const Outcome again =
+            tryConstraint(sketch, ConstraintKind::Distance, top.start, top.end, 0, 40.0);
+        REQUIRE(again.refusal == Refusal::Redundant);
+        CHECK(blockedBy(sketch, ConstraintKind::Distance, top.start, top.end, 0, 40.0) ==
+              std::vector<ConstraintId>{width.constraint});
+    }
+    SECTION("A constraint that is there already") {
+        const std::vector<ConstraintId> held = blockedBy(sketch, ConstraintKind::Horizontal, box.top);
+        REQUIRE(held.size() == 1);
+        CHECK(sketch.findConstraint(held.front())->kind == ConstraintKind::Horizontal);
+    }
+    SECTION("One that contradicts") {
+        CHECK_FALSE(blockedBy(sketch, ConstraintKind::Vertical, box.top).empty());
+    }
+}
+
+TEST_CASE("A point can be held at the middle of an arc", "[sketch][edit]") {
+    Sketch sketch;
+    const EntityId arc = sketch.addArc({0.0, 0.0}, {10.0, 0.0}, {0.0, 10.0});
+    // Far off, and nearer to the opposite side of the circle.
+    const EntityId point = sketch.addPoint({-12.0, -9.0});
+    REQUIRE(constraintFor(sketch, ConstraintKind::Midpoint, {arc, point}).has_value());
+    const Outcome held = tryConstraint(sketch, ConstraintKind::Midpoint, point, arc);
+    REQUIRE(held.ok());
+    const double side = 10.0 / std::sqrt(2.0);
+    CHECK_THAT(sketch.position(point).x, WithinAbs(side, lengthTolerance));
+    CHECK_THAT(sketch.position(point).y, WithinAbs(side, lengthTolerance));
+
+    // It follows the arc.
+    sketch.dragBy(sketch.find(arc)->end, -10.0, -10.0);
+    const Point2 at = sketch.position(point);
+    const Point2 middle = sketch.pointAt(arc, 0.5);
+    CHECK_THAT(at.x, WithinAbs(middle.x, 1e-6));
+    CHECK_THAT(at.y, WithinAbs(middle.y, 1e-6));
+
+    // The arc's own points are not for this.
+    CHECK_FALSE(constraintFor(sketch, ConstraintKind::Midpoint, {sketch.find(arc)->start, arc})
+                    .has_value());
+}
+
 TEST_CASE("Trim removes the part of a curve between its crossings", "[sketch][edit]") {
     Sketch sketch;
     // A long horizontal line crossed by two upright ones at x = 10 and x = 30.

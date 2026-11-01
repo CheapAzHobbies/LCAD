@@ -238,6 +238,9 @@ void Theme::apply() {
         QToolBar[tools="true"] QToolButton:pressed, QToolBar[tools="true"] QToolButton:checked {
             background: %7; border-color: %5; }
         QLabel#groupLabel { color: %3; font-weight: 600; padding: 0 4px 0 8px; }
+        QFrame#constraintRow { border-radius: %9px; border: 1px solid transparent; }
+        QFrame#constraintRow:hover, QFrame#constraintRow[lit="true"] { background: %7; }
+        QFrame#constraintRow[pinned="true"] { border-color: %5; }
         QLabel#secondary, QLabel#timeline { color: %3; }
         QDockWidget { titlebar-close-icon: none; }
         QDockWidget::title { background: %2; padding: 5px 8px; border-bottom: 1px solid %4; }

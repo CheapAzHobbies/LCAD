@@ -23,12 +23,14 @@
 #include <lcad/app/ShortcutsDialog.h>
 #include <lcad/app/SketchPanel.h>
 #include <lcad/app/Theme.h>
+#include <lcad/app/ToolbarCaptions.h>
 #include <lcad/app/TimelinePanel.h>
 #include <lcad/core/Log.h>
 #include <lcad/core/Path.h>
 #include <lcad/document/File.h>
 #include <lcad/document/Links.h>
 #include <lcad/document/SketchShapes.h>
+#include <lcad/sketch/Edit.h>
 #include <lcad/kernel/Check.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/Exchange.h>
@@ -67,6 +69,7 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QTabBar>
+#include <QPainter>
 #include <QToolBar>
 #include <QToolButton>
 
@@ -107,15 +110,6 @@ const char* const exportAngleKey = "export/angle";
 const char* const exportTextKey = "export/stlText";
 const int recentLimit = 10;
 
-QLabel* groupLabel(const QString& text, QWidget* parent) {
-    auto* label = new QLabel(text.toUpper(), parent);
-    label->setObjectName(QStringLiteral("groupLabel"));
-    QFont font = label->font();
-    font.setPointSizeF(font.pointSizeF() * Theme::instance().tokens().secondaryScale);
-    label->setFont(font);
-    return label;
-}
-
 // A label with a little room to spare. The font's measure of a short word can come out a pixel
 // or two narrower than the word is drawn, and its last letter would be cut off.
 class RoomyLabel : public QLabel {
@@ -152,7 +146,8 @@ MainWindow::MainWindow(QWidget* parent)
     m_center->setObjectName(QStringLiteral("centerStack"));
     m_center->addWidget(m_viewport);
     setCentralWidget(m_center);
-    m_viewport->setContextMenuPolicy(Qt::CustomContextMenu);
+    // Held, the right button turns the view; the viewport asks for the menu when it is let go.
+    m_viewport->setContextMenuPolicy(Qt::PreventContextMenu);
 
     createDocks();
     m_drawings = new DrawingWorkspace(this);
@@ -384,6 +379,14 @@ MainWindow::MainWindow(QWidget* parent)
         Qt::QueuedConnection);
     connect(m_viewport->sketchEditor(), &viewport::SketchEditor::changed, this,
             [this] { updateSelectionState(); });
+    connect(m_viewport, &viewport::ViewportWidget::projectionChanged, this,
+            [this] { m_commands->refresh(); });
+    connect(m_viewport, &viewport::ViewportWidget::pointPicked, this,
+            [this](document::ObjectId sketch, std::uint32_t point) {
+                if (m_featurePanel != nullptr) {
+                    m_featurePanel->togglePoint(sketch, point);
+                }
+            });
     connect(m_viewport->sketchEditor(), &viewport::SketchEditor::message, this,
             [this](const QString& text) { statusBar()->showMessage(text, 9000); });
     connect(m_browser, &BrowserPanel::originItemToggled, this,
@@ -1556,11 +1559,11 @@ void MainWindow::defineSketchCommands() {
          {tr("curve"), tr("freeform"), tr("bezier")}},
         {SketchTool::Trim,
          "sketch.trim",
-         tr("&Trim"),
+         tr("C&ut"),
          tr("Remove the part of a curve between the curves that cross it"),
          "trim",
          QKeySequence(Qt::Key_T),
-         {tr("cut")}},
+         {tr("trim")}},
         {SketchTool::Extend,
          "sketch.extend",
          tr("E&xtend"),
@@ -1684,13 +1687,16 @@ void MainWindow::defineSketchCommands() {
          tr("Make two points mirror images of each other in a line"), "c-symmetric"},
         {Kind::Collinear, "sketch.collinear", tr("Co&llinear"),
          tr("Put two lines on one straight line"), "c-collinear"},
-        {Kind::Fix, "sketch.fix", tr("Fi&x"), tr("Keep the selected points where they are"),
+        {Kind::Fix, "sketch.fix", tr("Loc&k"), tr("Keep the selected points where they are"),
          "c-fix"},
     };
     for (const auto& [kind, id, text, description, iconName] : constraints) {
         Command c = make(id, text, description, iconName);
         c.checkable = true;
         c.aliases = {tr("constraint"), tr("constrain")};
+        if (kind == Kind::Fix) {
+            c.aliases << tr("fix") << tr("pin") << tr("anchor");
+        }
         // On what is selected, if it fits; otherwise it becomes the tool and waits for clicks.
         c.run = [editor, kind](bool) { editor()->constrain(kind); };
         c.isEnabled = sketching;
@@ -1974,7 +1980,6 @@ void MainWindow::createToolbar() {
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
     // A sketch is where most solids start, so it leads the group.
-    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Create"), toolbar)));
     for (const char* id : {"sketch.new", "solid.pull", "solid.revolve"}) {
         toolbar->addAction(action(id));
     }
@@ -1996,14 +2001,12 @@ void MainWindow::createToolbar() {
     }
     toolbar->addSeparator();
 
-    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Modify"), toolbar)));
     for (const char* id : {"solid.hole", "solid.fillet", "solid.chamfer", "solid.shell"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
 
     // Components, and what joins them; the rest of the assembly tools in a menu beside them.
-    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Assemble"), toolbar)));
     // Buttons of their own, so that a narrow window can put them away without hiding the
     // commands from the menus: see fitToolbar().
     for (const char* id : {"assembly.newComponent", "assembly.joint"}) {
@@ -2032,7 +2035,6 @@ void MainWindow::createToolbar() {
     toolbar->addWidget(assembly);
     toolbar->addSeparator();
 
-    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("Select"), toolbar)));
     m_filterBox = new QComboBox(toolbar);
     m_filterBox->setObjectName(QStringLiteral("selectionFilter"));
     m_filterBox->setToolTip(tr("What a click in the 3D view picks"));
@@ -2045,7 +2047,6 @@ void MainWindow::createToolbar() {
     toolbar->addWidget(m_filterBox);
     toolbar->addSeparator();
 
-    m_modelGroupLabels.append(toolbar->addWidget(groupLabel(tr("View"), toolbar)));
     for (const char* id : {"inspect.measure", "view.fit", "view.fitSelection", "view.grid"}) {
         toolbar->addAction(action(id));
         auto* button = qobject_cast<QToolButton*>(toolbar->widgetForAction(action(id)));
@@ -2057,6 +2058,8 @@ void MainWindow::createToolbar() {
     m_styleButton->setPopupMode(QToolButton::InstantPopup);
     m_styleButton->setMenu(m_menuBar->findChild<QMenu*>(QStringLiteral("menu.displayStyle")));
     toolbar->addWidget(m_styleButton);
+    new ToolbarCaptions(
+        toolbar, {tr("Create"), tr("Modify"), tr("Assemble"), tr("Select"), tr("View")});
 }
 
 // The toolbar that takes the modeling toolbar's place while a sketch is open: the drawing,
@@ -2075,7 +2078,6 @@ void MainWindow::createSketchToolbar() {
     const int iconSize = Theme::instance().tokens().iconSize;
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
-    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Draw"), toolbar)));
     for (const char* id :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
@@ -2083,13 +2085,11 @@ void MainWindow::createSketchToolbar() {
     }
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
-    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Modify"), toolbar)));
     for (const char* id :
          {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();
-    m_sketchGroupLabels.append(toolbar->addWidget(groupLabel(tr("Constrain"), toolbar)));
     toolbar->addAction(action("sketch.dimension"));
     // Each constraint has a button of its own while there is room. In a narrow window they
     // fold into one button that opens the list: see fitToolbar().
@@ -2121,6 +2121,7 @@ void MainWindow::createSketchToolbar() {
     finish->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_finishButton = finish;
     toolbar->addWidget(finish);
+    new ToolbarCaptions(toolbar, {tr("Draw"), tr("Modify"), tr("Constrain")}, spacer);
     toolbar->hide();
 }
 
@@ -2212,19 +2213,8 @@ void MainWindow::fitToolbar() {
     if (wanted(m_modelToolbar) > width()) {
         setLeading(Qt::ToolButtonIconOnly);
     }
-    // Last, the names of the groups go; the separators still divide them.
-    for (QAction* label : std::as_const(m_modelGroupLabels)) {
-        label->setVisible(true);
-    }
-    if (wanted(m_modelToolbar) > width()) {
-        for (QAction* label : std::as_const(m_modelGroupLabels)) {
-            label->setVisible(false);
-        }
-    }
-
-    // The sketch toolbar gives up the constraints' own buttons for one that lists them; then
-    // the names of its groups; and last, Finish Sketch its label, which the panel's button
-    // still has.
+    // The sketch toolbar gives up the constraints' own buttons for one that lists them, and
+    // then Finish Sketch its label, which the panel's button still has.
     if (m_sketchToolbar == nullptr || m_constraintsFolded == nullptr) {
         return;
     }
@@ -2235,17 +2225,9 @@ void MainWindow::fitToolbar() {
         m_constraintsFolded->setVisible(folded);
     };
     fold(false);
-    for (QAction* label : std::as_const(m_sketchGroupLabels)) {
-        label->setVisible(true);
-    }
     m_finishButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     if (wanted(m_sketchToolbar) > width()) {
         fold(true);
-    }
-    if (wanted(m_sketchToolbar) > width()) {
-        for (QAction* label : std::as_const(m_sketchGroupLabels)) {
-            label->setVisible(false);
-        }
     }
     if (wanted(m_sketchToolbar) > width()) {
         m_finishButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -3601,7 +3583,44 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
     m_commands->refresh();
 }
 
+void MainWindow::showHolePoints() {
+    std::vector<viewport::PickablePoint> points;
+    const document::Feature feature = m_featurePanel->feature();
+    for (const document::SketchItem& sketch : document()->sketches()) {
+        // Those of its sketch; with none picked yet, those of every sketch that is shown.
+        if (feature.sketch.isValid() ? sketch.id != feature.sketch : !sketch.visible) {
+            continue;
+        }
+        const std::vector<sketch::EntityId> chosen =
+            sketch.id == feature.sketch ? document::holePoints(feature, sketch)
+                                        : std::vector<sketch::EntityId>();
+        const sketch::Sketch& geometry = sketch.geometry;
+        const auto taken = [&chosen](sketch::EntityId id) {
+            return std::find(chosen.begin(), chosen.end(), id) != chosen.end();
+        };
+        std::vector<sketch::EntityId> done;
+        for (const sketch::Entity& entity : geometry.entities()) {
+            if (entity.kind != sketch::EntityKind::Point || entity.id == geometry.origin() ||
+                std::find(done.begin(), done.end(), entity.id) != done.end()) {
+                continue;
+            }
+            // The ends of curves that meet are one place to drill.
+            const std::vector<sketch::EntityId> together = sketch::pointsTogether(geometry, entity.id);
+            done.insert(done.end(), together.begin(), together.end());
+            const auto chosenThere = std::find_if(together.begin(), together.end(), taken);
+            const sketch::EntityId id = chosenThere != together.end() ? *chosenThere : entity.id;
+            points.push_back({sketch.id, id, kernel::toWorld(sketch.plane, entity.x, entity.y),
+                              chosenThere != together.end()});
+        }
+    }
+    m_viewport->setPickablePoints(std::move(points));
+}
+
 void MainWindow::closeFeaturePanel() {
+    if (m_featurePanel == nullptr) {
+        return;
+    }
+    m_viewport->setPickablePoints({});
     if (m_featurePanel == nullptr) {
         return;
     }
@@ -3745,6 +3764,9 @@ void MainWindow::updateFeaturePreview() {
     if (m_featurePanel == nullptr) {
         return;
     }
+    if (m_featurePanel->feature().kind == document::FeatureKind::Hole) {
+        showHolePoints();
+    }
     const auto clear = [this] {
         m_viewport->setFeaturePreview({}, kernel::Shape());
         m_viewport->setPreview(kernel::Shape());
@@ -3846,11 +3868,9 @@ void MainWindow::showPullHandle(const document::Feature& feature) {
     const std::vector<kernel::Shape> faces = document::sketchRegionFaces(*sketch);
     std::optional<kernel::BoundingBox> box;
     for (std::size_t i = 0; i < regions.size() && i < faces.size(); ++i) {
-        std::vector<sketch::EntityId> outline = regions[i].outer;
-        std::sort(outline.begin(), outline.end());
         const bool used = feature.regions.empty() ||
-                          std::find(feature.regions.begin(), feature.regions.end(), outline) !=
-                              feature.regions.end();
+                          std::find(feature.regions.begin(), feature.regions.end(),
+                                    regions[i].key) != feature.regions.end();
         if (!used || faces[i].isNull()) {
             continue;
         }

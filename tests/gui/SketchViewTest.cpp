@@ -114,6 +114,13 @@ private slots:
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
+    void aBoxTakesThePointsInIt();
+    void symbolsHangOutsideAndCanBeMoved();
+    void markersAtACornerLieSideBySide();
+    void whatStopsAConstraintFlashesRed();
+    void midpointGoesOnLines();
+    void theSlotToolHoldsToAnglesUnlessShiftIsHeld();
+    void whatThePointerIsOnIsKnown();
 
     // Drawing on screen
     void geometryIsColoredByItsState();
@@ -268,6 +275,254 @@ int SketchViewTest::count(ConstraintKind kind) const {
 
 // ---------------------------------------------------------------------------------------------
 // Sketches among the bodies
+
+void SketchViewTest::aBoxTakesThePointsInIt() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    editor()->setTool(SketchTool::Select);
+
+    // Around a corner: the ends of the two lines that meet there, and no line.
+    drag(at(3.0, 3.0), at(17.0, 17.0));
+    std::vector<lcad::sketch::EntityId> picked = editor()->selectedEntities();
+    QCOMPARE(picked.size(), std::size_t{2});
+    for (const lcad::sketch::EntityId id : picked) {
+        QCOMPARE(sketch().find(id)->kind, EntityKind::Point);
+        QVERIFY(sketch().find(id)->owner != 0);
+    }
+
+    // Around everything: the lines. Their ends go with them, for a constraint given to the
+    // selection is meant for the lines.
+    drag(at(3.0, 3.0), at(70.0, 50.0));
+    picked = editor()->selectedEntities();
+    QCOMPARE(picked.size(), std::size_t{4});
+    for (const lcad::sketch::EntityId id : picked) {
+        QCOMPARE(sketch().find(id)->kind, EntityKind::Line);
+    }
+}
+
+void SketchViewTest::symbolsHangOutsideAndCanBeMoved() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    editor()->setTool(SketchTool::Select);
+    const auto symbolOn = [this](Point2 middle) {
+        for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+            if (c.kind != ConstraintKind::Horizontal && c.kind != ConstraintKind::Vertical) {
+                continue;
+            }
+            const Entity* line = sketch().find(c.first);
+            const Point2 a = sketch().position(line->start);
+            const Point2 b = sketch().position(line->end);
+            if (std::hypot((a.x + b.x) / 2.0 - middle.x, (a.y + b.y) / 2.0 - middle.y) < 1.0) {
+                return c.id;
+            }
+        }
+        return lcad::sketch::ConstraintId{0};
+    };
+    // Each side's symbol is on the outside of the box.
+    const lcad::sketch::ConstraintId bottom = symbolOn({35.0, 10.0});
+    QVERIFY(editor()->markerRect(bottom).center().y() > at(35.0, 10.0).y());
+    QVERIFY(editor()->markerRect(symbolOn({35.0, 40.0})).center().y() < at(35.0, 40.0).y());
+    QVERIFY(editor()->markerRect(symbolOn({10.0, 25.0})).center().x() < at(10.0, 25.0).x());
+    QVERIFY(editor()->markerRect(symbolOn({60.0, 25.0})).center().x() > at(60.0, 25.0).x());
+
+    // Dragged along the line it stays with the line, and a second step of undo is not needed.
+    const QPoint grabbed = editor()->markerRect(bottom).center().toPoint();
+    drag(grabbed, grabbed + QPoint(at(20.0, 10.0).x() - at(35.0, 10.0).x(), 0));
+    QVERIFY(qAbs(sketch().findConstraint(bottom)->markerShift[0] + 0.3) < 0.03);
+    QVERIFY(editor()->markerRect(bottom).center().x() < grabbed.x() - 20);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()),
+             QStringLiteral("Move Constraint Symbol"));
+    QVERIFY(qAbs(editor()->markerRect(bottom).center().y() - grabbed.y()) < 2.0);
+
+    // Near the middle it comes to rest in the middle.
+    const QPoint moved = editor()->markerRect(bottom).center().toPoint();
+    drag(moved, QPoint(grabbed.x() + 6, grabbed.y()));
+    QCOMPARE(sketch().findConstraint(bottom)->markerShift[0], 0.0);
+
+    // Across the line it goes to the other side, and the geometry has not moved.
+    const QPoint back = editor()->markerRect(bottom).center().toPoint();
+    const Point2 corner = sketch().position(curves(EntityKind::Line)[0].start);
+    drag(back, at(35.0, 14.0));
+    QVERIFY(editor()->markerRect(bottom).center().y() < at(35.0, 10.0).y());
+    QCOMPARE(sketch().position(curves(EntityKind::Line)[0].start).x, corner.x);
+    QVERIFY(m_document->canUndo());
+}
+
+void SketchViewTest::markersAtACornerLieSideBySide() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    // A third line from the corner, so that more than one constraint holds it.
+    editor()->setTool(SketchTool::Line);
+    click(at(10.0, 10.0));
+    click(at(-20.0, -15.0));
+    editor()->setTool(SketchTool::Select);
+    move(at(10.0, 10.0));
+
+    const Point2 corner{10.0, 10.0};
+    std::vector<QRectF> shown;
+    for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+        if (c.kind == ConstraintKind::Coincident &&
+            apart(sketch().position(c.first), corner) < 1.0) {
+            shown.push_back(editor()->markerRect(c.id));
+        }
+    }
+    QVERIFY2(shown.size() >= 2, "a corner of three lines has two Coincidents at least");
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+        QVERIFY(!shown[i].isEmpty());
+        for (std::size_t j = i + 1; j < shown.size(); ++j) {
+            QVERIFY(!shown[i].intersects(shown[j]));
+        }
+    }
+}
+
+void SketchViewTest::whatStopsAConstraintFlashesRed() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    editor()->setTool(SketchTool::Select);
+    const std::vector<Entity> sides = curves(EntityKind::Line);
+    const lcad::sketch::EntityId side = sides[0].id;
+    editor()->setSelection({side});
+    QVERIFY(editor()->addDimension());
+    type(QStringLiteral("50"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    lcad::sketch::ConstraintId dimension = 0;
+    for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+        if (c.kind == ConstraintKind::Distance) {
+            dimension = c.id;
+        }
+    }
+    QVERIFY(dimension != 0);
+
+    // The same again: the one that is there.
+    editor()->setSelection({side});
+    QVERIFY(!editor()->addDimension());
+    QCOMPARE(editor()->refusedBy(), std::vector<lcad::sketch::ConstraintId>{dimension});
+
+    // The opposite side has that length already, and the dimension is why.
+    editor()->setSelection({sides[2].id});
+    QVERIFY(!editor()->addDimension());
+    QCOMPARE(editor()->refusedBy(), std::vector<lcad::sketch::ConstraintId>{dimension});
+
+    // Any kind of constraint: a level line made level again.
+    editor()->setSelection({side});
+    QVERIFY(!editor()->constrain(ConstraintKind::Horizontal));
+    QCOMPARE(editor()->refusedBy().size(), std::size_t{1});
+    QCOMPARE(sketch().findConstraint(editor()->refusedBy().front())->kind,
+             ConstraintKind::Horizontal);
+    render();
+
+    // It is a flash: it ends by itself.
+    QTRY_VERIFY(editor()->refusedBy().empty());
+}
+
+void SketchViewTest::midpointGoesOnLines() {
+    openSketch();
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, 0.0));
+    click(at(40.0, 0.0));
+    editor()->cancel();
+    editor()->cancel();
+    const lcad::sketch::EntityId line = curves(EntityKind::Line)[0].id;
+
+    // A line selected: a point appears at its middle, and stays there.
+    editor()->setSelection({line});
+    QVERIFY(editor()->constrain(ConstraintKind::Midpoint));
+    QCOMPARE(count(ConstraintKind::Midpoint), 1);
+    for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+        if (c.kind == ConstraintKind::Midpoint) {
+            QVERIFY(apart(sketch().position(c.first), sketch().pointAt(line, 0.5)) < 1e-6);
+        }
+    }
+
+    // With the tool: a line clicked twice is the same thing.
+    editor()->clearSelection();
+    editor()->setConstraintTool(ConstraintKind::Midpoint);
+    click(at(10.0, 0.0));
+    QCOMPARE(count(ConstraintKind::Midpoint), 1);
+    click(at(10.0, 0.0));
+    QCOMPARE(count(ConstraintKind::Midpoint), 2);
+
+    // And a point that is there already goes to the middle of the line, clicked in either order.
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, 30.0));
+    click(at(30.0, 30.0));
+    editor()->cancel();
+    editor()->cancel();
+    editor()->setTool(SketchTool::Point);
+    click(at(12.0, 22.0));
+    editor()->setConstraintTool(ConstraintKind::Midpoint);
+    click(at(12.0, 22.0));
+    click(at(5.0, 30.0));
+    QCOMPARE(count(ConstraintKind::Midpoint), 3);
+}
+
+void SketchViewTest::theSlotToolHoldsToAnglesUnlessShiftIsHeld() {
+    openSketch();
+    const auto angleOfLastSlot = [this] {
+        const std::vector<Entity> arcs = curves(EntityKind::Arc);
+        const Point2 a = sketch().position(arcs[arcs.size() - 2].center);
+        const Point2 b = sketch().position(arcs[arcs.size() - 1].center);
+        return std::atan2(b.y - a.y, b.x - a.x) * 180.0 / M_PI;
+    };
+
+    // Near 15 degrees it is 15 degrees.
+    editor()->setTool(SketchTool::Slot);
+    click(at(0.0, 0.0));
+    click(at(40.0, 12.0));
+    click(at(35.0, 20.0));
+    QVERIFY2(qAbs(angleOfLastSlot() - 15.0) < 1e-6, qPrintable(QString::number(angleOfLastSlot())));
+
+    // With Shift it is where the pointer is.
+    click(at(0.0, 50.0));
+    click(at(40.0, 62.0), Qt::ShiftModifier);
+    click(at(35.0, 70.0));
+    const double free = angleOfLastSlot();
+    QVERIFY2(qAbs(free - 16.7) < 1.5, qPrintable(QString::number(free)));
+    QVERIFY(qAbs(free - 15.0) > 1e-3);
+
+    // Level, it stays level.
+    const int level = count(ConstraintKind::Horizontal);
+    click(at(0.0, 100.0));
+    click(at(40.0, 102.0));
+    click(at(20.0, 110.0));
+    QCOMPARE(qAbs(angleOfLastSlot()), 0.0);
+    QCOMPARE(count(ConstraintKind::Horizontal), level + 1);
+}
+
+void SketchViewTest::whatThePointerIsOnIsKnown() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    editor()->setTool(SketchTool::Select);
+    QSignalSpy changes(editor(), &SketchEditor::hoverChanged);
+
+    move(at(10.0, 10.0));
+    const lcad::sketch::EntityId point = editor()->hoveredEntity();
+    QVERIFY(point != 0);
+    QCOMPARE(sketch().find(point)->kind, EntityKind::Point);
+    QVERIFY(!changes.isEmpty());
+
+    move(emptyCorner());
+    QCOMPARE(editor()->hoveredEntity(), lcad::sketch::EntityId{0});
+
+    // While drawing, what a click would land on.
+    editor()->setTool(SketchTool::Line);
+    move(at(10.0, 10.0));
+    QVERIFY(editor()->hoveredEntity() != 0);
+
+    // The pointer gone from the view is on nothing.
+    editor()->pointerLeft();
+    QCOMPARE(editor()->hoveredEntity(), lcad::sketch::EntityId{0});
+}
 
 void SketchViewTest::sketchesAreDrawnAndFollowTheDocument() {
     const QImage empty = m_viewport->grabFramebuffer();
@@ -1481,7 +1736,7 @@ void SketchViewTest::trimAndExtendActOnTheCurveClicked() {
     click(at(50.0, 20.0));
     QCOMPARE(curves(EntityKind::Line).size(), std::size_t{5});
     QVERIFY(apart(endOf(lines[0].id), {30.0, 20.0}) < 0.4);
-    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Trim"));
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Cut"));
     // Nothing under the pointer, nothing trimmed, and a word about it.
     QSignalSpy messages(editor(), &SketchEditor::message);
     click(at(50.0, 35.0));

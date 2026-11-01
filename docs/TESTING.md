@@ -195,6 +195,13 @@ Nine lessons are built into them:
 - **A frame can be one step behind.** OCCT reuses the last frame until told the scene changed,
   and a layout change reaches a widget only when the event loop runs. Tests that look at a
   frame after such a change wait for it.
+- **Damage to the heap can be Qt's, and AddressSanitizer does not see it.** A test crashed now and
+  then, on a busy machine, in unrelated places each time, and the sanitizers found nothing, for
+  the writing was done inside Qt: in Qt 6.4, a `QFormLayout` with a hidden row and a word-wrapped
+  label in it writes past the end of its own buffer. What does find such a thing, every time, is
+  glibc's own check: run a test program with `MALLOC_CHECK_=3` and
+  `LD_PRELOAD=libc_malloc_debug.so.0`, and it aborts at the `free` of what was overrun. So: nothing
+  that wraps in a form whose rows come and go.
 - **A high-DPI display is a different display.** Everything OCCT draws at a fixed size on
   screen is measured in physical pixels. At twice the scale the view cube was half its size and
   sat where no click meant for it could land, and every test at the ordinary scale passed. So

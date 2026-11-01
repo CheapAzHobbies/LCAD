@@ -3,8 +3,10 @@
 # The 3D viewport: OCCT's viewer drawing into a Qt widget. Apart from the kernel, this is the
 # only module that uses OCCT directly, and its public header exposes Qt types only.
 qt_add_library(lcad_viewport STATIC
+    include/lcad/viewport/NavigationCube.h
     include/lcad/viewport/SketchEditor.h
     include/lcad/viewport/ViewportWidget.h
+    src/NavigationCube.cpp
     src/SketchEditor.cpp
     src/ViewportWidget.cpp)
 add_library(lcad::viewport ALIAS lcad_viewport)

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <map>
 #include <vector>
 
 namespace lcad::document {
@@ -127,7 +128,30 @@ kernel::Region kernelRegion(const SketchItem& sketch, const sketch::Region& regi
         return made;
     };
     kernel::Region made;
-    made.outer = outline(region.outer);
+    if (region.pieces.empty()) {
+        made.outer = outline(region.outer);
+    }
+    // Pieces of curves, where outlines cross. A name each: one curve can be in here twice.
+    std::map<sketch::EntityId, int> seen;
+    for (const sketch::CurvePiece& piece : region.pieces) {
+        const sketch::Entity* entity = sketch.geometry.find(piece.curve);
+        if (entity == nullptr) {
+            throw std::invalid_argument("the outline names a curve the sketch does not have");
+        }
+        const kernel::Plane& plane = sketch.plane;
+        kernel::Shape edge;
+        if (entity->kind == sketch::EntityKind::Line) {
+            edge = kernel::makeSegment(kernel::toWorld(plane, piece.start.x, piece.start.y),
+                                       kernel::toWorld(plane, piece.end.x, piece.end.y));
+        } else {
+            const sketch::Point2 c = sketch.geometry.position(entity->center);
+            edge = kernel::makeArcEdge(plane, c.x, c.y, piece.start.x, piece.start.y, piece.end.x,
+                                       piece.end.y);
+        }
+        const int number = seen[piece.curve]++;
+        made.outer.push_back({edge, std::to_string(piece.curve) +
+                                        (number > 0 ? "." + std::to_string(number) : "")});
+    }
     for (const std::vector<sketch::EntityId>& hole : region.holes) {
         made.holes.push_back(outline(hole));
     }
@@ -166,6 +190,34 @@ kernel::Shape axisShape(const AxisState& state) {
     const double half = state.length / 2.0;
     return kernel::makeSegment({c.x - d.x * half, c.y - d.y * half, c.z - d.z * half},
                                {c.x + d.x * half, c.y + d.y * half, c.z + d.z * half});
+}
+
+std::vector<sketch::EntityId> holePoints(const Feature& feature, const SketchItem& sketch) {
+    const sketch::Sketch& geometry = sketch.geometry;
+    std::vector<sketch::EntityId> points;
+    if (!feature.points.empty()) {
+        for (const sketch::EntityId id : feature.points) {
+            const sketch::Entity* entity = geometry.find(id);
+            if (entity != nullptr && entity->kind == sketch::EntityKind::Point) {
+                points.push_back(id);
+            }
+        }
+        return points;
+    }
+    for (const sketch::Entity& entity : geometry.entities()) {
+        if (entity.kind == sketch::EntityKind::Point && entity.owner == 0 &&
+            entity.id != geometry.origin() && !entity.construction) {
+            points.push_back(entity.id);
+        }
+    }
+    if (points.empty()) {
+        for (const sketch::Entity& entity : geometry.entities()) {
+            if (entity.kind == sketch::EntityKind::Circle && !entity.construction) {
+                points.push_back(entity.center);
+            }
+        }
+    }
+    return points;
 }
 
 std::optional<kernel::BoundingBox> sketchBounds(const SketchItem& sketch) {

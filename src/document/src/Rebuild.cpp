@@ -72,25 +72,28 @@ std::string describeFace(const Document& document, const std::string& name) {
 // The regions of its sketch that a pull or a revolve uses, as the kernel takes them.
 std::vector<kernel::Region> regionsOf(const Feature& feature, const SketchItem& sketch) {
     const std::vector<sketch::Region> all = sketch.geometry.regions();
+    // All of them is the outlines as drawn: the areas they cut each other into would leave lines
+    // where those meet. So is an outline picked before it came to cross another.
+    const std::vector<sketch::Region> whole = sketch.geometry.outlineRegions();
     if (all.empty()) {
         throw FeatureFailure("Its sketch, " + sketch.name + ", has no closed outline.");
     }
     std::vector<const sketch::Region*> chosen;
     if (feature.regions.empty()) {
-        for (const sketch::Region& region : all) {
+        for (const sketch::Region& region : whole) {
             chosen.push_back(&region);
         }
     }
     for (const std::vector<sketch::EntityId>& wanted : feature.regions) {
-        const auto found = std::find_if(all.begin(), all.end(), [&wanted](const sketch::Region& r) {
-            std::vector<sketch::EntityId> outline = r.outer;
-            std::sort(outline.begin(), outline.end());
-            return outline == wanted;
-        });
+        const auto named = [&wanted](const sketch::Region& r) { return r.key == wanted; };
+        auto found = std::find_if(all.begin(), all.end(), named);
         if (found == all.end()) {
-            throw FeatureFailure("An outline it was made from is no longer in " + sketch.name +
-                                 ": its curves were changed or removed, or it is no longer "
-                                 "closed.");
+            found = std::find_if(whole.begin(), whole.end(), named);
+            if (found == whole.end()) {
+                throw FeatureFailure("An outline it was made from is no longer in " + sketch.name +
+                                     ": its curves were changed or removed, or it is no longer "
+                                     "closed.");
+            }
         }
         chosen.push_back(&*found);
     }
@@ -419,7 +422,7 @@ kernel::NamedShape copiesOf(const Feature& feature, const Document& document,
     return result;
 }
 
-// Holes drilled into the body at the free-standing points of the feature's sketch.
+// Holes drilled into the body at the feature's points of its sketch.
 kernel::NamedShape drilled(const Feature& feature, const Document& document,
                            const kernel::NamedShape& body) {
     const std::string tag = tagOf(feature);
@@ -428,11 +431,8 @@ kernel::NamedShape drilled(const Feature& feature, const Document& document,
         throw FeatureFailure("The sketch that says where the holes go is gone.");
     }
     std::vector<const sketch::Entity*> points;
-    for (const sketch::Entity& entity : sketch->geometry.entities()) {
-        if (entity.kind == sketch::EntityKind::Point && entity.owner == 0 &&
-            entity.id != sketch->geometry.origin() && !entity.construction) {
-            points.push_back(&entity);
-        }
+    for (const sketch::EntityId id : holePoints(feature, *sketch)) {
+        points.push_back(sketch->geometry.find(id));
     }
     if (points.empty()) {
         throw FeatureFailure("Its sketch, " + sketch->name +

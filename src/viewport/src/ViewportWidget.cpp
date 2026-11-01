@@ -30,6 +30,7 @@
 #include <lcad/kernel/occt/PlacementAccess.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
 #include <lcad/kernel/occt/Stoppable.h>
+#include <lcad/viewport/NavigationCube.h>
 #include <lcad/viewport/SketchEditor.h>
 
 #include <AIS_AnimationCamera.hxx>
@@ -37,13 +38,23 @@
 #include <AIS_InteractiveObject.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_ViewController.hxx>
-#include <AIS_ViewCube.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <Aspect_Grid.hxx>
 #include <Aspect_NeutralWindow.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRep_Builder.hxx>
@@ -60,6 +71,7 @@
 #include <Prs3d_DatumAspect.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <Prs3d_PointAspect.hxx>
 #include <Prs3d_Presentation.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 #include <Prs3d_TextAspect.hxx>
@@ -77,10 +89,17 @@
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 #include <gp_Ax3.hxx>
+#include <gp_Mat.hxx>
+#include <gp_Quaternion.hxx>
+#include <gp_QuaternionSLerp.hxx>
 #include <gp_Pln.hxx>
 #include <gp_XYZ.hxx>
 
 #include <QApplication>
+#include <QCursor>
+#include <QEasingCurve>
+#include <QPainter>
+#include <QVariantAnimation>
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -93,6 +112,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <cmath>
 #include <map>
@@ -105,7 +125,145 @@ namespace lcad::viewport {
 
 namespace {
 
-// The view cube sits this far in from the top right corner and is this large, in logical pixels.
+// Points to click, drawn over the model: a point on a face is otherwise a speck in its color.
+class PointsOverlay : public QWidget {
+public:
+    using Project = std::function<QPointF(const kernel::Point&)>;
+
+    PointsOverlay(QWidget* parent, Project project)
+        : QWidget(parent), m_project(std::move(project)) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        setFocusPolicy(Qt::NoFocus);
+        setObjectName(QStringLiteral("pointsOverlay"));
+        hide();
+    }
+
+    void show(std::vector<PickablePoint> points, const QColor& plain, const QColor& chosen) {
+        m_points = std::move(points);
+        m_plain = plain;
+        m_chosen = chosen;
+        m_hovered = -1;
+        setVisible(!m_points.empty());
+        update();
+    }
+
+    [[nodiscard]] const std::vector<PickablePoint>& points() const { return m_points; }
+
+    /// The number of the point nearest to a position, in reach of it, or -1.
+    [[nodiscard]] int pointAt(const QPointF& position) const {
+        int best = -1;
+        double nearest = reach;
+        for (std::size_t i = 0; i < m_points.size(); ++i) {
+            const QPointF at = m_project(m_points[i].at);
+            const double away = std::hypot(at.x() - position.x(), at.y() - position.y());
+            if (away <= nearest) {
+                nearest = away;
+                best = static_cast<int>(i);
+            }
+        }
+        return best;
+    }
+
+    void setHovered(int point) {
+        if (point != m_hovered) {
+            m_hovered = point;
+            update();
+        }
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        for (std::size_t i = 0; i < m_points.size(); ++i) {
+            const QPointF at = m_project(m_points[i].at);
+            const bool hovered = static_cast<int>(i) == m_hovered;
+            const double radius = hovered ? 7.5 : 6.0;
+            // A dark ring, which shows on a light part, around a bright dot, which shows on a dark
+            // one.
+            painter.setPen(QPen(QColor(0, 0, 0, 170), 1.5));
+            painter.setBrush(m_points[i].chosen ? m_chosen : QColor(255, 255, 255, 215));
+            painter.drawEllipse(at, radius, radius);
+            if (!m_points[i].chosen) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(m_plain);
+                painter.drawEllipse(at, 2.2, 2.2);
+            }
+        }
+    }
+
+private:
+    static constexpr double reach = 11.0;
+
+    Project m_project;
+    std::vector<PickablePoint> m_points;
+    QColor m_plain;
+    QColor m_chosen;
+    int m_hovered = -1;
+};
+
+// A body. It is what AIS_Shape is, but for what can be picked of it: a round surface is one
+// smooth thing, and the edge it closes on, with the corner at its end, is nothing that anyone
+// aimed at. See smoothSeams().
+class BodyObject final : public AIS_Shape {
+public:
+    using AIS_Shape::AIS_Shape;
+
+protected:
+    void ComputeSelection(const Handle(SelectMgr_Selection)& selection,
+                          const Standard_Integer mode) override {
+        const TopAbs_ShapeEnum type = AIS_Shape::SelectionType(mode);
+        if (type != TopAbs_EDGE && type != TopAbs_VERTEX) {
+            AIS_Shape::ComputeSelection(selection, mode);
+            return;
+        }
+        // The same as ever, of a shape with those left out.
+        const TopoDS_Shape whole = myshape;
+        myshape = pickable(whole, type);
+        AIS_Shape::ComputeSelection(selection, mode);
+        myshape = whole;
+    }
+
+private:
+    static TopoDS_Shape pickable(const TopoDS_Shape& whole, TopAbs_ShapeEnum type) {
+        BRep_Builder builder;
+        TopoDS_Compound kept;
+        builder.MakeCompound(kept);
+        const auto seam = [](const TopoDS_Edge& edge) {
+            return BRep_Tool::Degenerated(edge) || BRep_Tool::MaxContinuity(edge) == GeomAbs_CN;
+        };
+        if (type == TopAbs_EDGE) {
+            TopTools_IndexedMapOfShape edges;
+            TopExp::MapShapes(whole, TopAbs_EDGE, edges);
+            for (Standard_Integer i = 1; i <= edges.Extent(); ++i) {
+                if (!seam(TopoDS::Edge(edges(i)))) {
+                    builder.Add(kept, edges(i));
+                }
+            }
+            return kept;
+        }
+        // A corner counts if a real edge ends there. A closed circle has no end: the corner on it
+        // is where its parameter starts, as arbitrary a place as a seam.
+        TopTools_IndexedDataMapOfShapeListOfShape edgesAt;
+        TopExp::MapShapesAndAncestors(whole, TopAbs_VERTEX, TopAbs_EDGE, edgesAt);
+        for (Standard_Integer i = 1; i <= edgesAt.Extent(); ++i) {
+            bool real = edgesAt(i).IsEmpty();
+            for (TopTools_ListOfShape::Iterator edge(edgesAt(i)); edge.More(); edge.Next()) {
+                const TopoDS_Edge& candidate = TopoDS::Edge(edge.Value());
+                TopoDS_Vertex first;
+                TopoDS_Vertex last;
+                TopExp::Vertices(candidate, first, last);
+                real = real || (!seam(candidate) && !first.IsSame(last));
+            }
+            if (real) {
+                builder.Add(kept, edgesAt.FindKey(i));
+            }
+        }
+        return kept;
+    }
+};
+
 // Lines in space that nothing can pick: toolpaths and the like.
 class LinesObject : public AIS_InteractiveObject {
     DEFINE_STANDARD_RTTI_INLINE(LinesObject, AIS_InteractiveObject)
@@ -193,12 +351,16 @@ private:
     kernel::Mesh m_mesh;
 };
 
-const int viewCubeOffset = 70;
-const double viewCubeSize = 46.0;
 
 Quantity_Color toOcct(const QColor& color) {
     return Quantity_Color(color.redF(), color.greenF(), color.blueF(), Quantity_TOC_sRGB);
 }
+
+// Whether another thread is using OCCT, so that no viewport may. See holdDrawing().
+bool drawingHeld = false;
+
+// How long the camera takes to turn to what was picked on the cube, in milliseconds.
+const int cubeTurnTime = 250;
 
 V3d_TypeOfOrientation toOcct(StandardView view) {
     switch (view) {
@@ -401,7 +563,12 @@ public:
     Handle(V3d_Viewer) viewer;
     Handle(V3d_View) view;
     Handle(AIS_InteractiveContext) context;
-    Handle(AIS_ViewCube) viewCube;
+    // The cube in the corner, and the turn of the camera to what was picked on it.
+    NavigationCube* cube = nullptr;
+    QVariantAnimation* turn = nullptr;
+    gp_Quaternion turnFrom;
+    gp_Quaternion turnTo;
+    bool fitAfterTurn = false;
     Handle(AIS_Shape) previewObject;
     // A native window that is never shown. OCCT wants an X11 window to make the OpenGL context
     // current on, although everything it draws goes into Qt's framebuffer. This one belongs to
@@ -765,21 +932,6 @@ public:
         // Scales line widths and screen-space text. 96 is OCCT's reference density.
         view->ChangeRenderingParams().Resolution =
             static_cast<unsigned int>(std::lround(96.0 * ratio));
-        viewCube->SetSize(viewCubeSize * ratio);
-        // Not multiplied: the resolution above already scales text.
-        viewCube->SetFontHeight(viewCubeSize * 0.2);
-        // The arrows along its edges, thick enough to tell their colors apart.
-        viewCube->SetAxesRadius(1.6 * ratio);
-        viewCube->SetAxesConeRadius(4.0 * ratio);
-        viewCube->SetAxesSphereRadius(3.0 * ratio);
-        // Out past the cube, so that the arrow going away from the viewer shows behind it.
-        viewCube->SetAxesPadding(10.0 * ratio);
-        const int offset = static_cast<int>(std::lround(viewCubeOffset * ratio));
-        viewCube->SetTransformPersistence(new Graphic3d_TransformPers(
-            Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(offset, offset)));
-        if (context->IsDisplayed(viewCube)) {
-            context->Redisplay(viewCube, false);
-        }
         // How near the pointer has to come to pick something is meant in what the user sees
         // as pixels, too. A sketch is thin lines and nothing else, so it gets twice the reach.
         context->SetPixelTolerance(static_cast<int>(std::lround(2.0 * ratio)));
@@ -807,14 +959,155 @@ public:
 
     // A left button press on the view cube is held back until it is known to be a click (which
     // OCCT turns into a change of view) or the start of a drag (which orbits).
-    bool cubePressed = false;
-    bool cubeDragging = false;
-    QPointF cubePressPosition;
-    Qt::KeyboardModifiers cubePressModifiers;
+    std::uint64_t frames = 0;
+    // Points that can be clicked, and whether the left button went down on one.
+    PointsOverlay* pointsOverlay = nullptr;
+    bool pressedPoint = false;
+    // Where the camera was when the things drawn over the view last followed it.
+    CameraState overlaidCamera;
+    // The right button: a click opens the menu, held and moved it orbits.
+    bool rightPressed = false;
+    bool rightDragging = false;
+    QPointF rightPressPosition;
+    // The middle button is panning, and the pointer is a hand.
+    bool panning = false;
 
-    [[nodiscard]] bool isOverViewCube() const {
-        return !context.IsNull() && context->HasDetected() &&
-               context->DetectedInteractive() == viewCube;
+    // Orbiting by hand: as the orbit buttons would from where it starts.
+    void startOrbit(const QPointF& position) {
+        stopTurn();
+        AbortViewAnimation();
+        UpdateMouseButtons(toFramebufferPixels(position), Aspect_VKeyMouse_MiddleButton,
+                           orbitModifiers, false);
+    }
+    void orbitTo(const QPointF& position) {
+        UpdateMousePosition(toFramebufferPixels(position), Aspect_VKeyMouse_MiddleButton,
+                            orbitModifiers, false);
+    }
+    void endOrbit(const QPointF& position) {
+        UpdateMouseButtons(toFramebufferPixels(position), Aspect_VKeyMouse_NONE,
+                           Aspect_VKeyFlags_NONE, false);
+    }
+
+    void stopTurn() {
+        if (turn != nullptr) {
+            turn->stop();
+        }
+        fitAfterTurn = false;
+    }
+
+    // Which way the camera is turned, as a rotation from looking down Z with Y up.
+    [[nodiscard]] gp_Quaternion orientation() const {
+        const Handle(Graphic3d_Camera)& camera = view->Camera();
+        const gp_Dir back = camera->Direction().Reversed();
+        const gp_Dir up = camera->Up();
+        const gp_Dir right = up.Crossed(back);
+        return orientationOf(right, gp_Dir(back.Crossed(right)), back);
+    }
+    [[nodiscard]] static gp_Quaternion orientationOf(const gp_Dir& right, const gp_Dir& up,
+                                                     const gp_Dir& back) {
+        gp_Mat matrix;
+        matrix.SetCol(1, right.XYZ());
+        matrix.SetCol(2, up.XYZ());
+        matrix.SetCol(3, back.XYZ());
+        return gp_Quaternion(matrix);
+    }
+
+    // Puts the camera at an orientation, around the same middle and at the same distance: the
+    // model stays where it is.
+    void setOrientation(const gp_Quaternion& turned) {
+        const Handle(Graphic3d_Camera)& camera = view->Camera();
+        const gp_Pnt center = camera->Center();
+        const double distance = camera->Distance();
+        const gp_Vec back = turned.Multiply(gp_Vec(0.0, 0.0, 1.0));
+        const gp_Vec up = turned.Multiply(gp_Vec(0.0, 1.0, 0.0));
+        camera->SetUp(gp_Dir(up));
+        camera->SetEyeAndCenter(center.Translated(back * distance), center);
+        view->Invalidate();
+    }
+
+    // Turns smoothly to an orientation, or at once if animations are off.
+    void turnToOrientation(const gp_Quaternion& target, bool thenFit) {
+        stopTurn();
+        AbortViewAnimation();
+        fitPending = false;
+        turnFrom = orientation();
+        turnTo = target;
+        fitAfterTurn = thenFit;
+        if (!animated) {
+            turn->setCurrentTime(turn->duration());
+            finishTurn();
+            return;
+        }
+        turn->start();
+    }
+
+    void stepTurn(double along) {
+        gp_QuaternionSLerp slerp(turnFrom, turnTo);
+        gp_Quaternion step;
+        slerp.Interpolate(along, step);
+        setOrientation(step);
+        m_widget->update();
+    }
+
+    void finishTurn() {
+        setOrientation(turnTo);
+        const bool fit = fitAfterTurn;
+        fitAfterTurn = false;
+        if (fit) {
+            m_widget->fitAll();
+        }
+        redraw();
+    }
+
+    // Looking at the model from a direction. Up stays up; looking straight down or up, there
+    // is none to keep, and the side of the screen that is nearest to up now goes on being it.
+    void turnToView(const QVector3D& from, bool thenFit) {
+        const gp_Dir back(from.x(), from.y(), from.z());
+        gp_Dir up(0.0, 0.0, 1.0);
+        if (std::abs(back.Z()) > 0.999) {
+            const gp_Dir now = view->Camera()->Up();
+            double best = -2.0;
+            for (const gp_Dir& candidate :
+                 {gp_Dir(0, 1, 0), gp_Dir(0, -1, 0), gp_Dir(1, 0, 0), gp_Dir(-1, 0, 0)}) {
+                if (candidate.Dot(now) > best) {
+                    best = candidate.Dot(now);
+                    up = candidate;
+                }
+            }
+        }
+        const gp_Dir right(up.Crossed(back));
+        turnToOrientation(orientationOf(right, gp_Dir(back.Crossed(right)), back), thenFit);
+    }
+
+    void turnHome() {
+        turnToView(QVector3D(1.0F, -1.0F, 1.0F).normalized(), true);
+    }
+
+    // Turns the view around the right of the screen and its top.
+    void turnBy(double aroundRight, double aroundUp) {
+        gp_Quaternion aboutRight(gp_Vec(1.0, 0.0, 0.0), aroundRight);
+        gp_Quaternion aboutUp(gp_Vec(0.0, 1.0, 0.0), aroundUp);
+        turnToOrientation(orientation().Multiplied(aboutRight).Multiplied(aboutUp), false);
+    }
+
+    void followCamera() const {
+        const Handle(Graphic3d_Camera)& camera = view->Camera();
+        const gp_Dir back = camera->Direction().Reversed();
+        const gp_Dir up = camera->Up();
+        const gp_Dir right = up.Crossed(back);
+        const auto vector = [](const gp_Dir& d) {
+            return QVector3D(static_cast<float>(d.X()), static_cast<float>(d.Y()),
+                             static_cast<float>(d.Z()));
+        };
+        cube->setView(vector(right), vector(back.Crossed(right)));
+    }
+
+    // Whether the middle button pans with these keys held, rather than orbiting or zooming.
+    [[nodiscard]] bool middlePans(Qt::KeyboardModifiers modifiers) const {
+        const Qt::KeyboardModifiers held =
+            modifiers & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier);
+        return preset == NavigationPreset::MiddlePans ? held == Qt::NoModifier
+                                                      : held == Qt::ShiftModifier;
     }
 
     // Color, finish, and outlines of a body, for the current colors and display style.
@@ -826,6 +1119,8 @@ public:
         const Handle(Prs3d_Drawer)& drawer = object->Attributes();
         drawer->SetFaceBoundaryDraw(style == DisplayStyle::ShadedWithEdges ||
                                     style == DisplayStyle::Transparent);
+        // Not the edges that smoothSeams() marked: a round surface shows no line of its own.
+        drawer->SetFaceBoundaryUpperContinuity(GeomAbs_C3);
         drawer->SetFaceBoundaryAspect(
             new Prs3d_LineAspect(toOcct(colors.bodyEdge), Aspect_TOL_SOLID, 1.0));
         if (wires) {
@@ -885,34 +1180,10 @@ public:
             selected->SetDisplayMode(AIS_Shaded);
             selected->SetTransparency(0.45F);
         }
-        // The sides in one color with the matte finish the bodies have, so that the three in
-        // view are three plainly different shades, and the edges and corners between them dark,
-        // so that every side has an outline whatever the light does.
-        viewCube->SetMaterial(bodyMaterial());
-        viewCube->SetBoxColor(toOcct(colors.cube));
-        viewCube->BoxEdgeStyle()->SetColor(toOcct(colors.cubeEdge));
-        viewCube->BoxCornerStyle()->SetColor(toOcct(colors.cubeEdge));
-        viewCube->SetTextColor(toOcct(colors.cubeText));
-        // Its arrows red, green, and blue, as the origin's axes are, and labeled.
-        const Handle(Prs3d_DatumAspect)& axes = viewCube->Attributes()->DatumAspect();
-        if (!axes.IsNull()) {
-            const std::array<std::pair<Prs3d_DatumParts, OriginItem>, 3> parts{{
-                {Prs3d_DatumParts_XAxis, OriginItem::AxisX},
-                {Prs3d_DatumParts_YAxis, OriginItem::AxisY},
-                {Prs3d_DatumParts_ZAxis, OriginItem::AxisZ},
-            }};
-            for (const auto& [part, item] : parts) {
-                axes->ShadingAspect(part)->SetColor(toOcct(ViewportWidget::originColor(item)));
-                // Each label in its axis's color, which reads on both themes' backgrounds, and in
-                // the sans-serif font the cube's sides use: the labels' own default is a Times
-                // that a desktop need not have.
-                axes->TextAspect(part)->SetColor(toOcct(ViewportWidget::originColor(item)));
-                axes->TextAspect(part)->SetFont(Font_NOF_SANS_SERIF);
-            }
-        }
-        if (context->IsDisplayed(viewCube)) {
-            context->Redisplay(viewCube, false);
-        }
+        cube->setColors({colors.cube, colors.cubeEdge, colors.cubeText, colors.selection, colors.line,
+                         {ViewportWidget::originColor(OriginItem::AxisX),
+                          ViewportWidget::originColor(OriginItem::AxisY),
+                          ViewportWidget::originColor(OriginItem::AxisZ)}});
         if (!previewObject.IsNull()) {
             previewObject->SetColor(toOcct(colors.preview));
             context->Redisplay(previewObject, false);
@@ -1274,8 +1545,7 @@ public:
                 if (faces[i].isNull()) {
                     continue;
                 }
-                Profile profile{id, regions[i].outer};
-                std::sort(profile.outline.begin(), profile.outline.end());
+                Profile profile{id, regions[i].key};
                 Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(faces[i]));
                 place(object, placementFor(sketch->component));
                 // Over a body's face that lies in the sketch's plane, but behind whatever is
@@ -1439,6 +1709,8 @@ public:
         drawer->SetFreeBoundaryAspect(line());
         drawer->SetUnFreeBoundaryAspect(line());
         drawer->SetSeenLineAspect(line());
+        // Large enough to find on a part: holes and the like go by these.
+        drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, color, 2.2));
     }
 
     void hideSketch(document::ObjectId id) {
@@ -1535,11 +1807,68 @@ public:
     // `reshaped` for a body that was shown before with another shape: that one leaves the
     // camera alone even if it is the only body.
     // Shows a body at each visible appearance of its component where it is not shown yet.
+    // Whether two faces lie on one round surface, as the halves of a cut cylinder do.
+    [[nodiscard]] static bool onOneRoundSurface(const TopoDS_Face& a, const TopoDS_Face& b) {
+        const BRepAdaptor_Surface first(a, Standard_False);
+        const BRepAdaptor_Surface second(b, Standard_False);
+        if (first.GetType() != second.GetType()) {
+            return false;
+        }
+        constexpr double within = 1e-7;
+        const auto sameAxis = [](const gp_Ax1& p, const gp_Ax1& q) {
+            return p.IsCoaxial(q, 1e-7, within) || p.IsCoaxial(q.Reversed(), 1e-7, within);
+        };
+        switch (first.GetType()) {
+        case GeomAbs_Cylinder:
+            return std::abs(first.Cylinder().Radius() - second.Cylinder().Radius()) < within &&
+                   sameAxis(first.Cylinder().Axis(), second.Cylinder().Axis());
+        case GeomAbs_Sphere:
+            return std::abs(first.Sphere().Radius() - second.Sphere().Radius()) < within &&
+                   first.Sphere().Location().IsEqual(second.Sphere().Location(), within);
+        case GeomAbs_Torus:
+            return std::abs(first.Torus().MajorRadius() - second.Torus().MajorRadius()) < within &&
+                   std::abs(first.Torus().MinorRadius() - second.Torus().MinorRadius()) < within &&
+                   first.Torus().Location().IsEqual(second.Torus().Location(), within) &&
+                   sameAxis(first.Torus().Axis(), second.Torus().Axis());
+        case GeomAbs_Cone:
+            return std::abs(first.Cone().SemiAngle() - second.Cone().SemiAngle()) < within &&
+                   first.Cone().Apex().IsEqual(second.Cone().Apex(), within) &&
+                   sameAxis(first.Cone().Axis(), second.Cone().Axis());
+        default:
+            return false;
+        }
+    }
+
+    // A cylinder, a sphere, or a torus closes on an edge of its own, and one cut in two has
+    // an edge between its halves. Those edges are what the faces are bounded by, and stay, for
+    // selecting and for the edits that work on them; but nothing is to be seen there, for the
+    // surface runs smoothly across. This says so of them, and styleBody() leaves out the edges
+    // that are that smooth. It changes no geometry.
+    static void smoothSeams(const TopoDS_Shape& shape) {
+        TopTools_IndexedDataMapOfShapeListOfShape facesOfEdge;
+        TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, facesOfEdge);
+        BRep_Builder builder;
+        for (Standard_Integer i = 1; i <= facesOfEdge.Extent(); ++i) {
+            const TopoDS_Edge& edge = TopoDS::Edge(facesOfEdge.FindKey(i));
+            const TopTools_ListOfShape& faces = facesOfEdge(i);
+            if (faces.Extent() != 2 || BRep_Tool::Degenerated(edge) ||
+                BRep_Tool::MaxContinuity(edge) == GeomAbs_CN) {
+                continue;
+            }
+            const TopoDS_Face& a = TopoDS::Face(faces.First());
+            const TopoDS_Face& b = TopoDS::Face(faces.Last());
+            if (a.IsSame(b) ? BRep_Tool::IsClosed(edge, a) : onOneRoundSurface(a, b)) {
+                builder.Continuity(edge, a, b, GeomAbs_CN);
+            }
+        }
+    }
+
     // The triangles of a shape are worked out when it is first drawn, which on a big part takes
     // far longer than anything else. Done here first they can be stopped, and the window stays
     // alive. Stopped, the body goes undrawn, for drawing it would do the rest with no way out.
     [[nodiscard]] bool meshedForDrawing(const document::Body& body) const {
         const TopoDS_Shape& shape = kernel::occt::unwrap(body.shape);
+        smoothSeams(shape);
         const Handle(Prs3d_Drawer)& drawer = context->DefaultDrawer();
         if (StdPrs_ToolTriangulatedShape::IsTessellated(shape, drawer)) {
             return true;
@@ -1581,7 +1910,7 @@ public:
             if (!meshedForDrawing(body)) {
                 return;
             }
-            Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(body.shape));
+            Handle(AIS_Shape) object = new BodyObject(kernel::occt::unwrap(body.shape));
             place(object, instance.placement);
             styleBody(object);
             if (ghosted(body.id)) {
@@ -1790,6 +2119,48 @@ ViewportWidget::ViewportWidget(QWidget* parent)
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setFormat(surfaceFormat());
     m_impl->editor = new SketchEditor(this);
+    m_impl->pointsOverlay = new PointsOverlay(this, [this](const kernel::Point& p) {
+        return project(p.x, p.y, p.z);
+    });
+    m_impl->cube = new NavigationCube(this);
+    m_impl->turn = new QVariantAnimation(this);
+    m_impl->turn->setDuration(cubeTurnTime);
+    m_impl->turn->setStartValue(0.0);
+    m_impl->turn->setEndValue(1.0);
+    m_impl->turn->setEasingCurve(QEasingCurve::OutCubic);
+    connect(m_impl->turn, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant& value) { m_impl->stepTurn(value.toDouble()); });
+    connect(m_impl->turn, &QVariantAnimation::finished, this, [this] { m_impl->finishTurn(); });
+    connect(m_impl->cube, &NavigationCube::viewChosen, this, [this](const QVector3D& from) {
+        // The view one is in already: there is nowhere to go but home.
+        const gp_Dir back = m_impl->view->Camera()->Direction().Reversed();
+        if (std::abs(back.X() - from.x()) + std::abs(back.Y() - from.y()) +
+                std::abs(back.Z() - from.z()) <
+            1e-3) {
+            m_impl->turnHome();
+        } else {
+            m_impl->turnToView(from, false);
+        }
+    });
+    connect(m_impl->cube, &NavigationCube::framedViewChosen, this,
+            [this](const QVector3D& from) { m_impl->turnToView(from, true); });
+    connect(m_impl->cube, &NavigationCube::homeChosen, this, [this] { m_impl->turnHome(); });
+    connect(m_impl->cube, &NavigationCube::turnAsked, this,
+            [this](double aroundRight, double aroundUp) { m_impl->turnBy(aroundRight, aroundUp); });
+    connect(m_impl->cube, &NavigationCube::projectionToggled, this, [this] {
+        setProjection(projection() == Projection::Perspective ? Projection::Orthographic
+                                                              : Projection::Perspective);
+    });
+    connect(m_impl->cube, &NavigationCube::orbitStarted, this,
+            [this](const QPointF& position) { m_impl->startOrbit(position); });
+    connect(m_impl->cube, &NavigationCube::orbitMoved, this, [this](const QPointF& position) {
+        m_impl->orbitTo(position);
+        update();
+    });
+    connect(m_impl->cube, &NavigationCube::orbitEnded, this, [this](const QPointF& position) {
+        m_impl->endOrbit(position);
+        update();
+    });
     // Whether bodies can be pointed at while a sketch is open depends on the sketch tool.
     connect(m_impl->editor, &SketchEditor::changed, this, [this] {
         const bool projecting =
@@ -1845,19 +2216,6 @@ ViewportWidget::ViewportWidget(QWidget* parent)
         m_impl->view->SetProj(V3d_XposYnegZpos); // the usual isometric CAD view
         m_impl->view->ChangeRenderingParams().NbMsaaSamples = 4;
 
-        // Clicking a side, edge, or corner of the cube turns the camera to face it.
-        m_impl->viewCube = new AIS_ViewCube();
-        m_impl->viewCube->SetSize(viewCubeSize);
-        m_impl->viewCube->SetFontHeight(viewCubeSize * 0.2);
-        // X, Y, and Z as arrows along the cube's edges, in the colors of the origin's axes.
-        m_impl->viewCube->SetDrawAxes(true);
-        m_impl->viewCube->SetTransformPersistence(
-            new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
-                                        Graphic3d_Vec2i(viewCubeOffset, viewCubeOffset)));
-        m_impl->viewCube->SetViewAnimation(m_impl->ViewAnimation());
-        m_impl->viewCube->SetFixedAnimationLoop(false);
-        m_impl->viewCube->SetAutoStartAnimation(true);
-        m_impl->context->Display(m_impl->viewCube, false);
         m_impl->applyColors();
     } catch (const Standard_Failure& failure) {
         m_impl->view.Nullify();
@@ -1884,7 +2242,6 @@ ViewportWidget::~ViewportWidget() {
     m_impl->profilePatches.clear();
     m_impl->constructionObjects.clear();
     m_impl->axisObjects.clear();
-    m_impl->viewCube.Nullify();
     for (Handle(AIS_Shape)& object : m_impl->originObjects) {
         object.Nullify();
     }
@@ -2300,7 +2657,9 @@ void ViewportWidget::setProjection(Projection projection) {
                                                   ? Graphic3d_Camera::Projection_Perspective
                                                   : Graphic3d_Camera::Projection_Orthographic);
     m_impl->view->Invalidate();
+    m_impl->cube->setPerspective(projection == Projection::Perspective);
     update();
+    emit projectionChanged();
 }
 
 Projection ViewportWidget::projection() const {
@@ -2343,7 +2702,11 @@ QPointF ViewportWidget::project(double x, double y, double z) const {
 }
 
 QPointF ViewportWidget::viewCubeCenter() const {
-    return QPointF(width() - viewCubeOffset, viewCubeOffset);
+    return m_impl->cube->pos() + m_impl->cube->cubeCenter();
+}
+
+NavigationCube* ViewportWidget::navigationCube() const {
+    return m_impl->cube;
 }
 
 std::optional<QPointF> ViewportWidget::positionOnPlane(const kernel::Plane& plane,
@@ -2503,10 +2866,6 @@ NavigationPreset ViewportWidget::navigationPreset() const {
 
 void ViewportWidget::setAnimated(bool animated) {
     m_impl->animated = animated;
-    if (!m_impl->viewCube.IsNull()) {
-        // Not zero: the animation still has to run for one frame to move the camera.
-        m_impl->viewCube->SetDuration(animated ? 0.5 : 0.001);
-    }
 }
 
 bool ViewportWidget::isAnimated() const {
@@ -2978,12 +3337,13 @@ void ViewportWidget::initializeGL() {
 
 void ViewportWidget::paintGL() {
     QOpenGLFunctions* gl = context()->functions();
-    if (!m_impl->canRender() || m_impl->view->Window().IsNull()) {
+    if (drawingHeld || !m_impl->canRender() || m_impl->view->Window().IsNull()) {
         const QColor& background = m_impl->colors.background;
         gl->glClearColor(background.redF(), background.greenF(), background.blueF(), 1.0F);
         gl->glClear(GL_COLOR_BUFFER_BIT);
         return;
     }
+    ++m_impl->frames;
 
     // The pixel ratio changes when the window moves to a screen with different scaling.
     Handle(ViewportWindow) window = Handle(ViewportWindow)::DownCast(m_impl->view->Window());
@@ -3129,12 +3489,36 @@ void ViewportWidget::paintGL() {
         // The sketch is drawn over this frame, and has to follow the camera.
         m_impl->editor->overlay()->update();
     }
+    if (m_impl->pointsOverlay->isVisible()) {
+        m_impl->pointsOverlay->update();
+    }
+    m_impl->followCamera();
 }
 
 void ViewportWidget::mousePressEvent(QMouseEvent* event) {
     QOpenGLWidget::mousePressEvent(event);
     if (!m_impl->canRender()) {
         return;
+    }
+    if (event->button() == Qt::RightButton) {
+        // Wait and see: held and moved it turns the view, let go it opens the menu.
+        m_impl->rightPressed = true;
+        m_impl->rightDragging = false;
+        m_impl->rightPressPosition = event->position();
+        return;
+    }
+    if (event->button() == Qt::MiddleButton && m_impl->middlePans(event->modifiers())) {
+        m_impl->panning = true;
+        setCursor(Qt::ClosedHandCursor);
+    }
+    if (event->button() == Qt::LeftButton && m_impl->pointsOverlay->isVisible()) {
+        if (const int point = m_impl->pointsOverlay->pointAt(event->position()); point >= 0) {
+            m_impl->pressedPoint = true;
+            const PickablePoint picked =
+                m_impl->pointsOverlay->points()[static_cast<std::size_t>(point)];
+            emit pointPicked(picked.sketch, picked.point);
+            return;
+        }
     }
     if (event->button() == Qt::LeftButton && !m_impl->sketching() &&
         m_impl->overHandle(event->position())) {
@@ -3154,14 +3538,6 @@ void ViewportWidget::mousePressEvent(QMouseEvent* event) {
         // macOS a move can arrive after the press it came before.
         const Graphic3d_Vec2i pixel = m_impl->toFramebufferPixels(event->position());
         m_impl->context->MoveTo(pixel.x(), pixel.y(), m_impl->view, false);
-    }
-    if (event->button() == Qt::LeftButton && m_impl->isOverViewCube()) {
-        // Wait and see whether this becomes a click or a drag.
-        m_impl->cubePressed = true;
-        m_impl->cubeDragging = false;
-        m_impl->cubePressPosition = event->position();
-        m_impl->cubePressModifiers = event->modifiers();
-        return;
     }
     if (m_impl->planePicking && event->button() == Qt::LeftButton) {
         if (const auto plane = pickPlaneAt(event->position().toPoint())) {
@@ -3229,6 +3605,26 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (!m_impl->canRender()) {
         return;
     }
+    if (event->button() == Qt::RightButton && m_impl->rightPressed) {
+        m_impl->rightPressed = false;
+        if (m_impl->rightDragging) {
+            m_impl->rightDragging = false;
+            m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(event->position()),
+                                       Aspect_VKeyMouse_NONE, Aspect_VKeyFlags_NONE, false);
+            update();
+        } else {
+            emit customContextMenuRequested(event->position().toPoint());
+        }
+        return;
+    }
+    if (event->button() == Qt::MiddleButton && m_impl->panning) {
+        m_impl->panning = false;
+        unsetCursor();
+    }
+    if (event->button() == Qt::LeftButton && m_impl->pressedPoint) {
+        m_impl->pressedPoint = false;
+        return;
+    }
     if (m_impl->handle.dragging && event->button() == Qt::LeftButton) {
         m_impl->handle.dragging = false;
         setCursor(m_impl->overHandle(event->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
@@ -3236,20 +3632,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
         m_impl->redraw();
         return;
     }
-    if (m_impl->cubePressed && event->button() == Qt::LeftButton) {
-        m_impl->cubePressed = false;
-        if (m_impl->cubeDragging) {
-            m_impl->cubeDragging = false;
-            m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(event->position()),
-                                       Aspect_VKeyMouse_NONE, Aspect_VKeyFlags_NONE, false);
-            update();
-            return;
-        }
-        // It was a click. Give OCCT the press it has not seen yet; the release follows below.
-        m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(m_impl->cubePressPosition),
-                                   Aspect_VKeyMouse_LeftButton,
-                                   toOcctModifiers(m_impl->cubePressModifiers), false);
-    } else if (m_impl->pressedConstruction.isValid() && event->button() == Qt::LeftButton) {
+    if (m_impl->pressedConstruction.isValid() && event->button() == Qt::LeftButton) {
         const document::ObjectId pressed = m_impl->pressedConstruction;
         m_impl->pressedConstruction = {};
         if (constructionPlaneAt(event->position().toPoint()) == pressed) {
@@ -3299,6 +3682,15 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
     if (!m_impl->canRender()) {
         return;
     }
+    if (m_impl->pointsOverlay->isVisible()) {
+        const int point = m_impl->pointsOverlay->pointAt(event->position());
+        m_impl->pointsOverlay->setHovered(point);
+        if (point >= 0) {
+            setCursor(Qt::PointingHandCursor);
+        } else {
+            unsetCursor();
+        }
+    }
     if (m_impl->handle.dragging) {
         if (const auto along = m_impl->handleParameterAt(event->position())) {
             // To a tenth of a millimeter: the box beside it takes any value.
@@ -3318,21 +3710,17 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* event) {
             m_impl->redraw();
         }
     }
-    if (m_impl->cubePressed) {
-        // Dragging the view cube orbits, as the orbit buttons would from the same spot.
-        const Aspect_VKeyMouse orbitButton = Aspect_VKeyMouse_MiddleButton;
-        if (!m_impl->cubeDragging) {
-            const QPointF moved = event->position() - m_impl->cubePressPosition;
+    if (m_impl->rightPressed) {
+        // Held and moved, the right button orbits, as the orbit buttons would from the same spot.
+        if (!m_impl->rightDragging) {
+            const QPointF moved = event->position() - m_impl->rightPressPosition;
             if (moved.manhattanLength() < QApplication::startDragDistance()) {
                 return;
             }
-            m_impl->cubeDragging = true;
-            m_impl->AbortViewAnimation();
-            m_impl->UpdateMouseButtons(m_impl->toFramebufferPixels(m_impl->cubePressPosition),
-                                       orbitButton, m_impl->orbitModifiers, false);
+            m_impl->rightDragging = true;
+            m_impl->startOrbit(m_impl->rightPressPosition);
         }
-        m_impl->UpdateMousePosition(m_impl->toFramebufferPixels(event->position()), orbitButton,
-                                    m_impl->orbitModifiers, false);
+        m_impl->orbitTo(event->position());
         update();
         return;
     }
@@ -3359,7 +3747,7 @@ void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* event) {
         fitAll();
         return;
     }
-    if (event->button() == Qt::LeftButton && m_impl->canRender() && !m_impl->isOverViewCube()) {
+    if (event->button() == Qt::LeftButton && m_impl->canRender()) {
         if (m_impl->sketching()) {
             m_impl->editor->mouseDoubleClick(event->position(), event->modifiers());
             return;
@@ -3378,12 +3766,52 @@ void ViewportWidget::keyPressEvent(QKeyEvent* event) {
         event->accept();
         return;
     }
+    if (event->key() == Qt::Key_Menu) {
+        emit customContextMenuRequested(mapFromGlobal(QCursor::pos()));
+        event->accept();
+        return;
+    }
     QOpenGLWidget::keyPressEvent(event);
+}
+
+void ViewportWidget::leaveEvent(QEvent* event) {
+    QOpenGLWidget::leaveEvent(event);
+    m_impl->editor->pointerLeft();
 }
 
 void ViewportWidget::resizeEvent(QResizeEvent* event) {
     QOpenGLWidget::resizeEvent(event);
     m_impl->editor->overlay()->setGeometry(rect());
+    m_impl->pointsOverlay->setGeometry(rect());
+    m_impl->cube->fitTo(size());
+    m_impl->cube->move(width() - m_impl->cube->width() - 4, 4);
+}
+
+std::uint64_t ViewportWidget::framesDrawn() const {
+    return m_impl->frames;
+}
+
+void ViewportWidget::holdDrawing(bool held) {
+    drawingHeld = held;
+    if (held) {
+        return;
+    }
+    for (QWidget* widget : QApplication::allWidgets()) {
+        if (auto* view = qobject_cast<ViewportWidget*>(widget)) {
+            view->update();
+        }
+    }
+}
+
+void ViewportWidget::setPickablePoints(std::vector<PickablePoint> points) {
+    m_impl->pointsOverlay->setGeometry(rect());
+    m_impl->pointsOverlay->show(std::move(points), m_impl->colors.selection,
+                                m_impl->colors.selection);
+    m_impl->pointsOverlay->raise();
+}
+
+const std::vector<PickablePoint>& ViewportWidget::pickablePoints() const {
+    return m_impl->pointsOverlay->points();
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* event) {

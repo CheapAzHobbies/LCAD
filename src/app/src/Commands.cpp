@@ -23,6 +23,16 @@ QString plain(QString text) {
     return text.remove(QLatin1Char('&')).remove(QStringLiteral("…"));
 }
 
+// What pointing at a button says: its name, and the key if it has one. What it does in more
+// words goes to the status bar.
+void nameInToolTip(QAction* action) {
+    const QString name = plain(action->text());
+    const QKeySequence key = action->shortcut();
+    action->setToolTip(key.isEmpty() ? name
+                                     : QStringLiteral("%1 (%2)").arg(
+                                           name, key.toString(QKeySequence::NativeText)));
+}
+
 // How well `text` answers `query`: 0 for not at all.
 int matchScore(const QString& text, const QString& query, int startOfText, int startOfWord,
                int elsewhere) {
@@ -50,7 +60,6 @@ QAction* CommandRegistry::add(Command command) {
     const QString id = command.id;
     auto* action = new QAction(command.text, this);
     action->setObjectName(id);
-    action->setToolTip(command.description);
     action->setStatusTip(command.description);
     action->setCheckable(command.checkable);
     if (!command.iconName.isEmpty()) {
@@ -78,6 +87,7 @@ QAction* CommandRegistry::add(Command command) {
     } else {
         action->setShortcuts(command.shortcuts);
     }
+    nameInToolTip(action);
 
     connect(action, &QAction::triggered, this, [this, id](bool checked) {
         const Command& definition = m_commands[id];
@@ -122,6 +132,7 @@ void CommandRegistry::refresh() {
         }
         if (definition.currentText) {
             action->setText(definition.currentText());
+            nameInToolTip(action);
         }
     }
 }
@@ -212,6 +223,7 @@ bool CommandRegistry::setShortcuts(const QString& id, const QList<QKeySequence>&
         }
     }
     found->setShortcuts(sequences);
+    nameInToolTip(found);
     if (sequences == m_defaults.value(id)) {
         QSettings().remove(settingsKey(id));
     } else {

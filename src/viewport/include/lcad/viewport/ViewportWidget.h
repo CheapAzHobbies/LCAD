@@ -121,6 +121,16 @@ struct CameraState {
     Projection projection = Projection::Orthographic;
 };
 
+class NavigationCube;
+
+/// A point of a sketch that can be clicked in the 3D view, whatever is in front of it.
+struct PickablePoint {
+    document::ObjectId sketch;
+    std::uint32_t point = 0;
+    kernel::Point at;
+    bool chosen = false;
+};
+
 /// One entry of the selection: a whole body, one face, edge, or vertex of a body, or a sketch.
 struct SelectedItem {
     enum class Kind { Body, Face, Edge, Vertex, Sketch };
@@ -275,6 +285,7 @@ public:
     [[nodiscard]] QPointF project(double x, double y, double z) const;
     /// The middle of the view cube, in the widget's coordinates.
     [[nodiscard]] QPointF viewCubeCenter() const;
+    [[nodiscard]] NavigationCube* navigationCube() const;
     /// Where the line of sight through a position in the widget meets a plane, in the plane's
     /// own coordinates (u, v). Nothing if the plane is seen edge-on.
     [[nodiscard]] std::optional<QPointF> positionOnPlane(const kernel::Plane& plane,
@@ -364,6 +375,10 @@ public:
     /// Everything the filter lets be picked at a position in the widget, nearest first: also
     /// what lies behind the item a click there would select.
     [[nodiscard]] std::vector<SelectedItem> itemsAt(const QPoint& position);
+    /// Shows these points over everything, and makes each a thing to click: pointPicked() says
+    /// which. None ends that.
+    void setPickablePoints(std::vector<PickablePoint> points);
+    [[nodiscard]] const std::vector<PickablePoint>& pickablePoints() const;
 
     // Diagnostics
 
@@ -373,9 +388,20 @@ public:
     [[nodiscard]] QString graphicsInfo() const;
     /// Why the viewport cannot render, or an empty string when it is working.
     [[nodiscard]] QString errorString() const;
+    /// How many frames it has drawn.
+    [[nodiscard]] std::uint64_t framesDrawn() const;
+
+    /// Stops every viewport from drawing, or lets them again, and has them catch up. For while
+    /// another thread is using OCCT: OCCT is not to be used from two threads at once, and a
+    /// frame can come at any time, for a resize draws one on the spot, whatever else says.
+    static void holdDrawing(bool held);
 
 signals:
     void selectionChanged();
+    /// Perspective was switched on or off, by whatever means.
+    void projectionChanged();
+    /// One of the points of setPickablePoints() was clicked.
+    void pointPicked(lcad::document::ObjectId sketch, std::uint32_t point);
     /// A sketch was opened for editing, or closed.
     void sketchEditingChanged();
     /// The user double-clicked something that can be picked.
@@ -406,6 +432,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void leaveEvent(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
 private:

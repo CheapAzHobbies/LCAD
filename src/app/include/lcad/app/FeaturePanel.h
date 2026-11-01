@@ -56,6 +56,9 @@ public:
     void setFaces(document::ObjectId body, const std::vector<std::string>& faces);
     /// Hole: the sketch whose points say where the holes go.
     void setSketch(document::ObjectId sketch);
+    /// Hole: takes a point of a sketch in, or out again. A point of another sketch starts over
+    /// with that sketch and that point.
+    void togglePoint(document::ObjectId sketch, sketch::EntityId point);
     /// Repair: the body to repair.
     void setBody(document::ObjectId body);
     /// Pull: the flat face, of a body, by name, that a pull up to a face ends in.
