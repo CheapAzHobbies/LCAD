@@ -139,6 +139,24 @@ uses. Faces in the file that are not part of a solid are sewn together, and thos
 become solids; the rest are kept as surfaces, and LCAD says so. Importing is one step to undo.
 An imported body has no timeline of its own: change it with the commands above.
 
+**A mesh** (.stl, .obj, .3mf) has no faces or features, only triangles, and LCAD works out what the
+triangles were. Each part of the mesh is taken as far as it will go, and LCAD says how far that was:
+
+1. **Rebuilt from sketches.** If the part is made of outlines stacked along one direction, it comes
+   in as if it had been drawn in LCAD: sketches and Pulls, with Holes, Fillets, and Chamfers in the
+   timeline at the sizes the mesh has. Change a fillet's radius, and it changes.
+2. **A solid with features.** If the part as a whole is not such a stack, its holes and rounds that
+   can be read still come in as Holes and Fillets, on a solid that takes the commands above.
+3. **A solid of exact faces.** Flat faces, cylinders, cones, spheres, and tori, with no features.
+4. **A solid of flat facets**, as the mesh has them, for a part whose faces cannot be pieced
+   together exactly.
+
+Whatever is rebuilt is measured against the mesh, and is only kept if it comes to the same shape.
+Reading a mesh can take a while, and can be stopped. Machined or modeled parts go furthest; a
+sculpted or scanned shape stays facets. A bevel around a round edge is not read as a Chamfer yet.
+A part with a hollow inside comes in as a solid, keeping the hollow. Meshes have no units: an STL or
+OBJ file's numbers are taken as millimeters.
+
 **File > Export** (Ctrl + Shift + E) writes the bodies shown, or those selected, to:
 
 - **STEP**: the exact solids, each a part with its name, for other CAD programs. Not the timeline:
@@ -640,12 +658,12 @@ These are the shortcuts LCAD starts with. On macOS, Ctrl in them is the Command 
 | Q | Offset Face |
 | J | Joint |
 | M | Measure |
-| Ctrl + I, Ctrl + Shift + E | Import a STEP or IGES file, export bodies |
+| Ctrl + I, Ctrl + Shift + E | Import a model or a mesh, export bodies |
 | F6, Shift + F6, Home | Fit the view, zoom to the selection, go to the home view |
 | F11 | Give the window to the 3D view, and back |
 | Ctrl + Q | Quit |
 
-Not there yet: inches as a display unit, importing meshes (STL, OBJ, 3MF) or exporting IGES,
+Not there yet: inches as a display unit, exporting IGES,
 pulling up to a curved face, dragging a component or a joint in the 3D view (they are moved by
 typed values), joints that close a loop (each part is placed by one joint at a time), exploded
 views, and a bill of materials. Construction axes are not picked by clicking them in the

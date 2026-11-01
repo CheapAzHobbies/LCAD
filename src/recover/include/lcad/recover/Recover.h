@@ -5,6 +5,7 @@
 #include <lcad/document/Document.h>
 #include <lcad/kernel/Exchange.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,8 @@ enum class Result {
 
 /// One part of a mesh, and what became of it.
 struct PartResult {
+    /// What it is called: the name of the mesh, with a number if it has several parts.
+    std::string name;
     Result result = Result::Failed;
     int pulls = 0;
     int holes = 0;
@@ -47,9 +50,27 @@ struct MeshResult {
     std::vector<document::ObjectId> bodies;
 };
 
-/// Adds the parts of a mesh to a document, each as far as it can be taken, and checks each against
-/// the mesh: what does not come to the same shape is not kept. All of it is one undo step. Throws
-/// kernel::Error when stopped (see Stop.h).
+/// What a mesh comes to, worked out but not yet in any document.
+class WorkedMesh {
+public:
+    struct Parts;
+    explicit WorkedMesh(std::shared_ptr<const Parts> parts);
+    [[nodiscard]] const Parts& parts() const { return *m_parts; }
+
+private:
+    std::shared_ptr<const Parts> m_parts;
+};
+
+/// Works out how far each part of a mesh can be taken, and checks each against the mesh: what does
+/// not come to the same shape is not kept. This is the long part, and touches no document, so it can
+/// go on a thread of its own. Throws kernel::Error when stopped (see Stop.h).
+[[nodiscard]] WorkedMesh workOutMesh(const kernel::Mesh& mesh, const std::string& name);
+
+/// Adds what was worked out to a document, as one undo step.
+MeshResult addWorkedMesh(document::Document& document, const WorkedMesh& worked,
+                         document::ObjectId component = {});
+
+/// Both of those.
 MeshResult addMesh(document::Document& document, const kernel::Mesh& mesh, const std::string& name,
                    document::ObjectId component = {});
 

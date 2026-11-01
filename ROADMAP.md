@@ -232,6 +232,8 @@ Started early, on the owner's word, once Phase 3 was merged. Built on the branch
       Tried on files other programs wrote: a Euclid screw, five Onshape parts, an IGES canopy.
 - [x] STL (binary or text), 3MF, OBJ export with resolution control: Coarse, Medium, Fine, or a
       deviation and an angle of one's own. The meshes are closed and face outward.
+- [x] STL, OBJ, and 3MF import, taken as far as each part allows: sketches and features, features
+      on a solid, a solid of exact faces, or a solid of facets, always checked against the mesh.
 - [x] Direct edits on imported solids: Offset Face (also widens or narrows a hole), Move Face
       (flat faces along their normals; a hole or a boss across the face it is in), Delete Face
       with healing (a fillet, a hole, a boss goes).
@@ -247,7 +249,7 @@ in the document (`tests/document/DirectEditTest.cpp`) and through the window
 volume compared with the closed-form value. STEP files written with each OCCT version are read
 by every build (`tests/models/step/`).
 
-What Phase 4 leaves for later: importing meshes (STL, OBJ, 3MF) and exporting IGES; moving a
+What Phase 4 leaves for later: exporting IGES; moving a
 flat face within its own plane, or faces that are not all flat in a direction that takes them
 off their neighbors' surfaces in a way defeaturing cannot undo; AP242 export (AP214 is
 written); and remembering which file a body was imported from.

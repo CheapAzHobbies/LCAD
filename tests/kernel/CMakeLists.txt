@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 add_executable(lcad_kernel_tests
+    MeshTest.cpp
     DirectEditTest.cpp
     ErrorTest.cpp
     ExchangeTest.cpp

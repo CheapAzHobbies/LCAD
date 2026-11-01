@@ -217,6 +217,43 @@ void InterchangeInterfaceTest::aStepSolidIsImportedOffsetSavedAndExported() {
     window.document()->redo();
     QCOMPARE(window.document()->bodies().size(), std::size_t{1});
 
+    // A mesh comes in as far as it can be taken: this one, a plate with a hole, all the way.
+    {
+        const lcad::kernel::Shape box = lcad::kernel::makeBox(40.0, 30.0, 5.0);
+        const lcad::kernel::Shape tool = lcad::kernel::translated(lcad::kernel::makeCylinder(4.0, 7.0),
+                                                                  20.0, 15.0, -1.0);
+        const lcad::kernel::NamedShape cut = lcad::kernel::combine(
+            lcad::kernel::nameFaces(box, "box"), lcad::kernel::nameFaces(tool, "tool"),
+            lcad::kernel::Combination::Cut);
+        const QString mesh = m_directory.filePath(QStringLiteral("plate.stl"));
+        lcad::kernel::exportStl({{"Plate", cut.shape}}, mesh.toStdString(), {0.01, 8.0},
+                                lcad::kernel::StlEncoding::Binary);
+        MainWindow meshes;
+        QVERIFY2(meshes.importGeometry(mesh, &error, &notes), qPrintable(error));
+        QCOMPARE(notes.size(), 1);
+        QVERIFY2(notes.front().contains(QStringLiteral("plate is rebuilt from sketches")) &&
+                     notes.front().contains(QStringLiteral("1 hole")),
+                 qPrintable(notes.front()));
+        QCOMPARE(meshes.document()->bodies().size(), std::size_t{1});
+        QCOMPARE(QString::fromStdString(meshes.document()->bodies().front().name),
+                 QStringLiteral("plate"));
+        QCOMPARE(meshes.document()->sketches().size(), std::size_t{2});
+        QVERIFY(meshes.document()->canUndo());
+        meshes.document()->undo();
+        QVERIFY(meshes.document()->bodies().empty());
+        QVERIFY(meshes.document()->features().empty());
+
+        // Not a mesh: it says so, and nothing changes.
+        const QString bad = m_directory.filePath(QStringLiteral("notes.stl"));
+        QFile file(bad);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("Not a mesh.\n");
+        file.close();
+        QVERIFY(!meshes.importGeometry(bad, &error));
+        QVERIFY(!error.isEmpty());
+        QVERIFY(meshes.document()->bodies().empty());
+    }
+
     // A file that is not a model says so, and changes nothing.
     const QString notes2 = m_directory.filePath(QStringLiteral("notes.step"));
     {

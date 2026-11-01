@@ -564,15 +564,21 @@ void undress(Worked& worked, const Mesh& part, const kernel::MeshSurfaces& origi
 
 } // namespace
 
-MeshResult addMesh(Document& document, const Mesh& mesh, const std::string& name,
-                   ObjectId component) {
+struct WorkedMesh::Parts {
+    std::string name;
+    std::vector<Worked> parts;
+};
+
+WorkedMesh::WorkedMesh(std::shared_ptr<const Parts> parts) : m_parts(std::move(parts)) {}
+
+WorkedMesh workOutMesh(const Mesh& mesh, const std::string& name) {
     const std::vector<Mesh> parts = partsOf(mesh);
     // A part facing inward is a hollow in another, and only a solid made of faces can hold that.
     const bool hollows = std::any_of(parts.begin(), parts.end(), [](const Mesh& part) {
         return kernel::meshVolume(part) < 0.0;
     });
-    // All the work comes first: stopped partway, the document has not been touched.
-    std::vector<Worked> work;
+    auto out = std::make_shared<WorkedMesh::Parts>();
+    out->name = name;
     if (hollows) {
         Worked worked;
         worked.name = name;
@@ -580,39 +586,42 @@ MeshResult addMesh(Document& document, const Mesh& mesh, const std::string& name
         worked.result.recognized = found.share;
         worked.result.note = "it has a hollow inside";
         asSolids(worked, kernel::solidsFromMesh(mesh, found));
-        work.push_back(std::move(worked));
-    } else {
-        int number = 0;
-        for (const Mesh& part : parts) {
-            Worked worked;
-            worked.name = parts.size() > 1 ? name + " " + std::to_string(++number) : name;
-            const kernel::MeshSurfaces found = kernel::findSurfaces(part);
-            worked.result.recognized = found.share;
-            worked.tolerance = found.tolerance;
-            std::string why;
-            std::optional<Plan> plan = planPart(part, found, why);
-            if (plan) {
-                if (tryPlan(*plan, nullptr, part, worked.name, found.tolerance, worked.result)) {
-                    worked.result.result = Result::Features;
-                    worked.plan = std::move(plan);
-                } else {
-                    why = "what it worked out did not come to the same shape";
-                }
-            }
-            if (!worked.plan) {
-                worked.result.note = why;
-                undress(worked, part, found);
-            }
-            if (!worked.plan) {
-                asSolids(worked, kernel::solidsFromMesh(part, found));
-            }
-            work.push_back(std::move(worked));
-        }
+        out->parts.push_back(std::move(worked));
+        return WorkedMesh(std::move(out));
     }
+    int number = 0;
+    for (const Mesh& part : parts) {
+        Worked worked;
+        worked.name = parts.size() > 1 ? name + " " + std::to_string(++number) : name;
+        const kernel::MeshSurfaces found = kernel::findSurfaces(part);
+        worked.result.recognized = found.share;
+        worked.tolerance = found.tolerance;
+        std::string why;
+        std::optional<Plan> plan = planPart(part, found, why);
+        if (plan) {
+            if (tryPlan(*plan, nullptr, part, worked.name, found.tolerance, worked.result)) {
+                worked.result.result = Result::Features;
+                worked.plan = std::move(plan);
+            } else {
+                why = "what it worked out did not come to the same shape";
+            }
+        }
+        if (!worked.plan) {
+            worked.result.note = why;
+            undress(worked, part, found);
+        }
+        if (!worked.plan) {
+            asSolids(worked, kernel::solidsFromMesh(part, found));
+        }
+        out->parts.push_back(std::move(worked));
+    }
+    return WorkedMesh(std::move(out));
+}
 
+MeshResult addWorkedMesh(Document& document, const WorkedMesh& mesh, ObjectId component) {
     MeshResult out;
-    document::Transaction transaction(document, "Import " + name);
-    for (Worked& worked : work) {
+    document::Transaction transaction(document, "Import " + mesh.parts().name);
+    for (const Worked& worked : mesh.parts().parts) {
         if (worked.plan) {
             Builder builder(document, worked.name, component, worked.tolerance);
             PartResult again;
@@ -623,17 +632,23 @@ MeshResult addMesh(Document& document, const Mesh& mesh, const std::string& name
             out.bodies.push_back(builder.body());
         }
         int made = 0;
-        for (kernel::Shape& solid : worked.solids) {
+        for (const kernel::Shape& solid : worked.solids) {
             const std::string bodyName = worked.solids.size() > 1
                                              ? worked.name + " " + std::to_string(++made)
                                              : worked.name;
-            out.bodies.push_back(document.addBody(document.uniqueBodyName(bodyName), std::move(solid),
-                                                  component));
+            out.bodies.push_back(document.addBody(document.uniqueBodyName(bodyName), solid, component));
         }
-        out.parts.push_back(worked.result);
+        PartResult result = worked.result;
+        result.name = worked.name;
+        out.parts.push_back(std::move(result));
     }
     transaction.commit();
     return out;
+}
+
+MeshResult addMesh(Document& document, const Mesh& mesh, const std::string& name,
+                   ObjectId component) {
+    return addWorkedMesh(document, workOutMesh(mesh, name), component);
 }
 
 } // namespace lcad::recover
