@@ -66,10 +66,11 @@ QPushButton* button(QWidget* in, const char* name) {
     return in->findChild<QPushButton*>(QLatin1String(name));
 }
 
-// Uses up the stack: about 4 KB a call. Its room is read after the call, for a compiler not to be
-// able to make a loop of it.
+// Uses up the stack: about 1 KB a call. Far less than a page, for the end of the stack to be met:
+// a call as large as the guard page there can step over it, into another thread's memory. Its
+// room is read after the call, for a compiler not to be able to make a loop of it.
 std::size_t deep(std::size_t calls) {
-    volatile char room[4096] = {};
+    volatile char room[1024] = {};
     room[calls % sizeof(room)] = 1;
     const std::size_t below = calls == 0 ? 0 : deep(calls - 1);
     return below + static_cast<std::size_t>(room[calls % sizeof(room)]);
@@ -140,8 +141,8 @@ void LongWorkTest::workWithinWorkIsDoneThere() {
 void LongWorkTest::aSmallStackIsNotAProblem() {
     // Some 80 MB of stack, which would end LCAD on any system's main or usual thread.
     std::size_t result = 1;
-    runLongWork(QStringLiteral("Deep"), [&result] { result = deep(20000); });
-    QVERIFY(result < 20002);
+    runLongWork(QStringLiteral("Deep"), [&result] { result = deep(80000); });
+    QCOMPARE(result, std::size_t{80001});
 }
 
 void LongWorkTest::slowWorkCanBeStopped() {

@@ -704,7 +704,8 @@ exceptions on Windows. Such faults are real on hard shapes in a geometry kernel,
 256 MB stack heads off the commonest. What was going on is abandoned without unwinding it, so
 locks and memory may be left in a bad way, and LCAD treats it as a warning to get out: it saves a
 recovery copy at once, and the feature fails with a message saying to save and restart. Faults on
-OCCT's own worker threads are not caught.
+OCCT's own worker threads are not caught. Nor is a stack frame larger than the guard page that
+happens to step over it at the very end of the stack, which writes into whatever lies below.
 
 **What it cannot do.** OCCT cannot be interrupted except where it looks up, so Stop is a request:
 hidden lines and draft do not look up at all, and a drawing stops only between its views. A thread
