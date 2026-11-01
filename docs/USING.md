@@ -558,6 +558,9 @@ the pointer is on lights up and is named underneath, without moving anything.
 - **Drag** it to turn the view freely.
 - With the pointer near it, **arrows** appear around it, each turning the view 45° toward the side
   it points at.
+- Two **curved arrows** above it spin the view around the way you are looking, as far as it takes
+  for the cube to look the same again: 90° at a face, 120° at a corner, where its three sides
+  change places, and 180° at an edge. Between those it is 90°.
 
 Below it are **Home** and the switch between orthographic and perspective. The small X, Y, and Z
 beside it show how the axes lie.
