@@ -8,6 +8,7 @@
 #include <lcad/kernel/Primitives.h>
 #include <lcad/kernel/Stop.h>
 #include <lcad/kernel/SubShapes.h>
+#include <lcad/kernel/Check.h>
 #include <lcad/sketch/Edit.h>
 
 #include <TempDir.h>
@@ -1089,6 +1090,53 @@ TEST_CASE("A hole goes at the points it is given, any points", "[document][featu
     REQUIRE(document.featureError(holes).empty());
     CHECK_THAT(made.volume(), WithinRel(solid - 2.0 * each, 1e-6));
     static_cast<void>(b);
+}
+
+TEST_CASE("One area of outlines that overlap can be pulled", "[document][feature]") {
+    Document document;
+    const ObjectId id = document.addSketch("Two", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {30.0, 20.0});
+    lcad::sketch::addRectangle(s, {20.0, 10.0}, {50.0, 30.0});
+    document.setSketchGeometry(id, s, "Two");
+    const std::vector<lcad::sketch::Region> areas = s.regions();
+    REQUIRE(areas.size() == 3);
+
+    // Nothing picked: all of it, as one solid with no lines across it.
+    const ObjectId all = document.addFeature(pullOf(id, 5.0));
+    REQUIRE(document.featureError(all).empty());
+    const ObjectId body = document.findFeature(all)->body;
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel(1100.0 * 5.0, 1e-9));
+    document.removeFeature(all);
+
+    // Each area alone.
+    for (const lcad::sketch::Region& area : areas) {
+        Feature pull = pullOf(id, 5.0);
+        pull.regions = {area.key};
+        const ObjectId one = document.addFeature(pull);
+        REQUIRE(document.featureError(one).empty());
+        const ObjectId made = document.findFeature(one)->body;
+        CHECK_THAT(lcad::kernel::volume(document.findBody(made)->shape),
+                   WithinRel(area.area * 5.0, 1e-9));
+        CHECK(lcad::kernel::checkGeometry(document.findBody(made)->shape).empty());
+        document.removeFeature(one);
+    }
+
+    // The two without what they share: two solids that touch at a corner of the overlap.
+    Feature apart = pullOf(id, 5.0);
+    for (const lcad::sketch::Region& area : areas) {
+        if (area.area > 200.0) {
+            apart.regions.push_back(area.key);
+        }
+    }
+    const ObjectId both = document.addFeature(apart);
+    REQUIRE(document.featureError(both).empty());
+    double total = 0.0;
+    for (const lcad::document::Body& body2 : document.bodies()) {
+        total += lcad::kernel::volume(body2.shape);
+    }
+    CHECK_THAT(total, WithinRel(1000.0 * 5.0, 1e-9));
 }
 
 TEST_CASE("Holes are drilled at the points of a sketch", "[document][feature]") {

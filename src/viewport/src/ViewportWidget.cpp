@@ -1449,8 +1449,7 @@ public:
                 if (faces[i].isNull()) {
                     continue;
                 }
-                Profile profile{id, regions[i].outer};
-                std::sort(profile.outline.begin(), profile.outline.end());
+                Profile profile{id, regions[i].key};
                 Handle(AIS_Shape) object = new AIS_Shape(kernel::occt::unwrap(faces[i]));
                 place(object, placementFor(sketch->component));
                 // Over a body's face that lies in the sketch's plane, but behind whatever is

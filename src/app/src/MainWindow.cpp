@@ -3947,11 +3947,9 @@ void MainWindow::showPullHandle(const document::Feature& feature) {
     const std::vector<kernel::Shape> faces = document::sketchRegionFaces(*sketch);
     std::optional<kernel::BoundingBox> box;
     for (std::size_t i = 0; i < regions.size() && i < faces.size(); ++i) {
-        std::vector<sketch::EntityId> outline = regions[i].outer;
-        std::sort(outline.begin(), outline.end());
         const bool used = feature.regions.empty() ||
-                          std::find(feature.regions.begin(), feature.regions.end(), outline) !=
-                              feature.regions.end();
+                          std::find(feature.regions.begin(), feature.regions.end(),
+                                    regions[i].key) != feature.regions.end();
         if (!used || faces[i].isNull()) {
             continue;
         }

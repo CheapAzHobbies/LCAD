@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <map>
 #include <vector>
 
 namespace lcad::document {
@@ -127,7 +128,30 @@ kernel::Region kernelRegion(const SketchItem& sketch, const sketch::Region& regi
         return made;
     };
     kernel::Region made;
-    made.outer = outline(region.outer);
+    if (region.pieces.empty()) {
+        made.outer = outline(region.outer);
+    }
+    // Pieces of curves, where outlines cross. A name each: one curve can be in here twice.
+    std::map<sketch::EntityId, int> seen;
+    for (const sketch::CurvePiece& piece : region.pieces) {
+        const sketch::Entity* entity = sketch.geometry.find(piece.curve);
+        if (entity == nullptr) {
+            throw std::invalid_argument("the outline names a curve the sketch does not have");
+        }
+        const kernel::Plane& plane = sketch.plane;
+        kernel::Shape edge;
+        if (entity->kind == sketch::EntityKind::Line) {
+            edge = kernel::makeSegment(kernel::toWorld(plane, piece.start.x, piece.start.y),
+                                       kernel::toWorld(plane, piece.end.x, piece.end.y));
+        } else {
+            const sketch::Point2 c = sketch.geometry.position(entity->center);
+            edge = kernel::makeArcEdge(plane, c.x, c.y, piece.start.x, piece.start.y, piece.end.x,
+                                       piece.end.y);
+        }
+        const int number = seen[piece.curve]++;
+        made.outer.push_back({edge, std::to_string(piece.curve) +
+                                        (number > 0 ? "." + std::to_string(number) : "")});
+    }
     for (const std::vector<sketch::EntityId>& hole : region.holes) {
         made.holes.push_back(outline(hole));
     }

@@ -32,6 +32,79 @@ std::vector<EntityId> sorted(std::vector<EntityId> ids) {
 
 } // namespace
 
+TEST_CASE("Outlines that cross cut each other into areas", "[sketch][profiles]") {
+    SECTION("Two boxes: each without the other, and what they share") {
+        Sketch sketch;
+        addRectangle(sketch, {0.0, 0.0}, {30.0, 20.0});
+        addRectangle(sketch, {20.0, 10.0}, {50.0, 30.0});
+        CHECK(sketch.outlineRegions().size() == 2);
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 3);
+        std::vector<double> sizes;
+        for (const Region& area : areas) {
+            sizes.push_back(area.area);
+            CHECK_FALSE(area.pieces.empty());
+        }
+        std::sort(sizes.begin(), sizes.end());
+        CHECK_THAT(sizes[0], WithinAbs(100.0, 1e-6));
+        CHECK_THAT(sizes[1], WithinAbs(500.0, 1e-6));
+        CHECK_THAT(sizes[2], WithinAbs(500.0, 1e-6));
+    }
+    SECTION("Two circles, whose three areas are bounded by the same two curves") {
+        Sketch sketch;
+        sketch.addCircle({0.0, 0.0}, 10.0);
+        sketch.addCircle({10.0, 0.0}, 10.0);
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 3);
+        CHECK(areas[0].key != areas[1].key);
+        CHECK(areas[1].key != areas[2].key);
+        CHECK(areas[0].key != areas[2].key);
+        double total = 0.0;
+        for (const Region& area : areas) {
+            total += area.area;
+        }
+        // Two discs, less what they share counted twice.
+        const double shared = 2.0 * 100.0 * std::acos(0.5) - 5.0 * std::sqrt(400.0 - 100.0);
+        CHECK_THAT(total, WithinAbs(2.0 * M_PI * 100.0 - shared, 1e-6));
+    }
+    SECTION("A cross: five areas, and two with no curve between them are told apart") {
+        Sketch sketch;
+        addRectangle(sketch, {0.0, 10.0}, {50.0, 20.0});
+        addRectangle(sketch, {20.0, 0.0}, {30.0, 30.0});
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 5);
+        for (std::size_t i = 0; i < areas.size(); ++i) {
+            for (std::size_t j = i + 1; j < areas.size(); ++j) {
+                CHECK(areas[i].key != areas[j].key);
+            }
+        }
+    }
+    SECTION("What does not cross stays as it was") {
+        Sketch sketch;
+        addRectangle(sketch, {0.0, 0.0}, {30.0, 20.0});
+        sketch.addCircle({15.0, 10.0}, 5.0);
+        addRectangle(sketch, {40.0, 0.0}, {50.0, 10.0});
+        const std::vector<Region> areas = sketch.regions();
+        CHECK(areas.size() == 3);
+        for (const Region& area : areas) {
+            CHECK(area.pieces.empty());
+        }
+    }
+    SECTION("An outline inside one of the areas is a hole in that area alone") {
+        Sketch sketch;
+        addRectangle(sketch, {0.0, 0.0}, {30.0, 20.0});
+        addRectangle(sketch, {20.0, 10.0}, {50.0, 30.0});
+        sketch.addCircle({8.0, 8.0}, 2.0);
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 4);
+        int withHole = 0;
+        for (const Region& area : areas) {
+            withHole += area.holes.size() == 1 ? 1 : 0;
+        }
+        CHECK(withHole == 1);
+    }
+}
+
 TEST_CASE("A rectangle is one outline of its area", "[sketch][profiles]") {
     Sketch sketch;
     const std::vector<EntityId> lines = addRectangle(sketch, 2.0, 3.0, 40.0, 25.0);
@@ -247,10 +320,15 @@ TEST_CASE("Outlines that share a side are neighbors, not one inside the other",
     // centered on the rectangle's side is half in, half out, and is a hole of nothing.
     divided.addCircle({60.0, 20.0}, 5.0);
     const std::vector<Region> crossing = divided.regions();
-    REQUIRE(crossing.size() == 2);
-    CHECK(crossing[0].holes.empty());
-    CHECK(crossing[1].holes.empty());
-    CHECK_THAT(crossing[0].area, WithinAbs(2400.0, 1e-6));
+    // Each without the other, and what they share.
+    REQUIRE(crossing.size() == 3);
+    double whole = 0.0;
+    for (const Region& region : crossing) {
+        CHECK(region.holes.empty());
+        whole += region.area;
+    }
+    CHECK_THAT(whole, WithinAbs(2400.0 + 12.5 * M_PI, 1e-3));
+    CHECK(divided.outlineRegions().size() == 2);
 }
 
 TEST_CASE("An outline is given as the points around it", "[sketch][profiles]") {
