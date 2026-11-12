@@ -1995,6 +1995,17 @@ void MainWindow::createToolbar() {
     patterns->setIcon(icon(QStringLiteral("pattern-rectangular")));
     m_patternButton = patterns;
     toolbar->addWidget(patterns);
+    // Planes to sketch on, such as the second profile of a loft, and axes to turn about.
+    auto* construct = new QToolButton(toolbar);
+    construct->setObjectName(QStringLiteral("constructButton"));
+    construct->setToolTip(tr("Construction planes and axes"));
+    construct->setPopupMode(QToolButton::InstantPopup);
+    construct->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    auto* constructMenu = new QMenu(construct);
+    constructMenu->addActions({action("construct.offsetPlane"), action("construct.axis")});
+    construct->setMenu(constructMenu);
+    construct->setIcon(icon(QStringLiteral("plane")));
+    toolbar->addWidget(construct);
     for (const char* id :
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
         toolbar->addAction(action(id));

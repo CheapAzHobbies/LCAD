@@ -344,6 +344,30 @@ TEST_CASE("A constraint's symbol stays where it was moved to", "[document][file]
     CHECK(read.findConstraint(level)->markerSide[0] == 0);
 }
 
+TEST_CASE("A dimension's value stays where it was moved to", "[document][file]") {
+    const TempDir directory;
+    const std::filesystem::path path = directory.file("labels.lcad");
+    Document document;
+    const ObjectId id = document.addSketch("Outline", lcad::kernel::planeXY());
+    lcad::sketch::Sketch geometry;
+    const lcad::sketch::EntityId line = geometry.addLine({0.0, 0.0}, {10.0, 0.0});
+    const lcad::sketch::Entity* entity = geometry.find(line);
+    const lcad::sketch::ConstraintId moved = geometry.addConstraint(
+        lcad::sketch::ConstraintKind::Distance, entity->start, entity->end, 0, 10.0);
+    const lcad::sketch::ConstraintId level =
+        geometry.addConstraint(lcad::sketch::ConstraintKind::Horizontal, line);
+    geometry.setConstraintLabel(moved, lcad::sketch::Point2{3.5, -12.25});
+    document.setSketchGeometry(id, std::move(geometry), "Draw");
+
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    const lcad::sketch::Sketch& read = loaded.document->findSketch(id)->geometry;
+    REQUIRE(read.findConstraint(moved)->label.has_value());
+    CHECK(read.findConstraint(moved)->label->x == 3.5);
+    CHECK(read.findConstraint(moved)->label->y == -12.25);
+    CHECK(!read.findConstraint(level)->label.has_value());
+}
+
 TEST_CASE("A document with a damaged sketch is refused", "[document][file]") {
     using Change = std::function<void(json&)>;
     struct Damage {

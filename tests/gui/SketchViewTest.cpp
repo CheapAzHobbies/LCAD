@@ -103,6 +103,7 @@ private slots:
     void aLineIsDimensionedByClickingIt();
     void anImpossibleOrMeaninglessValueIsKeptForCorrection();
     void markersAndValuesCanBePickedAndDeleted();
+    void aDimensionsValueCanBeDraggedElsewhere();
 
     // Selecting and moving
     void clicksAndABoxSelect();
@@ -443,15 +444,13 @@ void SketchViewTest::midpointGoesOnLines() {
         }
     }
 
-    // With the tool: a line clicked twice is the same thing.
+    // With the tool: one click on a line is the same thing.
     editor()->clearSelection();
     editor()->setConstraintTool(ConstraintKind::Midpoint);
     click(at(10.0, 0.0));
-    QCOMPARE(count(ConstraintKind::Midpoint), 1);
-    click(at(10.0, 0.0));
     QCOMPARE(count(ConstraintKind::Midpoint), 2);
 
-    // And a point that is there already goes to the middle of the line, clicked in either order.
+    // And a point that is there already goes to the middle of the line clicked after it.
     editor()->setTool(SketchTool::Line);
     click(at(0.0, 30.0));
     click(at(30.0, 30.0));
@@ -1946,6 +1945,70 @@ void SketchViewTest::projectBringsEdgesOfABodyIntoTheSketch() {
 
 // With the Dimension tool, a line takes one click: its dimension then follows the pointer, and
 // typing a number places it there with that value. Enter places it as it measures.
+void SketchViewTest::aDimensionsValueCanBeDraggedElsewhere() {
+    openSketch();
+    editor()->setInference(false);
+    Sketch g = sketch();
+    const EntityId line = g.addLine({10.0, 0.0}, {70.0, 0.0});
+    const Entity* entity = g.find(line);
+    const lcad::sketch::ConstraintId length =
+        g.addConstraint(ConstraintKind::Distance, entity->start, entity->end, 0, 60.0);
+    const EntityId circle = g.addCircle({40.0, 50.0}, 10.0);
+    const lcad::sketch::ConstraintId radius =
+        g.addConstraint(ConstraintKind::Radius, circle, 0, 0, 10.0);
+    g.solve();
+    m_document->setSketchGeometry(m_sketch, g, "Draw");
+    editor()->setTool(SketchTool::Select);
+    render();
+
+    // The length's value, from below the line to above it and off to the side.
+    const QPoint from = editor()->dimensionRect(length).center().toPoint();
+    drag(from, at(85.0, 20.0));
+    const auto* moved = sketch().findConstraint(length);
+    QVERIFY(moved->label.has_value());
+    const QPointF now = editor()->dimensionRect(length).center();
+    QVERIFY2(QLineF(now, QPointF(at(85.0, 20.0))).length() < 3.0,
+             qPrintable(QStringLiteral("%1 %2").arg(now.x()).arg(now.y())));
+    // It is still the same dimension, of the same value.
+    QCOMPARE(moved->value, 60.0);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Move Dimension"));
+    QVERIFY(editor()->valueField() == nullptr);
+
+    // It moves with what it measures.
+    Sketch shifted = sketch();
+    shifted.dragBy(line, 0.0, -10.0);
+    m_document->setSketchGeometry(m_sketch, shifted, "Shift");
+    render();
+    const QPointF after = editor()->dimensionRect(length).center();
+    QVERIFY(qAbs((after.y() - now.y()) - (at(0.0, -10.0).y() - at(0.0, 0.0).y())) < 1.5);
+    m_document->undo();
+
+    // A radius's value goes around the circle, wherever it is put.
+    const QPoint rim = editor()->dimensionRect(radius).center().toPoint();
+    drag(rim, at(15.0, 50.0));
+    QVERIFY(sketch().findConstraint(radius)->label.has_value());
+    QVERIFY(sketch().findConstraint(radius)->label->x < 0.0);
+
+    // One undo puts each back.
+    m_document->undo();
+    m_document->undo();
+    QVERIFY(!sketch().findConstraint(length)->label.has_value());
+    QVERIFY(!sketch().findConstraint(radius)->label.has_value());
+
+    // Esc puts a value being dragged back where it was.
+    move(from);
+    QTest::mousePress(m_viewport, Qt::LeftButton, Qt::NoModifier, from);
+    for (const QPoint& point : {from + QPoint(10, 10), from + QPoint(30, 30)}) {
+        QMouseEvent event(QEvent::MouseMove, point, m_viewport->mapToGlobal(point), Qt::NoButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(m_viewport, &event);
+    }
+    editor()->cancel();
+    QTest::mouseRelease(m_viewport, Qt::LeftButton, Qt::NoModifier, from + QPoint(30, 30));
+    render();
+    QVERIFY(!sketch().findConstraint(length)->label.has_value());
+}
+
 void SketchViewTest::aLineIsDimensionedByClickingIt() {
     openSketch();
     m_viewport->setFocus();

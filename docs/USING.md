@@ -344,6 +344,11 @@ Press Esc until no tool is active. Then:
   across empty space to select what lies wholly inside the rectangle.
 - Drag a point or a curve to move it, as far as its constraints allow. Drag a circle by its rim
   to change its size.
+- Let a dragged point go on another point, the origin among them, and it joins it with
+  Coincident. On the middle of a line or an arc it goes there with Midpoint, and on a curve it
+  stays on it. A mark under the pointer says which, and one undo takes back both.
+- Drag a dimension's value to put it elsewhere: a length's line follows it to either side, and a
+  radius points to it. It stays there as the sketch changes, and is saved with it.
 - Delete removes what is selected.
 
 ### Constraints
@@ -360,7 +365,7 @@ constraint first and then what it is about.
 | Tangent | A line and a circle or arc; or two circles or arcs |
 | Equal | Two lines (same length); or two circles or arcs (same radius) |
 | Concentric | Two circles or arcs |
-| Midpoint | A point and a line or an arc. A line or an arc alone, or clicked twice, gets a new point at its middle |
+| Midpoint | A line or an arc, clicked or selected, gets a new point at its middle. A point and then a line or an arc puts the point there |
 | Symmetric | Two points and the line between them |
 | Lock | Points, or curves, which stay where they are |
 
