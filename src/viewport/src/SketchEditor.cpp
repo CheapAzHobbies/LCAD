@@ -345,6 +345,10 @@ public:
     double markerDragShift = 0.0;
     int markerDragSide = 0;
     EntityId dragEntity = 0;
+    // A point being dragged: what it would join if let go now, and what it cannot join because
+    // it is already one with it or is its own curve.
+    Snap dragSnap;
+    std::vector<EntityId> dragIgnored;
     Point2 dragLast;
     std::optional<sketch::Sketch> dragBefore;
     std::unique_ptr<document::Transaction> dragTransaction;
@@ -997,6 +1001,69 @@ public:
             } else if (dx < reach && dy > reach) {
                 snap.position.x = anchor->x;
                 snap.vertical = true;
+            }
+        }
+        return snap;
+    }
+
+    // What a dragged point would join under the pointer: another point, the origin among them,
+    // the middle of a line or an arc, or a curve. Never itself, what it is already one with, or
+    // its own curves.
+    [[nodiscard]] Snap dragSnapAt(const QPointF& position, Point2 at) const {
+        Snap snap;
+        snap.position = at;
+        if (!inference) {
+            return snap;
+        }
+        const sketch::Sketch& g = geometry();
+        const auto ignored = [&](EntityId id) {
+            return id == dragEntity ||
+                   std::find(dragIgnored.begin(), dragIgnored.end(), id) != dragIgnored.end();
+        };
+        const auto pixelsTo = [&](Point2 p) {
+            const QPointF there = toWidget(p);
+            return std::hypot(there.x() - position.x(), there.y() - position.y());
+        };
+        double nearest = pointReach;
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind != EntityKind::Point || ignored(entity.id)) {
+                continue;
+            }
+            if (const double away = pixelsTo({entity.x, entity.y}); away <= nearest) {
+                nearest = away;
+                snap.kind = Snap::Kind::Point;
+                snap.entity = entity.id;
+                snap.position = {entity.x, entity.y};
+            }
+        }
+        if (snap.kind != Snap::Kind::None) {
+            return snap;
+        }
+        for (const Entity& entity : g.entities()) {
+            if ((entity.kind != EntityKind::Line && entity.kind != EntityKind::Arc) ||
+                ignored(entity.id)) {
+                continue;
+            }
+            const Point2 middle = g.pointAt(entity.id, 0.5);
+            if (pixelsTo(middle) <= pointReach) {
+                snap.kind = Snap::Kind::Midpoint;
+                snap.entity = entity.id;
+                snap.position = middle;
+                return snap;
+            }
+        }
+        double closest = curveReach * millimetersPerPixel(position);
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind == EntityKind::Point || ignored(entity.id) ||
+                (entity.kind != EntityKind::Line && entity.kind != EntityKind::Circle &&
+                 entity.kind != EntityKind::Arc)) {
+                continue;
+            }
+            if (const double away = sketch::distanceTo(g, entity.id, at); away <= closest) {
+                closest = away;
+                snap.kind = Snap::Kind::Curve;
+                snap.entity = entity.id;
+                snap.position = sketch::nearestOn(g, entity.id, at);
             }
         }
         return snap;
@@ -2130,6 +2197,36 @@ public:
         dragEntity = pressHit.entity;
         dragLast = *at;
         dragBefore = geometry();
+        dragSnap = Snap();
+        dragIgnored.clear();
+        const sketch::Sketch& g = geometry();
+        if (const Entity* dragged = g.find(dragEntity);
+            dragged != nullptr && dragged->kind == EntityKind::Point) {
+            // The points already at the same place (a rectangle's corner is the ends of two
+            // lines), the curves they belong to, and those curves' other points.
+            const Point2 here{dragged->x, dragged->y};
+            for (const Entity& entity : g.entities()) {
+                if (entity.kind == EntityKind::Point && apart(here, {entity.x, entity.y}) < 1e-9) {
+                    dragIgnored.push_back(entity.id);
+                    if (entity.owner != 0) {
+                        dragIgnored.push_back(entity.owner);
+                    }
+                }
+            }
+            const std::vector<EntityId> owners = dragIgnored;
+            for (const EntityId id : owners) {
+                const Entity* curve = g.find(id);
+                if (curve == nullptr || curve->kind == EntityKind::Point) {
+                    continue;
+                }
+                for (const EntityId point : {curve->center, curve->start, curve->end}) {
+                    if (point != 0) {
+                        dragIgnored.push_back(point);
+                    }
+                }
+                dragIgnored.insert(dragIgnored.end(), curve->points.begin(), curve->points.end());
+            }
+        }
         dragTransaction =
             std::make_unique<document::Transaction>(*document, tr("Drag").toStdString());
         dragging = true;
@@ -2149,8 +2246,11 @@ public:
             g.dragRadius(dragEntity, *at);
         } else if (entity->kind == EntityKind::Point) {
             // Toward the pointer from wherever the point has got to, so that a point held back
-            // by a constraint catches up when the pointer comes back.
-            g.dragBy(dragEntity, at->x - entity->x, at->y - entity->y);
+            // by a constraint catches up when the pointer comes back. Onto a point or a curve
+            // under the pointer, which it joins when it is let go.
+            dragSnap = dragSnapAt(position, *at);
+            const Point2 to = dragSnap.kind != Snap::Kind::None ? dragSnap.position : *at;
+            g.dragBy(dragEntity, to.x - entity->x, to.y - entity->y);
         } else {
             g.dragBy(dragEntity, at->x - dragLast.x, at->y - dragLast.y);
         }
@@ -2162,6 +2262,17 @@ public:
         dragging = false;
         if (dragTransaction == nullptr) {
             return;
+        }
+        const Snap snapped = dragSnap;
+        dragSnap = Snap();
+        dragIgnored.clear();
+        if (keep && snapped.kind != Snap::Kind::None) {
+            // In the same step as the drag, so that one undo takes back both.
+            sketch::Sketch g = geometry();
+            if (g.find(dragEntity) != nullptr) {
+                attach(g, dragEntity, snapped);
+                document->setSketchGeometry(sketchId, std::move(g), tr("Drag").toStdString());
+            }
         }
         bool moved = false;
         if (keep && dragBefore.has_value()) {
@@ -2601,11 +2712,12 @@ public:
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
                            tool != SketchTool::Extend && tool != SketchTool::Offset &&
                            tool != SketchTool::Mirror && tool != SketchTool::Project;
-        if (cursorValid && draws) {
-            const QPointF at = toWidget(cursor.position);
+        // What a tool's click, or a dragged point, would land on.
+        const auto drawSnap = [&](const Snap& snap) {
+            const QPointF at = toWidget(snap.position);
             painter.setPen(QPen(colors.preview, 1.4));
             painter.setBrush(Qt::NoBrush);
-            switch (cursor.kind) {
+            switch (snap.kind) {
             case Snap::Kind::Point:
                 painter.drawRect(QRectF(at.x() - 5.5, at.y() - 5.5, 11.0, 11.0));
                 break;
@@ -2620,6 +2732,13 @@ public:
             case Snap::Kind::None:
                 break;
             }
+        };
+        if (dragging && dragSnap.kind != Snap::Kind::None) {
+            drawSnap(dragSnap);
+        }
+        if (cursorValid && draws) {
+            const QPointF at = toWidget(cursor.position);
+            drawSnap(cursor);
             if ((cursor.horizontal || cursor.vertical || cursor.locked) && !clicks.empty()) {
                 // A guide through the start of the line, to say what it lined up with.
                 QPen guide(colors.preview, 1.0, Qt::DotLine);
