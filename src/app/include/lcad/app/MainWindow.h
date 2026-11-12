@@ -536,6 +536,8 @@ private:
     QComboBox* m_sectionPlane = nullptr;
     QDoubleSpinBox* m_sectionOffset = nullptr;
     bool m_sectionFlipped = false;
+    /// The last command that started a tool or a feature, which Repeat starts again.
+    QString m_lastCommand;
     QToolButton* m_patternButton = nullptr;
 
     std::vector<std::unique_ptr<Session>> m_sessions;

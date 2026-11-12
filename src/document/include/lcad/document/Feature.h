@@ -246,7 +246,11 @@ struct Feature {
     double moveZ = 0.0;
     /// Move Body: a moved copy, as a new body, rather than the body moved.
     bool copy = false;
+    /// Move Body: how many times as large, about the middle of the body, before it is moved.
+    double scale = 1.0;
     // Pipe, Coil, Thread
+    /// Chamfer: the distance on the other face at each edge; 0 is the same as `size`.
+    double size2 = 0.0;
     /// Pipe: wall thickness; 0 is a solid rod.
     double wall = 0.0;
     /// Coil and Thread: the rise of one turn, in millimeters.

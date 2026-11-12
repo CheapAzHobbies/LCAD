@@ -459,6 +459,21 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_timeline, &TimelinePanel::message, this,
             [this](const QString& text) { statusBar()->showMessage(text, 9000); });
     connect(m_viewport, &QWidget::customContextMenuRequested, this, &MainWindow::showViewportMenu);
+    // Repeat starts again what makes or changes the model, and says which in its name.
+    connect(m_commands, &CommandRegistry::triggered, this, [this](const QString& id) {
+        static const QStringList repeatable{QStringLiteral("solid."), QStringLiteral("surface."),
+                                            QStringLiteral("construct."),
+                                            QStringLiteral("create."),
+                                            QStringLiteral("inspect.measure")};
+        if (std::none_of(repeatable.begin(), repeatable.end(),
+                         [&id](const QString& prefix) { return id.startsWith(prefix); })) {
+            return;
+        }
+        m_lastCommand = id;
+        if (QAction* repeat = m_commands->action(QStringLiteral("edit.repeat"))) {
+            repeat->setText(tr("Re&peat %1").arg(m_commands->displayName(id)));
+        }
+    });
     // Queued: the viewport reports failure while painting, which is no place to open a dialog.
     connect(m_viewport, &viewport::ViewportWidget::initializationFailed, this,
             &MainWindow::showViewportError, Qt::QueuedConnection);
@@ -605,6 +620,20 @@ void MainWindow::defineCommands() {
         c.currentText = [this] {
             const QString label = QString::fromStdString(document()->undoLabel());
             return label.isEmpty() ? tr("&Undo") : tr("&Undo %1").arg(label);
+        };
+        m_commands->add(std::move(c));
+
+        c = make("edit.repeat", tr("Re&peat"), edit,
+                 tr("Start the last tool or feature again"));
+        c.aliases = {tr("repeat last command"), tr("again"), tr("last command")};
+        c.run = [this](bool) {
+            if (!m_lastCommand.isEmpty()) {
+                m_commands->trigger(m_lastCommand);
+            }
+        };
+        c.isEnabled = [this] {
+            const QAction* last = m_lastCommand.isEmpty() ? nullptr : m_commands->action(m_lastCommand);
+            return last != nullptr && last->isEnabled();
         };
         m_commands->add(std::move(c));
 
@@ -1917,7 +1946,7 @@ void MainWindow::createTopBar() {
     file->addActions({action("file.close"), action("file.quit")});
 
     QMenu* edit = m_menuBar->addMenu(tr("&Edit"));
-    edit->addActions({action("edit.undo"), action("edit.redo")});
+    edit->addActions({action("edit.undo"), action("edit.redo"), action("edit.repeat")});
     edit->addSeparator();
     edit->addActions({action("body.rename"), action("body.hide"), action("body.show"),
                       action("body.isolate"), action("body.showAll")});
@@ -3329,6 +3358,11 @@ QMenu* MainWindow::createViewportMenu(const QPoint& position) {
     m_commands->refresh();
 
     auto* menu = new QMenu(this);
+    // The last tool or feature, again, first: what a right-click is most often for.
+    if (QAction* repeat = action("edit.repeat"); repeat->isEnabled()) {
+        menu->addAction(repeat);
+        menu->addSeparator();
+    }
     if (under.size() > 1) {
         // What a click cannot reach because something lies in front of it.
         QMenu* other = menu->addMenu(tr("Select &Other"));

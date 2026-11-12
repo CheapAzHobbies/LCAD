@@ -52,7 +52,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Parallel, perpendicular, tangent detected while drawing | Have | Lines, since 2026-11-12: parallel or square to any line, tangent on from an arc. |
 | Equal lengths and radii detected | No | |
 | Snap to intersections | Have | Since 2026-11-12. |
-| Snap to quadrants | No | |
+| Snap to quadrants | Have | Since 2026-11-12. |
 | Grid snapping | No | |
 | Marker showing the snap before release | Have | |
 | Inference can be switched off | Have | |
@@ -85,7 +85,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Coil, pipe | Have | Since 2026-11-12. |
 | Rib, web, emboss | No | |
 | Primitives: box, cylinder, sphere, cone, torus | Have | |
-| Fillet, chamfer, shell | Have | One radius or distance per feature; chamfer by one distance. |
+| Fillet, chamfer, shell | Have | One radius or distance per feature; chamfer by one distance or two. |
 | Draft | Have | Since 2026-11-12, about an origin or construction plane. |
 | Offset, move, delete face; repair | Have | |
 | Replace face | No | |
@@ -93,7 +93,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Split body by a face or a sketch, split face | No | |
 | Combine bodies as a command | Have | Since 2026-11-12. |
 | Move, copy bodies | Have | Since 2026-11-12, by distances and a turn about an axis. |
-| Scale bodies | No | |
+| Scale bodies | Have | In Move/Copy Body, about the body's middle. |
 | Mirror, rectangular and circular patterns | Have | |
 | Pattern along a path | No | |
 
@@ -170,7 +170,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Selection filters, box select, Select Other for overlaps | Have | |
 | Standard views, both projections, navigation cube | Have | |
 | Display styles, grid | Have | |
-| Repeat last command | No | |
+| Repeat last command | Have | Edit menu, and first in the 3D view's right-click menu. |
 | Saved camera views | No | |
 | Grid spacing setting | No | |
 

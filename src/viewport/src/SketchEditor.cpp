@@ -1053,6 +1053,31 @@ public:
                 return snap;
             }
         }
+        // The quadrants of circles and arcs: the right, top, left, and bottom of them, held on
+        // the curve.
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind != EntityKind::Circle && entity.kind != EntityKind::Arc) {
+                continue;
+            }
+            const Point2 c = g.position(entity.center);
+            const double r = g.radiusOf(entity.id);
+            for (const Point2 way : {Point2{1.0, 0.0}, Point2{0.0, 1.0}, Point2{-1.0, 0.0},
+                                     Point2{0.0, -1.0}}) {
+                const Point2 quadrant = c + way * r;
+                // On an arc, only where the arc is.
+                if (entity.kind == EntityKind::Arc &&
+                    sketch::distanceTo(g, entity.id, quadrant) > 1e-6 * std::max(r, 1.0)) {
+                    continue;
+                }
+                const QPointF there = toWidget(quadrant);
+                if (std::hypot(there.x() - position.x(), there.y() - position.y()) <= pointReach) {
+                    snap.kind = Snap::Kind::Curve;
+                    snap.entity = entity.id;
+                    snap.position = quadrant;
+                    return snap;
+                }
+            }
+        }
         for (const Entity& entity : g.entities()) {
             if (entity.kind != EntityKind::Line && entity.kind != EntityKind::Arc) {
                 continue;

@@ -849,3 +849,15 @@ TEST_CASE("Surfaces are pulled, patched, stitched, and thickened", "[kernel][mod
     CHECK(volume(thick.shape) < 700.0);
     CHECK(findFace(thick, "7/side/1") >= 0);
 }
+
+TEST_CASE("A chamfer of two distances", "[kernel][modeling]") {
+    const NamedShape block = plate(20.0, 10.0, 10.0);
+    const std::vector<int> upright = uprightEdges(block);
+    REQUIRE(!upright.empty());
+    // One upright edge, 10 long, cut 2 back on one face and 4 on the other: a triangle of 4.
+    const NamedShape cut = chamfer(block, {upright.front()}, 2.0, "8", 4.0);
+    CHECK_THAT(volume(cut.shape), WithinRel(2000.0 - 0.5 * 2.0 * 4.0 * 10.0, 1e-9));
+    CHECK_THAT(volume(chamfer(block, {upright.front()}, 2.0, "8").shape),
+               WithinRel(2000.0 - 0.5 * 2.0 * 2.0 * 10.0, 1e-9));
+    CHECK_THROWS_AS(chamfer(block, {upright.front()}, 2.0, "8", -1.0), std::invalid_argument);
+}

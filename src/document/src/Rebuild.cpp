@@ -994,7 +994,7 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             }
             return feature.kind == FeatureKind::Fillet
                        ? kernel::fillet(body, edges, feature.size, tag)
-                       : kernel::chamfer(body, edges, feature.size, tag);
+                       : kernel::chamfer(body, edges, feature.size, tag, feature.size2);
         }
         case FeatureKind::OffsetFace:
         case FeatureKind::MoveFace:
@@ -1100,6 +1100,20 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
                 !std::isfinite(feature.moveZ) || !std::isfinite(feature.angle)) {
                 throw FeatureFailure("How far it moves is not a number.");
             }
+            if (!std::isfinite(feature.scale) || feature.scale <= 1e-6) {
+                throw FeatureFailure("Its scale has to be more than zero.");
+            }
+            kernel::NamedShape sized = *source;
+            if (std::abs(feature.scale - 1.0) > 1e-12) {
+                const auto box = kernel::boundingBox(source->shape);
+                const kernel::Point middle =
+                    box.has_value() ? kernel::Point{(box->min.x + box->max.x) / 2.0,
+                                                    (box->min.y + box->max.y) / 2.0,
+                                                    (box->min.z + box->max.z) / 2.0}
+                                    : kernel::Point{};
+                sized.shape = kernel::scaled(source->shape, middle, feature.scale);
+            }
+            source = &sized;
             kernel::Placement where = kernel::translation({feature.moveX, feature.moveY,
                                                            feature.moveZ});
             if (!feature.reference.empty() && std::abs(feature.angle) > 1e-12) {

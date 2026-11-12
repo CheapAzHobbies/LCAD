@@ -143,13 +143,14 @@ optional, and a file without them opens as it always did.
 | `throughAll` (pull) | A pull only, written only when true: it goes through every body, the way `distance` points, or both ways if `symmetric`; `distance` gives only the way. |
 | `faces`, `reference`, `angle` (draft) | A draft only: the faces it tilts, the plane they are tilted about (`XY`, `XZ`, `YZ`, `plane:` and an id, or a flat face of `body`), and by how many degrees. |
 | `tools`, `keepTools` (combine) | A combine only: the bodies joined to, cut out of, or intersected with `body`, as `operation` says, and whether they stay bodies of their own. |
-| `move`, `copy`, `reference`, `angle`, `tools` (move body) | A move only: how far along X, Y, and Z; the axis it is turned about (empty for none) and by how many degrees; and whether it makes a moved copy of the body in `tools` as `body` rather than moving `body`. |
+| `move`, `copy`, `reference`, `angle`, `tools`, `scale` (move body) | A move only: how many times as large about its middle (written only when not 1), then how far along X, Y, and Z; the axis it is turned about (empty for none) and by how many degrees; and whether it makes a moved copy of the body in `tools` as `body` rather than moving `body`. |
 | `pathSketch`, `size`, `wall` (pipe) | A pipe only: the sketch whose curves it runs along, its outside diameter, and its wall thickness (0 for a solid rod). |
 | `reference`, `size`, `pitch`, `turns`, `section` (coil) | A coil only: the axis it winds about, its diameter, the rise of a turn, how many turns, and the diameter of its wire. |
 | `sketch`, `distance`, `symmetric` (surface pull) | A surface pull only: every curve of the sketch, pulled `distance` along its normal, or half each way. |
 | `sketch`, `regions` (patch) | A patch only: the closed areas filled with flat faces. |
 | `tools`, `size` (stitch) | A stitch only: the bodies sewn to `body`, and the widest gap it closes. |
 | `size` (thicken) | A thicken only: how thick the solid made of the surface `body` is; negative is the other way. |
+| `size2` (chamfer) | A chamfer of two distances only: the distance on the other face at each edge, `size` being on the first. |
 | `faces`, `pitch` (thread) | A thread only: the cylindrical face of `body` it is cut into, and its pitch. |
 | `reference` (split body) | A split only: the plane `body` is cut in two along, as for a draft. |
 | `extentBody`, `extentFace` | A pull up to a face only: the body, and the name of its flat face, that the pull ends in. |
