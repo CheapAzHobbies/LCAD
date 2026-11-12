@@ -51,6 +51,16 @@ enum class SketchTool {
     Extend,
     /// Click a corner where two lines meet to round it, then type the radius.
     Fillet,
+    /// Click a corner where two lines meet to cut it straight across, then type how far back.
+    Chamfer,
+    /// By its center and a corner.
+    CenterRectangle,
+    /// Through three points.
+    ThreePointCircle,
+    /// By its start, its end, and a point it passes through.
+    ThreePointArc,
+    /// On from the end of a line or an arc, tangent to it, to the point clicked.
+    TangentArc,
     Offset,
     Mirror,
     /// Click an edge or a corner of a body to bring it into the sketch as reference geometry.

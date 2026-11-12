@@ -1541,6 +1541,13 @@ void MainWindow::defineSketchCommands() {
          "rectangle",
          QKeySequence(Qt::Key_R),
          {tr("box"), tr("square")}},
+        {SketchTool::CenterRectangle,
+         "sketch.centerRectangle",
+         tr("C&enter Rectangle"),
+         tr("Draw a rectangle by its center and a corner"),
+         "rectangle-center",
+         {},
+         {tr("rectangle from center"), tr("centered rectangle")}},
         {SketchTool::Circle,
          "sketch.circle",
          tr("&Circle"),
@@ -1548,6 +1555,13 @@ void MainWindow::defineSketchCommands() {
          "circle",
          QKeySequence(Qt::Key_C),
          {tr("round"), tr("hole")}},
+        {SketchTool::ThreePointCircle,
+         "sketch.circle3",
+         tr("&3-Point Circle"),
+         tr("Draw a circle through three points"),
+         "circle-3point",
+         {},
+         {tr("circle through points"), tr("three point circle")}},
         {SketchTool::Arc,
          "sketch.arc",
          tr("&Arc"),
@@ -1555,6 +1569,20 @@ void MainWindow::defineSketchCommands() {
          "arc",
          QKeySequence(Qt::Key_A),
          {tr("curve")}},
+        {SketchTool::ThreePointArc,
+         "sketch.arc3",
+         tr("3-Point A&rc"),
+         tr("Draw an arc by its start, its end, and a point it passes through"),
+         "arc-3point",
+         {},
+         {tr("arc through points"), tr("three point arc")}},
+        {SketchTool::TangentArc,
+         "sketch.tangentArc",
+         tr("&Tangent Arc"),
+         tr("Draw an arc on from the end of a line or an arc, tangent to it"),
+         "arc-tangent",
+         {},
+         {tr("continue arc"), tr("smooth arc")}},
         {SketchTool::Point,
          "sketch.point",
          tr("&Point"),
@@ -1611,6 +1639,13 @@ void MainWindow::defineSketchCommands() {
          "fillet",
          {},
          {tr("round corner"), tr("radius corner"), tr("sketch fillet")}},
+        {SketchTool::Chamfer,
+         "sketch.chamfer",
+         tr("C&hamfer"),
+         tr("Cut a corner where two lines meet straight across, the same distance back on each"),
+         "chamfer-sketch",
+         {},
+         {tr("bevel corner"), tr("sketch chamfer")}},
         {SketchTool::Offset,
          "sketch.offset",
          tr("&Offset"),
@@ -1846,14 +1881,15 @@ void MainWindow::createTopBar() {
     sketchMenu->addActions({action("sketch.edit"), action("sketch.finish")});
     sketchMenu->addSeparator();
     for (const char* id :
-         {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
+         {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.centerRectangle",
+          "sketch.circle", "sketch.circle3", "sketch.arc", "sketch.arc3", "sketch.tangentArc",
           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
     for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.offset", "sketch.mirror",
-          "sketch.project"}) {
+         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset",
+          "sketch.mirror", "sketch.project"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
@@ -2153,16 +2189,37 @@ void MainWindow::createSketchToolbar() {
     const int iconSize = Theme::instance().tokens().iconSize;
     toolbar->setIconSize(QSize(iconSize, iconSize));
 
+    // Rectangles, circles, and arcs drawn other ways are in a list beside each: the button
+    // starts the tool it shows, which is the one picked from the list last.
+    const auto variants = [this, toolbar, &action](const char* name,
+                                                   std::initializer_list<const char*> ids) {
+        auto* button = new QToolButton(toolbar);
+        button->setObjectName(QLatin1String(name));
+        button->setPopupMode(QToolButton::MenuButtonPopup);
+        auto* menu = new QMenu(button);
+        for (const char* id : ids) {
+            menu->addAction(action(id));
+        }
+        button->setMenu(menu);
+        button->setDefaultAction(action(*ids.begin()));
+        connect(menu, &QMenu::triggered, button,
+                [button](QAction* chosen) { button->setDefaultAction(chosen); });
+        toolbar->addWidget(button);
+    };
+    toolbar->addAction(action("sketch.select"));
+    toolbar->addAction(action("sketch.line"));
+    variants("rectangleButton", {"sketch.rectangle", "sketch.centerRectangle"});
+    variants("circleButton", {"sketch.circle", "sketch.circle3"});
+    variants("arcButton", {"sketch.arc", "sketch.arc3", "sketch.tangentArc"});
     for (const char* id :
-         {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
-          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
+         {"sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
     for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.offset", "sketch.mirror",
-          "sketch.project"}) {
+         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset",
+          "sketch.mirror", "sketch.project"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();

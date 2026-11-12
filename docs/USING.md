@@ -349,6 +349,10 @@ in the 3D view.
 | Rectangle | R | Click one corner, then the opposite one. |
 | Circle | C | Click the center, then a point on the circle. |
 | Arc | A | Click the center, then where it starts, then move round the center and click where it ends. |
+| Center Rectangle | | Click the center, then a corner. A construction diagonal holds it centered on the point. In the list beside Rectangle. |
+| 3-Point Circle | | Click three points on the circle. In the list beside Circle. |
+| 3-Point Arc | | Click where it starts, where it ends, then a point it passes through. In the list beside Arc. |
+| Tangent Arc | | Click the end of a line or an arc, then where the arc ends. It goes on from the curve, joined and tangent to it. In the list beside Arc. |
 | Point | | Click where it goes. |
 | Polygon | | Click the center, then a corner. The number of sides is set in the panel on the right. |
 | Slot | | Click the two centers, then move away from the line between them and click to set the width. |
@@ -464,6 +468,7 @@ coincident with it), then add dimensions until nothing is blue.
 |---|---|---|
 | Cut | T | Click the part of a curve to remove. It goes up to where other curves cross it. |
 | Extend | | Click a line or an arc near an end. It grows to the next curve it meets. |
+| Chamfer | | Click a corner where two lines meet. A line cuts it, the same distance back on each line, and that distance opens to be typed. |
 | Fillet | | Click a corner where two lines meet. An arc rounds it, tangent to both lines, and its radius opens to be typed. Its center shows like any arc's, and its radius is a dimension: double-click it to change it. A construction point stays where the corner was, so dimensions to the corner still hold. |
 | Offset | O | Click a curve, which takes the whole outline it belongs to. Then click where the copy should go. |
 | Mirror | | Select what to mirror, choose Mirror, and click the line to mirror in. |
