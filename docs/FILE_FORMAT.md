@@ -126,7 +126,7 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, `Split Body`, `Combine`, `Move Body`, `Pipe`, `Coil`, or `Thread`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, `Split Body`, `Combine`, `Move Body`, `Pipe`, `Coil`, `Thread`, `Surface Pull`, `Patch`, `Stitch`, or `Thicken`. |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
@@ -146,6 +146,10 @@ optional, and a file without them opens as it always did.
 | `move`, `copy`, `reference`, `angle`, `tools` (move body) | A move only: how far along X, Y, and Z; the axis it is turned about (empty for none) and by how many degrees; and whether it makes a moved copy of the body in `tools` as `body` rather than moving `body`. |
 | `pathSketch`, `size`, `wall` (pipe) | A pipe only: the sketch whose curves it runs along, its outside diameter, and its wall thickness (0 for a solid rod). |
 | `reference`, `size`, `pitch`, `turns`, `section` (coil) | A coil only: the axis it winds about, its diameter, the rise of a turn, how many turns, and the diameter of its wire. |
+| `sketch`, `distance`, `symmetric` (surface pull) | A surface pull only: every curve of the sketch, pulled `distance` along its normal, or half each way. |
+| `sketch`, `regions` (patch) | A patch only: the closed areas filled with flat faces. |
+| `tools`, `size` (stitch) | A stitch only: the bodies sewn to `body`, and the widest gap it closes. |
+| `size` (thicken) | A thicken only: how thick the solid made of the surface `body` is; negative is the other way. |
 | `faces`, `pitch` (thread) | A thread only: the cylindrical face of `body` it is cut into, and its pitch. |
 | `reference` (split body) | A split only: the plane `body` is cut in two along, as for a draft. |
 | `extentBody`, `extentFace` | A pull up to a face only: the body, and the name of its flat face, that the pull ends in. |

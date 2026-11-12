@@ -148,6 +148,29 @@ struct Region {
 [[nodiscard]] NamedShape thread(const NamedShape& body, int face, double pitch,
                                 const std::string& tag);
 
+// Surfaces: bodies of faces that need not enclose anything.
+
+/// Pulls curves of a plane, open or closed, into a surface: a face from each, reaching from
+/// `from` to `to` along the plane's normal, sewn together where they meet. Each face is named
+/// `tag`/side/<curve name>. Throws kernel::Error if there is nothing to pull.
+[[nodiscard]] NamedShape pullSurface(const Plane& plane, const std::vector<OutlineCurve>& curves,
+                                     double from, double to, const std::string& tag);
+
+/// A flat face filling a region of a plane, named `tag`/patch/<name of the region>.
+[[nodiscard]] NamedShape patch(const Plane& plane, const Region& region, const std::string& tag);
+
+/// Sews bodies' faces together where their edges meet to within `tolerance`. Where they close
+/// all round, the result is a solid; otherwise a surface. Faces keep their names. Throws
+/// kernel::Error if nothing could be sewn.
+[[nodiscard]] NamedShape stitch(const std::vector<NamedShape>& pieces, double tolerance,
+                                const std::string& tag);
+
+/// A solid from a surface, `thickness` thick, out from it along its faces' normals, or the
+/// other way for a negative thickness. The faces it starts from keep their names. Throws
+/// kernel::Error if the surface cannot be thickened that much.
+[[nodiscard]] NamedShape thicken(const NamedShape& surface, double thickness,
+                                 const std::string& tag);
+
 /// How two solids are combined.
 enum class Combination {
     Join,      ///< everything that is in either

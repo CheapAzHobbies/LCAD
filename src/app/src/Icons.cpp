@@ -206,6 +206,42 @@ const QHash<QString, Drawing>& drawings() {
              i.arc(6, 17.5, 13, 3, 200, 290);
              i.poly({{16.5, 14}, {19.2, 16.3}, {16, 18}}, false);
          }},
+        {QStringLiteral("surface-pull"),
+         [](const Ink& i) {
+             // A curved sheet standing up from a curve, open at its ends.
+             QPainterPath sheet(QPointF(3, 19));
+             sheet.cubicTo(QPointF(8, 14), QPointF(14, 22), QPointF(21, 16));
+             sheet.lineTo(21, 7);
+             sheet.cubicTo(QPointF(14, 13), QPointF(8, 5), QPointF(3, 10));
+             sheet.closeSubpath();
+             i.p.fillPath(sheet, i.accent);
+             i.p.drawPath(sheet);
+         }},
+        {QStringLiteral("patch"),
+         [](const Ink& i) {
+             // An outline, and the flat face filling it.
+             i.fill({{4, 8}, {14, 4}, {20, 10}, {16, 20}, {6, 18}});
+             i.poly({{4, 8}, {14, 4}, {20, 10}, {16, 20}, {6, 18}});
+         }},
+        {QStringLiteral("stitch"),
+         [](const Ink& i) {
+             // Two sheets meeting at a seam, stitched across it.
+             i.fill({{3, 6}, {11, 6}, {11, 18}, {3, 18}});
+             i.poly({{3, 6}, {11, 6}, {11, 18}, {3, 18}});
+             i.fill({{13, 6}, {21, 6}, {21, 18}, {13, 18}});
+             i.poly({{13, 6}, {21, 6}, {21, 18}, {13, 18}});
+             for (int k = 0; k < 3; ++k) {
+                 i.line(9, 8 + 4 * k, 15, 10 + 4 * k);
+             }
+         }},
+        {QStringLiteral("thicken"),
+         [](const Ink& i) {
+             // A thin sheet, and the slab it becomes.
+             i.line(3, 6, 21, 6);
+             i.fill({{3, 11}, {21, 11}, {21, 18}, {3, 18}});
+             i.poly({{3, 11}, {21, 11}, {21, 18}, {3, 18}});
+             i.line(12, 7, 12, 10);
+         }},
         {QStringLiteral("combine"),
          [](const Ink& i) {
              // Two blocks overlapping, made one.

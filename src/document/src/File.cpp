@@ -641,7 +641,8 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     if (feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::Pipe) {
         out["pathSketch"] = feature.pathSketch.value;
     }
-    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::MoveBody) {
+    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::MoveBody ||
+        feature.kind == FeatureKind::Stitch) {
         out["tools"] = ordered_json::array();
         for (const ObjectId tool : feature.tools) {
             out["tools"].push_back(tool.value);
@@ -807,7 +808,8 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     if (feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::Pipe) {
         feature.pathSketch = ObjectId{idMember(entry, "pathSketch", where, path)};
     }
-    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::MoveBody) {
+    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::MoveBody ||
+        feature.kind == FeatureKind::Stitch) {
         const json& tools = member(entry, "tools", where, path);
         if (!tools.is_array()) {
             damaged(path, "\"tools\" in " + where + " is not a list");

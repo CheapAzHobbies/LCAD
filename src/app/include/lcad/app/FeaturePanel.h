@@ -171,6 +171,8 @@ private:
     QListWidget* m_tools = nullptr;
     QCheckBox* m_keepTools = nullptr;
     QCheckBox* m_copy = nullptr;
+    /// Surface Pull: half each way.
+    QCheckBox* m_bothSides = nullptr;
     QComboBox* m_turnAxis = nullptr;
     QDoubleSpinBox* m_moveX = nullptr;
     QDoubleSpinBox* m_moveY = nullptr;

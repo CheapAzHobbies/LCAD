@@ -101,7 +101,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 
 | Item | State | Note |
 |---|---|---|
-| Surface bodies and surface tools | No | Planned after the mechanical gaps. |
+| Surface bodies; surface pull, patch, stitch, thicken | Have | Since 2026-11-12. |
+| Surface revolve, sweep, loft; trim, extend, offset surfaces; boundary surfaces | No | |
 | Subdivision (freeform) modeling | No | See the top of this page. |
 | Mesh import (STL, OBJ, 3MF) to solids | Part | Pull request #15, not merged. |
 | Mesh export (STL, 3MF, OBJ) | Have | |
@@ -183,4 +184,5 @@ large project of its own. Both come after the gaps in mechanical modeling below.
    Done.
 5. **Solids, second round:** thread, coil, pipe, combine as a command, and moving bodies. Done.
 6. **Inspection:** a section view in the 3D view. Done.
-7. **Surfaces**, then the rest.
+7. **Surfaces:** surface pull, patch, stitch, and thicken. Done. Surface trimming, lofting,
+   and offsetting next; then the rest.

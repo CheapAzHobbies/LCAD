@@ -109,6 +109,7 @@ private slots:
     void throughAllDraftAndSplit();
     void combineMovePipeCoilAndThread();
     void aSectionCutsTheView();
+    void surfacesArePulledPatchedStitchedAndThickened();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
@@ -1135,6 +1136,66 @@ void ModelingInterfaceTest::aSectionCutsTheView() {
     QVERIFY(!bar->isVisible());
     QVERIFY(!window.viewport()->section().has_value());
     QVERIFY(!action(window, "view.section")->isChecked());
+}
+
+void ModelingInterfaceTest::surfacesArePulledPatchedStitchedAndThickened() {
+    MainWindow window;
+    show(window);
+    const auto [outline, width] = drawPlate(window, 20.0, 10.0);
+    Q_UNUSED(width);
+    window.finishSketch();
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    // The four sides of the rectangle pulled up 5 as a surface.
+    window.browser()->setSelection({}, {outline});
+    QVERIFY(trigger(window, "surface.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    QCOMPARE(pull->feature().sketch, outline);
+    typeInto(pull, "distance", 5.0);
+    QTRY_VERIFY2(pull->errorText().isEmpty(), qPrintable(pull->errorText()));
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId walls = bodyOf(window, window.document()->features().back().id).id;
+    QVERIFY(nearly(lcad::kernel::surfaceArea(window.document()->findBody(walls)->shape), 300.0));
+
+    // The bottom patched: the outline's area picked.
+    window.browser()->setSelection({}, {outline});
+    QVERIFY(trigger(window, "surface.patch"));
+    FeaturePanel* patch = panel(window);
+    QVERIFY(patch != nullptr);
+    QTRY_VERIFY(!patch->feature().regions.empty());
+    QTest::mouseClick(okButton(patch), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId floor = bodyOf(window, window.document()->features().back().id).id;
+
+    // Sewn: still open at the top, so a surface.
+    window.browser()->setSelection({walls}, {});
+    QVERIFY(trigger(window, "surface.stitch"));
+    FeaturePanel* stitch = panel(window);
+    QVERIFY(stitch != nullptr);
+    QCOMPARE(stitch->feature().body, walls);
+    stitch->setBody(floor);
+    QCOMPARE(stitch->feature().tools, std::vector<ObjectId>{floor});
+    QTRY_VERIFY2(stitch->errorText().isEmpty(), qPrintable(stitch->errorText()));
+    QTest::mouseClick(okButton(stitch), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(window.document()->findBody(floor)->shape.isNull());
+
+    // Thickened 1: an open box with walls.
+    window.browser()->setSelection({walls}, {});
+    QVERIFY(trigger(window, "surface.thicken"));
+    FeaturePanel* thicken = panel(window);
+    QVERIFY(thicken != nullptr);
+    QCOMPARE(thicken->feature().body, walls);
+    typeInto(thicken, "size", 1.0);
+    QTRY_VERIFY2(thicken->errorText().isEmpty(), qPrintable(thicken->errorText()));
+    QTest::mouseClick(okButton(thicken), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const double volume = lcad::kernel::volume(window.document()->findBody(walls)->shape);
+    QVERIFY2(volume > 300.0 && volume < 600.0, qPrintable(QString::number(volume)));
 }
 
 void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {

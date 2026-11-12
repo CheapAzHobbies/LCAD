@@ -956,6 +956,40 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasBody;
         m_commands->add(std::move(c));
 
+        // Surfaces: faces that need not enclose anything, made into solids at the end.
+        c = make("surface.pull", tr("Surface &Pull"), create,
+                 tr("Pull every curve of a sketch, open or closed, into a surface"));
+        c.iconName = QStringLiteral("surface-pull");
+        c.aliases = {tr("extrude surface"), tr("surface extrude"), tr("sheet"), tr("surface")};
+        c.run = [this](bool) { startFeature(FeatureKind::SurfacePull); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
+        c = make("surface.patch", tr("P&atch"), create,
+                 tr("Fill closed areas of a sketch with flat faces, as a surface"));
+        c.iconName = QStringLiteral("patch");
+        c.aliases = {tr("fill"), tr("cap"), tr("surface patch")};
+        c.run = [this](bool) { startFeature(FeatureKind::Patch); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
+        c = make("surface.stitch", tr("&Stitch"), modify,
+                 tr("Sew surfaces together where their edges meet; closed all round, they "
+                    "become a solid"));
+        c.iconName = QStringLiteral("stitch");
+        c.aliases = {tr("sew"), tr("knit"), tr("join surfaces"), tr("make solid")};
+        c.run = [this](bool) { startFeature(FeatureKind::Stitch); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("surface.thicken", tr("&Thicken"), modify,
+                 tr("Make a surface into a solid of a thickness"));
+        c.iconName = QStringLiteral("thicken");
+        c.aliases = {tr("thicken surface"), tr("give thickness"), tr("solid from surface")};
+        c.run = [this](bool) { startFeature(FeatureKind::Thicken); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
         c = make("solid.mirror", tr("&Mirror"), create,
                  tr("Add the mirror image of features, or of a whole body, in a plane"));
         c.iconName = QStringLiteral("mirror");
@@ -1903,6 +1937,10 @@ void MainWindow::createTopBar() {
     create->addActions({action("solid.pull"), action("solid.revolve"), action("solid.loft"),
                         action("solid.sweep"), action("solid.pipe"), action("solid.coil"),
                         action("solid.hole"), action("solid.thread")});
+    QMenu* surfaces = create->addMenu(tr("S&urface"));
+    surfaces->setObjectName(QStringLiteral("menu.surface"));
+    surfaces->addActions({action("surface.pull"), action("surface.patch"),
+                          action("surface.stitch"), action("surface.thicken")});
     QMenu* pattern = create->addMenu(tr("&Pattern"));
     pattern->setObjectName(QStringLiteral("menu.pattern"));
     pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
@@ -3539,6 +3577,7 @@ namespace {
 
 bool usesProfiles(document::FeatureKind kind) {
     return kind == document::FeatureKind::Pull || kind == document::FeatureKind::Revolve ||
+           kind == document::FeatureKind::Patch ||
            kind == document::FeatureKind::Loft || kind == document::FeatureKind::Sweep;
 }
 
@@ -3616,8 +3655,10 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         seed.spacing2 = 20.0;
         seed.angle = 360.0;
     }
-    // Combine and Move Body start from the body selected, or else the first there is.
-    if (kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody) {
+    // Combine, Move Body, Stitch, and Thicken start from the body selected, or else the first
+    // there is.
+    if (kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody ||
+        kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken) {
         const std::vector<document::ObjectId> bodies = targetBodies();
         if (!bodies.empty()) {
             seed.body = bodies.front();
@@ -3631,12 +3672,17 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         }
         seed.operation = document::Operation::Join;
         seed.angle = 0.0;
-        // The other bodies selected are what it is combined with.
-        if (kind == document::FeatureKind::Combine) {
+        seed.size = kind == document::FeatureKind::Stitch ? 0.01 : 2.0;
+        // The other bodies selected are what it is combined with, or sewn to.
+        if (kind == document::FeatureKind::Combine || kind == document::FeatureKind::Stitch) {
             for (std::size_t i = 1; i < bodies.size(); ++i) {
                 seed.tools.push_back(bodies[i]);
             }
         }
+    }
+    if (kind == document::FeatureKind::SurfacePull) {
+        seed.sketch = from;
+        seed.distance = 10.0;
     }
     if (kind == document::FeatureKind::Pipe) {
         seed.pathSketch = from;
@@ -3725,7 +3771,9 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         m_settingPicks = false;
     } else if (copiesFeatures(kind) || kind == document::FeatureKind::Combine ||
                kind == document::FeatureKind::MoveBody || kind == document::FeatureKind::Pipe ||
-               kind == document::FeatureKind::Coil) {
+               kind == document::FeatureKind::Coil || kind == document::FeatureKind::Stitch ||
+               kind == document::FeatureKind::Thicken ||
+               kind == document::FeatureKind::SurfacePull) {
         m_featurePanel->setFeature(seed);
         m_settingPicks = true;
         m_viewport->clearSelection();
@@ -3844,7 +3892,8 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         m_filterBeforeFeature = m_viewport->selectionFilter();
         SelectionFilter filter = SelectionFilter::Edges;
         if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody ||
-            kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody) {
+            kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody ||
+            kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken) {
             filter = SelectionFilter::Bodies;
         } else if (picksFaces(kind) || kind == document::FeatureKind::Mirror) {
             filter = SelectionFilter::Faces;
@@ -4034,8 +4083,10 @@ void MainWindow::takeFeaturePicks() {
         return;
     }
     if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody ||
-        kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody) {
-        // The body clicked is the one to repair, split, or move, or to combine with.
+        kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody ||
+        kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken) {
+        // The body clicked is the one to repair, split, move, or thicken, or to combine with
+        // or sew on.
         for (const SelectedItem& item : m_viewport->selection()) {
             m_featurePanel->setBody(item.body);
             break;
@@ -4243,7 +4294,8 @@ void MainWindow::acceptFeature() {
             const document::ObjectId id = document()->addFeature(feature);
             // The sketch has done its work, and its lines would only clutter the solid.
             if (usesProfiles(feature.kind) || feature.kind == document::FeatureKind::Hole ||
-                feature.kind == document::FeatureKind::Pipe) {
+                feature.kind == document::FeatureKind::Pipe ||
+                feature.kind == document::FeatureKind::SurfacePull) {
                 // A loft's sections and a sweep's or a pipe's path too.
                 for (const document::ObjectId sketch : document::sketchesOf(feature)) {
                     document()->setSketchVisible(sketch, false);

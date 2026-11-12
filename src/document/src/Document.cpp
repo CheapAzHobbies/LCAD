@@ -49,6 +49,10 @@ bool makesBody(const Feature& feature) {
     if (feature.kind == FeatureKind::MoveBody) {
         return feature.copy;
     }
+    // A surface is always a body of its own.
+    if (feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch) {
+        return true;
+    }
     return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
             feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
             feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
@@ -58,7 +62,8 @@ bool makesBody(const Feature& feature) {
 bool usesSketch(const Feature& feature) {
     return feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
            feature.kind == FeatureKind::Hole || feature.kind == FeatureKind::Loft ||
-           feature.kind == FeatureKind::Sweep;
+           feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::SurfacePull ||
+           feature.kind == FeatureKind::Patch;
 }
 
 // Whether every sketch a feature is made from is in the document. `missing` is set to the
@@ -2052,8 +2057,8 @@ void Document::rebuild() {
     std::unordered_set<ObjectId> changed;
     const auto markChanged = [this, &changed](const Feature& feature) {
         changed.insert(feature.body);
-        // A combine uses its tools up.
-        if (feature.kind == FeatureKind::Combine) {
+        // A combine or a stitch uses its tools up.
+        if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::Stitch) {
             changed.insert(feature.tools.begin(), feature.tools.end());
         }
         for (const ObjectId piece : piecesOf(feature.id)) {
@@ -2064,7 +2069,8 @@ void Document::rebuild() {
     // stays together: settlePieces() is about to make the rest.
     const auto leave = [this, &state](const Feature& feature, const Built& built) {
         // What a combine uses up is gone from here on.
-        if (feature.kind == FeatureKind::Combine && !feature.keepTools) {
+        if ((feature.kind == FeatureKind::Combine && !feature.keepTools) ||
+            feature.kind == FeatureKind::Stitch) {
             for (const ObjectId tool : feature.tools) {
                 if (tool != feature.body) {
                     state[tool] = kernel::NamedShape{};

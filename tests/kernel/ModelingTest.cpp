@@ -816,3 +816,36 @@ TEST_CASE("Pipes, coils, and threads", "[kernel][modeling]") {
     CHECK(after > pi * (5.0 - 0.92) * (5.0 - 0.92) * 20.0);
     CHECK_THROWS_AS(thread(bolt, side == 0 ? 1 : 0, 1.5, "10"), Error);
 }
+
+TEST_CASE("Surfaces are pulled, patched, stitched, and thickened", "[kernel][modeling]") {
+    // An L of two lines pulled 10 up: two faces sewn at the corner, not a solid.
+    const auto at = [](double x, double y) { return toWorld(planeXY(), x, y); };
+    const std::vector<OutlineCurve> l{{makeSegment(at(0, 0), at(20, 0)), "1"},
+                                      {makeSegment(at(20, 0), at(20, 10)), "2"}};
+    const NamedShape wall = pullSurface(planeXY(), l, 0.0, 10.0, "7");
+    CHECK(countTopology(wall.shape).solids == 0);
+    CHECK(countTopology(wall.shape).faces == 2);
+    CHECK(findFace(wall, "7/side/1") >= 0);
+    CHECK_THAT(surfaceArea(wall.shape), WithinRel(300.0, 1e-9));
+
+    // A box from surfaces alone: four sides pulled, a patch at the bottom and the top.
+    const std::vector<OutlineCurve> outline = rectangle(planeXY(), 0.0, 0.0, 20.0, 10.0);
+    const NamedShape sides = pullSurface(planeXY(), outline, 0.0, 5.0, "8");
+    const NamedShape bottom = patch(planeXY(), Region{outline, {}}, "9");
+    const Plane up = makePlane({0.0, 0.0, 5.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0});
+    const NamedShape top = patch(up, Region{rectangle(up, 0.0, 0.0, 20.0, 10.0), {}}, "10");
+    CHECK(countTopology(bottom.shape).faces == 1);
+    const NamedShape box = stitch({sides, bottom, top}, 1e-3, "11");
+    CHECK(countTopology(box.shape).solids == 1);
+    CHECK_THAT(volume(box.shape), WithinRel(1000.0, 1e-6));
+    // Without its top it stays a surface, open.
+    CHECK(countTopology(stitch({sides, bottom}, 1e-3, "11").shape).solids == 0);
+
+    // The L thickened 2: a solid.
+    const NamedShape thick = thicken(wall, 2.0, "12");
+    CHECK(countTopology(thick.shape).solids == 1);
+    // About 300 of area by 2, give or take what the corner shares.
+    CHECK(volume(thick.shape) > 400.0);
+    CHECK(volume(thick.shape) < 700.0);
+    CHECK(findFace(thick, "7/side/1") >= 0);
+}
