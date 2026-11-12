@@ -2169,3 +2169,91 @@ TEST_CASE("Planes at an angle and midplanes", "[document][feature]") {
     CHECK_THAT(loaded.document->planeState(mid)->plane.origin.z, WithinAbs(10.0, 1e-9));
     CHECK_THAT(loaded.document->planeState(over)->plane.origin.z, WithinAbs(expected, 1e-9));
 }
+
+TEST_CASE("Pull through all and draft and split body", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+    const ObjectId plate = document.addFeature(pullOf(made.outline, 10.0));
+    const ObjectId body = document.findFeature(plate)->body;
+
+    // A circle on a plane 30 above, cut down through all of the plate.
+    const ObjectId above = document.addSketch(
+        "Above", lcad::kernel::makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch round;
+    round.addCircle({30.0, 20.0}, 5.0);
+    document.setSketchGeometry(above, round, "Circle");
+    Feature hole = pullOf(above, -1.0, Operation::Cut, body);
+    hole.throughAll = true;
+    const ObjectId through = document.addFeature(hole);
+    CHECK(document.featureError(through).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel(60.0 * 40.0 * 10.0 - pi * 25.0 * 10.0, 1e-6));
+    // Thicker plate, still through.
+    Feature thicker = *document.findFeature(plate);
+    thicker.distance = 20.0;
+    document.changeFeature(plate, thicker);
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel((60.0 * 40.0 - pi * 25.0) * 20.0, 1e-6));
+    document.undo();
+    // Up, away from the plate, there is nothing to go through.
+    hole = *document.findFeature(through);
+    hole.distance = 1.0;
+    document.changeFeature(through, hole);
+    CHECK_THAT(document.featureError(through), ContainsSubstring("nothing that way"));
+    document.undo();
+
+    // Draft the four outer sides 3 degrees about the bottom: the plate narrows upward.
+    const double before = lcad::kernel::volume(document.findBody(body)->shape);
+    Feature draft;
+    draft.kind = FeatureKind::Draft;
+    draft.body = body;
+    draft.reference = "XY";
+    draft.angle = 3.0;
+    for (const std::string& name : document.findBody(body)->faceNames) {
+        if (name.rfind(std::to_string(plate.value) + "/side/", 0) == 0) {
+            draft.faces.push_back(name);
+        }
+    }
+    REQUIRE(draft.faces.size() == 4);
+    const ObjectId drafted = document.addFeature(draft);
+    CHECK(document.featureError(drafted).empty());
+    CHECK(document.findFeature(drafted)->name == "Draft 1");
+    const double after = lcad::kernel::volume(document.findBody(body)->shape);
+    CHECK(after < before);
+    CHECK(after > before * 0.9);
+
+    // Split along the YZ plane moved to x = 20: two bodies.
+    Feature cut;
+    cut.kind = FeatureKind::Plane;
+    cut.reference = "YZ";
+    cut.distance = 20.0;
+    const ObjectId plane = document.addFeature(cut);
+    Feature split;
+    split.kind = FeatureKind::SplitBody;
+    split.body = body;
+    split.reference = "plane:" + std::to_string(plane.value);
+    const ObjectId halves = document.addFeature(split);
+    CHECK(document.featureError(halves).empty());
+    std::size_t solids = 0;
+    double total = 0.0;
+    for (const Body& b : document.bodies()) {
+        if (!b.shape.isNull()) {
+            ++solids;
+            total += lcad::kernel::volume(b.shape);
+        }
+    }
+    CHECK(solids == 2);
+    CHECK_THAT(total, WithinRel(after, 1e-6));
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("split.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(through)->throughAll);
+    CHECK(loaded.document->findFeature(drafted)->faces == draft.faces);
+    CHECK(loaded.document->findFeature(halves)->reference == split.reference);
+    CHECK(loaded.document->featureError(halves).empty());
+}

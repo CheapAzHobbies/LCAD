@@ -595,10 +595,16 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["planeKind"] = toString(feature.planeKind);
         out["reference2"] = feature.reference2;
     }
-    // A revolve about an origin axis or a construction axis; the direction of a face moved.
+    // A revolve about an origin axis or a construction axis; the direction of a face moved;
+    // the plane of a draft or a split.
     if ((feature.kind == FeatureKind::Revolve && !feature.reference.empty()) ||
-        feature.kind == FeatureKind::MoveFace) {
+        feature.kind == FeatureKind::MoveFace || feature.kind == FeatureKind::Draft ||
+        feature.kind == FeatureKind::SplitBody) {
         out["reference"] = feature.reference;
+    }
+    // A pull through all.
+    if (feature.kind == FeatureKind::Pull && feature.throughAll) {
+        out["throughAll"] = true;
     }
     if (!feature.expressions.empty()) {
         out["expressions"] = feature.expressions;
@@ -720,8 +726,12 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
         feature.reference2 = stringMember(entry, "reference2", where, path);
     }
     if ((feature.kind == FeatureKind::Revolve && entry.contains("reference")) ||
-        feature.kind == FeatureKind::MoveFace) {
+        feature.kind == FeatureKind::MoveFace || feature.kind == FeatureKind::Draft ||
+        feature.kind == FeatureKind::SplitBody) {
         feature.reference = stringMember(entry, "reference", where, path);
+    }
+    if (feature.kind == FeatureKind::Pull && entry.contains("throughAll")) {
+        feature.throughAll = boolMember(entry, "throughAll", where, path);
     }
     if (entry.contains("expressions")) {
         const json& expressions = entry.at("expressions");

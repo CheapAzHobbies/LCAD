@@ -77,17 +77,18 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Item | State | Note |
 |---|---|---|
 | Pull (extrude): one side, both sides, symmetric, to a face, taper | Have | |
-| Pull through all | No | |
+| Pull through all | Have | Since 2026-11-12. |
 | Revolve, loft, sweep | Have | Loft and sweep since 2026-11-12. |
 | Hole: simple, counterbore, countersink | Have | |
 | Thread | No | |
 | Coil, pipe, rib, web, emboss | No | |
 | Primitives: box, cylinder, sphere, cone, torus | Have | |
 | Fillet, chamfer, shell | Have | One radius or distance per feature; chamfer by one distance. |
-| Draft | Part | Only as a pull's taper. |
+| Draft | Have | Since 2026-11-12, about an origin or construction plane. |
 | Offset, move, delete face; repair | Have | |
 | Replace face | No | |
-| Split body, split face | No | |
+| Split body along a plane | Have | Since 2026-11-12. |
+| Split body by a face or a sketch, split face | No | |
 | Combine bodies as a command | Part | Only as a pull's or revolve's join, cut, or intersect. |
 | Move, copy, scale bodies | Part | Components can be moved; bodies cannot. |
 | Mirror, rectangular and circular patterns | Have | |
@@ -172,7 +173,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 ## Order of work
 
 1. **Construction geometry:** plane at angle and midplane. Done.
-2. **Solids:** pull through all, draft, split body.
+2. **Solids:** pull through all, draft, split body. Done.
 3. **Sketching:** center rectangle, three-point circle and arc, tangent arc, chamfer, and sketch
    patterns.
 4. **Snapping:** parallel, perpendicular, and tangent detected while drawing, and intersections.

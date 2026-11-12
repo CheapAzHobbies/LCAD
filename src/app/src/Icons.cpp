@@ -206,6 +206,34 @@ const QHash<QString, Drawing>& drawings() {
              i.arc(6, 17.5, 13, 3, 200, 290);
              i.poly({{16.5, 14}, {19.2, 16.3}, {16, 18}}, false);
          }},
+        {QStringLiteral("draft"),
+         [](const Ink& i) {
+             // A block whose sides lean in, and the plane they lean from.
+             i.fill({{5, 19}, {19, 19}, {16, 6}, {8, 6}});
+             i.poly({{5, 19}, {19, 19}, {16, 6}, {8, 6}});
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(5, 19, 5, 6);
+             i.line(19, 19, 19, 6);
+             i.p.restore();
+             i.line(2, 21, 22, 21);
+         }},
+        {QStringLiteral("split"),
+         [](const Ink& i) {
+             // A block cut in two, the halves apart, and the plane between them.
+             i.fill({{3, 6}, {10, 6}, {10, 18}, {3, 18}});
+             i.poly({{3, 6}, {10, 6}, {10, 18}, {3, 18}});
+             i.fill({{14, 6}, {21, 6}, {21, 18}, {14, 18}});
+             i.poly({{14, 6}, {21, 6}, {21, 18}, {14, 18}});
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(12, 2, 12, 22);
+             i.p.restore();
+         }},
         {QStringLiteral("loft"),
          [](const Ink& i) {
              // A wide outline below, a narrow one above, and the solid between them.

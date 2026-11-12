@@ -114,6 +114,19 @@ struct Region {
 [[nodiscard]] NamedShape sweep(const Plane& plane, const std::vector<Region>& regions,
                                const Shape& path, const std::string& tag);
 
+/// Tilts faces of a body by `angle` radians about where they cross the plane `neutral`, as a
+/// mold needs: a positive angle narrows the body along the plane's normal. The faces keep their
+/// names. Throws kernel::Error if the faces cannot be tilted that far, or are not ones a draft
+/// can tilt.
+[[nodiscard]] NamedShape draft(const NamedShape& body, const std::vector<int>& faces,
+                               const Plane& neutral, double angle, const std::string& tag);
+
+/// Cuts a body in two along a plane. The result holds a solid for each piece, which do not
+/// share faces: the faces made by the cut are named `tag`/split/front on the side the plane's
+/// normal points to and `tag`/split/back on the other, and the others keep their names.
+/// Throws kernel::Error if the plane does not pass through the body.
+[[nodiscard]] NamedShape split(const NamedShape& body, const Plane& plane, const std::string& tag);
+
 /// How two solids are combined.
 enum class Combination {
     Join,      ///< everything that is in either

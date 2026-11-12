@@ -54,9 +54,10 @@ programs call extrude).
    pointer; a second click lets one go).
 3. Type the distance on the right, or drag the arrow in the 3D view up or down, or type the
    distance into the box beside the arrow and press Enter. A negative distance, or **Flip
-   Direction**, pulls the other way. **Direction** pulls to one side, by the same amount to both sides (**Symmetric**), by
-   different amounts (**Two Sides**), or up to a flat face you click in the 3D view (**To
-   Face**), which it then follows. **Taper** leans the sides in as the pull goes out (negative
+   Direction**, pulls the other way. **Direction** pulls to one side, by the same amount to
+   both sides (**Symmetric**), by different amounts (**Two Sides**), up to a flat face you
+   click in the 3D view (**To Face**), which it then follows, or through every body that way
+   (**Through All**: **Flip Direction** chooses the way). **Taper** leans the sides in as the pull goes out (negative
    leans them out); it works on a pull to one side.
 4. **Operation**: a **New Body**, **Join** it to a body, **Cut** it out of one, or keep only
    what it shares with one (**Intersect**). Until you choose, LCAD guesses: a pull that lies
@@ -111,6 +112,14 @@ sketch that is not on the face itself.
 Under **Modify**: **Fillet** (F) rounds edges, **Chamfer** bevels them, **Shell** hollows a body
 out, open at the faces you click. Click the edges or faces in the 3D view, before or after
 starting the command; Shift-click picks more.
+
+**Draft** tilts the faces you click by an angle, about a plane chosen in the panel (an origin
+plane or a construction plane): the body keeps its size where the faces cross the plane, and
+narrows along the plane's normal, as a part that comes out of a mold must. A negative angle
+tilts them the other way.
+
+**Split Body** cuts the body you click in two along an origin plane or a construction plane.
+Each piece becomes a body of its own, and the features after it work on them as on any body.
 
 ## Changing faces directly
 

@@ -720,3 +720,52 @@ TEST_CASE("A sweep moves an outline along a path", "[kernel][modeling]") {
     CHECK_THROWS_AS(sweep(planeXZ(), {square}, makeCompound({line, apart}), "7"), Error);
     CHECK_THROWS_AS(sweep(planeXZ(), {}, line, "7"), std::invalid_argument);
 }
+
+TEST_CASE("A draft tilts faces about a plane", "[kernel][modeling]") {
+    // A 20 by 20 by 10 block; its four sides tilted 5 degrees about its bottom, narrowing up.
+    const NamedShape block = plate(20.0, 20.0, 10.0);
+    std::vector<int> sides;
+    for (std::size_t i = 0; i < block.faceNames.size(); ++i) {
+        if (block.faceNames[i].find("/side/") != std::string::npos) {
+            sides.push_back(static_cast<int>(i));
+        }
+    }
+    REQUIRE(sides.size() == 4);
+    const double angle = 5.0 * pi / 180.0;
+    const NamedShape drafted = draft(block, sides, planeXY(), angle, "8");
+    CHECK(countTopology(drafted.shape).solids == 1);
+    // A frustum: 20 square at the bottom, 20 - 2 * 10 tan(5) square at the top.
+    const double top = 20.0 - 2.0 * 10.0 * std::tan(angle);
+    CHECK_THAT(volume(drafted.shape),
+               WithinRel(10.0 / 3.0 * (400.0 + top * top + 20.0 * top), 1e-6));
+    // The faces keep their names.
+    CHECK(asSet(drafted.faceNames) == asSet(block.faceNames));
+    // Negative widens it.
+    CHECK(volume(draft(block, sides, planeXY(), -angle, "8").shape) > volume(block.shape));
+
+    CHECK_THROWS_AS(draft(block, {}, planeXY(), angle, "8"), std::invalid_argument);
+    CHECK_THROWS_AS(draft(block, sides, planeXY(), 0.0, "8"), std::invalid_argument);
+}
+
+TEST_CASE("A split cuts a body in two along a plane", "[kernel][modeling]") {
+    const NamedShape block = plate(20.0, 10.0, 10.0);
+    const Plane across = makePlane({5.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+    const NamedShape halves = split(block, across, "8");
+    CHECK(countTopology(halves.shape).solids == 2);
+    CHECK_THAT(volume(halves.shape), WithinRel(2000.0, 1e-9));
+    // Each piece is a body of its own, with its cut face named after its side.
+    const std::vector<NamedShape> pieces = separated(halves);
+    REQUIRE(pieces.size() == 2);
+    std::set<double> volumes{volume(pieces[0].shape), volume(pieces[1].shape)};
+    CHECK_THAT(*volumes.begin(), WithinRel(500.0, 1e-9));
+    CHECK_THAT(*volumes.rbegin(), WithinRel(1500.0, 1e-9));
+    CHECK(findFace(halves, "8/split/front") >= 0);
+    CHECK(findFace(halves, "8/split/back") >= 0);
+    // The faces it did not cut keep their names; the top is cut in two, so has two.
+    CHECK(findFace(halves, "7/end/1") >= 0);
+    CHECK(findFace(halves, "7/end/1;2") >= 0);
+
+    // A plane that misses the body splits nothing.
+    const Plane beside = makePlane({50.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+    CHECK_THROWS_AS(split(block, beside, "8"), Error);
+}

@@ -202,6 +202,39 @@ kernel::NamedShape madeBy(const Feature& feature, const Document& document,
         }
         return kernel::pullTo(sketch->plane, regions, *limit, tag);
     }
+    if (feature.kind == FeatureKind::Pull && feature.throughAll) {
+        // Through every body there is at this point: as far along the normal, each way it
+        // goes, as the farthest corner of any of them, and a little more.
+        const kernel::Plane& plane = sketch->plane;
+        double ahead = 0.0;
+        double behind = 0.0;
+        if (bodies != nullptr) {
+            for (const auto& [id, shape] : *bodies) {
+                const auto box = kernel::boundingBox(shape.shape);
+                if (!box.has_value()) {
+                    continue;
+                }
+                for (const double x : {box->min.x, box->max.x}) {
+                    for (const double y : {box->min.y, box->max.y}) {
+                        for (const double z : {box->min.z, box->max.z}) {
+                            const double h = (x - plane.origin.x) * plane.normal.x +
+                                             (y - plane.origin.y) * plane.normal.y +
+                                             (z - plane.origin.z) * plane.normal.z;
+                            ahead = std::max(ahead, h);
+                            behind = std::min(behind, h);
+                        }
+                    }
+                }
+            }
+        }
+        const bool forward = !std::signbit(feature.distance);
+        const double to = feature.symmetric || forward ? ahead + 1.0 : 0.0;
+        const double from = feature.symmetric || !forward ? behind - 1.0 : 0.0;
+        if ((feature.symmetric ? ahead - behind : (forward ? ahead : -behind)) < 1e-7) {
+            throw FeatureFailure("There is nothing that way for it to go through.");
+        }
+        return kernel::pull(sketch->plane, regions, from, to, tag);
+    }
     if (feature.kind == FeatureKind::Pull) {
         double from = 0.0;
         double to = feature.distance;
@@ -254,7 +287,7 @@ kernel::Plane planeNamed(const std::string& name, const kernel::NamedShape& body
         return kernel::planeYZ();
     }
     if (name.empty()) {
-        throw FeatureFailure("It has no plane to mirror in.");
+        throw FeatureFailure("It has no plane.");
     }
     if (name.rfind("plane:", 0) == 0) {
         const ObjectId id{std::stoull(name.substr(6))};
@@ -995,6 +1028,32 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             }
             const double scale = feature.distance / length;
             return kernel::moveFaces(body, faces, {d.x * scale, d.y * scale, d.z * scale}, tag);
+        }
+        case FeatureKind::Draft: {
+            const kernel::NamedShape& body = targetOf(feature, document, bodies);
+            if (feature.faces.empty()) {
+                throw FeatureFailure("It has no faces to tilt.");
+            }
+            if (!std::isfinite(feature.angle) || std::abs(feature.angle) < 1e-7 ||
+                std::abs(feature.angle) >= 89.0) {
+                throw FeatureFailure("Its angle has to be more than zero and less than 89 "
+                                     "degrees either way.");
+            }
+            std::vector<int> faces;
+            for (const std::string& name : feature.faces) {
+                const int face = kernel::findFace(body, name);
+                if (face < 0) {
+                    throw FeatureFailure("A face it tilts no longer exists: " +
+                                         describeName(document, name) + ".");
+                }
+                faces.push_back(face);
+            }
+            const kernel::Plane neutral = planeNamed(feature.reference, body, document);
+            return kernel::draft(body, faces, neutral, feature.angle * pi / 180.0, tag);
+        }
+        case FeatureKind::SplitBody: {
+            const kernel::NamedShape& body = targetOf(feature, document, bodies);
+            return kernel::split(body, planeNamed(feature.reference, body, document), tag);
         }
         case FeatureKind::Repair:
             if (!std::isfinite(feature.size) || feature.size <= 0.0) {

@@ -126,7 +126,7 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, or `Sweep`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, or `Split Body`. |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
@@ -140,6 +140,9 @@ optional, and a file without them opens as it always did.
 | `reference` (move face) | Move Face only: the direction, as for a pattern (`X`, `Y`, `Z`, the name of an edge or face, or `axis:` and an id); its `distance` is how far. An Offset Face's `distance` is how far along the faces' normals. |
 | `size` | A fillet's radius, a chamfer's distance, a shell's wall thickness, a hole's diameter. |
 | `taper` | A pull only, and only when not zero: how far its sides lean in, in degrees. |
+| `throughAll` (pull) | A pull only, written only when true: it goes through every body, the way `distance` points, or both ways if `symmetric`; `distance` gives only the way. |
+| `faces`, `reference`, `angle` (draft) | A draft only: the faces it tilts, the plane they are tilted about (`XY`, `XZ`, `YZ`, `plane:` and an id, or a flat face of `body`), and by how many degrees. |
+| `reference` (split body) | A split only: the plane `body` is cut in two along, as for a draft. |
 | `extentBody`, `extentFace` | A pull up to a face only: the body, and the name of its flat face, that the pull ends in. |
 | `sources`, `reference`, `reference2`, `count`, `count2`, `spacing`, `spacing2` | Mirror and patterns only: the features copied (empty: the whole body), the plane, direction, or axis (`XY`, `XZ`, `YZ`, `X`, `Y`, `Z`, a face or edge name, `plane:` and the id of a construction plane, or `axis:` and the id of a construction axis), how many, and how far apart. |
 | `holeKind`, `throughAll`, `tipAngle`, `headDiameter`, `headDepth`, `countersinkAngle`, `flipped` | A hole only: `Simple`, `Counterbore`, or `Countersink`; right through or to `distance` with a point of `tipAngle` degrees; the width and depth of a counterbore or the angle of a countersink; and whether it is drilled toward the side the sketch is seen from. Its `size` is the diameter. The holes go at `points`, entities of its `sketch`; left out, at the sketch's free-standing points, or with none of those, at the centers of its circles. |

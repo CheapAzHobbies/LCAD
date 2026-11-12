@@ -34,6 +34,7 @@
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRep_Tool.hxx>
+#include <BRep_Builder.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <ShapeBuild_ReShape.hxx>
@@ -48,6 +49,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shell.hxx>
@@ -732,6 +734,95 @@ NamedShape revolve(const Plane& plane, const std::vector<Region>& regions, doubl
                 }));
         }
         return joinAll(std::move(solids));
+    });
+}
+
+NamedShape draft(const NamedShape& body, const std::vector<int>& faces, const Plane& neutral,
+                 double angle, const std::string& tag) {
+    if (body.shape.isNull()) {
+        throw std::invalid_argument("draft: there is no body");
+    }
+    if (faces.empty()) {
+        throw std::invalid_argument("draft: it needs faces to tilt");
+    }
+    if (!std::isfinite(angle) || std::abs(angle) < 1e-9 || std::abs(angle) >= M_PI / 2.0) {
+        throw std::invalid_argument("draft: the angle must be more than zero and less than 90 "
+                                    "degrees either way");
+    }
+    return occt::guarded("draft", [&] {
+        const TopoDS_Shape& shape = occt::unwrap(body.shape);
+        const TopTools_IndexedMapOfShape all = mapOf(shape, TopAbs_FACE);
+        const gp_Dir direction(neutral.normal.x, neutral.normal.y, neutral.normal.z);
+        const gp_Pln plane(toOcct(neutral.origin), direction);
+        BRepOffsetAPI_DraftAngle maker(shape);
+        for (const int index : faces) {
+            if (index < 0 || index >= all.Extent()) {
+                throw std::out_of_range("draft: there is no face " + std::to_string(index));
+            }
+            maker.Add(TopoDS::Face(all(index + 1)), direction, angle, plane);
+            if (!maker.AddDone()) {
+                throw Error("draft", "a face cannot be tilted that way: it may lie along the "
+                                     "plane, or be too curved");
+            }
+        }
+        maker.Build();
+        if (!maker.IsDone() || !hasSolid(maker.Shape())) {
+            throw Error("draft", "the faces could not be tilted that far");
+        }
+        requireValid(maker.Shape(), "draft");
+        FaceNamer namer(maker.Shape());
+        for (int i = 1; i <= all.Extent(); ++i) {
+            namer.offer(maker.ModifiedShape(all(i)), body.faceNames.at(static_cast<std::size_t>(i - 1)));
+        }
+        return named(maker.Shape(), namer, tag);
+    });
+}
+
+NamedShape split(const NamedShape& body, const Plane& plane, const std::string& tag) {
+    if (body.shape.isNull()) {
+        throw std::invalid_argument("split: there is no body");
+    }
+    return occt::guarded("split", [&] {
+        const TopoDS_Shape& shape = occt::unwrap(body.shape);
+        const gp_Pnt on = toOcct(plane.origin);
+        const gp_Vec n(plane.normal.x, plane.normal.y, plane.normal.z);
+        const TopoDS_Face boundary = BRepBuilderAPI_MakeFace(gp_Pln(on, gp_Dir(n))).Face();
+        const double whole = solidVolume(shape);
+        BRep_Builder builder;
+        TopoDS_Compound pieces;
+        builder.MakeCompound(pieces);
+        std::vector<std::unique_ptr<BRepAlgoAPI_Common>> cuts;
+        std::vector<std::unique_ptr<BRepPrimAPI_MakeHalfSpace>> sides;
+        int kept = 0;
+        for (const double sign : {1.0, -1.0}) {
+            sides.push_back(std::make_unique<BRepPrimAPI_MakeHalfSpace>(
+                boundary, on.Translated(n * sign)));
+            cuts.push_back(std::make_unique<BRepAlgoAPI_Common>(shape, sides.back()->Solid()));
+            BRepAlgoAPI_Common& cut = *cuts.back();
+            if (!cut.IsDone() || cut.HasErrors()) {
+                throw Error("split", "the body could not be cut along the plane");
+            }
+            for (TopExp_Explorer it(cut.Shape(), TopAbs_SOLID); it.More(); it.Next()) {
+                if (solidVolume(it.Current()) > 1e-9 * std::max(whole, 1.0)) {
+                    builder.Add(pieces, it.Current());
+                    ++kept;
+                }
+            }
+        }
+        if (kept < 2) {
+            throw Error("split", "the plane does not pass through the body, so there is "
+                                 "nothing to split");
+        }
+        requireValid(pieces, "split");
+        FaceNamer namer(pieces);
+        const char* names[] = {"/split/front", "/split/back"};
+        for (std::size_t i = 0; i < cuts.size(); ++i) {
+            namer.inherit(body, *cuts[i]);
+            for (TopExp_Explorer it(sides[i]->Solid(), TopAbs_FACE); it.More(); it.Next()) {
+                namer.offerAll(cuts[i]->Modified(it.Current()), tag + names[i]);
+            }
+        }
+        return named(pieces, namer, tag);
     });
 }
 
