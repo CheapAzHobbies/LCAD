@@ -206,6 +206,36 @@ const QHash<QString, Drawing>& drawings() {
              i.arc(6, 17.5, 13, 3, 200, 290);
              i.poly({{16.5, 14}, {19.2, 16.3}, {16, 18}}, false);
          }},
+        {QStringLiteral("loft"),
+         [](const Ink& i) {
+             // A wide outline below, a narrow one above, and the solid between them.
+             i.fill({{3, 19}, {21, 19}, {16, 6}, {8, 6}});
+             i.poly({{3, 19}, {21, 19}, {16, 6}, {8, 6}});
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(3, 19, 8, 6);
+             i.line(21, 19, 16, 6);
+             i.p.restore();
+             i.line(6, 3, 18, 3);
+             i.line(1, 22, 23, 22);
+         }},
+        {QStringLiteral("sweep"),
+         [](const Ink& i) {
+             // A section, and the bent path it is moved along.
+             QPainterPath bent(QPointF(5, 20));
+             bent.lineTo(5, 12);
+             bent.arcTo(QRectF(5, 4, 16, 16), 180, -90);
+             bent.lineTo(20, 4);
+             bent.lineTo(20, 10);
+             bent.lineTo(13, 10);
+             bent.arcTo(QRectF(11, 10, 4, 4), 90, 90);
+             bent.lineTo(11, 20);
+             bent.closeSubpath();
+             i.p.fillPath(bent, i.accent);
+             i.p.drawPath(bent);
+         }},
         {QStringLiteral("fillet"),
          [](const Ink& i) {
              QPainterPath body(QPointF(4, 20));

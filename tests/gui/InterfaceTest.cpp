@@ -589,6 +589,20 @@ void InterfaceTest::nothingEssentialIsClipped() {
             QVERIFY(size.width() <= 1280);
             continue;
         }
+        // So do Loft, Sweep, and the construction button, to one button that lists them; and
+        // that one is put away while there is room for them.
+        const QWidget* shapes = toolbar->findChild<QWidget*>(QStringLiteral("shapesButton"));
+        const bool shape = widget->objectName() == QStringLiteral("solid.loft") ||
+                           widget->objectName() == QStringLiteral("solid.sweep") ||
+                           widget->objectName() == QStringLiteral("constructButton");
+        if (shape && !widget->isVisible()) {
+            QVERIFY(size.width() <= 1280);
+            QVERIFY(shapes->isVisible());
+            continue;
+        }
+        if (widget == shapes && !widget->isVisible()) {
+            continue;
+        }
         QVERIFY2(widget->isVisible(), qPrintable(entry->objectName()));
         const QRect where = widget->geometry();
         QVERIFY2(toolbar->rect().contains(where), qPrintable(entry->objectName()));
