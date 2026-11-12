@@ -116,6 +116,7 @@ private slots:
     void aCornerIsRoundedAndItsRadiusTyped();
     void moreWaysToDrawAndACornerCutStraight();
     void patternsCopyWhatIsSelected();
+    void linesLineUpWithOtherLinesAndCrossings();
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
@@ -1928,6 +1929,79 @@ void SketchViewTest::patternsCopyWhatIsSelected() {
         highest = highest || apart(sketch().position(c.center), {20.0, 20.0}) < 0.5;
     }
     QVERIFY(highest);
+}
+
+void SketchViewTest::linesLineUpWithOtherLinesAndCrossings() {
+    openSketch();
+    const auto has = [this](ConstraintKind kind, EntityId a, EntityId b) {
+        for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+            if (c.kind == kind && ((c.first == a && c.second == b) ||
+                                   (c.first == b && c.second == a))) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto lastLine = [this] { return curves(EntityKind::Line).back(); };
+    // A slanting line to line up with.
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, 0.0));
+    click(at(40.0, 10.0));
+    editor()->cancel();
+    const Entity slant = lastLine();
+
+    // Nearly parallel to it: made parallel.
+    click(at(0.0, 30.0));
+    move(at(40.0, 40.6));
+    click(at(40.0, 40.6));
+    editor()->cancel();
+    const Entity along = lastLine();
+    QVERIFY(has(ConstraintKind::Parallel, along.id, slant.id));
+    const double dx = endOf(along.id).x - startOf(along.id).x;
+    const double dy = endOf(along.id).y - startOf(along.id).y;
+    QVERIFY(qAbs(dy / dx - 0.25) < 1e-6);
+
+    // Nearly square to it: made perpendicular.
+    click(at(60.0, 0.0));
+    click(at(50.6, 40.0));
+    editor()->cancel();
+    const Entity across = lastLine();
+    QVERIFY(has(ConstraintKind::Perpendicular, across.id, slant.id));
+
+    // On from the end of an arc, nearly the way it goes: tangent.
+    Sketch g = sketch();
+    const double r = 10.0;
+    const double eighth = std::atan(1.0);
+    const Point2 end{100.0 + r * std::cos(eighth), r * std::sin(eighth)};
+    const EntityId bend = g.addArc({100.0, 0.0}, {110.0, 0.0}, end);
+    m_document->setSketchGeometry(m_sketch, g, "Arc");
+    render();
+    click(at(end.x, end.y));
+    click(at(end.x - 14.0, end.y + 14.4));
+    editor()->cancel();
+    QVERIFY(has(ConstraintKind::Tangent, lastLine().id, bend));
+
+    // A point dropped where two lines cross is held on both.
+    click(at(0.0, -40.0));
+    click(at(40.0, -40.0));
+    editor()->cancel();
+    const Entity flat = lastLine();
+    click(at(20.0, -60.0));
+    click(at(20.0, -20.0));
+    editor()->cancel();
+    const Entity upright = lastLine();
+    editor()->setTool(SketchTool::Point);
+    click(at(20.4, -40.3));
+    std::vector<Entity> points;
+    for (const Entity& e : sketch().entities()) {
+        if (e.kind == EntityKind::Point && e.owner == 0 && e.id != sketch().origin()) {
+            points.push_back(e);
+        }
+    }
+    QCOMPARE(points.size(), std::size_t{1});
+    QVERIFY(apart(sketch().position(points[0].id), {20.0, -40.0}) < 1e-6);
+    QVERIFY(has(ConstraintKind::PointOnLine, points[0].id, flat.id));
+    QVERIFY(has(ConstraintKind::PointOnLine, points[0].id, upright.id));
 }
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {

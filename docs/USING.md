@@ -372,6 +372,17 @@ of the rectangle (`40 25`), or the diameter of the circle. The size becomes a di
 dashed. Press X with curves selected to turn them into construction geometry or back. With
 nothing selected, X switches what the drawing tools make.
 
+
+While drawing, LCAD lines things up and holds them so, with a mark by the pointer to say how:
+
+- A click on a point, the origin among them, joins it there (a square mark); on the middle of a
+  line or an arc, holds it there (a triangle); on a curve, holds it on the curve (a cross); where
+  two curves cross, holds it on both (a circled cross).
+- A line drawn nearly level or upright is made horizontal or vertical. One drawn nearly parallel
+  or square to another line is made parallel (∥) or perpendicular (⊥) to it, and that line is
+  lit; one that goes on from the end of an arc nearly the way it goes is made tangent (◠).
+- Hold Shift to draw at any angle, or turn all of this off with **Sketch > Pick Up Constraints
+  While Drawing**.
 ### Selecting and moving
 
 Press Esc until no tool is active. Then:

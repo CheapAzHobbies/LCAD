@@ -218,10 +218,16 @@ Stroke strokeOf(const sketch::Sketch& geometry, const Entity& entity) {
 
 // What a tool's click landed on.
 struct Snap {
-    enum class Kind { None, Point, Curve, Midpoint };
+    enum class Kind { None, Point, Curve, Midpoint, Intersection };
     Point2 position;
     Kind kind = Kind::None;
     EntityId entity = 0;
+    // For an intersection: the second curve.
+    EntityId entity2 = 0;
+    // For the end of a line: parallel or perpendicular to another line, or tangent to the arc
+    // or circle it starts on. 0 for none.
+    EntityId alignedTo = 0;
+    ConstraintKind alignKind = ConstraintKind::Parallel;
     // For the end of a line: level with, or straight above or below, where the line starts.
     bool horizontal = false;
     bool vertical = false;
@@ -1015,6 +1021,38 @@ public:
             snap.position = g.position(point);
             return snap;
         }
+        // Where two curves cross.
+        {
+            const double near = 2.0 * curveReach * millimetersPerPixel(position);
+            std::vector<EntityId> close;
+            for (const Entity& entity : g.entities()) {
+                if ((entity.kind == EntityKind::Line || entity.kind == EntityKind::Circle ||
+                     entity.kind == EntityKind::Arc) &&
+                    sketch::distanceTo(g, entity.id, at) <= near) {
+                    close.push_back(entity.id);
+                }
+            }
+            double nearest = pointReach;
+            for (std::size_t i = 0; i < close.size(); ++i) {
+                for (std::size_t j = i + 1; j < close.size(); ++j) {
+                    for (const Point2 cross : sketch::intersections(g, close[i], close[j])) {
+                        const QPointF there = toWidget(cross);
+                        const double away =
+                            std::hypot(there.x() - position.x(), there.y() - position.y());
+                        if (away <= nearest) {
+                            nearest = away;
+                            snap.kind = Snap::Kind::Intersection;
+                            snap.entity = close[i];
+                            snap.entity2 = close[j];
+                            snap.position = cross;
+                        }
+                    }
+                }
+            }
+            if (snap.kind == Snap::Kind::Intersection) {
+                return snap;
+            }
+        }
         for (const Entity& entity : g.entities()) {
             if (entity.kind != EntityKind::Line && entity.kind != EntityKind::Arc) {
                 continue;
@@ -1056,6 +1094,8 @@ public:
             } else if (dx < reach && dy > reach) {
                 snap.position.x = anchor->x;
                 snap.vertical = true;
+            } else {
+                alignLine(snap, *anchor, at);
             }
         }
         return snap;
@@ -1124,6 +1164,65 @@ public:
         return snap;
     }
 
+    // Holds the end of a line being drawn from `anchor` parallel or perpendicular to another
+    // line, or tangent to the arc or circle it starts on, when it points nearly that way.
+    void alignLine(Snap& snap, Point2 anchor, Point2 at) const {
+        const Point2 d = at - anchor;
+        const double length = norm(d);
+        if (length < 1e-9) {
+            return;
+        }
+        const sketch::Sketch& g = geometry();
+        // Within 2.5 degrees.
+        double best = std::sin(2.5 * pi / 180.0);
+        Point2 way;
+        // The point the line starts at, if it is one.
+        EntityId start = chainEnd;
+        if (start == 0 && !clicks.empty() && clicks.back().kind == Snap::Kind::Point) {
+            start = clicks.back().entity;
+        }
+        const auto consider = [&](Point2 direction, EntityId to, ConstraintKind kind) {
+            const double off = std::abs(direction.x * d.y - direction.y * d.x) / length;
+            if (off < best) {
+                best = off;
+                way = direction;
+                snap.alignedTo = to;
+                snap.alignKind = kind;
+            }
+        };
+        // The points at the start: the ends of the curves it goes on from.
+        const std::vector<EntityId> together =
+            start != 0 ? sketch::pointsTogether(g, start) : std::vector<EntityId>{};
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind != EntityKind::Line) {
+                continue;
+            }
+            const Point2 u = unit(g.position(entity.end) - g.position(entity.start));
+            // Parallel to the line it goes on from would only be in line with it.
+            const bool goesOn = contains(together, entity.start) || contains(together, entity.end);
+            if (!goesOn) {
+                consider(u, entity.id, ConstraintKind::Parallel);
+            }
+            consider({-u.y, u.x}, entity.id, ConstraintKind::Perpendicular);
+        }
+        // Tangent on from an arc or a circle it starts on.
+        if (start != 0) {
+            for (const EntityId p : together) {
+                const Entity* owner = g.find(g.find(p)->owner);
+                if (owner != nullptr && owner->kind == EntityKind::Arc &&
+                    (owner->start == p || owner->end == p)) {
+                    const Point2 r = g.position(p) - g.position(owner->center);
+                    consider(unit(Point2{-r.y, r.x}), owner->id, ConstraintKind::Tangent);
+                }
+            }
+        }
+        if (snap.alignedTo == 0) {
+            return;
+        }
+        const double along = way.x * d.x + way.y * d.y;
+        snap.position = anchor + way * along;
+    }
+
     // Keeps a new point where the click that made it landed.
     void attach(sketch::Sketch& g, EntityId point, const Snap& snap) const {
         if (!inference || snap.entity == 0 || g.find(snap.entity) == nullptr) {
@@ -1135,6 +1234,17 @@ public:
             break;
         case Snap::Kind::Midpoint:
             sketch::tryConstraint(g, ConstraintKind::Midpoint, point, snap.entity);
+            break;
+        case Snap::Kind::Intersection:
+            for (const EntityId curve : {snap.entity, snap.entity2}) {
+                if (g.find(curve) != nullptr) {
+                    sketch::tryConstraint(g,
+                                          g.find(curve)->kind == EntityKind::Line
+                                              ? ConstraintKind::PointOnLine
+                                              : ConstraintKind::PointOnCircle,
+                                          point, curve);
+                }
+            }
             break;
         case Snap::Kind::Curve:
             sketch::tryConstraint(g,
@@ -1190,6 +1300,9 @@ public:
         }
         if (inference && to.vertical) {
             sketch::tryConstraint(g, ConstraintKind::Vertical, lineId);
+        }
+        if (inference && to.alignedTo != 0 && g.find(to.alignedTo) != nullptr) {
+            sketch::tryConstraint(g, to.alignKind, lineId, to.alignedTo);
         }
         attach(g, made.end, to);
         if (length.has_value()) {
@@ -3253,6 +3366,11 @@ public:
                 painter.drawLine(QLineF(at + QPointF(-5, -5), at + QPointF(5, 5)));
                 painter.drawLine(QLineF(at + QPointF(-5, 5), at + QPointF(5, -5)));
                 break;
+            case Snap::Kind::Intersection:
+                painter.drawEllipse(at, 6.0, 6.0);
+                painter.drawLine(QLineF(at + QPointF(-4, -4), at + QPointF(4, 4)));
+                painter.drawLine(QLineF(at + QPointF(-4, 4), at + QPointF(4, -4)));
+                break;
             case Snap::Kind::None:
                 break;
             }
@@ -3263,7 +3381,21 @@ public:
         if (cursorValid && draws) {
             const QPointF at = toWidget(cursor.position);
             drawSnap(cursor);
-            if ((cursor.horizontal || cursor.vertical || cursor.locked) && !clicks.empty()) {
+            if (cursor.alignedTo != 0 && !clicks.empty()) {
+                // What the line lines up with: a symbol by the pointer, and that line lit.
+                const QString symbol = cursor.alignKind == ConstraintKind::Parallel ? QStringLiteral("∥")
+                                       : cursor.alignKind == ConstraintKind::Perpendicular
+                                           ? QStringLiteral("⊥")
+                                           : QStringLiteral("◠");
+                painter.setPen(colors.preview);
+                painter.drawText(at + QPointF(10.0, -10.0), symbol);
+                if (const Entity* other = geometry().find(cursor.alignedTo)) {
+                    painter.setPen(QPen(colors.preview, 2.4));
+                    painter.drawPath(pathOf(strokeOf(geometry(), *other)));
+                }
+            }
+            if ((cursor.horizontal || cursor.vertical || cursor.locked || cursor.alignedTo != 0) &&
+                !clicks.empty()) {
                 // A guide through the start of the line, to say what it lined up with.
                 QPen guide(colors.preview, 1.0, Qt::DotLine);
                 painter.setPen(guide);

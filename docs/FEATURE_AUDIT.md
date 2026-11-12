@@ -49,9 +49,10 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Snap onto curves; point-on-curve added | Have | |
 | Horizontal and vertical while drawing a line | Have | |
 | Snap to circle centers | Have | Centers are points, so they snap as points. |
-| Parallel, perpendicular, tangent detected while drawing | No | |
+| Parallel, perpendicular, tangent detected while drawing | Have | Lines, since 2026-11-12: parallel or square to any line, tangent on from an arc. |
 | Equal lengths and radii detected | No | |
-| Snap to intersections, quadrants | No | |
+| Snap to intersections | Have | Since 2026-11-12. |
+| Snap to quadrants | No | |
 | Grid snapping | No | |
 | Marker showing the snap before release | Have | |
 | Inference can be switched off | Have | |
@@ -177,6 +178,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 3. **Sketching:** center rectangle, three-point circle and arc, tangent arc, chamfer, and sketch
    patterns. Done.
 4. **Snapping:** parallel, perpendicular, and tangent detected while drawing, and intersections.
+   Done.
 5. **Solids, second round:** thread, coil, pipe, combine as a command, and moving bodies.
 6. **Inspection:** a section view in the 3D view.
 7. **Surfaces**, then the rest.

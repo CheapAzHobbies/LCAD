@@ -1740,8 +1740,9 @@ void MainWindow::defineSketchCommands() {
         m_commands->add(std::move(c));
 
         c = make("sketch.inference", tr("Pick Up Constraints &While Drawing"),
-                 tr("Keep ends on the points and curves they land on, and make nearly level or "
-                    "upright lines exactly so"),
+                 tr("Keep ends on the points, curves, and crossings they land on, and make "
+                    "lines that are nearly level, upright, parallel, square, or tangent exactly "
+                    "so"),
                  "inference");
         c.checkable = true;
         c.aliases = {tr("snap"), tr("inference"), tr("automatic constraints")};
