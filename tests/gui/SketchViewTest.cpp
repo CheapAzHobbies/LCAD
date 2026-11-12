@@ -114,6 +114,7 @@ private slots:
     // Modifying
     void trimAndExtendActOnTheCurveClicked();
     void aCornerIsRoundedAndItsRadiusTyped();
+    void moreWaysToDrawAndACornerCutStraight();
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
@@ -1801,6 +1802,78 @@ void SketchViewTest::aCornerIsRoundedAndItsRadiusTyped() {
     click(at(35.0, 10.0));
     QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{1});
     QVERIFY(messages.count() >= 1);
+}
+
+void SketchViewTest::moreWaysToDrawAndACornerCutStraight() {
+    openSketch();
+    editor()->setInference(false);
+
+    // A rectangle by its center and a corner.
+    editor()->setTool(SketchTool::CenterRectangle);
+    QVERIFY(editor()->hint().contains(QStringLiteral("center")));
+    click(at(20.0, 20.0));
+    click(at(35.0, 30.0));
+    std::vector<Entity> lines;
+    for (const Entity& line : curves(EntityKind::Line)) {
+        if (!line.construction) {
+            lines.push_back(line);
+        }
+    }
+    QCOMPARE(lines.size(), std::size_t{4});
+    QVERIFY(apart(startOf(lines[0].id), {5.0, 10.0}) < 0.5);
+    QVERIFY(qAbs(apart(startOf(lines[0].id), endOf(lines[0].id)) - 30.0) < 0.5);
+
+    // A circle through three points: its center where they put it.
+    editor()->setTool(SketchTool::ThreePointCircle);
+    click(at(60.0, 0.0));
+    click(at(80.0, 0.0));
+    click(at(70.0, 10.0));
+    QCOMPARE(curves(EntityKind::Circle).size(), std::size_t{1});
+    const Entity round = curves(EntityKind::Circle).front();
+    QVERIFY(apart(sketch().position(round.center), {70.0, 0.0}) < 0.5);
+    QVERIFY(qAbs(sketch().radiusOf(round.id) - 10.0) < 0.5);
+
+    // An arc by its ends and a point it passes through, bulging down.
+    editor()->setTool(SketchTool::ThreePointArc);
+    click(at(-40.0, 0.0));
+    click(at(-20.0, 0.0));
+    click(at(-30.0, -10.0));
+    QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{1});
+    const Entity bow = curves(EntityKind::Arc).front();
+    QVERIFY(sketch().pointAt(bow.id, 0.5).y < -9.0);
+
+    // A tangent arc on from the end of a line.
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, -40.0));
+    click(at(20.0, -40.0));
+    editor()->cancel();
+    editor()->setInference(true);
+    editor()->setTool(SketchTool::TangentArc);
+    // Not from the middle of nowhere.
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    click(at(10.0, -60.0));
+    QVERIFY(messages.count() >= 1);
+    click(at(20.0, -40.0));
+    click(at(30.0, -30.0));
+    QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{2});
+    const Entity bend = curves(EntityKind::Arc).back();
+    QVERIFY(qAbs(sketch().radiusOf(bend.id) - 10.0) < 0.5);
+    bool tangent = false;
+    for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+        tangent = tangent || (c.kind == ConstraintKind::Tangent &&
+                              (c.first == bend.id || c.second == bend.id));
+    }
+    QVERIFY(tangent);
+
+    // A corner of the rectangle cut straight across, and the distance typed.
+    editor()->setTool(SketchTool::Chamfer);
+    click(at(35.0, 30.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Chamfer"));
+    type(QStringLiteral("4"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QCOMPARE(sketch().profiles().size(), std::size_t{2});
 }
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {

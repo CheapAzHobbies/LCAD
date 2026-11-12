@@ -18,14 +18,14 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Item | State | Note |
 |---|---|---|
 | Line, chains of lines | Have | |
-| Rectangle | Part | Two corners only. No center or three-point rectangle. |
-| Circle | Part | Center and radius only. No two- or three-point circle. |
-| Arc | Part | Center, start, end only. No three-point or tangent arc. |
+| Rectangle | Part | Two corners, or center and corner. No three-point rectangle. |
+| Circle | Have | Center and radius, or three points. |
+| Arc | Have | Center, start, and end; three points; tangent on from a curve. |
 | Ellipse, polygon, slot, spline, point | Have | Polygon is inscribed only; spline is fit-point only. |
 | Construction geometry | Have | Any curve can be made construction. |
 | Sketch text | No | |
 | Fillet | Have | Between two lines. |
-| Chamfer | No | |
+| Chamfer | Have | Equal distance, between two lines. |
 | Trim, extend, offset, mirror | Have | |
 | Break, split | No | |
 | Sketch patterns (rectangular, circular) | No | |
@@ -174,8 +174,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 
 1. **Construction geometry:** plane at angle and midplane. Done.
 2. **Solids:** pull through all, draft, split body. Done.
-3. **Sketching:** center rectangle, three-point circle and arc, tangent arc, chamfer, and sketch
-   patterns.
+3. **Sketching:** center rectangle, three-point circle and arc, tangent arc, chamfer: done.
+   Sketch patterns next.
 4. **Snapping:** parallel, perpendicular, and tangent detected while drawing, and intersections.
 5. **Solids, second round:** thread, coil, pipe, combine as a command, and moving bodies.
 6. **Inspection:** a section view in the 3D view.

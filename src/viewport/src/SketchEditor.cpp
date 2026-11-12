@@ -1363,6 +1363,101 @@ public:
         clicks.clear();
     }
 
+    // The point of `ids` nearest to a place.
+    [[nodiscard]] static EntityId nearestOf(const sketch::Sketch& g,
+                                            std::initializer_list<EntityId> ids, Point2 where) {
+        EntityId best = 0;
+        double nearest = 0.0;
+        for (const EntityId id : ids) {
+            const double away = apart(g.position(id), where);
+            if (best == 0 || away < nearest) {
+                best = id;
+                nearest = away;
+            }
+        }
+        return best;
+    }
+
+    void addCenterRectangle(const Snap& center, const Snap& corner) {
+        sketch::Sketch g = geometry();
+        sketch::CenterRectangleParts parts;
+        try {
+            parts = sketch::addCenterRectangle(g, center.position, corner.position);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("A rectangle needs a width and a height."));
+            return;
+        }
+        for (const EntityId side :
+             {parts.sides.bottom, parts.sides.right, parts.sides.top, parts.sides.left}) {
+            finishCurve(g, side);
+        }
+        attach(g, parts.center, center);
+        attach(g,
+               nearestOf(g,
+                         {g.find(parts.sides.bottom)->start, g.find(parts.sides.right)->start,
+                          g.find(parts.sides.top)->start, g.find(parts.sides.left)->start},
+                         corner.position),
+               corner);
+        commit(std::move(g), tr("Rectangle"));
+        clicks.clear();
+    }
+
+    void addCircleThrough(const Snap& a, const Snap& b, const Snap& c) {
+        const auto round = sketch::circleThrough(a.position, b.position, c.position);
+        if (!round.has_value()) {
+            emit q->message(tr("Three points in a line have no circle through them."));
+            return;
+        }
+        sketch::Sketch g = geometry();
+        const EntityId made = g.addCircle(round->first, round->second);
+        finishCurve(g, made);
+        // On the points it was drawn through.
+        for (const Snap* click : {&a, &b, &c}) {
+            if (inference && click->kind == Snap::Kind::Point && g.find(click->entity) != nullptr) {
+                sketch::tryConstraint(g, ConstraintKind::PointOnCircle, click->entity, made);
+            }
+        }
+        commit(std::move(g), tr("Circle"));
+        clicks.clear();
+    }
+
+    void addArcThrough(const Snap& start, const Snap& through, const Snap& end) {
+        sketch::Sketch g = geometry();
+        EntityId made = 0;
+        try {
+            made = sketch::addArcThrough(g, start.position, through.position, end.position);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("Three points in a line have no arc through them."));
+            return;
+        }
+        finishCurve(g, made);
+        const Entity arc = *g.find(made);
+        const EntityId first = nearestOf(g, {arc.start, arc.end}, start.position);
+        attach(g, first, start);
+        attach(g, first == arc.start ? arc.end : arc.start, end);
+        if (inference && through.kind == Snap::Kind::Point && g.find(through.entity) != nullptr) {
+            sketch::tryConstraint(g, ConstraintKind::PointOnCircle, through.entity, made);
+        }
+        commit(std::move(g), tr("Arc"));
+        clicks.clear();
+    }
+
+    void addTangentArc(const Snap& from, const Snap& end) {
+        sketch::Sketch g = geometry();
+        EntityId made = 0;
+        try {
+            made = sketch::addTangentArc(g, from.entity, end.position);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("Straight on from the end there is no arc. Click to one side."));
+            return;
+        }
+        finishCurve(g, made);
+        const Entity arc = *g.find(made);
+        attach(g, nearestOf(g, {arc.start, arc.end}, end.position), end);
+        commit(std::move(g), tr("Arc"));
+        clicks.clear();
+    }
+
     void addPoint(const Snap& at) {
         sketch::Sketch g = geometry();
         const EntityId made = g.addPoint(at.position);
@@ -1468,6 +1563,45 @@ public:
                 strokes.push_back(circle(first, apart(first, at)));
             }
             break;
+        case SketchTool::CenterRectangle: {
+            const Point2 o{2.0 * first.x - at.x, 2.0 * first.y - at.y};
+            strokes.push_back(segment(o, {at.x, o.y}));
+            strokes.push_back(segment({at.x, o.y}, at));
+            strokes.push_back(segment(at, {o.x, at.y}));
+            strokes.push_back(segment({o.x, at.y}, o));
+            break;
+        }
+        case SketchTool::ThreePointCircle:
+            if (clicks.size() == 1) {
+                strokes.push_back(segment(first, at));
+            } else if (const auto round = sketch::circleThrough(first, clicks[1].position, at)) {
+                strokes.push_back(circle(round->first, round->second));
+            }
+            break;
+        case SketchTool::ThreePointArc:
+            if (clicks.size() == 1) {
+                strokes.push_back(segment(first, at));
+            } else {
+                sketch::Sketch scratch;
+                try {
+                    const EntityId made =
+                        sketch::addArcThrough(scratch, first, at, clicks[1].position);
+                    strokes.push_back(strokeOf(scratch, *scratch.find(made)));
+                } catch (const std::invalid_argument&) {
+                    strokes.push_back(segment(first, clicks[1].position));
+                }
+            }
+            break;
+        case SketchTool::TangentArc: {
+            sketch::Sketch scratch = geometry();
+            try {
+                const EntityId made = sketch::addTangentArc(scratch, clicks[0].entity, at);
+                strokes.push_back(strokeOf(scratch, *scratch.find(made)));
+            } catch (const std::invalid_argument&) {
+                strokes.push_back(segment(first, at));
+            }
+            break;
+        }
         case SketchTool::Arc:
             if (clicks.size() == 1) {
                 strokes.push_back(segment(first, at));
@@ -1562,6 +1696,34 @@ public:
                 .arg(formatValue(std::abs(at.x - first.x)), formatValue(std::abs(at.y - first.y)));
         case SketchTool::Circle:
             return tr("Ø%1 mm").arg(formatValue(2.0 * apart(first, at)));
+        case SketchTool::CenterRectangle:
+            return tr("%1 × %2 mm")
+                .arg(formatValue(2.0 * std::abs(at.x - first.x)),
+                     formatValue(2.0 * std::abs(at.y - first.y)));
+        case SketchTool::ThreePointCircle: {
+            if (clicks.size() == 1) {
+                return tr("%1 mm").arg(formatValue(apart(first, at)));
+            }
+            const auto round = sketch::circleThrough(first, clicks[1].position, at);
+            return round.has_value() ? tr("Ø%1 mm").arg(formatValue(2.0 * round->second))
+                                     : QString();
+        }
+        case SketchTool::ThreePointArc: {
+            if (clicks.size() == 1) {
+                return tr("%1 mm").arg(formatValue(apart(first, at)));
+            }
+            const auto round = sketch::circleThrough(first, at, clicks[1].position);
+            return round.has_value() ? tr("R%1 mm").arg(formatValue(round->second)) : QString();
+        }
+        case SketchTool::TangentArc: {
+            sketch::Sketch scratch = geometry();
+            try {
+                const EntityId made = sketch::addTangentArc(scratch, clicks[0].entity, at);
+                return tr("R%1 mm").arg(formatValue(scratch.radiusOf(made)));
+            } catch (const std::invalid_argument&) {
+                return {};
+            }
+        }
         case SketchTool::Arc:
             return clicks.size() == 1 ? tr("R%1 mm").arg(formatValue(apart(first, at)))
                                       : tr("%1°").arg(formatValue(std::abs(arcSweep) * 180.0 / pi));
@@ -1598,6 +1760,9 @@ public:
         const EntityId hoveredBefore = hoveredNow();
         const bool draws = tool == SketchTool::Line || tool == SketchTool::Rectangle ||
                            tool == SketchTool::Circle || tool == SketchTool::Arc ||
+                           tool == SketchTool::CenterRectangle ||
+                           tool == SketchTool::ThreePointCircle ||
+                           tool == SketchTool::ThreePointArc || tool == SketchTool::TangentArc ||
                            tool == SketchTool::Point || tool == SketchTool::Polygon ||
                            tool == SketchTool::Slot || tool == SketchTool::Ellipse ||
                            tool == SketchTool::Spline;
@@ -1622,7 +1787,8 @@ public:
             const bool takesPoints =
                 tool == SketchTool::Dimension || tool == SketchTool::Constraint;
             // Fillet rounds corners, which are points and nothing else.
-            hover = tool == SketchTool::Fillet ? pointAt(position, pointReach)
+            hover = tool == SketchTool::Fillet || tool == SketchTool::Chamfer
+                        ? pointAt(position, pointReach)
                     : takesPoints              ? hitAt(position, true).entity
                                                : curveAt(position, curveReach);
         }
@@ -1698,6 +1864,50 @@ public:
                 }
             } else {
                 addArc(clicks[0], clicks[1], cursor);
+            }
+            break;
+        case SketchTool::CenterRectangle:
+            if (clicks.empty()) {
+                clicks.push_back(cursor);
+            } else {
+                addCenterRectangle(clicks.front(), cursor);
+            }
+            break;
+        case SketchTool::ThreePointCircle:
+            if (clicks.size() < 2) {
+                clicks.push_back(cursor);
+            } else {
+                addCircleThrough(clicks[0], clicks[1], cursor);
+            }
+            break;
+        case SketchTool::ThreePointArc:
+            if (clicks.size() < 2) {
+                clicks.push_back(cursor);
+            } else {
+                addArcThrough(clicks[0], cursor, clicks[1]);
+            }
+            break;
+        case SketchTool::TangentArc:
+            if (clicks.empty()) {
+                // It starts at the end of a line or an arc.
+                bool atEnd = false;
+                if (cursor.kind == Snap::Kind::Point) {
+                    for (const EntityId id : sketch::pointsTogether(g, cursor.entity)) {
+                        const Entity* owner = g.find(g.find(id)->owner);
+                        atEnd = atEnd ||
+                                (owner != nullptr &&
+                                 (owner->kind == EntityKind::Line ||
+                                  owner->kind == EntityKind::Arc) &&
+                                 (owner->start == id || owner->end == id));
+                    }
+                }
+                if (!atEnd) {
+                    emit q->message(tr("Click the end of a line or an arc to go on from."));
+                    break;
+                }
+                clicks.push_back(cursor);
+            } else {
+                addTangentArc(clicks.front(), cursor);
             }
             break;
         case SketchTool::Point:
@@ -1801,7 +2011,9 @@ public:
             }
             break;
         }
-        case SketchTool::Fillet: {
+        case SketchTool::Fillet:
+        case SketchTool::Chamfer: {
+            const bool rounds = tool == SketchTool::Fillet;
             const Entity* picked = hover != 0 ? g.find(hover) : nullptr;
             if (picked == nullptr || picked->kind != EntityKind::Point) {
                 emit q->message(tr("Click a corner where two lines meet."));
@@ -1822,19 +2034,22 @@ public:
                 radius = std::floor(radius);
             }
             sketch::Sketch next = g;
-            sketch::FilletParts made;
+            sketch::ConstraintId size = 0;
             try {
-                made = sketch::fillet(next, hover, radius);
+                size = rounds ? sketch::fillet(next, hover, radius).radius
+                              : sketch::chamfer(next, hover, radius).distance;
             } catch (const std::invalid_argument&) {
-                emit q->message(tr("Only a corner where two lines meet at an angle can be "
-                                   "rounded, with room on both lines for the arc."));
+                emit q->message(rounds ? tr("Only a corner where two lines meet at an angle can "
+                                            "be rounded, with room on both lines for the arc.")
+                                       : tr("Only a corner where two lines meet at an angle can "
+                                            "be cut, with room on both lines for the cut."));
                 break;
             }
             hover = 0;
-            commit(std::move(next), tr("Fillet"));
+            commit(std::move(next), rounds ? tr("Fillet") : tr("Chamfer"));
             selected.clear();
-            selectedConstraints = {made.radius};
-            q->editDimension(made.radius);
+            selectedConstraints = {size};
+            q->editDimension(size);
             break;
         }
         case SketchTool::Offset: {
@@ -2906,6 +3121,7 @@ public:
         const bool draws = tool != SketchTool::Select && tool != SketchTool::Dimension &&
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
                            tool != SketchTool::Extend && tool != SketchTool::Fillet &&
+                           tool != SketchTool::Chamfer &&
                            tool != SketchTool::Offset &&
                            tool != SketchTool::Mirror && tool != SketchTool::Project;
         // What a tool's click, or a dragged point, would land on.
@@ -3490,6 +3706,22 @@ QString SketchEditor::hint() const {
         return tr("Extend: click a line or an arc near the end to lengthen");
     case SketchTool::Fillet:
         return tr("Fillet: click a corner where two lines meet, then type the radius");
+    case SketchTool::Chamfer:
+        return tr("Chamfer: click a corner where two lines meet, then type how far back to cut");
+    case SketchTool::CenterRectangle:
+        return placed == 0 ? tr("Center Rectangle: click the center")
+                           : tr("Center Rectangle: click a corner");
+    case SketchTool::ThreePointCircle:
+        return placed == 0   ? tr("3-Point Circle: click a point on the circle")
+               : placed == 1 ? tr("3-Point Circle: click a second point on it")
+                             : tr("3-Point Circle: click a third point on it");
+    case SketchTool::ThreePointArc:
+        return placed == 0   ? tr("3-Point Arc: click where it starts")
+               : placed == 1 ? tr("3-Point Arc: click where it ends")
+                             : tr("3-Point Arc: click a point it passes through");
+    case SketchTool::TangentArc:
+        return placed == 0 ? tr("Tangent Arc: click the end of a line or an arc")
+                           : tr("Tangent Arc: click where it ends");
     case SketchTool::Offset:
         return m_impl->selected.empty() ? tr("Offset: click the curve to offset")
                                         : tr("Offset: click where the copy should go");

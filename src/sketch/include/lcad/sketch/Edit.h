@@ -54,6 +54,29 @@ struct PolygonParts {
     /// The construction circle through the corners.
     EntityId circle = 0;
 };
+/// A center rectangle: also a construction diagonal, and a point at its middle, which is where
+/// the rectangle is centered.
+struct CenterRectangleParts {
+    RectangleParts sides;
+    EntityId diagonal = 0;
+    EntityId center = 0;
+};
+/// A rectangle around `center` with one corner at `corner`, held centered on the point.
+CenterRectangleParts addCenterRectangle(Sketch& sketch, Point2 center, Point2 corner);
+
+/// The circle through three points: its center and radius. Nothing if they lie in a line.
+[[nodiscard]] std::optional<std::pair<Point2, double>> circleThrough(Point2 a, Point2 b,
+                                                                     Point2 c);
+
+/// An arc from `start` to `end` that passes through `through`. Throws std::invalid_argument
+/// if the three lie in a line.
+EntityId addArcThrough(Sketch& sketch, Point2 start, Point2 through, Point2 end);
+
+/// An arc that goes on from the end of a line or an arc at `from` (that end, or a point joined
+/// to it) to `end`, joined to that end and tangent to the curve. Throws std::invalid_argument
+/// if `from` is not an end of a line or an arc, or `end` lies straight on from it.
+EntityId addTangentArc(Sketch& sketch, EntityId from, Point2 end);
+
 /// A regular polygon with `sides` sides (3 to 64) around `center`, with one corner at `corner`:
 /// lines of equal length whose ends are held on a construction circle.
 PolygonParts addPolygon(Sketch& sketch, Point2 center, Point2 corner, int sides);
@@ -172,5 +195,19 @@ struct FilletParts {
 /// leaving the sketch as it was, if two lines do not meet there, they are in line, or the arc
 /// does not fit on them.
 FilletParts fillet(Sketch& sketch, EntityId corner, double radius);
+
+/// What chamfer() made: the line across the corner, and the point where the corner was.
+struct ChamferParts {
+    EntityId line = 0;
+    /// As FilletParts::corner.
+    EntityId corner = 0;
+    /// How far back along each line the corner is cut: a dimension on one of two construction
+    /// lines from the corner, which are held equal.
+    ConstraintId distance = 0;
+};
+
+/// Cuts the corner where two lines meet at `corner` with a straight line, `distance` back along
+/// each. Otherwise as fillet().
+ChamferParts chamfer(Sketch& sketch, EntityId corner, double distance);
 
 } // namespace lcad::sketch

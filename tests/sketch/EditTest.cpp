@@ -891,3 +891,106 @@ TEST_CASE("A corner between two lines is rounded with a tangent arc", "[sketch][
     CHECK_THROWS_AS(fillet(sketch, sketch.find(r.left)->start, 0.0), std::invalid_argument);
     CHECK(same(sketch, kept));
 }
+
+TEST_CASE("A corner between two lines is cut with a chamfer", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts r = addRectangle(sketch, {0.0, 0.0}, {40.0, 20.0});
+    sketch.addConstraint(ConstraintKind::Coincident, sketch.find(r.bottom)->start, sketch.origin());
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.bottom)->start,
+                         sketch.find(r.bottom)->end, 0, 40.0);
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.left)->start,
+                         sketch.find(r.left)->end, 0, 20.0);
+    sketch.solve();
+    const double before = sketch.profiles()[0].area;
+
+    const ChamferParts c = chamfer(sketch, sketch.find(r.right)->end, 4.0);
+    CHECK(sketch.find(c.line)->kind == EntityKind::Line);
+    CHECK_THAT(endOf(sketch, r.right).y, WithinAbs(16.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.top).x, WithinAbs(36.0, lengthTolerance));
+    REQUIRE(sketch.profiles().size() == 1);
+    CHECK_THAT(sketch.profiles()[0].area, WithinAbs(before - 8.0, 1e-6));
+    // One value moves both sides.
+    REQUIRE(tryDimensionValue(sketch, c.distance, 6.0).ok());
+    CHECK_THAT(endOf(sketch, r.right).y, WithinAbs(14.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.top).x, WithinAbs(34.0, lengthTolerance));
+    CHECK(sketch.solve().isFullyConstrained());
+
+    const Sketch kept = sketch;
+    CHECK_THROWS_AS(chamfer(sketch, sketch.find(r.bottom)->start, 50.0), std::invalid_argument);
+    CHECK_THROWS_AS(chamfer(sketch, sketch.find(r.left)->start, 0.0), std::invalid_argument);
+    CHECK(same(sketch, kept));
+}
+
+TEST_CASE("Rectangles by their center, and arcs and circles through three points",
+          "[sketch][edit]") {
+    Sketch sketch;
+    const CenterRectangleParts r = addCenterRectangle(sketch, {10.0, 5.0}, {25.0, 15.0});
+    CHECK_THAT(startOf(sketch, r.sides.bottom).x, WithinAbs(-5.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.sides.bottom).y, WithinAbs(-5.0, lengthTolerance));
+    CHECK_THAT(lengthOf(sketch, r.sides.bottom), WithinAbs(30.0, lengthTolerance));
+    // It stays centered on its point as it is pulled.
+    sketch.dragBy(sketch.find(r.sides.top)->start, 5.0, 5.0);
+    const Point2 middle = sketch.position(r.center);
+    CHECK_THAT((startOf(sketch, r.sides.bottom).x + endOf(sketch, r.sides.bottom).x) / 2.0,
+               WithinAbs(middle.x, 1e-6));
+    CHECK_THAT((startOf(sketch, r.sides.left).y + endOf(sketch, r.sides.left).y) / 2.0,
+               WithinAbs(middle.y, 1e-6));
+
+    const auto circle = circleThrough({0.0, 0.0}, {10.0, 0.0}, {5.0, 5.0});
+    REQUIRE(circle.has_value());
+    CHECK_THAT(circle->first.x, WithinAbs(5.0, 1e-9));
+    CHECK_THAT(circle->first.y, WithinAbs(0.0, 1e-9));
+    CHECK_THAT(circle->second, WithinAbs(5.0, 1e-9));
+    CHECK(!circleThrough({0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}).has_value());
+
+    // The upper half and the lower half, by the point between.
+    Sketch arcs;
+    const EntityId upper = addArcThrough(arcs, {10.0, 0.0}, {0.0, 10.0}, {-10.0, 0.0});
+    const EntityId lower = addArcThrough(arcs, {10.0, 0.0}, {0.0, -10.0}, {-10.0, 0.0});
+    CHECK(arcs.pointAt(upper, 0.5).y > 9.9);
+    CHECK(arcs.pointAt(lower, 0.5).y < -9.9);
+    CHECK_THROWS_AS(addArcThrough(arcs, {0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}), std::invalid_argument);
+}
+
+TEST_CASE("A tangent arc goes on from the end of a line or an arc", "[sketch][edit]") {
+    Sketch sketch;
+    const EntityId line = sketch.addLine({0.0, 0.0}, {20.0, 0.0});
+    // On from the line's end, curving up to the left: a quarter of a circle of radius 10.
+    const EntityId arc = addTangentArc(sketch, sketch.find(line)->end, {30.0, 10.0});
+    CHECK_THAT(sketch.radiusOf(arc), WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, arc).x, WithinAbs(20.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, arc).y, WithinAbs(10.0, lengthTolerance));
+    // And on again from that arc, the other way: an S.
+    const Entity first = *sketch.find(arc);
+    const EntityId next = addTangentArc(sketch, first.end, {40.0, 20.0});
+    CHECK_THAT(sketch.radiusOf(next), WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, next).x, WithinAbs(40.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, next).y, WithinAbs(10.0, lengthTolerance));
+    // They stay tangent when the line is turned.
+    sketch.dragBy(sketch.find(line)->start, 0.0, -5.0);
+    CHECK(sketch.state().status == SolveStatus::Solved);
+
+    const Sketch kept = sketch;
+    CHECK_THROWS_AS(addTangentArc(sketch, sketch.origin(), {5.0, 5.0}), std::invalid_argument);
+    // Straight on from a line is no arc.
+    const EntityId straight = sketch.addLine({0.0, 50.0}, {10.0, 50.0});
+    const Sketch withLine = sketch;
+    CHECK_THROWS_AS(addTangentArc(sketch, sketch.find(straight)->end, {30.0, 50.0}),
+                    std::invalid_argument);
+    CHECK(same(sketch, withLine));
+    sketch = kept;
+    CHECK(same(sketch, kept));
+}
+
+TEST_CASE("A corner with construction geometry at it can still be cut", "[sketch][edit]") {
+    Sketch sketch;
+    const CenterRectangleParts r = addCenterRectangle(sketch, {0.0, 0.0}, {20.0, 10.0});
+    // The diagonal ends at the top right corner too.
+    const FilletParts f = fillet(sketch, sketch.find(r.sides.top)->start, 3.0);
+    CHECK_THAT(sketch.radiusOf(f.arc), WithinAbs(3.0, lengthTolerance));
+    // The diagonal now ends at the point where the corner was, and the rectangle is centered.
+    CHECK_THAT(sketch.position(f.corner).x, WithinAbs(20.0, lengthTolerance));
+    CHECK_THAT(sketch.position(f.corner).y, WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, r.diagonal).x, WithinAbs(20.0, lengthTolerance));
+    CHECK(sketch.solve().status != SolveStatus::Conflicting);
+}

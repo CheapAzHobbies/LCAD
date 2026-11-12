@@ -587,6 +587,39 @@ const QHash<QString, Drawing>& drawings() {
              node(i, 6, 6);
              node(i, 6, 18.5);
          }},
+        {QStringLiteral("rectangle-center"),
+         [](const Ink& i) {
+             i.poly({{4.5, 7}, {19.5, 7}, {19.5, 17}, {4.5, 17}});
+             node(i, 12, 12);
+             node(i, 19.5, 7);
+         }},
+        {QStringLiteral("circle-3point"),
+         [](const Ink& i) {
+             i.ellipse(12, 12, 7.5, 7.5);
+             node(i, 4.5, 12);
+             node(i, 17.3, 6.7);
+             node(i, 17.3, 17.3);
+         }},
+        {QStringLiteral("arc-3point"),
+         [](const Ink& i) {
+             i.arc(12, 17, 8, 8, 0, 180);
+             node(i, 4, 17);
+             node(i, 20, 17);
+             node(i, 12, 9);
+         }},
+        {QStringLiteral("arc-tangent"),
+         [](const Ink& i) {
+             i.line(3, 18, 11, 18);
+             i.arc(11, 10, 8, 8, 270, 90);
+             node(i, 11, 18);
+             node(i, 19, 10);
+         }},
+        {QStringLiteral("chamfer-sketch"),
+         [](const Ink& i) {
+             i.poly({{5, 19}, {5, 5}, {12, 5}, {19, 12}, {19, 19}}, false);
+             node(i, 12, 5);
+             node(i, 19, 12);
+         }},
         {QStringLiteral("point"),
          [](const Ink& i) {
              i.line(12, 4.5, 12, 8.5);
