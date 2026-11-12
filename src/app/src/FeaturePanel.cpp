@@ -37,7 +37,7 @@ using document::Operation;
 // Far beyond any part LCAD is meant for, and small enough that the input boxes stay narrow.
 constexpr double largestInput = 1.0e6;
 
-enum Extent { OneSide = 0, Symmetric = 1, TwoSides = 2, ToFace = 3 };
+enum Extent { OneSide = 0, Symmetric = 1, TwoSides = 2, ToFace = 3, ThroughAll = 4 };
 
 bool copies(FeatureKind kind) {
     return kind == FeatureKind::Mirror || kind == FeatureKind::RectangularPattern ||
@@ -82,6 +82,10 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Loft");
     case FeatureKind::Sweep:
         return FeaturePanel::tr("Sweep");
+    case FeatureKind::Draft:
+        return FeaturePanel::tr("Draft");
+    case FeatureKind::SplitBody:
+        return FeaturePanel::tr("Split Body");
     }
     return {};
 }
@@ -161,16 +165,20 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         fillBodies();
         fillSketches();
     }
-    if (kind == FeatureKind::Repair) {
+    if (kind == FeatureKind::Repair || kind == FeatureKind::SplitBody) {
         m_body = new QComboBox(this);
         m_body->setObjectName(QStringLiteral("body"));
-        m_body->setToolTip(tr("The body to repair."));
+        m_body->setToolTip(kind == FeatureKind::Repair
+                               ? tr("The body to repair.")
+                               : tr("The body to cut in two. Click a body in the 3D view to "
+                                    "pick it."));
         connect(m_body, &QComboBox::activated, this, [this] { readFields(); });
         m_form->addRow(tr("Body"), m_body);
         fillBodies();
     }
     if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis ||
-        kind == FeatureKind::MoveFace) {
+        kind == FeatureKind::MoveFace || kind == FeatureKind::Draft ||
+        kind == FeatureKind::SplitBody) {
         m_reference = new QComboBox(this);
         m_reference->setObjectName(QStringLiteral("reference"));
         connect(m_reference, &QComboBox::activated, this, [this] { readFields(); });
@@ -179,9 +187,11 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
     case FeatureKind::Pull: {
         m_extent = new QComboBox(this);
         m_extent->setObjectName(QStringLiteral("extent"));
-        m_extent->addItems({tr("One Side"), tr("Symmetric"), tr("Two Sides"), tr("To Face")});
+        m_extent->addItems(
+            {tr("One Side"), tr("Symmetric"), tr("Two Sides"), tr("To Face"), tr("Through All")});
         m_extent->setToolTip(tr("Pull to one side of the sketch, by the same amount to both "
-                                "sides, by a different amount to each, or up to a flat face."));
+                                "sides, by a different amount to each, up to a flat face, or "
+                                "through every body that way."));
         connect(m_extent, &QComboBox::activated, this, [this] { readFields(); });
         m_form->addRow(tr("Direction"), m_extent);
         m_distance = addField(QStringLiteral("distance"), tr("Distance"), -largestInput,
@@ -363,6 +373,20 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_distance->setValue(5.0);
         m_distance->setToolTip(tr("How far to move them. Negative goes the other way."));
         break;
+    case FeatureKind::Draft:
+        m_reference->setToolTip(tr("The plane the faces turn about, where the body keeps its "
+                                   "size. Its normal is the way the body narrows, as a part "
+                                   "comes out of a mold."));
+        m_form->addRow(tr("Plane"), m_reference);
+        m_angle = addField(QStringLiteral("angle"), tr("Angle"), -88.0, 88.0, tr("°"));
+        m_angle->setValue(3.0);
+        m_angle->setToolTip(tr("How far the faces tilt. Negative tilts them the other way."));
+        break;
+    case FeatureKind::SplitBody:
+        m_reference->setToolTip(tr("The plane to cut along: an origin plane or a construction "
+                                   "plane."));
+        m_form->addRow(tr("Along"), m_reference);
+        break;
     case FeatureKind::Repair:
         m_size =
             addField(QStringLiteral("size"), tr("Close gaps up to"), 0.000001, 10.0, tr(" mm"));
@@ -375,7 +399,8 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         break;
     }
     if (copies(kind) || kind == FeatureKind::Plane || kind == FeatureKind::Axis ||
-        kind == FeatureKind::MoveFace) {
+        kind == FeatureKind::MoveFace || kind == FeatureKind::Draft ||
+        kind == FeatureKind::SplitBody) {
         fillReferences();
         fillSources();
     }
@@ -466,14 +491,18 @@ void FeaturePanel::fillReferences() {
     const QString was = m_reference->currentData().toString();
     const QSignalBlocker blocker(m_reference);
     m_reference->clear();
-    const bool mirror =
-        m_feature.kind == FeatureKind::Mirror || m_feature.kind == FeatureKind::Plane;
+    const bool mirror = m_feature.kind == FeatureKind::Mirror ||
+                        m_feature.kind == FeatureKind::Plane ||
+                        m_feature.kind == FeatureKind::Draft ||
+                        m_feature.kind == FeatureKind::SplitBody;
     if (mirror) {
         m_reference->addItem(tr("XY Plane"), QStringLiteral("XY"));
         m_reference->addItem(tr("XZ Plane"), QStringLiteral("XZ"));
         m_reference->addItem(tr("YZ Plane"), QStringLiteral("YZ"));
-        // A plane can be placed against another construction plane too.
-        if (m_feature.kind == FeatureKind::Plane) {
+        // A plane can be placed against another construction plane too, and a body drafted
+        // about one or split along one.
+        if (m_feature.kind == FeatureKind::Plane || m_feature.kind == FeatureKind::Draft ||
+            m_feature.kind == FeatureKind::SplitBody) {
             addConstruction(m_reference, FeatureKind::Plane);
         }
     } else {
@@ -862,7 +891,8 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         }
     }
     if (m_extent != nullptr) {
-        m_extent->setCurrentIndex(!feature.extentFace.empty()   ? ToFace
+        m_extent->setCurrentIndex(feature.throughAll             ? ThroughAll
+                                  : !feature.extentFace.empty() ? ToFace
                                   : feature.symmetric           ? Symmetric
                                   : feature.distanceBack != 0.0 ? TwoSides
                                                                 : OneSide);
@@ -889,7 +919,11 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
             fillReferences();
         }
     }
-    if (feature.kind == FeatureKind::Repair) {
+    if (feature.kind == FeatureKind::Draft || feature.kind == FeatureKind::SplitBody) {
+        m_pickedName.clear();
+        fillReferences();
+    }
+    if (feature.kind == FeatureKind::Repair || feature.kind == FeatureKind::SplitBody) {
         fillBodies();
         const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
         if (index >= 0) {
@@ -1016,7 +1050,8 @@ void FeaturePanel::setFaces(document::ObjectId body, const std::vector<std::stri
 }
 
 void FeaturePanel::setBody(document::ObjectId body) {
-    if (m_body == nullptr || m_feature.kind != FeatureKind::Repair) {
+    if (m_body == nullptr ||
+        (m_feature.kind != FeatureKind::Repair && m_feature.kind != FeatureKind::SplitBody)) {
         return;
     }
     const int index = m_body->findData(QVariant::fromValue<qulonglong>(body.value));
@@ -1040,6 +1075,11 @@ bool FeaturePanel::hasInput() const {
     case FeatureKind::Shell:
     case FeatureKind::Repair:
         return m_feature.body.isValid();
+    case FeatureKind::Draft:
+        return m_feature.body.isValid() && !m_feature.faces.empty() &&
+               !m_feature.reference.empty();
+    case FeatureKind::SplitBody:
+        return m_feature.body.isValid() && !m_feature.reference.empty();
     case FeatureKind::OffsetFace:
     case FeatureKind::DeleteFace:
         return m_feature.body.isValid() && !m_feature.faces.empty();
@@ -1138,13 +1178,15 @@ void FeaturePanel::readFields() {
             }
         };
         m_feature.symmetric = extent == Symmetric;
+        m_feature.throughAll = extent == ThroughAll;
         m_feature.distance = m_distance->value();
         m_feature.distanceBack = extent == TwoSides ? m_distanceBack->value() : 0.0;
         // A taper leans the sides from the sketch outward, which only works one way.
         m_feature.taper = extent == OneSide ? m_taper->value() : 0.0;
         m_feature.extentBody = extent == ToFace ? m_pickedBody : document::ObjectId{};
         m_feature.extentFace = extent == ToFace ? m_pickedName : std::string();
-        show(m_distance, extent != ToFace);
+        // Through all goes as far as it takes; only its way counts, which Flip changes.
+        show(m_distance, extent != ToFace && extent != ThroughAll);
         show(m_flip, extent != ToFace);
         show(m_distanceBack, extent == TwoSides);
         show(m_taper, extent == OneSide);
@@ -1251,9 +1293,12 @@ void FeaturePanel::readFields() {
     if (m_feature.kind == FeatureKind::MoveFace) {
         m_feature.reference = m_reference->currentData().toString().toStdString();
     }
-    if (m_feature.kind == FeatureKind::Repair) {
+    if (m_feature.kind == FeatureKind::Repair || m_feature.kind == FeatureKind::SplitBody) {
         m_feature.body =
             document::ObjectId{m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
+    }
+    if (m_feature.kind == FeatureKind::Draft || m_feature.kind == FeatureKind::SplitBody) {
+        m_feature.reference = m_reference->currentData().toString().toStdString();
     }
     if (m_feature.kind == FeatureKind::Axis) {
         m_feature.reference = m_reference->currentData().toString().toStdString();
@@ -1420,6 +1465,24 @@ void FeaturePanel::updatePicked() {
         }
         break;
     }
+    case FeatureKind::Draft: {
+        const document::Body* body = m_document->findBody(m_feature.body);
+        if (body == nullptr || m_feature.faces.empty()) {
+            text = tr("Click the faces to tilt in the 3D view, such as the sides of a part that "
+                      "comes out of a mold. Shift-click picks more.");
+        } else {
+            const std::size_t count = m_feature.faces.size();
+            text = (count == 1 ? tr("1 face of %1 tilted.")
+                               : tr("%1 faces of %2 tilted.").arg(count))
+                       .arg(QString::fromStdString(body->name)) +
+                   QLatin1Char(' ') + tr("Shift-click picks more, or lets one go.");
+        }
+        break;
+    }
+    case FeatureKind::SplitBody:
+        text = tr("Click the body to cut in two, and choose the plane to cut along. Each piece "
+                  "becomes a body of its own.");
+        break;
     case FeatureKind::Repair:
         text = tr("Sews loose faces together, turns faces to face out, and fixes edges and "
                   "tolerances, where that can be done. Inspect > Check Geometry says what is "

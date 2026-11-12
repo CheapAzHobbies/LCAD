@@ -1015,6 +1015,22 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasBody;
         m_commands->add(std::move(c));
 
+        c = make("solid.draft", tr("D&raft"), modify,
+                 tr("Tilt faces of a body about a plane, so that a part comes out of a mold"));
+        c.iconName = QStringLiteral("draft");
+        c.aliases = {tr("taper faces"), tr("draft angle"), tr("tilt faces"), tr("mold")};
+        c.run = [this](bool) { startFeature(FeatureKind::Draft); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.split", tr("Spl&it Body"), modify,
+                 tr("Cut a body in two along a plane, each piece a body of its own"));
+        c.iconName = QStringLiteral("split");
+        c.aliases = {tr("split"), tr("cut in two"), tr("slice"), tr("divide body")};
+        c.run = [this](bool) { startFeature(FeatureKind::SplitBody); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
         // Direct edits, for bodies whatever made them, such as one imported from a STEP file.
         c = make("solid.offsetFace", tr("&Offset Face"), modify,
                  tr("Move faces of a body along their normals, the faces around them following: "
@@ -1793,8 +1809,8 @@ void MainWindow::createTopBar() {
     }
 
     QMenu* modifyMenu = m_menuBar->addMenu(tr("&Modify"));
-    modifyMenu->addActions(
-        {action("solid.fillet"), action("solid.chamfer"), action("solid.shell")});
+    modifyMenu->addActions({action("solid.fillet"), action("solid.chamfer"), action("solid.shell"),
+                            action("solid.draft"), action("solid.split")});
     modifyMenu->addSeparator();
     modifyMenu->addActions({action("solid.offsetFace"), action("solid.moveFace"),
                             action("solid.deleteFace"), action("solid.repair")});
@@ -3399,7 +3415,8 @@ bool copiesFeatures(document::FeatureKind kind) {
 
 // Features whose input is faces of one body, clicked in the 3D view.
 bool picksFaces(document::FeatureKind kind) {
-    return kind == document::FeatureKind::Shell || kind == document::FeatureKind::OffsetFace ||
+    return kind == document::FeatureKind::Shell || kind == document::FeatureKind::Draft ||
+           kind == document::FeatureKind::OffsetFace ||
            kind == document::FeatureKind::MoveFace || kind == document::FeatureKind::DeleteFace;
 }
 
@@ -3616,7 +3633,8 @@ bool MainWindow::editFeature(document::ObjectId id) {
         // The edges or faces it works on, as far as the body still has them.
         const kernel::NamedShape body = document()->namedBody(feature.body);
         std::vector<SelectedItem> items;
-        if (feature.kind == document::FeatureKind::Repair) {
+        if (feature.kind == document::FeatureKind::Repair ||
+            feature.kind == document::FeatureKind::SplitBody) {
             items.push_back({feature.body, SelectedItem::Kind::Body, -1});
         } else if (picksFaces(feature.kind)) {
             for (const std::string& name : feature.faces) {
@@ -3653,7 +3671,7 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         // mirror is in; a pattern takes its direction or axis from either.
         m_filterBeforeFeature = m_viewport->selectionFilter();
         SelectionFilter filter = SelectionFilter::Edges;
-        if (kind == document::FeatureKind::Repair) {
+        if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody) {
             filter = SelectionFilter::Bodies;
         } else if (picksFaces(kind) || kind == document::FeatureKind::Mirror) {
             filter = SelectionFilter::Faces;
@@ -3842,8 +3860,8 @@ void MainWindow::takeFeaturePicks() {
         }
         return;
     }
-    if (kind == document::FeatureKind::Repair) {
-        // The body clicked is the one to repair.
+    if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody) {
+        // The body clicked is the one to repair or split.
         for (const SelectedItem& item : m_viewport->selection()) {
             m_featurePanel->setBody(item.body);
             break;

@@ -305,6 +305,10 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("loft");
         case FeatureKind::Sweep:
             return QStringLiteral("sweep");
+        case FeatureKind::Draft:
+            return QStringLiteral("draft");
+        case FeatureKind::SplitBody:
+            return QStringLiteral("split");
         }
     }
     return QStringLiteral("box");

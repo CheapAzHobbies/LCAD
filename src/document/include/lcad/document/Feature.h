@@ -53,6 +53,10 @@ enum class FeatureKind {
     Loft,
     /// Moves outlines of a sketch along a path: the curves of another sketch.
     Sweep,
+    /// Tilts faces of a body by `angle` degrees about the plane `reference`, as a mold needs.
+    Draft,
+    /// Cuts a body in two along the plane `reference`.
+    SplitBody,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
@@ -209,7 +213,8 @@ struct Feature {
     // Hole. Its sketch's free-standing points are where the holes go, its `size` is their
     // diameter and its `distance` their depth.
     HoleKind holeKind = HoleKind::Simple;
-    /// Through the whole body, whatever its size, with a flat bottom.
+    /// Hole: through the whole body, whatever its size, with a flat bottom. Pull: through
+    /// every body there is, the way `distance` points, or both ways if `symmetric`.
     bool throughAll = false;
     /// The angle of the point a drill leaves at the bottom, in degrees; 180 for a flat bottom.
     double tipAngle = 118.0;
