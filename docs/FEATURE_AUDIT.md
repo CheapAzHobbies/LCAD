@@ -124,7 +124,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Item | State | Note |
 |---|---|---|
 | Distance, angle, length, area, volume, center of mass | Have | |
-| Section view in the 3D view | No | |
+| Section view in the 3D view | Have | Since 2026-11-12, along an origin or construction plane. |
 | Curvature, draft, thickness analysis | No | |
 | Geometry check | Have | |
 
@@ -182,5 +182,5 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 4. **Snapping:** parallel, perpendicular, and tangent detected while drawing, and intersections.
    Done.
 5. **Solids, second round:** thread, coil, pipe, combine as a command, and moving bodies. Done.
-6. **Inspection:** a section view in the 3D view.
+6. **Inspection:** a section view in the 3D view. Done.
 7. **Surfaces**, then the rest.

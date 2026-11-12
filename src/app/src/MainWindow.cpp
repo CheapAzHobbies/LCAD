@@ -56,6 +56,8 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
+#include <QDoubleSpinBox>
+#include <QFrame>
 #include <QLocale>
 #include <QMenu>
 #include <QMenuBar>
@@ -1359,6 +1361,17 @@ void MainWindow::defineCommands() {
         c.isChecked = [this] { return m_viewport->isGridVisible(); };
         m_commands->add(std::move(c));
 
+        c = make("view.section", tr("&Section View"), view,
+                 tr("Cut the 3D view along a plane to see inside the model"));
+        c.iconName = QStringLiteral("split");
+        c.checkable = true;
+        c.aliases = {tr("section analysis"), tr("cut view"), tr("cross section"),
+                     tr("clipping plane")};
+        c.run = [this](bool on) { setSectionShown(on); };
+        c.isChecked = [this] { return m_sectionBar != nullptr && m_sectionBar->isVisible(); };
+        c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
         c = make("view.axes", tr("&Axis Marker"), view,
                  tr("Show the X, Y, Z marker in the corner of the 3D view"));
         c.iconName = QStringLiteral("axes");
@@ -1967,7 +1980,7 @@ void MainWindow::createTopBar() {
     sketchMenu->addActions({action("sketch.construction"), action("sketch.inference")});
 
     QMenu* view = m_menuBar->addMenu(tr("&View"));
-    view->addActions({action("view.fit"), action("view.fitSelection")});
+    view->addActions({action("view.fit"), action("view.fitSelection"), action("view.section")});
     view->addActions({action("inspect.measure"), action("inspect.checkGeometry"),
                       action("inspect.interference"), action("inspect.physical"),
                       action("inspect.materials")});
@@ -4436,6 +4449,131 @@ kernel::Shape MainWindow::shapeOf(const SelectedItem& item) const {
         return {};
     }
     return kernel::placed(body->shape, at);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Section view
+
+void MainWindow::setSectionShown(bool shown) {
+    if (shown && m_sectionBar == nullptr) {
+        m_sectionBar = new QFrame(m_viewport);
+        m_sectionBar->setObjectName(QStringLiteral("sectionBar"));
+        m_sectionBar->setFrameShape(QFrame::StyledPanel);
+        m_sectionBar->setAutoFillBackground(true);
+        auto* row = new QHBoxLayout(m_sectionBar);
+        row->setContentsMargins(8, 4, 4, 4);
+        row->addWidget(new QLabel(tr("Section"), m_sectionBar));
+        m_sectionPlane = new QComboBox(m_sectionBar);
+        m_sectionPlane->setObjectName(QStringLiteral("sectionPlane"));
+        m_sectionPlane->setToolTip(tr("The plane the view is cut along"));
+        connect(m_sectionPlane, &QComboBox::activated, this, [this] { applySection(true); });
+        row->addWidget(m_sectionPlane);
+        m_sectionOffset = new QDoubleSpinBox(m_sectionBar);
+        m_sectionOffset->setObjectName(QStringLiteral("sectionOffset"));
+        m_sectionOffset->setRange(-1e6, 1e6);
+        m_sectionOffset->setDecimals(2);
+        m_sectionOffset->setSuffix(tr(" mm"));
+        m_sectionOffset->setToolTip(tr("How far along the plane's normal the cut is"));
+        connect(m_sectionOffset, &QDoubleSpinBox::valueChanged, this,
+                [this] { applySection(false); });
+        row->addWidget(m_sectionOffset);
+        auto* flip = new QToolButton(m_sectionBar);
+        flip->setObjectName(QStringLiteral("sectionFlip"));
+        flip->setText(tr("Flip"));
+        flip->setToolTip(tr("Show the other side of the cut"));
+        connect(flip, &QToolButton::clicked, this, [this] {
+            m_sectionFlipped = !m_sectionFlipped;
+            applySection(false);
+        });
+        row->addWidget(flip);
+        auto* close = new QToolButton(m_sectionBar);
+        close->setObjectName(QStringLiteral("sectionClose"));
+        close->setText(QStringLiteral("×"));
+        close->setToolTip(tr("Show the model whole again"));
+        connect(close, &QToolButton::clicked, this, [this] { setSectionShown(false); });
+        row->addWidget(close);
+    }
+    if (m_sectionBar == nullptr) {
+        return;
+    }
+    if (shown) {
+        // The origin planes, and the construction planes there are.
+        const QString was = m_sectionPlane->currentData().toString();
+        m_sectionPlane->clear();
+        m_sectionPlane->addItem(tr("XY Plane"), QStringLiteral("XY"));
+        m_sectionPlane->addItem(tr("XZ Plane"), QStringLiteral("XZ"));
+        m_sectionPlane->addItem(tr("YZ Plane"), QStringLiteral("YZ"));
+        for (const document::Feature& feature : document()->features()) {
+            if (feature.kind == document::FeatureKind::Plane &&
+                document()->planeState(feature.id).has_value()) {
+                m_sectionPlane->addItem(QString::fromStdString(feature.name),
+                                        QStringLiteral("plane:%1").arg(feature.id.value));
+            }
+        }
+        const int index = m_sectionPlane->findData(was);
+        m_sectionPlane->setCurrentIndex(index >= 0 ? index : 1);
+        m_sectionBar->adjustSize();
+        m_sectionBar->move(12, 12);
+        m_sectionBar->show();
+        m_sectionBar->raise();
+        applySection(index < 0);
+    } else {
+        m_sectionBar->hide();
+        m_viewport->setSection(std::nullopt);
+    }
+    m_commands->refresh();
+}
+
+void MainWindow::applySection(bool recenter) {
+    if (m_sectionBar == nullptr || !m_sectionBar->isVisible()) {
+        return;
+    }
+    const QString choice = m_sectionPlane->currentData().toString();
+    kernel::Plane plane = choice == QStringLiteral("XY")   ? kernel::planeXY()
+                          : choice == QStringLiteral("XZ") ? kernel::planeXZ()
+                                                           : kernel::planeYZ();
+    if (choice.startsWith(QStringLiteral("plane:"))) {
+        const auto state = document()->planeState(document::ObjectId{choice.mid(6).toULongLong()});
+        if (!state.has_value()) {
+            m_viewport->setSection(std::nullopt);
+            return;
+        }
+        plane = state->plane;
+    }
+    const kernel::Vector n = plane.normal;
+    if (recenter) {
+        // Through the middle of the model, where there is one.
+        std::optional<kernel::BoundingBox> all;
+        for (const document::Body& body : document()->bodies()) {
+            const auto box = kernel::boundingBox(body.shape);
+            if (!box.has_value()) {
+                continue;
+            }
+            if (!all.has_value()) {
+                all = box;
+            } else {
+                all->min = {std::min(all->min.x, box->min.x), std::min(all->min.y, box->min.y),
+                            std::min(all->min.z, box->min.z)};
+                all->max = {std::max(all->max.x, box->max.x), std::max(all->max.y, box->max.y),
+                            std::max(all->max.z, box->max.z)};
+            }
+        }
+        double middle = 0.0;
+        if (all.has_value()) {
+            const kernel::Point c{(all->min.x + all->max.x) / 2.0, (all->min.y + all->max.y) / 2.0,
+                                  (all->min.z + all->max.z) / 2.0};
+            middle = (c.x - plane.origin.x) * n.x + (c.y - plane.origin.y) * n.y +
+                     (c.z - plane.origin.z) * n.z;
+        }
+        const QSignalBlocker blocker(m_sectionOffset);
+        m_sectionOffset->setValue(middle);
+    }
+    const double d = m_sectionOffset->value();
+    plane.origin = {plane.origin.x + n.x * d, plane.origin.y + n.y * d, plane.origin.z + n.z * d};
+    if (m_sectionFlipped) {
+        plane.normal = {-n.x, -n.y, -n.z};
+    }
+    m_viewport->setSection(plane);
 }
 
 void MainWindow::showMeasurement() {

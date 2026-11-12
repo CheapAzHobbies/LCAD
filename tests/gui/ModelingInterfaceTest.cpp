@@ -108,6 +108,7 @@ private slots:
     void planesAtAnAngleAndMidplanes();
     void throughAllDraftAndSplit();
     void combineMovePipeCoilAndThread();
+    void aSectionCutsTheView();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
@@ -1096,6 +1097,44 @@ void ModelingInterfaceTest::combineMovePipeCoilAndThread() {
     QTRY_VERIFY(panel(window) == nullptr);
     QCOMPARE(window.document()->features().back().kind, lcad::document::FeatureKind::Coil);
     QVERIFY(window.document()->featureError(window.document()->features().back().id).empty());
+}
+
+void ModelingInterfaceTest::aSectionCutsTheView() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+    QVERIFY(!window.viewport()->section().has_value());
+
+    // On: through the middle of the plate, along the XZ plane.
+    QVERIFY(trigger(window, "view.section"));
+    auto* bar = window.findChild<QFrame*>(QStringLiteral("sectionBar"));
+    QVERIFY(bar != nullptr && bar->isVisible());
+    auto section = window.viewport()->section();
+    QVERIFY(section.has_value());
+    QVERIFY(nearly(section->origin.y, 20.0));
+    QVERIFY(nearly(std::abs(section->normal.y), 1.0));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-section");
+
+    // Moved, and turned the other way.
+    auto* offset = bar->findChild<QDoubleSpinBox*>(QStringLiteral("sectionOffset"));
+    offset->setValue(offset->value() - 5.0);
+    QVERIFY(nearly(std::abs(window.viewport()->section()->origin.y - 20.0), 5.0));
+    const double before = window.viewport()->section()->normal.y;
+    QTest::mouseClick(bar->findChild<QToolButton*>(QStringLiteral("sectionFlip")), Qt::LeftButton);
+    QVERIFY(nearly(window.viewport()->section()->normal.y, -before));
+
+    // Off: whole again.
+    QTest::mouseClick(bar->findChild<QToolButton*>(QStringLiteral("sectionClose")),
+                      Qt::LeftButton);
+    QVERIFY(!bar->isVisible());
+    QVERIFY(!window.viewport()->section().has_value());
+    QVERIFY(!action(window, "view.section")->isChecked());
 }
 
 void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {

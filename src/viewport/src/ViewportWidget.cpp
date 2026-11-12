@@ -64,6 +64,7 @@
 #include <Graphic3d_ArrayOfTriangles.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
 #include <Graphic3d_CView.hxx>
+#include <Graphic3d_ClipPlane.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
@@ -1204,7 +1205,40 @@ public:
         }
         applyAxes();
         applyGrid();
+        applySection();
         showConstructionPlanes();
+    }
+
+    // The plane the view is cut along, if it is, and what OCCT cuts with.
+    std::optional<kernel::Plane> section;
+    Handle(Graphic3d_ClipPlane) sectionClip;
+
+    void applySection() {
+        if (view.IsNull()) {
+            return;
+        }
+        if (!sectionClip.IsNull()) {
+            view->RemoveClipPlane(sectionClip);
+            sectionClip.Nullify();
+        }
+        if (!section.has_value()) {
+            return;
+        }
+        const kernel::Plane& p = *section;
+        // OCCT keeps what lies on the side the plane's normal points to, and leaves out the
+        // other; the section leaves out the side its normal points to.
+        sectionClip = new Graphic3d_ClipPlane(
+            gp_Pln(gp_Pnt(p.origin.x, p.origin.y, p.origin.z),
+                   gp_Dir(-p.normal.x, -p.normal.y, -p.normal.z)));
+        sectionClip->SetCapping(true);
+        // Filled in a color of its own, unlit, so that the cut reads as a cut from any side.
+        Graphic3d_MaterialAspect fill(Graphic3d_NameOfMaterial_DEFAULT);
+        fill.SetMaterialType(Graphic3d_MATERIAL_ASPECT);
+        fill.SetColor(toOcct(colors.selection));
+        sectionClip->SetCappingMaterial(fill);
+        sectionClip->SetCappingColor(toOcct(colors.selection));
+        sectionClip->CappingAspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+        view->AddClipPlane(sectionClip);
     }
 
     void applyAxes() {
@@ -2929,6 +2963,18 @@ void ViewportWidget::setDisplayStyle(DisplayStyle style) {
 
 DisplayStyle ViewportWidget::displayStyle() const {
     return m_impl->style;
+}
+
+void ViewportWidget::setSection(const std::optional<kernel::Plane>& plane) {
+    m_impl->section = plane;
+    if (m_impl->canRender()) {
+        m_impl->applySection();
+        m_impl->redraw();
+    }
+}
+
+std::optional<kernel::Plane> ViewportWidget::section() const {
+    return m_impl->section;
 }
 
 void ViewportWidget::setGridVisible(bool visible) {
