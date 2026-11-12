@@ -206,6 +206,59 @@ const QHash<QString, Drawing>& drawings() {
              i.arc(6, 17.5, 13, 3, 200, 290);
              i.poly({{16.5, 14}, {19.2, 16.3}, {16, 18}}, false);
          }},
+        {QStringLiteral("combine"),
+         [](const Ink& i) {
+             // Two blocks overlapping, made one.
+             i.fill({{3, 9}, {14, 9}, {14, 4}, {21, 4}, {21, 15}, {10, 15}, {10, 20}, {3, 20}});
+             i.poly({{3, 9}, {14, 9}, {14, 4}, {21, 4}, {21, 15}, {10, 15}, {10, 20}, {3, 20}});
+         }},
+        {QStringLiteral("move-body"),
+         [](const Ink& i) {
+             // A block, and arrows out of it four ways.
+             i.fill({{9, 9}, {15, 9}, {15, 15}, {9, 15}});
+             i.poly({{9, 9}, {15, 9}, {15, 15}, {9, 15}});
+             i.line(12, 2, 12, 7);
+             i.line(12, 17, 12, 22);
+             i.line(2, 12, 7, 12);
+             i.line(17, 12, 22, 12);
+             i.poly({{10, 4}, {12, 2}, {14, 4}}, false);
+             i.poly({{20, 10}, {22, 12}, {20, 14}}, false);
+         }},
+        {QStringLiteral("pipe"),
+         [](const Ink& i) {
+             // A tube bending round a corner, and its round end.
+             QPainterPath tube(QPointF(4, 21));
+             tube.lineTo(4, 12);
+             tube.arcTo(QRectF(4, 4, 16, 16), 180, -90);
+             tube.lineTo(21, 4);
+             tube.lineTo(21, 10);
+             tube.lineTo(12, 10);
+             tube.arcTo(QRectF(10, 10, 4, 4), 90, 90);
+             tube.lineTo(10, 21);
+             tube.closeSubpath();
+             i.p.fillPath(tube, i.accent);
+             i.p.drawPath(tube);
+             i.ellipse(7, 21, 3, 1.2);
+         }},
+        {QStringLiteral("coil"),
+         [](const Ink& i) {
+             // Turns of a spring, seen from the side.
+             for (int k = 0; k < 4; ++k) {
+                 i.ellipse(12, 5 + 4.5 * k, 7, 2);
+             }
+             i.line(5, 5, 5, 18.5);
+             i.line(19, 5, 19, 18.5);
+         }},
+        {QStringLiteral("thread"),
+         [](const Ink& i) {
+             // A rod with the slanting crests of a thread.
+             i.fill({{8, 3}, {16, 3}, {16, 21}, {8, 21}});
+             i.poly({{8, 3}, {16, 3}, {16, 21}, {8, 21}});
+             for (int k = 0; k < 5; ++k) {
+                 const qreal y = 5 + 3.5 * k;
+                 i.line(8, y + 1.5, 16, y);
+             }
+         }},
         {QStringLiteral("draft"),
          [](const Ink& i) {
              // A block whose sides lean in, and the plane they lean from.

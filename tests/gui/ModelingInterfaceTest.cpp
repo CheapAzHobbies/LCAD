@@ -107,6 +107,7 @@ private slots:
     void loftAndSweepWork();
     void planesAtAnAngleAndMidplanes();
     void throughAllDraftAndSplit();
+    void combineMovePipeCoilAndThread();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
@@ -998,6 +999,103 @@ void ModelingInterfaceTest::throughAllDraftAndSplit() {
         solids += b.shape.isNull() ? 0 : 1;
     }
     QCOMPARE(solids, 2);
+}
+
+void ModelingInterfaceTest::combineMovePipeCoilAndThread() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    // Pipe: a rod 10 across up a line from the middle of the plate, a body of its own.
+    const ObjectId path = window.document()->addSketch("Path", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch line = window.document()->findSketch(path)->geometry;
+    line.addLine({30.0, 0.0}, {30.0, 30.0});
+    window.document()->setSketchGeometry(path, line, "Line");
+    QVERIFY(trigger(window, "solid.pipe"));
+    FeaturePanel* pipe = panel(window);
+    QVERIFY(pipe != nullptr);
+    QCOMPARE(pipe->feature().pathSketch, path);
+    QCOMPARE(pipe->feature().operation, Operation::NewBody);
+    typeInto(pipe, "wall", 0.0);
+    QTRY_VERIFY2(pipe->errorText().isEmpty(), qPrintable(pipe->errorText()));
+    QTest::mouseClick(okButton(pipe), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId rodFeature = window.document()->features().back().id;
+    const ObjectId rod = bodyOf(window, rodFeature).id;
+    QVERIFY(nearly(volumeOf(window, rodFeature), pi * 25.0 * 30.0, 1e-5));
+    QVERIFY(!window.document()->findSketch(path)->visible);
+
+    // Thread on the rod: its round face clicked.
+    window.viewport()->fitAll();
+    render(window);
+    QVERIFY(trigger(window, "solid.thread"));
+    FeaturePanel* thread = panel(window);
+    QVERIFY(thread != nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Faces);
+    const auto box = lcad::kernel::boundingBox(window.document()->findBody(rod)->shape);
+    QVERIFY(box.has_value());
+    click(window, at(window, 30.0, -5.0, 20.0));
+    QCOMPARE(thread->feature().body, rod);
+    QCOMPARE(thread->feature().faces.size(), std::size_t{1});
+    QTRY_VERIFY2(thread->errorText().isEmpty(), qPrintable(thread->errorText()));
+    const double before = volumeOf(window, rodFeature);
+    QTest::mouseClick(okButton(thread), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(volumeOf(window, rodFeature) < before);
+
+    // Combine: the rod joined to the plate, by clicking it.
+    window.viewport()->clearSelection();
+    window.browser()->setSelection({body}, {});
+    QVERIFY(trigger(window, "solid.combine"));
+    FeaturePanel* combine = panel(window);
+    QVERIFY(combine != nullptr);
+    QCOMPARE(combine->feature().body, body);
+    QVERIFY(!okButton(combine)->isEnabled());
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Bodies);
+    combine->setBody(rod);
+    QCOMPARE(combine->feature().tools, std::vector<ObjectId>{rod});
+    QTRY_VERIFY2(combine->errorText().isEmpty(), qPrintable(combine->errorText()));
+    QTest::mouseClick(okButton(combine), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(window.document()->findBody(rod)->shape.isNull());
+
+    // Move/Copy: a copy of the plate 100 along X.
+    window.browser()->setSelection({body}, {});
+    QVERIFY(trigger(window, "solid.moveBody"));
+    FeaturePanel* move = panel(window);
+    QVERIFY(move != nullptr);
+    QCOMPARE(move->feature().body, body);
+    // The thread's long work showed a window of its own; the window takes typing again.
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    typeInto(move, "moveX", 100.0);
+    move->findChild<QCheckBox*>(QStringLiteral("copy"))->setChecked(true);
+    QCOMPARE(move->feature().moveX, 100.0);
+    QVERIFY(move->feature().copy);
+    QTRY_VERIFY2(move->errorText().isEmpty(), qPrintable(move->errorText()));
+    QTest::mouseClick(okButton(move), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId copied = window.document()->features().back().id;
+    const auto moved = lcad::kernel::boundingBox(bodyOf(window, copied).shape);
+    QVERIFY(moved.has_value());
+    QVERIFY(nearly(moved->min.x, 100.0));
+
+    // Coil about the Z axis.
+    QVERIFY(trigger(window, "solid.coil"));
+    FeaturePanel* coil = panel(window);
+    QVERIFY(coil != nullptr);
+    QCOMPARE(coil->feature().reference, std::string("Z"));
+    QTRY_VERIFY2(coil->errorText().isEmpty(), qPrintable(coil->errorText()));
+    QTest::mouseClick(okButton(coil), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QCOMPARE(window.document()->features().back().kind, lcad::document::FeatureKind::Coil);
+    QVERIFY(window.document()->featureError(window.document()->features().back().id).empty());
 }
 
 void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {

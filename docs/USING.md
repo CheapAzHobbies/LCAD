@@ -121,6 +121,13 @@ tilts them the other way.
 **Split Body** cuts the body you click in two along an origin plane or a construction plane.
 Each piece becomes a body of its own, and the features after it work on them as on any body.
 
+**Combine** joins other bodies to a body, cuts them out of it, or keeps only what they share:
+choose the body in the panel and click the others in the 3D view. They are used up, unless you
+check **Keep the bodies used**.
+
+**Move/Copy Body** moves the body you click along X, Y, and Z and then turns it about an axis, or
+with **Make a moved copy** leaves it where it is and makes a moved copy as a body of its own.
+
 ## Changing faces directly
 
 These work on any body, whatever made it, and are the way to change a body imported from a
@@ -269,6 +276,18 @@ are, so draw the path starting on them, for instance on a plane through the prof
 
 Like a pull, a loft or a sweep makes a body of its own or joins, cuts, or intersects one, follows
 its sketches when they change, and puts them away when it is made.
+
+**Pipe** makes a round tube along the curves of a sketch chosen under **Path**: type its outside
+**Diameter** and its **Wall**, or 0 for a solid rod. It starts where the path starts, square to
+it.
+
+**Coil** winds a round wire about an axis (an origin axis or a construction axis), from where the
+axis starts: its **Diameter**, the **Pitch** it rises each turn, how many **Turns**, and the
+**Wire** thickness, less than the pitch.
+
+**Thread** cuts a 60° screw thread all along the round face you click: the outside of a rod, or
+the inside of a hole. Type its **Pitch**: 1.5 for M10, 1.25 for M8, 1 for M6, 0.8 for M5. The
+hole or rod should already be the size the thread is for.
 
 ## Construction planes
 

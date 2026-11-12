@@ -309,6 +309,16 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("draft");
         case FeatureKind::SplitBody:
             return QStringLiteral("split");
+        case FeatureKind::Combine:
+            return QStringLiteral("combine");
+        case FeatureKind::MoveBody:
+            return QStringLiteral("move-body");
+        case FeatureKind::Pipe:
+            return QStringLiteral("pipe");
+        case FeatureKind::Coil:
+            return QStringLiteral("coil");
+        case FeatureKind::Thread:
+            return QStringLiteral("thread");
         }
     }
     return QStringLiteral("box");
@@ -333,7 +343,8 @@ QString TimelineStrip::describe(document::ObjectId item) const {
             const bool makes =
                 feature.operation == document::Operation::NewBody &&
                 (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
-                 feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep);
+                 feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
+                 feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil);
             const bool copiesIt = std::find(feature.sources.begin(), feature.sources.end(), id) !=
                                   feature.sources.end();
             const std::vector<document::ObjectId> sketches = document::sketchesOf(feature);
@@ -394,8 +405,10 @@ QString TimelineStrip::describe(document::ObjectId item) const {
         if (const document::Body* body = m_document->findBody(feature->body)) {
             const bool makes =
                 feature->operation == document::Operation::NewBody &&
-                (feature->kind == FeatureKind::Pull || feature->kind == FeatureKind::Revolve ||
-                 feature->kind == FeatureKind::Loft || feature->kind == FeatureKind::Sweep);
+                ((feature->kind == FeatureKind::Pull || feature->kind == FeatureKind::Revolve ||
+                  feature->kind == FeatureKind::Loft || feature->kind == FeatureKind::Sweep ||
+                  feature->kind == FeatureKind::Pipe || feature->kind == FeatureKind::Coil) ||
+                 (feature->kind == FeatureKind::MoveBody && feature->copy));
             lines.append(makes ? tr("Makes %1").arg(name(body->name))
                                : tr("Works on %1").arg(name(body->name)));
             if (makes) {

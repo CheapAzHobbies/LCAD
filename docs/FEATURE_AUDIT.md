@@ -81,8 +81,9 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Pull through all | Have | Since 2026-11-12. |
 | Revolve, loft, sweep | Have | Loft and sweep since 2026-11-12. |
 | Hole: simple, counterbore, countersink | Have | |
-| Thread | No | |
-| Coil, pipe, rib, web, emboss | No | |
+| Thread | Have | Modeled 60° thread, outside or inside, by pitch. No thread tables yet. |
+| Coil, pipe | Have | Since 2026-11-12. |
+| Rib, web, emboss | No | |
 | Primitives: box, cylinder, sphere, cone, torus | Have | |
 | Fillet, chamfer, shell | Have | One radius or distance per feature; chamfer by one distance. |
 | Draft | Have | Since 2026-11-12, about an origin or construction plane. |
@@ -90,8 +91,9 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Replace face | No | |
 | Split body along a plane | Have | Since 2026-11-12. |
 | Split body by a face or a sketch, split face | No | |
-| Combine bodies as a command | Part | Only as a pull's or revolve's join, cut, or intersect. |
-| Move, copy, scale bodies | Part | Components can be moved; bodies cannot. |
+| Combine bodies as a command | Have | Since 2026-11-12. |
+| Move, copy bodies | Have | Since 2026-11-12, by distances and a turn about an axis. |
+| Scale bodies | No | |
 | Mirror, rectangular and circular patterns | Have | |
 | Pattern along a path | No | |
 
@@ -179,6 +181,6 @@ large project of its own. Both come after the gaps in mechanical modeling below.
    patterns. Done.
 4. **Snapping:** parallel, perpendicular, and tangent detected while drawing, and intersections.
    Done.
-5. **Solids, second round:** thread, coil, pipe, combine as a command, and moving bodies.
+5. **Solids, second round:** thread, coil, pipe, combine as a command, and moving bodies. Done.
 6. **Inspection:** a section view in the 3D view.
 7. **Surfaces**, then the rest.

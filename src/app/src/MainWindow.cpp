@@ -929,6 +929,31 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasSketch;
         m_commands->add(std::move(c));
 
+        c = make("solid.pipe", tr("P&ipe"), create,
+                 tr("Make a round tube or rod along the curves of a sketch"));
+        c.iconName = QStringLiteral("pipe");
+        c.aliases = {tr("tube"), tr("rod"), tr("wire"), tr("hose")};
+        c.run = [this](bool) { startFeature(FeatureKind::Pipe); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
+        c = make("solid.coil", tr("C&oil"), create,
+                 tr("Make a coil or spring wound about an axis"));
+        c.iconName = QStringLiteral("coil");
+        c.aliases = {tr("spring"), tr("helix"), tr("spiral")};
+        c.run = [this](bool) { startFeature(FeatureKind::Coil); };
+        c.isEnabled = [this] { return !isSketching(); };
+        m_commands->add(std::move(c));
+
+        c = make("solid.thread", tr("&Thread"), create,
+                 tr("Cut a screw thread into a round face: the outside of a rod, or the inside of "
+                    "a hole"));
+        c.iconName = QStringLiteral("thread");
+        c.aliases = {tr("screw thread"), tr("tap"), tr("bolt"), tr("threaded hole")};
+        c.run = [this](bool) { startFeature(FeatureKind::Thread); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
         c = make("solid.mirror", tr("&Mirror"), create,
                  tr("Add the mirror image of features, or of a whole body, in a plane"));
         c.iconName = QStringLiteral("mirror");
@@ -1028,6 +1053,24 @@ void MainWindow::defineCommands() {
         c.iconName = QStringLiteral("split");
         c.aliases = {tr("split"), tr("cut in two"), tr("slice"), tr("divide body")};
         c.run = [this](bool) { startFeature(FeatureKind::SplitBody); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.combine", tr("Com&bine"), modify,
+                 tr("Join bodies to a body, cut them out of it, or keep what they share"));
+        c.iconName = QStringLiteral("combine");
+        c.aliases = {tr("boolean"), tr("union"), tr("subtract"), tr("merge bodies"),
+                     tr("join bodies"), tr("cut bodies")};
+        c.run = [this](bool) { startFeature(FeatureKind::Combine); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
+        c = make("solid.moveBody", tr("Move/Copy B&ody"), modify,
+                 tr("Move a body, turn it about an axis, or make a moved copy of it"));
+        c.iconName = QStringLiteral("move-body");
+        c.aliases = {tr("move"), tr("copy body"), tr("rotate body"), tr("translate"),
+                     tr("duplicate body")};
+        c.run = [this](bool) { startFeature(FeatureKind::MoveBody); };
         c.isEnabled = hasBody;
         m_commands->add(std::move(c));
 
@@ -1845,7 +1888,8 @@ void MainWindow::createTopBar() {
 
     QMenu* create = m_menuBar->addMenu(tr("&Create"));
     create->addActions({action("solid.pull"), action("solid.revolve"), action("solid.loft"),
-                        action("solid.sweep"), action("solid.hole")});
+                        action("solid.sweep"), action("solid.pipe"), action("solid.coil"),
+                        action("solid.hole"), action("solid.thread")});
     QMenu* pattern = create->addMenu(tr("&Pattern"));
     pattern->setObjectName(QStringLiteral("menu.pattern"));
     pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
@@ -1860,7 +1904,8 @@ void MainWindow::createTopBar() {
 
     QMenu* modifyMenu = m_menuBar->addMenu(tr("&Modify"));
     modifyMenu->addActions({action("solid.fillet"), action("solid.chamfer"), action("solid.shell"),
-                            action("solid.draft"), action("solid.split")});
+                            action("solid.draft"), action("solid.split"), action("solid.combine"),
+                            action("solid.moveBody")});
     modifyMenu->addSeparator();
     modifyMenu->addActions({action("solid.offsetFace"), action("solid.moveFace"),
                             action("solid.deleteFace"), action("solid.repair")});
@@ -2093,7 +2138,8 @@ void MainWindow::createToolbar() {
     shapes->setToolButtonStyle(Qt::ToolButtonIconOnly);
     shapes->setIcon(icon(QStringLiteral("loft")));
     auto* shapesMenu = new QMenu(shapes);
-    shapesMenu->addActions({action("solid.loft"), action("solid.sweep")});
+    shapesMenu->addActions({action("solid.loft"), action("solid.sweep"), action("solid.pipe"),
+                            action("solid.coil")});
     shapesMenu->addSeparator();
     shapesMenu->addActions({action("construct.offsetPlane"), action("construct.axis")});
     shapes->setMenu(shapesMenu);
@@ -3492,6 +3538,7 @@ bool copiesFeatures(document::FeatureKind kind) {
 // Features whose input is faces of one body, clicked in the 3D view.
 bool picksFaces(document::FeatureKind kind) {
     return kind == document::FeatureKind::Shell || kind == document::FeatureKind::Draft ||
+           kind == document::FeatureKind::Thread ||
            kind == document::FeatureKind::OffsetFace ||
            kind == document::FeatureKind::MoveFace || kind == document::FeatureKind::DeleteFace;
 }
@@ -3555,6 +3602,40 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         seed.spacing = 20.0;
         seed.spacing2 = 20.0;
         seed.angle = 360.0;
+    }
+    // Combine and Move Body start from the body selected, or else the first there is.
+    if (kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody) {
+        const std::vector<document::ObjectId> bodies = targetBodies();
+        if (!bodies.empty()) {
+            seed.body = bodies.front();
+        } else {
+            for (const document::Body& body : document()->bodies()) {
+                if (!body.shape.isNull()) {
+                    seed.body = body.id;
+                    break;
+                }
+            }
+        }
+        seed.operation = document::Operation::Join;
+        seed.angle = 0.0;
+        // The other bodies selected are what it is combined with.
+        if (kind == document::FeatureKind::Combine) {
+            for (std::size_t i = 1; i < bodies.size(); ++i) {
+                seed.tools.push_back(bodies[i]);
+            }
+        }
+    }
+    if (kind == document::FeatureKind::Pipe) {
+        seed.pathSketch = from;
+        seed.size = 10.0;
+        seed.wall = 1.0;
+    }
+    if (kind == document::FeatureKind::Coil) {
+        seed.reference = "Z";
+        seed.size = 20.0;
+        seed.pitch = 5.0;
+        seed.turns = 5.0;
+        seed.section = 2.0;
     }
     if (kind == document::FeatureKind::Hole) {
         // The points of the sketch that was open or is selected, or else of the last sketch
@@ -3629,7 +3710,9 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         m_settingPicks = true;
         m_viewport->clearSelection();
         m_settingPicks = false;
-    } else if (copiesFeatures(kind)) {
+    } else if (copiesFeatures(kind) || kind == document::FeatureKind::Combine ||
+               kind == document::FeatureKind::MoveBody || kind == document::FeatureKind::Pipe ||
+               kind == document::FeatureKind::Coil) {
         m_featurePanel->setFeature(seed);
         m_settingPicks = true;
         m_viewport->clearSelection();
@@ -3747,7 +3830,8 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         // mirror is in; a pattern takes its direction or axis from either.
         m_filterBeforeFeature = m_viewport->selectionFilter();
         SelectionFilter filter = SelectionFilter::Edges;
-        if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody) {
+        if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody ||
+            kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody) {
             filter = SelectionFilter::Bodies;
         } else if (picksFaces(kind) || kind == document::FeatureKind::Mirror) {
             filter = SelectionFilter::Faces;
@@ -3936,8 +4020,9 @@ void MainWindow::takeFeaturePicks() {
         }
         return;
     }
-    if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody) {
-        // The body clicked is the one to repair or split.
+    if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody ||
+        kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody) {
+        // The body clicked is the one to repair, split, or move, or to combine with.
         for (const SelectedItem& item : m_viewport->selection()) {
             m_featurePanel->setBody(item.body);
             break;
@@ -4144,8 +4229,9 @@ void MainWindow::acceptFeature() {
                                               featureKindName(feature.kind).toStdString());
             const document::ObjectId id = document()->addFeature(feature);
             // The sketch has done its work, and its lines would only clutter the solid.
-            if (usesProfiles(feature.kind) || feature.kind == document::FeatureKind::Hole) {
-                // A loft's sections and a sweep's path too.
+            if (usesProfiles(feature.kind) || feature.kind == document::FeatureKind::Hole ||
+                feature.kind == document::FeatureKind::Pipe) {
+                // A loft's sections and a sweep's or a pipe's path too.
                 for (const document::ObjectId sketch : document::sketchesOf(feature)) {
                     document()->setSketchVisible(sketch, false);
                 }

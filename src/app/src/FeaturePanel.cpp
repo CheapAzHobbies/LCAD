@@ -86,6 +86,16 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Draft");
     case FeatureKind::SplitBody:
         return FeaturePanel::tr("Split Body");
+    case FeatureKind::Combine:
+        return FeaturePanel::tr("Combine");
+    case FeatureKind::MoveBody:
+        return FeaturePanel::tr("Move Body");
+    case FeatureKind::Pipe:
+        return FeaturePanel::tr("Pipe");
+    case FeatureKind::Coil:
+        return FeaturePanel::tr("Coil");
+    case FeatureKind::Thread:
+        return FeaturePanel::tr("Thread");
     }
     return {};
 }
@@ -106,7 +116,8 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
     m_form = new QFormLayout;
     layout->addLayout(m_form);
     const bool fromSketch = kind == FeatureKind::Pull || kind == FeatureKind::Revolve ||
-                            kind == FeatureKind::Loft || kind == FeatureKind::Sweep;
+                            kind == FeatureKind::Loft || kind == FeatureKind::Sweep ||
+                            kind == FeatureKind::Pipe || kind == FeatureKind::Coil;
     if (fromSketch) {
         m_operation = new QComboBox(this);
         m_operation->setObjectName(QStringLiteral("operation"));
@@ -128,8 +139,59 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         connect(m_body, &QComboBox::activated, this, [this] { readFields(); });
         m_form->addRow(tr("Body"), m_body);
         fillBodies();
-        // Without a body to work on, a new body is what it can be.
-        m_operation->setCurrentIndex(m_body->count() == 0 ? 0 : 1);
+        // Without a body to work on, a new body is what it can be. A pipe or a coil is
+        // usually a part of its own.
+        m_operation->setCurrentIndex(
+            m_body->count() == 0 || kind == FeatureKind::Pipe || kind == FeatureKind::Coil ? 0 : 1);
+    }
+    if (kind == FeatureKind::Combine) {
+        m_operation = new QComboBox(this);
+        m_operation->setObjectName(QStringLiteral("operation"));
+        m_operation->addItem(tr("Join"), static_cast<int>(Operation::Join));
+        m_operation->addItem(tr("Cut"), static_cast<int>(Operation::Cut));
+        m_operation->addItem(tr("Intersect"), static_cast<int>(Operation::Intersect));
+        m_operation->setToolTip(tr("Add the other bodies to this one, take them out of it, or "
+                                   "keep only what they share with it."));
+        connect(m_operation, &QComboBox::activated, this, [this] {
+            m_operationChosen = true;
+            readFields();
+        });
+        m_form->addRow(tr("Operation"), m_operation);
+        m_body = new QComboBox(this);
+        m_body->setObjectName(QStringLiteral("body"));
+        m_body->setToolTip(tr("The body that is changed."));
+        connect(m_body, &QComboBox::activated, this, [this] {
+            fillTools();
+            readFields();
+        });
+        m_form->addRow(tr("Body"), m_body);
+        m_tools = new QListWidget(this);
+        m_tools->setObjectName(QStringLiteral("tools"));
+        m_tools->setToolTip(tr("The bodies to combine with it. Click them in the 3D view, or "
+                               "check them here."));
+        m_tools->setMaximumHeight(110);
+        connect(m_tools, &QListWidget::itemChanged, this, [this] { readFields(); });
+        m_form->addRow(tr("With"), m_tools);
+        m_keepTools = new QCheckBox(tr("Keep the bodies used"), this);
+        m_keepTools->setObjectName(QStringLiteral("keepTools"));
+        connect(m_keepTools, &QCheckBox::toggled, this, [this] { readFields(); });
+        m_form->addRow(QString(), m_keepTools);
+        fillBodies();
+        fillTools();
+    }
+    if (kind == FeatureKind::MoveBody) {
+        m_body = new QComboBox(this);
+        m_body->setObjectName(QStringLiteral("body"));
+        m_body->setToolTip(tr("The body to move. Click a body in the 3D view to pick it."));
+        connect(m_body, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Body"), m_body);
+        fillBodies();
+        m_copy = new QCheckBox(tr("Make a moved copy"), this);
+        m_copy->setObjectName(QStringLiteral("copy"));
+        m_copy->setToolTip(tr("Leave the body where it is, and make a copy of it, moved, as a "
+                              "body of its own."));
+        connect(m_copy, &QCheckBox::toggled, this, [this] { readFields(); });
+        m_form->addRow(QString(), m_copy);
     }
     if (copies(kind)) {
         m_body = new QComboBox(this);
@@ -227,6 +289,68 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_form->addRow(tr("Axis"), m_axis);
         m_angle = addField(QStringLiteral("angle"), tr("Angle"), -360.0, 360.0, tr("°"));
         m_angle->setValue(360.0);
+        break;
+    case FeatureKind::Combine:
+        break;
+    case FeatureKind::MoveBody:
+        m_moveX = addField(QStringLiteral("moveX"), tr("X"), -largestInput, largestInput, tr(" mm"));
+        m_moveY = addField(QStringLiteral("moveY"), tr("Y"), -largestInput, largestInput, tr(" mm"));
+        m_moveZ = addField(QStringLiteral("moveZ"), tr("Z"), -largestInput, largestInput, tr(" mm"));
+        for (QDoubleSpinBox* box : {m_moveX, m_moveY, m_moveZ}) {
+            box->setValue(0.0);
+        }
+        m_moveX->setToolTip(tr("How far to move it along each axis."));
+        m_turnAxis = new QComboBox(this);
+        m_turnAxis->setObjectName(QStringLiteral("turnAxis"));
+        m_turnAxis->setToolTip(tr("The axis to turn it about, after it is moved."));
+        connect(m_turnAxis, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Turn about"), m_turnAxis);
+        m_angle = addField(QStringLiteral("angle"), tr("Angle"), -360.0, 360.0, tr("°"));
+        m_angle->setValue(0.0);
+        fillTurnAxes();
+        break;
+    case FeatureKind::Pipe:
+        m_path = new QComboBox(this);
+        m_path->setObjectName(QStringLiteral("path"));
+        m_path->setToolTip(tr("The sketch whose curves the pipe runs along. They have to join "
+                              "end to end."));
+        connect(m_path, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Path"), m_path);
+        fillPaths();
+        m_size = addField(QStringLiteral("size"), tr("Diameter"), 0.0, largestInput, tr(" mm"));
+        m_size->setValue(10.0);
+        m_size->setToolTip(tr("Across the outside of the pipe."));
+        m_wall = addField(QStringLiteral("wall"), tr("Wall"), 0.0, largestInput, tr(" mm"));
+        m_wall->setValue(1.0);
+        m_wall->setToolTip(tr("How thick the wall is. 0 makes a solid rod."));
+        break;
+    case FeatureKind::Coil:
+        m_turnAxis = new QComboBox(this);
+        m_turnAxis->setObjectName(QStringLiteral("turnAxis"));
+        m_turnAxis->setToolTip(tr("The axis it winds about. It starts where the axis starts."));
+        connect(m_turnAxis, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Axis"), m_turnAxis);
+        fillTurnAxes();
+        m_size = addField(QStringLiteral("size"), tr("Diameter"), 0.0, largestInput, tr(" mm"));
+        m_size->setValue(20.0);
+        m_size->setToolTip(tr("Across the coil, to the middle of its wire."));
+        m_pitch = addField(QStringLiteral("pitch"), tr("Pitch"), -largestInput, largestInput,
+                           tr(" mm"));
+        m_pitch->setValue(5.0);
+        m_pitch->setToolTip(tr("How far it rises each turn. Negative winds it the other way "
+                               "along the axis."));
+        m_turns = addField(QStringLiteral("turns"), tr("Turns"), 0.0, 10000.0, QString());
+        m_turns->setValue(5.0);
+        m_section = addField(QStringLiteral("section"), tr("Wire"), 0.0, largestInput, tr(" mm"));
+        m_section->setValue(2.0);
+        m_section->setToolTip(tr("How thick the wire is. Less than the pitch, so the turns do "
+                                 "not touch."));
+        break;
+    case FeatureKind::Thread:
+        m_pitch = addField(QStringLiteral("pitch"), tr("Pitch"), 0.0, largestInput, tr(" mm"));
+        m_pitch->setValue(1.5);
+        m_pitch->setToolTip(tr("How far the thread rises each turn: 1.5 for an M10 screw, 1.25 "
+                               "for M8, 1 for M6, 0.8 for M5."));
         break;
     case FeatureKind::Sweep:
         m_path = new QComboBox(this);
@@ -676,6 +800,47 @@ void FeaturePanel::fillPlaneSecond() {
     m_planeSecond->setCurrentIndex(index >= 0 ? index : 0);
 }
 
+void FeaturePanel::fillTools() {
+    if (m_tools == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_tools);
+    m_tools->clear();
+    const document::ObjectId target{m_body->count() > 0 ? m_body->currentData().toULongLong()
+                                                        : 0};
+    for (const document::Body& body : m_document->bodies()) {
+        if (body.shape.isNull() || body.id == target) {
+            continue;
+        }
+        auto* item = new QListWidgetItem(QString::fromStdString(body.name), m_tools);
+        item->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(body.id.value));
+        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+        const bool checked = std::find(m_feature.tools.begin(), m_feature.tools.end(), body.id) !=
+                             m_feature.tools.end();
+        item->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+    }
+}
+
+void FeaturePanel::fillTurnAxes() {
+    if (m_turnAxis == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_turnAxis);
+    m_turnAxis->clear();
+    if (m_feature.kind == FeatureKind::MoveBody) {
+        m_turnAxis->addItem(tr("None"), QString());
+    }
+    m_turnAxis->addItem(tr("X Axis"), QStringLiteral("X"));
+    m_turnAxis->addItem(tr("Y Axis"), QStringLiteral("Y"));
+    m_turnAxis->addItem(tr("Z Axis"), QStringLiteral("Z"));
+    addConstruction(m_turnAxis, FeatureKind::Axis);
+    int index = m_turnAxis->findData(QString::fromStdString(m_feature.reference));
+    if (index < 0 && m_feature.kind == FeatureKind::Coil) {
+        index = m_turnAxis->findData(QStringLiteral("Z"));
+    }
+    m_turnAxis->setCurrentIndex(index >= 0 ? index : 0);
+}
+
 void FeaturePanel::fillPaths() {
     if (m_path == nullptr) {
         return;
@@ -923,6 +1088,40 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         m_pickedName.clear();
         fillReferences();
     }
+    if (feature.kind == FeatureKind::Combine) {
+        m_operation->setCurrentIndex(m_operation->findData(static_cast<int>(feature.operation)));
+        fillBodies();
+        const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
+        if (index >= 0) {
+            m_body->setCurrentIndex(index);
+        }
+        fillTools();
+        m_keepTools->setChecked(feature.keepTools);
+    }
+    if (feature.kind == FeatureKind::MoveBody) {
+        fillBodies();
+        const document::ObjectId shown =
+            feature.copy && !feature.tools.empty() ? feature.tools.front() : feature.body;
+        const int index = m_body->findData(QVariant::fromValue<qulonglong>(shown.value));
+        if (index >= 0) {
+            m_body->setCurrentIndex(index);
+        }
+        m_copy->setChecked(feature.copy);
+        m_moveX->setValue(feature.moveX);
+        m_moveY->setValue(feature.moveY);
+        m_moveZ->setValue(feature.moveZ);
+    }
+    fillTurnAxes();
+    if (m_wall != nullptr) {
+        m_wall->setValue(feature.wall);
+    }
+    if (m_pitch != nullptr) {
+        m_pitch->setValue(feature.pitch);
+    }
+    if (m_turns != nullptr) {
+        m_turns->setValue(feature.turns);
+        m_section->setValue(feature.section);
+    }
     if (feature.kind == FeatureKind::Repair || feature.kind == FeatureKind::SplitBody) {
         fillBodies();
         const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
@@ -1031,6 +1230,10 @@ void FeaturePanel::setEdges(document::ObjectId body, const std::vector<std::stri
 void FeaturePanel::setFaces(document::ObjectId body, const std::vector<std::string>& faces) {
     m_feature.body = body;
     m_feature.faces = faces;
+    // A thread goes on one face: the one clicked last.
+    if (m_feature.kind == FeatureKind::Thread && faces.size() > 1) {
+        m_feature.faces = {faces.back()};
+    }
     if (m_feature.kind == FeatureKind::MoveFace) {
         if (!m_directionChosen) {
             // Square to the first face, if it is flat: the way a face is usually moved.
@@ -1051,7 +1254,25 @@ void FeaturePanel::setFaces(document::ObjectId body, const std::vector<std::stri
 
 void FeaturePanel::setBody(document::ObjectId body) {
     if (m_body == nullptr ||
-        (m_feature.kind != FeatureKind::Repair && m_feature.kind != FeatureKind::SplitBody)) {
+        (m_feature.kind != FeatureKind::Repair && m_feature.kind != FeatureKind::SplitBody &&
+         m_feature.kind != FeatureKind::Combine && m_feature.kind != FeatureKind::MoveBody)) {
+        return;
+    }
+    // A body clicked for a combine is one to combine with, taken in or let go.
+    if (m_feature.kind == FeatureKind::Combine) {
+        const document::ObjectId target{
+            m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
+        if (body == target) {
+            return;
+        }
+        for (int i = 0; i < m_tools->count(); ++i) {
+            QListWidgetItem* item = m_tools->item(i);
+            if (item->data(Qt::UserRole).toULongLong() == body.value) {
+                item->setCheckState(item->checkState() == Qt::Checked ? Qt::Unchecked
+                                                                       : Qt::Checked);
+            }
+        }
+        readFields();
         return;
     }
     const int index = m_body->findData(QVariant::fromValue<qulonglong>(body.value));
@@ -1080,6 +1301,17 @@ bool FeaturePanel::hasInput() const {
                !m_feature.reference.empty();
     case FeatureKind::SplitBody:
         return m_feature.body.isValid() && !m_feature.reference.empty();
+    case FeatureKind::Combine:
+        return m_feature.body.isValid() && !m_feature.tools.empty();
+    case FeatureKind::MoveBody:
+        return m_feature.copy ? !m_feature.tools.empty() && m_feature.tools.front().isValid()
+                              : m_feature.body.isValid();
+    case FeatureKind::Pipe:
+        return m_feature.pathSketch.isValid();
+    case FeatureKind::Coil:
+        return !m_feature.reference.empty();
+    case FeatureKind::Thread:
+        return m_feature.body.isValid() && !m_feature.faces.empty();
     case FeatureKind::OffsetFace:
     case FeatureKind::DeleteFace:
         return m_feature.body.isValid() && !m_feature.faces.empty();
@@ -1297,6 +1529,48 @@ void FeaturePanel::readFields() {
         m_feature.body =
             document::ObjectId{m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
     }
+    if (m_tools != nullptr) {
+        m_feature.tools.clear();
+        for (int i = 0; i < m_tools->count(); ++i) {
+            if (m_tools->item(i)->checkState() == Qt::Checked) {
+                m_feature.tools.push_back(
+                    document::ObjectId{m_tools->item(i)->data(Qt::UserRole).toULongLong()});
+            }
+        }
+        m_feature.keepTools = m_keepTools->isChecked();
+    }
+    if (m_feature.kind == FeatureKind::MoveBody) {
+        const document::ObjectId chosen{
+            m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
+        m_feature.copy = m_copy->isChecked();
+        if (m_feature.copy) {
+            // The copy is a new body, made from the one chosen.
+            if (m_feature.tools != std::vector<document::ObjectId>{chosen}) {
+                m_feature.body = {};
+            }
+            m_feature.tools = {chosen};
+            m_feature.operation = Operation::NewBody;
+        } else {
+            m_feature.body = chosen;
+            m_feature.tools.clear();
+        }
+        m_feature.moveX = m_moveX->value();
+        m_feature.moveY = m_moveY->value();
+        m_feature.moveZ = m_moveZ->value();
+    }
+    if (m_turnAxis != nullptr) {
+        m_feature.reference = m_turnAxis->currentData().toString().toStdString();
+    }
+    if (m_wall != nullptr) {
+        m_feature.wall = m_wall->value();
+    }
+    if (m_pitch != nullptr) {
+        m_feature.pitch = m_pitch->value();
+    }
+    if (m_turns != nullptr) {
+        m_feature.turns = m_turns->value();
+        m_feature.section = m_section->value();
+    }
     if (m_feature.kind == FeatureKind::Draft || m_feature.kind == FeatureKind::SplitBody) {
         m_feature.reference = m_reference->currentData().toString().toStdString();
     }
@@ -1479,6 +1753,31 @@ void FeaturePanel::updatePicked() {
         }
         break;
     }
+    case FeatureKind::Combine:
+        text = m_feature.tools.empty()
+                   ? tr("Choose the body to change, and click the bodies to combine with it in "
+                        "the 3D view.")
+                   : tr("%n body(s) combined with it. Click a body to take it in or let it go.",
+                        nullptr, static_cast<int>(m_feature.tools.size()));
+        break;
+    case FeatureKind::MoveBody:
+        text = tr("Click the body to move in the 3D view, and type how far along X, Y, and Z, and "
+                  "how far to turn it.");
+        break;
+    case FeatureKind::Pipe:
+        text = tr("Choose the sketch of its path below: its curves have to join end to end. The "
+                  "pipe starts where the path does, square to it.");
+        break;
+    case FeatureKind::Coil:
+        text = tr("Choose the axis it winds about. It starts where the axis starts, the "
+                  "diameter out from it.");
+        break;
+    case FeatureKind::Thread:
+        text = m_feature.faces.empty()
+                   ? tr("Click the cylindrical face to thread in the 3D view: the outside of a "
+                        "rod, or the inside of a hole.")
+                   : tr("The thread runs all along the face clicked.");
+        break;
     case FeatureKind::SplitBody:
         text = tr("Click the body to cut in two, and choose the plane to cut along. Each piece "
                   "becomes a body of its own.");
