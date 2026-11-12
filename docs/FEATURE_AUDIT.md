@@ -35,7 +35,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Constraints: coincident, horizontal, vertical, parallel, perpendicular, tangent, equal, concentric, midpoint, collinear, symmetric, fix | Have | |
 | Curvature (G2), smooth | No | |
 | Dimensions: length, horizontal, vertical, aligned, point to line, radius, diameter, angle | Have | |
-| Reference (driven) dimensions | No | A dimension that would over-constrain is refused instead. |
+| Reference (driven) dimensions | Have | Since 2026-11-12: a dimension that would over-constrain goes in as one, in brackets. |
 | Fully constrained detection, what can still move, what conflicts | Have | |
 | Dragging dimension values | Have | Since 2026-11-12. |
 | Expressions in dimensions | Have | |

@@ -502,6 +502,11 @@ click; two points or lines need a click on each.
 Or select first, then press D: a line gets its length, a circle its diameter, and the value
 opens for typing. With a line selected, the panel says "Press D to give it a length".
 
+A size the other dimensions and constraints already fix, such as the length of the second side
+of a rectangle, goes in as a **reference dimension**, in brackets: it shows the size and follows
+the sketch, and does not set it. What fixes it flashes red. Its value cannot be typed over;
+delete it if it is not wanted.
+
 | Click | Gives |
 |---|---|
 | A line | Its length |

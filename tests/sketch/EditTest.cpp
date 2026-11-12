@@ -1069,3 +1069,30 @@ TEST_CASE("Sketch geometry is moved, turned, scaled, and copied", "[sketch][edit
                     std::invalid_argument);
     CHECK(same(sketch, dimensioned));
 }
+
+TEST_CASE("A reference dimension shows a size without setting it", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts r = addRectangle(sketch, {0.0, 0.0}, {30.0, 40.0});
+    sketch.addConstraint(ConstraintKind::Coincident, sketch.find(r.bottom)->start, sketch.origin());
+    const ConstraintId width = sketch.addConstraint(
+        ConstraintKind::Distance, sketch.find(r.bottom)->start, sketch.find(r.bottom)->end, 0, 30.0);
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.left)->start,
+                         sketch.find(r.left)->end, 0, 40.0);
+    REQUIRE(sketch.solve().isFullyConstrained());
+    // The diagonal would over-constrain it: as a reference it measures 50.
+    const ConstraintId diagonal = sketch.addConstraint(
+        ConstraintKind::Distance, sketch.find(r.bottom)->start, sketch.find(r.top)->start, 0, 1.0);
+    sketch.setConstraintReference(diagonal, true);
+    const SolveResult state = sketch.solve();
+    CHECK(state.status == SolveStatus::Solved);
+    CHECK(state.isFullyConstrained());
+    CHECK_THAT(sketch.findConstraint(diagonal)->value, WithinAbs(50.0, 1e-9));
+    // It follows: a width of 30 to 9 makes it 41.
+    REQUIRE(tryDimensionValue(sketch, width, 9.0).ok());
+    CHECK_THAT(sketch.findConstraint(diagonal)->value, WithinAbs(std::hypot(9.0, 40.0), 1e-9));
+    // It cannot be set.
+    CHECK(tryDimensionValue(sketch, diagonal, 60.0).refusal == Refusal::Reference);
+    CHECK_THROWS_AS(sketch.setConstraintReference(
+                        sketch.addConstraint(ConstraintKind::Horizontal, r.bottom), true),
+                    std::invalid_argument);
+}

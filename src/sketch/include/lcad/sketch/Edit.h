@@ -124,6 +124,8 @@ enum class Refusal {
     Redundant,
     /// It contradicts the other constraints.
     Conflicting,
+    /// It is a reference dimension, which shows a size and does not set it.
+    Reference,
 };
 
 struct Outcome {

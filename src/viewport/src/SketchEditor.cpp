@@ -931,6 +931,10 @@ public:
             default:
                 continue;
             }
+            // A reference dimension is shown in brackets.
+            if (c.reference) {
+                a.text = QStringLiteral("(") + a.text + QStringLiteral(")");
+            }
             // A value worked out from parameters is marked so.
             if (const document::SketchItem* sketch = item();
                 sketch != nullptr && sketch->expressions.contains(c.id)) {
@@ -2584,6 +2588,9 @@ public:
                 .arg(name);
         case sketch::Refusal::Invalid:
             return tr("%1 does not apply to that.").arg(name);
+        case sketch::Refusal::Reference:
+            return tr("%1 is a reference dimension: it shows the size, and does not set it.")
+                .arg(name);
         case sketch::Refusal::None:
             break;
         }
@@ -2698,12 +2705,33 @@ public:
         }
         const sketch::Outcome outcome = sketch::tryConstraint(
             g, choice->kind, choice->first, choice->second, choice->third, choice->value);
+        // The same dimension on the same things again adds nothing, not even as a reference.
+        const bool repeated = std::any_of(
+            g.constraints().begin(), g.constraints().end(), [&](const Constraint& c) {
+                return c.kind == choice->kind &&
+                       ((c.first == choice->first && c.second == choice->second) ||
+                        (c.first == choice->second && c.second == choice->first));
+            });
+        if (!outcome.ok() && outcome.refusal == sketch::Refusal::Redundant && !repeated) {
+            // Already fixed by the rest: what fixes it flashes, and it goes in as a reference
+            // dimension, which shows the size without setting it.
+            flashWhatRefused(g, *choice, outcome.refusal);
+            const ConstraintId made = g.addConstraint(choice->kind, choice->first, choice->second,
+                                                      choice->third, choice->value);
+            g.setConstraintReference(made, true);
+            g.solve();
+            commit(std::move(g), tr("Reference Dimension"));
+            selected.clear();
+            selectedConstraints = {made};
+            emit q->message(tr("That size is already fixed by the other dimensions and "
+                               "constraints, so it was added as a reference dimension, in "
+                               "brackets: it shows the size, and does not set it."));
+            return true;
+        }
         if (!outcome.ok()) {
             flashWhatRefused(g, *choice, outcome.refusal);
             emit q->message(outcome.refusal == sketch::Refusal::Redundant
-                                ? tr("That is already fixed by the other dimensions and "
-                                     "constraints. A dimension there would over-constrain the "
-                                     "sketch.")
+                                ? tr("That dimension is there already.")
                                 : refusalText(outcome.refusal, tr("The dimension")));
             return false;
         }
@@ -3858,7 +3886,10 @@ bool SketchEditor::setDimensionValue(sketch::ConstraintId dimension, double valu
     const sketch::Outcome outcome = sketch::tryDimensionValue(g, dimension, stored);
     if (!outcome.ok()) {
         m_impl->lastProblem =
-            outcome.refusal == sketch::Refusal::Invalid
+            outcome.refusal == sketch::Refusal::Reference
+                ? tr("This is a reference dimension: it shows the size the other dimensions and "
+                     "constraints give, and does not set it.")
+            : outcome.refusal == sketch::Refusal::Invalid
                 ? tr("%1 is not a value this dimension can have.").arg(formatValue(value))
                 : tr("The sketch cannot take %1 there: it contradicts the other dimensions and "
                      "constraints. The value was left as it was.")
@@ -4053,6 +4084,15 @@ QRectF SketchEditor::dimensionRect(sketch::ConstraintId dimension) const {
     for (const Annotation& annotation : m_impl->layout()) {
         if (annotation.id == dimension && annotation.dimension) {
             return annotation.rect;
+        }
+    }
+    return {};
+}
+
+QString SketchEditor::dimensionText(sketch::ConstraintId dimension) const {
+    for (const Annotation& annotation : m_impl->layout()) {
+        if (annotation.id == dimension && annotation.dimension) {
+            return annotation.text;
         }
     }
     return {};

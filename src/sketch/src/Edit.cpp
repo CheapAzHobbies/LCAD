@@ -856,6 +856,12 @@ std::vector<ConstraintId> blockedBy(const Sketch& sketch, ConstraintKind kind, E
 
 Outcome tryDimensionValue(Sketch& sketch, ConstraintId dimension, double value) {
     Outcome outcome;
+    if (const Constraint* found = sketch.findConstraint(dimension);
+        found != nullptr && found->reference) {
+        outcome.refusal = Refusal::Reference;
+        outcome.result = sketch.state();
+        return outcome;
+    }
     const SolveResult before = sketch.state();
     outcome.result = before;
     Sketch work = sketch;
@@ -1031,7 +1037,11 @@ std::vector<EntityId> copyPlaced(Sketch& work, const Sketch& sketch,
             continue;
         }
         const auto to = [&copies](EntityId id) { return id == 0 ? 0 : copies.at(id); };
-        work.addConstraint(c.kind, to(c.first), to(c.second), to(c.third), c.value);
+        const ConstraintId copied =
+            work.addConstraint(c.kind, to(c.first), to(c.second), to(c.third), c.value);
+        if (c.reference) {
+            work.setConstraintReference(copied, true);
+        }
     }
     return made;
 }

@@ -776,6 +776,10 @@ SolveResult solveSketch(Sketch& sketch, const System& system, Eigen::VectorXd st
     SolveResult result;
     std::vector<Block> constraintBlocks;
     for (const Constraint& constraint : sketch.constraints()) {
+        // A reference dimension only measures.
+        if (constraint.reference) {
+            continue;
+        }
         constraintBlocks.push_back(system.blockFor(constraint));
     }
     std::vector<const Block*> all;
@@ -813,6 +817,23 @@ SolveResult solveSketch(Sketch& sketch, const System& system, Eigen::VectorXd st
         result.status = SolveStatus::Conflicting;
     }
     system.store(attempt.x, sketch);
+    // Reference dimensions read what the geometry now measures.
+    for (const Constraint& constraint : std::vector<Constraint>(sketch.constraints())) {
+        if (!constraint.reference) {
+            continue;
+        }
+        try {
+            const double measured =
+                sketch.measure(constraint.kind, constraint.first, constraint.second);
+            // An angle keeps the way it turns.
+            sketch.setConstraintValue(constraint.id, constraint.kind == ConstraintKind::Angle &&
+                                                             constraint.value < 0.0
+                                                         ? -std::abs(measured)
+                                                         : measured);
+        } catch (const std::invalid_argument&) {
+            // Nothing to measure for now, such as a length of nothing: left as it was.
+        }
+    }
 
     // What the accepted equations leave free, from their derivatives at the solution.
     Eigen::VectorXd r;

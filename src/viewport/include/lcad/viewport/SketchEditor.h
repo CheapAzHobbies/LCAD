@@ -154,6 +154,8 @@ public:
     bool setDimensionValue(sketch::ConstraintId dimension, double value);
     /// A dimension's value as it is shown and typed: millimeters, or degrees for an angle.
     [[nodiscard]] double dimensionValue(sketch::ConstraintId dimension) const;
+    /// A dimension's value as it is drawn: "40", "R5", "(50)" for a reference dimension.
+    [[nodiscard]] QString dimensionText(sketch::ConstraintId dimension) const;
     /// Deletes the selected curves, free-standing points, and constraints.
     bool deleteSelection();
     /// Turns the selected curves into construction geometry, or back if they all are already.

@@ -119,6 +119,7 @@ private slots:
     void linesLineUpWithOtherLinesAndCrossings();
     void clicksGoToRoundNumbersOnTheGrid();
     void selectedGeometryIsMovedTurnedAndScaled();
+    void anOverConstrainingDimensionBecomesAReference();
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
@@ -414,10 +415,13 @@ void SketchViewTest::whatStopsAConstraintFlashesRed() {
     QVERIFY(!editor()->addDimension());
     QCOMPARE(editor()->refusedBy(), std::vector<lcad::sketch::ConstraintId>{dimension});
 
-    // The opposite side has that length already, and the dimension is why.
+    // The opposite side has that length already, and the dimension is why: it flashes, and the
+    // new one goes in as a reference dimension.
     editor()->setSelection({sides[2].id});
-    QVERIFY(!editor()->addDimension());
+    QVERIFY(editor()->addDimension());
     QCOMPARE(editor()->refusedBy(), std::vector<lcad::sketch::ConstraintId>{dimension});
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Reference Dimension"));
+    m_document->undo();
 
     // Any kind of constraint: a level line made level again.
     editor()->setSelection({side});
@@ -2092,6 +2096,33 @@ void SketchViewTest::selectedGeometryIsMovedTurnedAndScaled() {
     QTest::keyClick(editor()->valueField(), Qt::Key_Return);
     render();
     QVERIFY(apart(endOf(line.id), {0.0, 20.0}) < 1e-6);
+}
+
+void SketchViewTest::anOverConstrainingDimensionBecomesAReference() {
+    openSketch();
+    Sketch g = sketch();
+    const lcad::sketch::RectangleParts r = lcad::sketch::addRectangle(g, {0.0, 0.0}, {30.0, 20.0});
+    g.addConstraint(ConstraintKind::Distance, g.find(r.bottom)->start, g.find(r.bottom)->end, 0,
+                    30.0);
+    g.solve();
+    m_document->setSketchGeometry(m_sketch, g, "Draw");
+    render();
+    // The top is as long as the bottom already: its length goes in as a reference.
+    editor()->setSelection({r.top});
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    QVERIFY(editor()->addDimension());
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Reference Dimension"));
+    QVERIFY(messages.count() >= 1);
+    lcad::sketch::ConstraintId reference = 0;
+    for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+        if (c.reference) {
+            reference = c.id;
+        }
+    }
+    QVERIFY(reference != 0);
+    QVERIFY(editor()->dimensionText(reference).startsWith(QStringLiteral("(")));
+    // It cannot be set.
+    QVERIFY(!editor()->setDimensionValue(reference, 50.0));
 }
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {
