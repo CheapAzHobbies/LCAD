@@ -341,6 +341,14 @@ its length, area, radius, or position; click a second to see the distance betwee
 along X, Y, and Z) and, for flat faces and straight edges, the angle between them. A third click
 starts again. Esc closes it.
 
+
+### Section view
+
+**View > Section View** cuts the 3D view along a plane, to see inside the model; the faces it
+cuts through are filled in color. A bar at the top left of the view chooses the plane (an origin
+plane or a construction plane) and how far along its normal the cut is; it starts through the
+middle of the model. **Flip** shows the other side, and **×** shows the model whole again. It
+only changes what is shown: the model is not cut, and you can go on working while it is on.
 ## Sketching
 
 A sketch is flat geometry on a plane: lines, circles, and arcs, held in shape by constraints

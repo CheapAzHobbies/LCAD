@@ -316,6 +316,10 @@ public:
     /// A reference grid on the XY plane, with lines 10 mm apart. Off until switched on.
     void setGridVisible(bool visible);
     [[nodiscard]] bool isGridVisible() const;
+    /// Cuts the view along a plane: what lies on the side its normal points to is left out, and
+    /// the cut faces of solids are filled in. Nothing shows everything whole again.
+    void setSection(const std::optional<kernel::Plane>& plane);
+    [[nodiscard]] std::optional<kernel::Plane> section() const;
     /// The X, Y, Z marker in the corner. On until switched off.
     void setAxesVisible(bool visible);
     [[nodiscard]] bool areAxesVisible() const;
