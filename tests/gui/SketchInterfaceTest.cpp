@@ -450,7 +450,8 @@ void SketchInterfaceTest::sketchToolsAreCommandsWithShortcuts() {
         {"sketch.circle", SketchTool::Circle},       {"sketch.arc", SketchTool::Arc},
         {"sketch.point", SketchTool::Point},         {"sketch.polygon", SketchTool::Polygon},
         {"sketch.slot", SketchTool::Slot},           {"sketch.trim", SketchTool::Trim},
-        {"sketch.extend", SketchTool::Extend},       {"sketch.offset", SketchTool::Offset},
+        {"sketch.extend", SketchTool::Extend},       {"sketch.fillet", SketchTool::Fillet},
+        {"sketch.offset", SketchTool::Offset},
         {"sketch.dimension", SketchTool::Dimension}, {"sketch.select", SketchTool::Select},
     };
     for (const auto& [id, tool] : tools) {

@@ -113,6 +113,7 @@ private slots:
 
     // Modifying
     void trimAndExtendActOnTheCurveClicked();
+    void aCornerIsRoundedAndItsRadiusTyped();
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
@@ -1767,6 +1768,40 @@ void SketchViewTest::deleteAndConstructionActOnTheSelection() {
 
 // ---------------------------------------------------------------------------------------------
 // Modifying
+
+void SketchViewTest::aCornerIsRoundedAndItsRadiusTyped() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    editor()->setTool(SketchTool::Fillet);
+    QVERIFY2(editor()->hint().contains(QStringLiteral("corner")), qPrintable(editor()->hint()));
+
+    // A click on a corner rounds it, and the radius is ready to be typed.
+    click(at(60.0, 40.0));
+    QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{1});
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Fillet"));
+    type(QStringLiteral("8"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    const Entity arc = curves(EntityKind::Arc).front();
+    QVERIFY2(qAbs(sketch().radiusOf(arc.id) - 8.0) < 1e-6,
+             qPrintable(QString::number(sketch().radiusOf(arc.id))));
+    // Tangent to both lines: its center is the radius in from each.
+    const std::vector<Entity> sides = curves(EntityKind::Line);
+    const Point2 center = sketch().position(arc.center);
+    QVERIFY(qAbs(startOf(sides[1].id).x - 8.0 - center.x) < 1e-6);
+    QVERIFY(qAbs(endOf(sides[2].id).y - 8.0 - center.y) < 1e-6);
+    // Still one outline, which a Pull can take.
+    QCOMPARE(sketch().profiles().size(), std::size_t{1});
+
+    // A click on the middle of a line rounds nothing, and says so.
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    click(at(35.0, 10.0));
+    QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{1});
+    QVERIFY(messages.count() >= 1);
+}
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {
     openSketch();

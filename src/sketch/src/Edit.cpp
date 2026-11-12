@@ -1372,4 +1372,115 @@ bool extend(Sketch& sketch, EntityId id, Point2 nearPoint) {
     return true;
 }
 
+FilletParts fillet(Sketch& sketch, EntityId corner, double radius) {
+    if (!std::isfinite(radius) || radius <= 0.0) {
+        throw std::invalid_argument("fillet: the radius has to be more than 0");
+    }
+    // The ends of lines at the corner: exactly two, of two lines.
+    struct End {
+        EntityId point = 0;
+        EntityId line = 0;
+        Point2 away;
+        double length = 0.0;
+    };
+    std::vector<End> ends;
+    for (const EntityId id : pointsTogether(sketch, corner)) {
+        const Entity* point = sketch.find(id);
+        const Entity* owner = sketch.find(point->owner);
+        if (owner == nullptr) {
+            continue;
+        }
+        if (owner->kind != EntityKind::Line || owner->fixed) {
+            throw std::invalid_argument("fillet: only a corner between two lines can be rounded");
+        }
+        const EntityId other = owner->start == id ? owner->end : owner->start;
+        const Point2 from = sketch.position(id);
+        const Point2 to = sketch.position(other);
+        End end;
+        end.point = id;
+        end.line = owner->id;
+        end.length = std::hypot(to.x - from.x, to.y - from.y);
+        end.away = {(to.x - from.x) / end.length, (to.y - from.y) / end.length};
+        ends.push_back(end);
+    }
+    if (ends.size() != 2 || ends[0].line == ends[1].line) {
+        throw std::invalid_argument("fillet: two lines have to meet at the corner");
+    }
+    const Point2 at = sketch.position(ends[0].point);
+    const Point2 u1 = ends[0].away;
+    const Point2 u2 = ends[1].away;
+    const double cosine = std::clamp(u1.x * u2.x + u1.y * u2.y, -1.0, 1.0);
+    const double half = std::acos(cosine) / 2.0;
+    if (half < 1e-6 || half > pi / 2.0 - 1e-6) {
+        throw std::invalid_argument("fillet: the lines are in line, so there is no corner");
+    }
+    // Where the arc meets each line, how far from the corner, and its center on the bisector.
+    const double back = radius / std::tan(half);
+    if (back >= ends[0].length - minimumLength || back >= ends[1].length - minimumLength) {
+        throw std::invalid_argument("fillet: the radius is too large for the lines");
+    }
+    const Point2 t1{at.x + u1.x * back, at.y + u1.y * back};
+    const Point2 t2{at.x + u2.x * back, at.y + u2.y * back};
+    const double bisectorLength = std::hypot(u1.x + u2.x, u1.y + u2.y);
+    const Point2 bisector{(u1.x + u2.x) / bisectorLength, (u1.y + u2.y) / bisectorLength};
+    const double out = radius / std::sin(half);
+    const Point2 center{at.x + bisector.x * out, at.y + bisector.y * out};
+
+    Parts parts(sketch);
+    // The point where the lines would meet keeps what was on the corner.
+    const EntityId sharp = parts.addPoint(at, 0);
+    parts.at(sharp).construction = true;
+    std::vector<Constraint> kept;
+    const auto onCorner = [&](EntityId id) { return id == ends[0].point || id == ends[1].point; };
+    for (Constraint c : parts.constraints) {
+        const bool first = onCorner(c.first);
+        const bool second = onCorner(c.second);
+        const bool third = onCorner(c.third);
+        if (!first && !second && !third) {
+            kept.push_back(c);
+            continue;
+        }
+        // The two ends were one point; now the arc joins them.
+        if (c.kind == ConstraintKind::Coincident && first && second) {
+            continue;
+        }
+        c.first = first ? sharp : c.first;
+        c.second = second ? sharp : c.second;
+        c.third = third ? sharp : c.third;
+        // Added below in any case.
+        if (c.kind == ConstraintKind::PointOnLine && c.first == sharp &&
+            (c.second == ends[0].line || c.second == ends[1].line)) {
+            continue;
+        }
+        kept.push_back(c);
+    }
+    parts.constraints = std::move(kept);
+    parts.place(ends[0].point, t1);
+    parts.place(ends[1].point, t2);
+    Sketch work = parts.build();
+
+    // Counter-clockwise the short way round, from one line to the other.
+    const double turn = (t1.x - center.x) * (t2.y - center.y) - (t1.y - center.y) * (t2.x - center.x);
+    const bool forward = turn > 0.0;
+    FilletParts made;
+    made.corner = sharp;
+    made.arc = work.addArc(center, forward ? t1 : t2, forward ? t2 : t1);
+    const Entity arc = *work.find(made.arc);
+    work.addConstraint(ConstraintKind::Coincident, arc.start,
+                       forward ? ends[0].point : ends[1].point);
+    work.addConstraint(ConstraintKind::Coincident, arc.end,
+                       forward ? ends[1].point : ends[0].point);
+    work.addConstraint(ConstraintKind::Tangent, ends[0].line, made.arc);
+    work.addConstraint(ConstraintKind::Tangent, ends[1].line, made.arc);
+    work.addConstraint(ConstraintKind::PointOnLine, sharp, ends[0].line);
+    work.addConstraint(ConstraintKind::PointOnLine, sharp, ends[1].line);
+    made.radius = work.addConstraint(ConstraintKind::Radius, made.arc, 0, 0, radius);
+    const SolveResult result = work.solve();
+    if (result.status == SolveStatus::Conflicting) {
+        throw std::invalid_argument("fillet: the rest of the sketch does not let the corner round");
+    }
+    sketch = std::move(work);
+    return made;
+}
+
 } // namespace lcad::sketch
