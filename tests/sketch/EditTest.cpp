@@ -1034,3 +1034,38 @@ TEST_CASE("Sketch patterns copy geometry around a point and along a step", "[ske
                     std::invalid_argument);
     CHECK(same(rows, kept));
 }
+
+TEST_CASE("Sketch geometry is moved, turned, scaled, and copied", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts r = addRectangle(sketch, {0.0, 0.0}, {20.0, 10.0});
+    const std::vector<EntityId> sides{r.bottom, r.right, r.top, r.left};
+    // Moved 5 along X: still a rectangle.
+    place(sketch, sides, Placing{{0.0, 0.0}, 0.0, 1.0, {5.0, 0.0}}, false);
+    CHECK_THAT(startOf(sketch, r.bottom).x, WithinAbs(5.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, r.right).x, WithinAbs(25.0, lengthTolerance));
+    // Turned a quarter about its corner: horizontal and vertical forbid it.
+    const Sketch kept = sketch;
+    CHECK_THROWS_AS(place(sketch, sides, Placing{{5.0, 0.0}, pi / 2.0, 1.0, {}}, false),
+                    std::invalid_argument);
+    CHECK(same(sketch, kept));
+    // A free line turns.
+    const EntityId line = sketch.addLine({0.0, 30.0}, {10.0, 30.0});
+    place(sketch, {line}, Placing{{0.0, 30.0}, pi / 2.0, 1.0, {}}, false);
+    CHECK_THAT(endOf(sketch, line).x, WithinAbs(0.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, line).y, WithinAbs(40.0, lengthTolerance));
+    // A copy twice as large, 50 along: the original stays.
+    const std::vector<EntityId> copies =
+        place(sketch, sides, Placing{{5.0, 0.0}, 0.0, 2.0, {50.0, 0.0}}, true);
+    REQUIRE(copies.size() == 4);
+    CHECK_THAT(startOf(sketch, r.bottom).x, WithinAbs(5.0, lengthTolerance));
+    CHECK_THAT(lengthOf(sketch, copies[0]), WithinAbs(40.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, copies[0]).x, WithinAbs(55.0, lengthTolerance));
+    // Scaled where a dimension holds the size: refused.
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.bottom)->start,
+                         sketch.find(r.bottom)->end, 0, 20.0);
+    sketch.solve();
+    const Sketch dimensioned = sketch;
+    CHECK_THROWS_AS(place(sketch, sides, Placing{{5.0, 0.0}, 0.0, 2.0, {}}, false),
+                    std::invalid_argument);
+    CHECK(same(sketch, dimensioned));
+}

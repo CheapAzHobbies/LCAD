@@ -174,6 +174,22 @@ std::vector<EntityId> patternCircular(Sketch& sketch, const std::vector<EntityId
 std::vector<EntityId> patternRectangular(Sketch& sketch, const std::vector<EntityId>& entities,
                                          Point2 step, int count);
 
+/// How selected geometry is moved: turned by `angle` radians about `center`, made `scale`
+/// times as large about it, then moved by `move`.
+struct Placing {
+    Point2 center;
+    double angle = 0.0;
+    double scale = 1.0;
+    Point2 move;
+};
+
+/// Moves curves and free-standing points as `placing` says, keeping the constraints among them,
+/// and solves; or, with `copy`, adds moved copies and leaves them where they are. Returns what
+/// was moved or made. Throws std::invalid_argument, leaving the sketch as it was, if the other
+/// constraints do not let them go there, such as a dimension when they are scaled.
+std::vector<EntityId> place(Sketch& sketch, const std::vector<EntityId>& entities,
+                            const Placing& placing, bool copy);
+
 /// Adds copies of lines, arcs, and circles at `distance` from the originals, on the side
 /// `side` is on. Curves that are joined end to end are offset as one outline, and the copy is
 /// joined at its corners too. Each new line is held parallel to its original and each new arc or

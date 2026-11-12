@@ -1038,6 +1038,83 @@ std::vector<EntityId> copyPlaced(Sketch& work, const Sketch& sketch,
 
 } // namespace
 
+std::vector<EntityId> place(Sketch& sketch, const std::vector<EntityId>& entities,
+                            const Placing& placing, bool copy) {
+    if (entities.empty()) {
+        throw std::invalid_argument("place: there is nothing to move");
+    }
+    if (!std::isfinite(placing.scale) || placing.scale <= 1e-9 || !std::isfinite(placing.angle) ||
+        !std::isfinite(placing.move.x) || !std::isfinite(placing.move.y)) {
+        throw std::invalid_argument("place: it has to be turned, scaled, and moved by numbers");
+    }
+    const double c = std::cos(placing.angle);
+    const double s = std::sin(placing.angle);
+    const auto where = [&](Point2 p) {
+        const Point2 d{p.x - placing.center.x, p.y - placing.center.y};
+        return Point2{placing.center.x + placing.scale * (c * d.x - s * d.y) + placing.move.x,
+                      placing.center.y + placing.scale * (s * d.x + c * d.y) + placing.move.y};
+    };
+    if (copy) {
+        Sketch work = sketch;
+        std::vector<EntityId> made = copyPlaced(work, sketch, entities, where);
+        // A copy made larger keeps the shape, not the size its dimensions say.
+        if (std::abs(placing.scale - 1.0) > 1e-12) {
+            for (const Constraint& constraint : work.constraints()) {
+                const bool ours = std::find(made.begin(), made.end(), constraint.first) != made.end();
+                if (ours && (constraint.kind == ConstraintKind::Radius ||
+                             constraint.kind == ConstraintKind::Diameter)) {
+                    work.setConstraintValue(constraint.id, constraint.value * placing.scale);
+                }
+            }
+        }
+        if (work.solve().status == SolveStatus::Conflicting) {
+            throw std::invalid_argument("place: the copies do not fit their constraints");
+        }
+        sketch = std::move(work);
+        return made;
+    }
+    // Every point of what is moved, and every radius.
+    Parts parts(sketch);
+    for (const EntityId id : entities) {
+        const Entity* entity = sketch.find(id);
+        if (entity == nullptr || entity->owner != 0 || id == sketch.origin() || entity->fixed) {
+            throw std::invalid_argument("place: choose curves and free-standing points");
+        }
+        if (entity->kind == EntityKind::Point) {
+            parts.place(id, where({entity->x, entity->y}));
+            continue;
+        }
+        std::vector<EntityId> points = entity->points;
+        for (const EntityId point : {entity->start, entity->end, entity->center}) {
+            if (point != 0) {
+                points.push_back(point);
+            }
+        }
+        for (const EntityId point : points) {
+            parts.place(point, where(sketch.position(point)));
+        }
+        parts.at(id).radius = entity->radius * placing.scale;
+    }
+    Sketch work = parts.build();
+    const SolveResult result = work.solve();
+    // What held them stays: if they came back, or anything conflicts, it cannot go there.
+    bool went = result.status != SolveStatus::Conflicting;
+    for (const EntityId id : entities) {
+        const Entity* entity = sketch.find(id);
+        const EntityId probe = entity->kind == EntityKind::Point ? id
+                               : entity->start != 0         ? entity->start
+                                                            : entity->center;
+        const Point2 wanted = where(sketch.position(probe));
+        const Point2 got = work.position(probe);
+        went = went && std::hypot(wanted.x - got.x, wanted.y - got.y) < 1e-6;
+    }
+    if (!went) {
+        throw std::invalid_argument("place: the sketch's constraints do not let it go there");
+    }
+    sketch = std::move(work);
+    return entities;
+}
+
 std::vector<EntityId> patternCircular(Sketch& sketch, const std::vector<EntityId>& entities,
                                       Point2 center, int count, double angle) {
     if (count < 2 || count > 1000) {
