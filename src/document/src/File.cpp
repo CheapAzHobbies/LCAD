@@ -338,6 +338,9 @@ nlohmann::ordered_json writeSketch(const SketchItem& item) {
         if (constraint.label.has_value()) {
             c["label"] = {constraint.label->x, constraint.label->y};
         }
+        if (constraint.reference) {
+            c["reference"] = true;
+        }
         out["constraints"].push_back(std::move(c));
     }
     return out;
@@ -484,6 +487,9 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
                 damaged(path, "\"label\" of " + in + " is not two numbers");
             }
             constraint.label = sketch::Point2{label[0].get<double>(), label[1].get<double>()};
+        }
+        if (c.contains("reference")) {
+            constraint.reference = boolMember(c, "reference", in, path);
         }
         constraints.push_back(constraint);
     }

@@ -120,6 +120,9 @@ struct Constraint {
     /// middle of what a distance measures, the center of a circle or an arc, or the corner of
     /// an angle. It moves with the geometry. Nothing where the value goes by itself.
     std::optional<Point2> label;
+    /// A reference dimension: it shows what the geometry measures, and does not set it. The
+    /// solver leaves it out, and sets its value to what is measured.
+    bool reference = false;
 };
 
 enum class SolveStatus {
@@ -249,6 +252,9 @@ public:
     /// Puts a dimension's value elsewhere, or with nothing back where it goes by itself. See
     /// Constraint::label.
     void setConstraintLabel(ConstraintId id, std::optional<Point2> label);
+    /// Makes a dimension a reference dimension, or one that drives the geometry again. Does not
+    /// solve. See Constraint::reference.
+    void setConstraintReference(ConstraintId id, bool reference);
     [[nodiscard]] const std::vector<Constraint>& constraints() const { return m_constraints; }
     [[nodiscard]] const Constraint* findConstraint(ConstraintId id) const;
     /// What a dimension would read if it were measured now, whatever its stored value.
