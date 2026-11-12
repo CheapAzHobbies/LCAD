@@ -1184,6 +1184,13 @@ Feature Document::resolved(const Feature& feature) const {
         {"headDiameter", "head diameter"},
         {"headDepth", "head depth"},
         {"countersinkAngle", "countersink angle"},
+        {"moveX", "move along X"},
+        {"moveY", "move along Y"},
+        {"moveZ", "move along Z"},
+        {"wall", "wall"},
+        {"pitch", "pitch"},
+        {"turns", "turns"},
+        {"section", "section"},
     };
     Feature result = feature;
     for (const auto& [field, expression] : feature.expressions) {
@@ -1232,6 +1239,20 @@ Feature Document::resolved(const Feature& feature) const {
             result.headDepth = value;
         } else if (field == "countersinkAngle") {
             result.countersinkAngle = value;
+        } else if (field == "moveX") {
+            result.moveX = value;
+        } else if (field == "moveY") {
+            result.moveY = value;
+        } else if (field == "moveZ") {
+            result.moveZ = value;
+        } else if (field == "wall") {
+            result.wall = value;
+        } else if (field == "pitch") {
+            result.pitch = value;
+        } else if (field == "turns") {
+            result.turns = value;
+        } else if (field == "section") {
+            result.section = value;
         }
     }
     return result;

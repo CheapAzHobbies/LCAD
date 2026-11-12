@@ -266,7 +266,8 @@ struct Feature {
 
     /// Values worked out from parameters: the name of the value ("distance", "distanceBack",
     /// "taper", "angle", "size", "count", "count2", "spacing", "spacing2", "tipAngle",
-    /// "headDiameter", "headDepth", "countersinkAngle") and the expression. The value itself is
+    /// "headDiameter", "headDepth", "countersinkAngle", "moveX", "moveY", "moveZ", "wall",
+    /// "pitch", "turns", "section") and the expression. The value itself is
     /// what the expression last came to.
     std::map<std::string, std::string> expressions;
 

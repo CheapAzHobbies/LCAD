@@ -122,6 +122,10 @@ private:
     void fillSketches();
     /// Sweep: the sketches its path can be, every one but the profile's.
     void fillPaths();
+    /// Combine: the bodies that can be combined with the one chosen.
+    void fillTools();
+    /// Move Body and Coil: the axes to turn about or wind about.
+    void fillTurnAxes();
     /// Shows the boxes that go with the kind of hole.
     void showHoleFields();
     /// Reads the boxes into m_feature and shows or hides what depends on them.
@@ -161,8 +165,20 @@ private:
     std::string m_pickedName;
     QString m_pickedDescription;
     document::ObjectId m_pickedBody;
-    // Sweep
+    // Sweep and Pipe
     QComboBox* m_path = nullptr;
+    // Combine, Move Body, Pipe, Coil, Thread
+    QListWidget* m_tools = nullptr;
+    QCheckBox* m_keepTools = nullptr;
+    QCheckBox* m_copy = nullptr;
+    QComboBox* m_turnAxis = nullptr;
+    QDoubleSpinBox* m_moveX = nullptr;
+    QDoubleSpinBox* m_moveY = nullptr;
+    QDoubleSpinBox* m_moveZ = nullptr;
+    QDoubleSpinBox* m_wall = nullptr;
+    QDoubleSpinBox* m_pitch = nullptr;
+    QDoubleSpinBox* m_turns = nullptr;
+    QDoubleSpinBox* m_section = nullptr;
     // Plane: how it is placed, and its second reference: the axis it turns about, or the plane
     // it is halfway to. What was picked in the 3D view for that.
     QComboBox* m_planeKind = nullptr;

@@ -342,6 +342,18 @@ double solidVolume(const TopoDS_Shape& shape) {
     return properties.Mass();
 }
 
+// Whether a shape has a spline face of many control points, as a helix swept makes.
+bool hasHeavyFaces(const TopoDS_Shape& shape) {
+    for (TopExp_Explorer it(shape, TopAbs_FACE); it.More(); it.Next()) {
+        const BRepAdaptor_Surface surface(TopoDS::Face(it.Current()), Standard_False);
+        if (surface.GetType() == GeomAbs_BSplineSurface &&
+            surface.NbUPoles() * surface.NbVPoles() > 400) {
+            return true;
+        }
+    }
+    return false;
+}
+
 NamedShape named(const TopoDS_Shape& shape, const FaceNamer& namer, const std::string& tag) {
     return NamedShape{occt::wrap(shape), namer.names(tag)};
 }
@@ -1166,8 +1178,12 @@ NamedShape combine(const NamedShape& body, const NamedShape& tool, Combination h
         if (!operation->IsDone() || operation->HasErrors()) {
             throw Error("combine", "the two shapes could not be combined");
         }
-        // Faces left lying in one plane, and edges left in one line, become one.
-        operation->SimplifyResult();
+        // Faces left lying in one plane, and edges left in one line, become one. Not where
+        // there are large spline faces, such as a thread's or a coil's: looking for faces to
+        // merge along them takes minutes, and they have none.
+        if (!hasHeavyFaces(first) && !hasHeavyFaces(second)) {
+            operation->SimplifyResult();
+        }
         const TopoDS_Shape result = operation->Shape();
         if (!hasSolid(result)) {
             throw Error("combine", how == Combination::Cut ? "the cut leaves nothing of the body"
