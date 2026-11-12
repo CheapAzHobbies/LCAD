@@ -32,6 +32,11 @@ constexpr KindName kindNames[] = {
     {FeatureKind::Sweep, "Sweep"},
     {FeatureKind::Draft, "Draft"},
     {FeatureKind::SplitBody, "Split Body"},
+    {FeatureKind::Combine, "Combine"},
+    {FeatureKind::MoveBody, "Move Body"},
+    {FeatureKind::Pipe, "Pipe"},
+    {FeatureKind::Coil, "Coil"},
+    {FeatureKind::Thread, "Thread"},
 };
 
 struct HoleKindName {
