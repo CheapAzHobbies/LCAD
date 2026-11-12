@@ -964,12 +964,13 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasBody;
         m_commands->add(std::move(c));
 
-        c = make("construct.offsetPlane", tr("&Offset Plane"), create,
-                 tr("Add a construction plane to sketch on: an origin plane or a flat face, "
-                    "moved along its normal"));
+        c = make("construct.offsetPlane", tr("Construction &Plane"), create,
+                 tr("Add a plane to sketch on: offset from a plane or a flat face, at an angle "
+                    "about an axis or an edge, or halfway between two planes"));
         c.iconName = QStringLiteral("plane");
-        c.aliases = {tr("construction plane"), tr("work plane"), tr("datum plane"),
-                     tr("reference plane"), tr("plane")};
+        c.aliases = {tr("offset plane"), tr("plane at angle"), tr("angled plane"),
+                     tr("midplane"), tr("mid plane"), tr("construction plane"), tr("work plane"),
+                     tr("datum plane"), tr("reference plane"), tr("plane")};
         c.run = [this](bool) { startFeature(FeatureKind::Plane); };
         c.isEnabled = [this] { return !isSketching(); };
         m_commands->add(std::move(c));
@@ -3494,6 +3495,7 @@ void MainWindow::startFeature(document::FeatureKind kind) {
         // Against the flat face that is selected, or else the XY plane.
         seed.reference = "XY";
         seed.distance = 20.0;
+        seed.angle = 45.0;
         if (const auto face = selectedFaceName()) {
             seed.body = face->first;
             seed.reference = face->second;
@@ -3653,11 +3655,11 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         SelectionFilter filter = SelectionFilter::Edges;
         if (kind == document::FeatureKind::Repair) {
             filter = SelectionFilter::Bodies;
-        } else if (picksFaces(kind) || kind == document::FeatureKind::Mirror ||
-                   kind == document::FeatureKind::Plane) {
+        } else if (picksFaces(kind) || kind == document::FeatureKind::Mirror) {
             filter = SelectionFilter::Faces;
         } else if (copiesFeatures(kind) || kind == document::FeatureKind::Hole ||
-                   kind == document::FeatureKind::Axis) {
+                   kind == document::FeatureKind::Axis || kind == document::FeatureKind::Plane) {
+            // A plane at an angle turns about an edge.
             // A hole's sketch is picked by clicking it, which needs edges to be pickable; an
             // axis runs along an edge or a round face.
             filter = SelectionFilter::FacesEdgesVertices;
@@ -3820,13 +3822,21 @@ void MainWindow::takeFeaturePicks() {
     if (copiesFeatures(kind) || kind == document::FeatureKind::Plane ||
         kind == document::FeatureKind::Axis) {
         // The edge or face that gives the plane, the direction, or the axis.
+        // A plane at an angle turns about an edge clicked.
+        const bool turns = kind == document::FeatureKind::Plane &&
+                           m_featurePanel->feature().planeKind == document::PlaneKind::AtAngle;
         for (const SelectedItem& item : m_viewport->selection()) {
             if (item.kind != SelectedItem::Kind::Face &&
-                (item.kind != SelectedItem::Kind::Edge || kind == document::FeatureKind::Plane)) {
+                (item.kind != SelectedItem::Kind::Edge ||
+                 (kind == document::FeatureKind::Plane && !turns))) {
                 continue;
             }
             if (const std::string name = nameOf(item); !name.empty()) {
-                m_featurePanel->setPickedReference(item.body, name, describe(item));
+                if (item.kind == SelectedItem::Kind::Edge && turns) {
+                    m_featurePanel->setPickedEdge(item.body, name, describe(item));
+                } else {
+                    m_featurePanel->setPickedReference(item.body, name, describe(item));
+                }
             }
             break;
         }

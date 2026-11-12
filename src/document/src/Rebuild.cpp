@@ -652,18 +652,17 @@ AxisState placeAxis(const Feature& feature, const Document& document, const Body
     return state;
 }
 
-PlaneState placePlane(const Feature& feature, const Document& document, const BodyStates& bodies) {
-    if (!std::isfinite(feature.distance)) {
-        throw FeatureFailure("Its distance is not a number.");
-    }
+// A plane a construction plane is placed against: an origin plane, another construction plane
+// ("plane:12"), or a flat face of the feature's body. With where to draw it and how large.
+PlaneState referencePlane(const std::string& name, const Feature& feature,
+                          const Document& document, const BodyStates& bodies) {
     PlaneState state;
-    kernel::Plane base;
-    if (feature.reference == "XY" || feature.reference == "XZ" || feature.reference == "YZ") {
-        base = feature.reference == "XY"   ? kernel::planeXY()
-               : feature.reference == "XZ" ? kernel::planeXZ()
-                                           : kernel::planeYZ();
+    if (name == "XY" || name == "XZ" || name == "YZ") {
+        state.plane = name == "XY"   ? kernel::planeXY()
+                      : name == "XZ" ? kernel::planeXZ()
+                                     : kernel::planeYZ();
         // Drawn over the model, as large as the model, where there is one.
-        state.center = base.origin;
+        state.center = state.plane.origin;
         std::optional<kernel::BoundingBox> all;
         for (const auto& entry : bodies) {
             const auto box = kernel::boundingBox(entry.second.shape);
@@ -687,46 +686,177 @@ PlaneState placePlane(const Feature& feature, const Document& document, const Bo
             const double dz = all->max.z - all->min.z;
             state.size = std::max(state.size, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
         }
-    } else {
-        const auto found = bodies.find(feature.body);
-        const Body* body = document.findBody(feature.body);
-        if (found == bodies.end() || found->second.shape.isNull()) {
-            throw FeatureFailure(body != nullptr
-                                     ? "The body it is placed on, " + body->name +
-                                           ", does not exist at this point in the timeline."
-                                     : std::string("The body it is placed on is gone."));
-        }
-        const int index = kernel::findFace(found->second, feature.reference);
-        if (index < 0) {
-            throw FeatureFailure("The face it is placed on no longer exists: " +
-                                 describeName(document, feature.reference) + ".");
-        }
-        const kernel::Shape face =
-            kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, index);
-        const auto plane = kernel::planeOfFace(face);
-        if (!plane.has_value()) {
-            throw FeatureFailure("The face it is placed on, " +
-                                 describeName(document, feature.reference) + ", is not flat.");
-        }
-        base = *plane;
-        const auto box = kernel::boundingBox(face);
-        if (box.has_value()) {
-            state.center = {(box->min.x + box->max.x) / 2.0, (box->min.y + box->max.y) / 2.0,
-                            (box->min.z + box->max.z) / 2.0};
-            const double dx = box->max.x - box->min.x;
-            const double dy = box->max.y - box->min.y;
-            const double dz = box->max.z - box->min.z;
-            state.size = std::max(20.0, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
-        }
+        return state;
     }
-    const kernel::Vector& n = base.normal;
-    const double d = feature.distance;
-    base.origin = {base.origin.x + n.x * d, base.origin.y + n.y * d, base.origin.z + n.z * d};
-    // The middle, dropped onto the plane where it now is.
-    const kernel::Point& c = state.center;
-    const double above =
-        (c.x - base.origin.x) * n.x + (c.y - base.origin.y) * n.y + (c.z - base.origin.z) * n.z;
-    state.center = {c.x - above * n.x, c.y - above * n.y, c.z - above * n.z};
+    if (name.rfind("plane:", 0) == 0) {
+        ObjectId id;
+        try {
+            id = ObjectId{std::stoull(name.substr(6))};
+        } catch (const std::exception&) {
+            throw FeatureFailure("The plane it is placed against is not a plane.");
+        }
+        const Feature* other = document.findFeature(id);
+        const auto found = document.planeState(id);
+        if (other == nullptr || !found.has_value() || id == feature.id) {
+            throw FeatureFailure(other != nullptr && id != feature.id
+                                     ? "The plane " + other->name +
+                                           " does not exist at this point in the timeline."
+                                     : std::string("The plane it is placed against is gone."));
+        }
+        return *found;
+    }
+    if (name.empty()) {
+        throw FeatureFailure("It has nothing to be placed against.");
+    }
+    const auto found = bodies.find(feature.body);
+    const Body* body = document.findBody(feature.body);
+    if (found == bodies.end() || found->second.shape.isNull()) {
+        throw FeatureFailure(body != nullptr
+                                 ? "The body it is placed on, " + body->name +
+                                       ", does not exist at this point in the timeline."
+                                 : std::string("The body it is placed on is gone."));
+    }
+    const int index = kernel::findFace(found->second, name);
+    if (index < 0) {
+        throw FeatureFailure("The face it is placed on no longer exists: " +
+                             describeName(document, name) + ".");
+    }
+    const kernel::Shape face = kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, index);
+    const auto plane = kernel::planeOfFace(face);
+    if (!plane.has_value()) {
+        throw FeatureFailure("The face it is placed on, " + describeName(document, name) +
+                             ", is not flat.");
+    }
+    state.plane = *plane;
+    state.center = plane->origin;
+    if (const auto box = kernel::boundingBox(face)) {
+        state.center = {(box->min.x + box->max.x) / 2.0, (box->min.y + box->max.y) / 2.0,
+                        (box->min.z + box->max.z) / 2.0};
+        const double dx = box->max.x - box->min.x;
+        const double dy = box->max.y - box->min.y;
+        const double dz = box->max.z - box->min.z;
+        state.size = std::max(20.0, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    return state;
+}
+
+namespace {
+
+double dot(const kernel::Vector& a, const kernel::Vector& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+kernel::Vector cross(const kernel::Vector& a, const kernel::Vector& b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+kernel::Vector scaled(const kernel::Vector& a, double k) {
+    return {a.x * k, a.y * k, a.z * k};
+}
+kernel::Vector plus(const kernel::Vector& a, const kernel::Vector& b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+kernel::Vector unitOf(const kernel::Vector& a) {
+    const double length = std::sqrt(dot(a, a));
+    return length > 1e-12 ? scaled(a, 1.0 / length) : a;
+}
+kernel::Vector between(const kernel::Point& from, const kernel::Point& to) {
+    return {to.x - from.x, to.y - from.y, to.z - from.z};
+}
+kernel::Point moved(const kernel::Point& p, const kernel::Vector& by) {
+    return {p.x + by.x, p.y + by.y, p.z + by.z};
+}
+
+// A direction in the plane square to the normal, kept as near to `toward` as can be.
+kernel::Vector inPlane(const kernel::Vector& normal, const kernel::Vector& toward) {
+    kernel::Vector x = plus(toward, scaled(normal, -dot(toward, normal)));
+    if (dot(x, x) < 1e-18) {
+        x = std::abs(normal.x) < 0.9 ? kernel::Vector{1.0, 0.0, 0.0} : kernel::Vector{0.0, 1.0, 0.0};
+        x = plus(x, scaled(normal, -dot(x, normal)));
+    }
+    return unitOf(x);
+}
+
+} // namespace
+
+PlaneState placePlane(const Feature& feature, const Document& document, const BodyStates& bodies) {
+    PlaneState state = referencePlane(feature.reference, feature, document, bodies);
+    kernel::Plane base = state.plane;
+    const auto dropCenter = [&state](const kernel::Plane& onto) {
+        const kernel::Vector& n = onto.normal;
+        const double above = dot(between(onto.origin, state.center), n);
+        state.center = moved(state.center, scaled(n, -above));
+    };
+    switch (feature.planeKind) {
+    case PlaneKind::Offset: {
+        if (!std::isfinite(feature.distance)) {
+            throw FeatureFailure("Its distance is not a number.");
+        }
+        base.origin = moved(base.origin, scaled(base.normal, feature.distance));
+        break;
+    }
+    case PlaneKind::AtAngle: {
+        if (!std::isfinite(feature.angle)) {
+            throw FeatureFailure("Its angle is not a number.");
+        }
+        kernel::NamedShape body;
+        if (const auto found = bodies.find(feature.body); found != bodies.end()) {
+            body = found->second;
+        }
+        const kernel::Axis axis = axisNamed(feature.reference2, body, document);
+        const kernel::Vector u = unitOf(axis.direction);
+        const kernel::Vector& n = base.normal;
+        // The axis has to lie across the plane's normal for a turn about it to mean anything.
+        const kernel::Vector across = plus(n, scaled(u, -dot(n, u)));
+        if (dot(across, across) < 1e-12) {
+            throw FeatureFailure("Its axis is square to the plane it turns from, so there is no "
+                                 "angle to turn by.");
+        }
+        // The plane through the axis that is square to the reference, turned by the angle:
+        // at 0 degrees it is the reference moved onto the axis.
+        const double a = feature.angle * pi / 180.0;
+        const kernel::Vector n0 = unitOf(across);
+        const kernel::Vector side = cross(u, n0);
+        const kernel::Vector normal = plus(scaled(n0, std::cos(a)), scaled(side, std::sin(a)));
+        base = kernel::makePlane(axis.origin, normal, inPlane(normal, u));
+        // Drawn by the axis, near where the reference was drawn.
+        const double along = dot(between(axis.origin, state.center), u);
+        state.center = moved(axis.origin, scaled(u, along));
+        break;
+    }
+    case PlaneKind::Midplane: {
+        const PlaneState other = referencePlane(feature.reference2, feature, document, bodies);
+        const kernel::Vector n1 = base.normal;
+        kernel::Vector n2 = other.plane.normal;
+        // Facing the same way, so that "halfway" means between them.
+        if (dot(n1, n2) < 0.0) {
+            n2 = scaled(n2, -1.0);
+        }
+        const double gap = dot(between(base.origin, other.plane.origin), n1);
+        const kernel::Vector line = cross(n1, n2);
+        if (dot(line, line) < 1e-12) {
+            if (std::abs(gap) < 1e-9) {
+                throw FeatureFailure("Its two planes are the same plane, so there is nothing to "
+                                     "be halfway between.");
+            }
+            base.origin = moved(base.origin, scaled(n1, gap / 2.0));
+        } else {
+            // Through the line where they meet, halving the angle between them.
+            const double d1 = dot(between({0.0, 0.0, 0.0}, base.origin), n1);
+            const double d2 = dot(between({0.0, 0.0, 0.0}, other.plane.origin), n2);
+            const double c = dot(n1, n2);
+            const double det = 1.0 - c * c;
+            const kernel::Vector p =
+                plus(scaled(n1, (d1 - d2 * c) / det), scaled(n2, (d2 - d1 * c) / det));
+            const kernel::Vector normal = unitOf(plus(n1, n2));
+            base = kernel::makePlane({p.x, p.y, p.z}, normal, inPlane(normal, unitOf(line)));
+        }
+        state.center = {(state.center.x + other.center.x) / 2.0,
+                        (state.center.y + other.center.y) / 2.0,
+                        (state.center.z + other.center.z) / 2.0};
+        state.size = std::max(state.size, other.size);
+        break;
+    }
+    }
+    dropCenter(base);
     state.plane = base;
     return state;
 }

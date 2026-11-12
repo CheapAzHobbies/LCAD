@@ -72,6 +72,20 @@ enum class Operation {
 [[nodiscard]] const char* toString(Operation operation);
 [[nodiscard]] std::optional<Operation> operationFromString(const std::string& name);
 
+/// How a construction plane is placed.
+enum class PlaneKind {
+    /// Parallel to `reference`, `distance` along its normal.
+    Offset,
+    /// Through the axis `reference2`, turned `angle` degrees about it from `reference`.
+    AtAngle,
+    /// Halfway between `reference` and `reference2`: between them if they are parallel, and
+    /// otherwise halving the angle between them, through the line where they meet.
+    Midplane,
+};
+
+[[nodiscard]] const char* toString(PlaneKind kind);
+[[nodiscard]] std::optional<PlaneKind> planeKindFromString(const std::string& name);
+
 /// What a hole looks like at the top.
 enum class HoleKind {
     Simple,
@@ -184,6 +198,8 @@ struct Feature {
     double spacing2 = 10.0;
     /// Plane: whether it is shown.
     bool visible = true;
+    /// Plane: how it is placed.
+    PlaneKind planeKind = PlaneKind::Offset;
     // Loft
     /// The sections after the first, in the order the loft goes through them.
     std::vector<LoftSection> sections;

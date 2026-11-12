@@ -2055,3 +2055,117 @@ TEST_CASE("A sweep moves an outline along the curves of another sketch", "[docum
     without.pathSketch = ObjectId{9999};
     CHECK_THROWS_AS(document.addFeature(without), std::invalid_argument);
 }
+
+TEST_CASE("Planes at an angle and midplanes", "[document][feature]") {
+    Document document;
+    // A plate 60 by 40 by 10 to put them on.
+    const ObjectId outline = document.addSketch("Outline", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {60.0, 40.0});
+    document.setSketchGeometry(outline, s, "Draw");
+    Feature pull;
+    pull.kind = FeatureKind::Pull;
+    pull.sketch = outline;
+    pull.distance = 10.0;
+    const ObjectId plate = document.addFeature(pull);
+    const ObjectId body = document.findFeature(plate)->body;
+    std::string top;
+    std::string bottom;
+    for (const std::string& name : document.findBody(body)->faceNames) {
+        if (name.find("/end/") != std::string::npos) {
+            top = name;
+        }
+        if (name.find("/start/") != std::string::npos) {
+            bottom = name;
+        }
+    }
+    REQUIRE(!top.empty());
+    REQUIRE(!bottom.empty());
+
+    // The XY plane turned 30 degrees about the X axis.
+    Feature tilted;
+    tilted.kind = FeatureKind::Plane;
+    tilted.planeKind = PlaneKind::AtAngle;
+    tilted.reference = "XY";
+    tilted.reference2 = "X";
+    tilted.angle = 30.0;
+    const ObjectId angled = document.addFeature(tilted);
+    CHECK(document.featureError(angled).empty());
+    auto state = document.planeState(angled);
+    REQUIRE(state.has_value());
+    CHECK_THAT(std::abs(state->plane.normal.z), WithinAbs(std::cos(pi / 6.0), 1e-9));
+    CHECK_THAT(std::abs(state->plane.normal.y), WithinAbs(std::sin(pi / 6.0), 1e-9));
+    CHECK_THAT(state->plane.normal.x, WithinAbs(0.0, 1e-9));
+    // It goes through the axis.
+    CHECK_THAT(state->plane.origin.y * state->plane.normal.y +
+                   state->plane.origin.z * state->plane.normal.z,
+               WithinAbs(0.0, 1e-9));
+    // 90 degrees about Z is not a turn at all for the XY plane: Z is square to it.
+    tilted = *document.findFeature(angled);
+    tilted.reference2 = "Z";
+    document.changeFeature(angled, tilted);
+    CHECK_THAT(document.featureError(angled), ContainsSubstring("square"));
+    document.undo();
+
+    // Halfway between the top and the bottom of the plate.
+    Feature middle;
+    middle.kind = FeatureKind::Plane;
+    middle.planeKind = PlaneKind::Midplane;
+    middle.body = body;
+    middle.reference = bottom;
+    middle.reference2 = top;
+    const ObjectId mid = document.addFeature(middle);
+    CHECK(document.featureError(mid).empty());
+    state = document.planeState(mid);
+    REQUIRE(state.has_value());
+    CHECK_THAT(std::abs(state->plane.normal.z), WithinAbs(1.0, 1e-9));
+    CHECK_THAT(state->plane.origin.z, WithinAbs(5.0, 1e-9));
+
+    // It follows the plate: twice as thick, and the midplane is at 10.
+    Feature thicker = *document.findFeature(plate);
+    thicker.distance = 20.0;
+    document.changeFeature(plate, thicker);
+    CHECK_THAT(document.planeState(mid)->plane.origin.z, WithinAbs(10.0, 1e-9));
+
+    // Between two planes that meet: XY and the angled one, halving the 30 degrees.
+    Feature halving;
+    halving.kind = FeatureKind::Plane;
+    halving.planeKind = PlaneKind::Midplane;
+    halving.reference = "XY";
+    halving.reference2 = "plane:" + std::to_string(angled.value);
+    const ObjectId half = document.addFeature(halving);
+    CHECK(document.featureError(half).empty());
+    CHECK_THAT(std::abs(document.planeState(half)->plane.normal.z),
+               WithinAbs(std::cos(pi / 12.0), 1e-9));
+    // The same plane twice is nothing to be halfway between.
+    halving.reference2 = "XY";
+    document.changeFeature(half, halving);
+    CHECK_THAT(document.featureError(half), ContainsSubstring("same plane"));
+    document.undo();
+    CHECK(document.featureError(half).empty());
+
+    // An offset from another construction plane.
+    Feature above;
+    above.kind = FeatureKind::Plane;
+    above.reference = "plane:" + std::to_string(mid.value);
+    above.distance = 7.0;
+    const ObjectId over = document.addFeature(above);
+    CHECK(document.featureError(over).empty());
+    // Along the midplane's normal, which is the bottom face's: downward.
+    const double expected = 10.0 + 7.0 * document.planeState(mid)->plane.normal.z;
+    CHECK_THAT(document.planeState(over)->plane.origin.z, WithinAbs(expected, 1e-9));
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("planes.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    for (const auto& warning : loaded.warnings) {
+        UNSCOPED_INFO(warning);
+    }
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(angled)->planeKind == PlaneKind::AtAngle);
+    CHECK(loaded.document->findFeature(mid)->reference2 == top);
+    CHECK_THAT(loaded.document->planeState(mid)->plane.origin.z, WithinAbs(10.0, 1e-9));
+    CHECK_THAT(loaded.document->planeState(over)->plane.origin.z, WithinAbs(expected, 1e-9));
+}

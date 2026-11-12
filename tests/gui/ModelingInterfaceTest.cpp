@@ -105,6 +105,7 @@ private slots:
     void edgesArePickedInTheViewForAFilletOrChamfer();
     void shellAndRevolveWork();
     void loftAndSweepWork();
+    void planesAtAnAngleAndMidplanes();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
@@ -839,6 +840,78 @@ void ModelingInterfaceTest::loftAndSweepWork() {
     window.viewport()->fitAll();
     render(window);
     lcad::test::keepFrame(window.grab().toImage(), "loft-and-sweep");
+}
+
+void ModelingInterfaceTest::planesAtAnAngleAndMidplanes() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    // At an angle: the XY plane turned 30 degrees about the X axis, chosen in the panel.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* angled = panel(window);
+    QVERIFY(angled != nullptr);
+    auto* second = angled->findChild<QComboBox*>(QStringLiteral("planeSecond"));
+    QVERIFY(second != nullptr);
+    QVERIFY(!second->isVisible());
+    angled->setChoice(QStringLiteral("planeKind"), 1);
+    QVERIFY(second->isVisible());
+    QCOMPARE(second->currentText(), QStringLiteral("X Axis"));
+    QVERIFY(!angled->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))->isVisible());
+    typeInto(angled, "angle", 30.0);
+    QCOMPARE(angled->feature().planeKind, lcad::document::PlaneKind::AtAngle);
+    QTRY_VERIFY2(angled->errorText().isEmpty(), qPrintable(angled->errorText()));
+    QTest::mouseClick(okButton(angled), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId tilted = window.document()->features().back().id;
+    const auto tilt = window.document()->planeState(tilted);
+    QVERIFY(tilt.has_value());
+    QVERIFY(nearly(std::abs(tilt->plane.normal.z), std::cos(pi / 6.0)));
+
+    // An edge clicked in the 3D view is the axis to turn about.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* byEdge = panel(window);
+    QVERIFY(byEdge != nullptr);
+    byEdge->setChoice(QStringLiteral("planeKind"), 1);
+    click(window, at(window, 30.0, 0.0, 8.0));
+    QVERIFY2(byEdge->feature().reference2.find('|') != std::string::npos,
+             byEdge->feature().reference2.c_str());
+    QCOMPARE(byEdge->feature().body, bodyOf(window, plate).id);
+    QTRY_VERIFY2(byEdge->errorText().isEmpty(), qPrintable(byEdge->errorText()));
+    QTest::keyClick(byEdge, Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // Midplane: the top of the plate clicked, and the XY plane, which its bottom lies in.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* middle = panel(window);
+    QVERIFY(middle != nullptr);
+    middle->setChoice(QStringLiteral("planeKind"), 2);
+    second = middle->findChild<QComboBox*>(QStringLiteral("planeSecond"));
+    QVERIFY(second->isVisible());
+    click(window, at(window, 30.0, 20.0, 8.0));
+    QVERIFY(middle->feature().reference.find("/end/") != std::string::npos);
+    QCOMPARE(middle->feature().body, bodyOf(window, plate).id);
+    middle->setChoice(QStringLiteral("planeSecond"), 0);
+    QCOMPARE(middle->feature().reference2, std::string("XY"));
+    QTRY_VERIFY2(middle->errorText().isEmpty(), qPrintable(middle->errorText()));
+    QTest::mouseClick(okButton(middle), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId mid = window.document()->features().back().id;
+    QVERIFY(nearly(window.document()->planeState(mid)->plane.origin.z, 4.0));
+
+    // Editing it shows what it is.
+    QVERIFY(window.editFeature(mid));
+    FeaturePanel* edited = panel(window);
+    QVERIFY(edited != nullptr);
+    QCOMPARE(edited->findChild<QComboBox*>(QStringLiteral("planeKind"))->currentIndex(), 2);
+    QCOMPARE(edited->feature().reference2, std::string("XY"));
+    QTest::keyClick(edited, Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
 }
 
 void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {
