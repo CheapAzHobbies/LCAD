@@ -142,8 +142,15 @@ Each piece becomes a body of its own, and the features after it work on them as 
 choose the body in the panel and click the others in the 3D view. They are used up, unless you
 check **Keep the bodies used**.
 
-**Move/Copy Body** moves the body you click along X, Y, and Z and then turns it about an axis, or
-with **Make a moved copy** leaves it where it is and makes a moved copy as a body of its own.
+**Move/Copy Body** scales the body you click about its middle, moves it along X, Y, and Z, and
+then turns it about an axis, or with **Make a moved copy** leaves it where it is and makes a
+moved copy as a body of its own.
+
+**Chamfer** takes a second distance, **Other side**, for a bevel that is not even: the first
+distance is along one face at each edge and the second along the other. 0 makes both the same.
+
+**Edit > Repeat**, also at the top of the menu a right-click opens in the 3D view, starts the
+last tool or feature again.
 
 ## Changing faces directly
 
@@ -420,8 +427,9 @@ nothing selected, X switches what the drawing tools make.
 While drawing, LCAD lines things up and holds them so, with a mark by the pointer to say how:
 
 - A click on a point, the origin among them, joins it there (a square mark); on the middle of a
-  line or an arc, holds it there (a triangle); on a curve, holds it on the curve (a cross); where
-  two curves cross, holds it on both (a circled cross).
+  line or an arc, holds it there (a triangle); on a curve, holds it on the curve (a cross), and
+  at the right, top, left, or bottom of a circle or an arc, exactly there; where two curves
+  cross, holds it on both (a circled cross).
 - A line drawn nearly level or upright is made horizontal or vertical. One drawn nearly parallel
   or square to another line is made parallel (∥) or perpendicular (⊥) to it, and that line is
   lit; one that goes on from the end of an arc nearly the way it goes is made tangent (◠).

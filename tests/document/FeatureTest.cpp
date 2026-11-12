@@ -2481,3 +2481,33 @@ TEST_CASE("A box made of surfaces and a thickened wall", "[document][feature]") 
     CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(sides)->shape),
                WithinRel(1000.0, 1e-6));
 }
+
+TEST_CASE("A body scaled about its middle", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 20.0, 10.0);
+    Document& document = made.document;
+    const ObjectId plate = document.addFeature(pullOf(made.outline, 10.0));
+    const ObjectId body = document.findFeature(plate)->body;
+    Feature grow;
+    grow.kind = FeatureKind::MoveBody;
+    grow.body = body;
+    grow.scale = 2.0;
+    const ObjectId grown = document.addFeature(grow);
+    CHECK(document.featureError(grown).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape), WithinRel(8.0 * 2000.0, 1e-9));
+    // About its middle: it still is where it was.
+    const auto box = lcad::kernel::boundingBox(document.findBody(body)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT((box->min.x + box->max.x) / 2.0, WithinAbs(10.0, 1e-9));
+    CHECK_THAT(box->max.x - box->min.x, WithinAbs(40.0, 1e-9));
+    grow = *document.findFeature(grown);
+    grow.scale = 0.0;
+    document.changeFeature(grown, grow);
+    CHECK_THAT(document.featureError(grown), ContainsSubstring("scale"));
+    document.undo();
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("scale.lcad");
+    saveDocument(document, path);
+    CHECK_THAT(loadDocument(path).document->findFeature(grown)->scale, WithinAbs(2.0, 1e-12));
+}

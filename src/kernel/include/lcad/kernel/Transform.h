@@ -17,6 +17,10 @@ namespace lcad::kernel {
 /// Throws std::invalid_argument when a distance is not finite.
 [[nodiscard]] Shape translated(const Shape& shape, double dx, double dy, double dz);
 
+/// `shape` made `factor` times as large about `about`. Its faces are numbered as they were.
+/// Throws std::invalid_argument for a factor that is not more than zero.
+[[nodiscard]] Shape scaled(const Shape& shape, const Point& about, double factor);
+
 /// Where a part sits within what it is part of: its own origin and its own X, Y, and Z, given
 /// in the coordinates of that larger whole. The three directions are of unit length, square to
 /// each other, and right-handed, so a placement turns and moves without stretching or

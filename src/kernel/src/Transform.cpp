@@ -2,6 +2,8 @@
 
 #include <lcad/kernel/Transform.h>
 
+#include <BRepBuilderAPI_Transform.hxx>
+
 #include <lcad/kernel/occt/Guard.h>
 #include <lcad/kernel/occt/PlacementAccess.h>
 #include <lcad/kernel/occt/ShapeAccess.h>
@@ -71,6 +73,19 @@ Point fromOcct(const gp_Pnt& point) {
 }
 
 } // namespace
+
+Shape scaled(const Shape& shape, const Point& about, double factor) {
+    if (!std::isfinite(factor) || factor <= 0.0) {
+        throw std::invalid_argument("scaled: the factor has to be more than zero");
+    }
+    if (shape.isNull()) {
+        return shape;
+    }
+    gp_Trsf trsf;
+    trsf.SetScale(gp_Pnt(about.x, about.y, about.z), factor);
+    // Copied: a scale cannot be kept as a location, as a move can.
+    return occt::wrap(BRepBuilderAPI_Transform(occt::unwrap(shape), trsf, Standard_True).Shape());
+}
 
 Shape translated(const Shape& shape, double dx, double dy, double dz) {
     if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dz)) {

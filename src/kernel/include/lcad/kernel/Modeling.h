@@ -188,10 +188,11 @@ enum class Combination {
 [[nodiscard]] NamedShape fillet(const NamedShape& body, const std::vector<int>& edges,
                                 double radius, const std::string& tag);
 
-/// Bevels the edges with the given numbers by `distance` on each side. The new faces are named
-/// as by fillet().
+/// Bevels the edges with the given numbers by `distance` on each side, or, with `distance2`
+/// more than 0, by `distance` on the first face at each edge and `distance2` on the other. The
+/// new faces are named as by fillet().
 [[nodiscard]] NamedShape chamfer(const NamedShape& body, const std::vector<int>& edges,
-                                 double distance, const std::string& tag);
+                                 double distance, const std::string& tag, double distance2 = 0.0);
 
 /// Hollows a solid out, leaving walls of `thickness`, open at the faces with the given numbers.
 /// The inside of a face is named `tag`/inner/<a number made from the face's name>.

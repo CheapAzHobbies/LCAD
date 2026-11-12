@@ -655,9 +655,16 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["move"] = {feature.moveX, feature.moveY, feature.moveZ};
         out["copy"] = feature.copy;
         out["reference"] = feature.reference;
+        if (feature.scale != 1.0) {
+            out["scale"] = feature.scale;
+        }
     }
     if (feature.kind == FeatureKind::Pipe) {
         out["wall"] = feature.wall;
+    }
+    // A chamfer of two distances.
+    if (feature.kind == FeatureKind::Chamfer && feature.size2 != 0.0) {
+        out["size2"] = feature.size2;
     }
     if (feature.kind == FeatureKind::Coil || feature.kind == FeatureKind::Thread) {
         out["pitch"] = feature.pitch;
@@ -834,10 +841,16 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
         feature.moveY = move[1].get<double>();
         feature.moveZ = move[2].get<double>();
         feature.copy = boolMember(entry, "copy", where, path);
+        if (entry.contains("scale")) {
+            feature.scale = numberMember(entry, "scale", where, path);
+        }
         feature.reference = stringMember(entry, "reference", where, path);
     }
     if (feature.kind == FeatureKind::Pipe) {
         feature.wall = numberMember(entry, "wall", where, path);
+    }
+    if (feature.kind == FeatureKind::Chamfer && entry.contains("size2")) {
+        feature.size2 = numberMember(entry, "size2", where, path);
     }
     if (feature.kind == FeatureKind::Coil || feature.kind == FeatureKind::Thread) {
         feature.pitch = numberMember(entry, "pitch", where, path);

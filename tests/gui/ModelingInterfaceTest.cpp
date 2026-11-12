@@ -110,6 +110,7 @@ private slots:
     void combineMovePipeCoilAndThread();
     void aSectionCutsTheView();
     void surfacesArePulledPatchedStitchedAndThickened();
+    void theLastCommandCanBeRepeated();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
@@ -1196,6 +1197,27 @@ void ModelingInterfaceTest::surfacesArePulledPatchedStitchedAndThickened() {
     QTRY_VERIFY(panel(window) == nullptr);
     const double volume = lcad::kernel::volume(window.document()->findBody(walls)->shape);
     QVERIFY2(volume > 300.0 && volume < 600.0, qPrintable(QString::number(volume)));
+}
+
+void ModelingInterfaceTest::theLastCommandCanBeRepeated() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.commands()->refresh();
+    // The pull was the last.
+    QVERIFY(action(window, "edit.repeat")->text().contains(QStringLiteral("Pull")));
+    QVERIFY(trigger(window, "solid.fillet"));
+    QVERIFY(panel(window) != nullptr);
+    QTest::keyClick(panel(window), Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.commands()->refresh();
+    QVERIFY(action(window, "edit.repeat")->isEnabled());
+    QVERIFY(action(window, "edit.repeat")->text().contains(QStringLiteral("Fillet")));
+    QVERIFY(trigger(window, "edit.repeat"));
+    QVERIFY(panel(window) != nullptr);
+    QCOMPARE(panel(window)->kind(), lcad::document::FeatureKind::Fillet);
 }
 
 void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {

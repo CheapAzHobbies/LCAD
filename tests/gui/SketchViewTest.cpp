@@ -2002,6 +2002,25 @@ void SketchViewTest::linesLineUpWithOtherLinesAndCrossings() {
     QVERIFY(apart(sketch().position(points[0].id), {20.0, -40.0}) < 1e-6);
     QVERIFY(has(ConstraintKind::PointOnLine, points[0].id, flat.id));
     QVERIFY(has(ConstraintKind::PointOnLine, points[0].id, upright.id));
+
+    // Near the top of a circle: exactly there, and held on the circle.
+    Sketch round = sketch();
+    const EntityId ring = round.addCircle({100.0, -60.0}, 10.0);
+    m_document->setSketchGeometry(m_sketch, round, "Circle");
+    render();
+    editor()->setTool(SketchTool::Point);
+    click(at(100.6, -50.4));
+    const Entity top = [this] {
+        Entity last;
+        for (const Entity& e : sketch().entities()) {
+            if (e.kind == EntityKind::Point && e.owner == 0 && e.id != sketch().origin()) {
+                last = e;
+            }
+        }
+        return last;
+    }();
+    QVERIFY(apart(sketch().position(top.id), {100.0, -50.0}) < 1e-6);
+    QVERIFY(has(ConstraintKind::PointOnCircle, top.id, ring));
 }
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {

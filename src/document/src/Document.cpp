@@ -1196,6 +1196,8 @@ Feature Document::resolved(const Feature& feature) const {
         {"pitch", "pitch"},
         {"turns", "turns"},
         {"section", "section"},
+        {"size2", "second distance"},
+        {"scale", "scale"},
     };
     Feature result = feature;
     for (const auto& [field, expression] : feature.expressions) {
@@ -1258,6 +1260,10 @@ Feature Document::resolved(const Feature& feature) const {
             result.turns = value;
         } else if (field == "section") {
             result.section = value;
+        } else if (field == "size2") {
+            result.size2 = value;
+        } else if (field == "scale") {
+            result.scale = value;
         }
     }
     return result;

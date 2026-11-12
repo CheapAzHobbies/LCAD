@@ -1355,7 +1355,7 @@ NamedShape fillet(const NamedShape& body, const std::vector<int>& edges, double 
 }
 
 NamedShape chamfer(const NamedShape& body, const std::vector<int>& edges, double distance,
-                   const std::string& tag) {
+                   const std::string& tag, double distance2) {
     if (edges.empty()) {
         throw std::invalid_argument("chamfer: there are no edges to bevel");
     }
@@ -1364,9 +1364,21 @@ NamedShape chamfer(const NamedShape& body, const std::vector<int>& edges, double
     }
     return occt::guarded("chamfer", [&] {
         const TopTools_IndexedMapOfShape all = mapOf(occt::unwrap(body.shape), TopAbs_EDGE);
+        if (!std::isfinite(distance2) || distance2 < 0.0) {
+            throw std::invalid_argument("chamfer: the second distance must not be negative");
+        }
         BRepFilletAPI_MakeChamfer maker(occt::unwrap(body.shape));
+        TopTools_IndexedDataMapOfShapeListOfShape faces;
+        TopExp::MapShapesAndAncestors(occt::unwrap(body.shape), TopAbs_EDGE, TopAbs_FACE, faces);
         for (const int edge : edges) {
-            maker.Add(distance, edgeAt(all, edge, "chamfer"));
+            const TopoDS_Edge chosen = edgeAt(all, edge, "chamfer");
+            if (distance2 > 1e-7 && faces.Contains(chosen) && !faces.FindFromKey(chosen).IsEmpty()) {
+                // Measured from the first face at the edge, and the other on the other face.
+                maker.Add(distance, distance2, chosen,
+                          TopoDS::Face(faces.FindFromKey(chosen).First()));
+            } else {
+                maker.Add(distance, chosen);
+            }
         }
         const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
         maker.Build(stoppable->Start());

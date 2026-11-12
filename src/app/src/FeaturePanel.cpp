@@ -352,6 +352,14 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
             box->setValue(0.0);
         }
         m_moveX->setToolTip(tr("How far to move it along each axis."));
+        {
+            QDoubleSpinBox* scale =
+                addField(QStringLiteral("scale"), tr("Scale"), 0.0001, 10000.0, tr("×"));
+            scale->setDecimals(4);
+            scale->setValue(1.0);
+            scale->setToolTip(tr("How many times as large, about the middle of the body, before "
+                                 "it is moved."));
+        }
         m_turnAxis = new QComboBox(this);
         m_turnAxis->setObjectName(QStringLiteral("turnAxis"));
         m_turnAxis->setToolTip(tr("The axis to turn it about, after it is moved."));
@@ -419,10 +427,16 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_size = addField(QStringLiteral("size"), tr("Radius"), 0.0, largestInput, tr(" mm"));
         m_size->setValue(2.0);
         break;
-    case FeatureKind::Chamfer:
+    case FeatureKind::Chamfer: {
         m_size = addField(QStringLiteral("size"), tr("Distance"), 0.0, largestInput, tr(" mm"));
         m_size->setValue(1.0);
+        QDoubleSpinBox* other =
+            addField(QStringLiteral("size2"), tr("Other side"), 0.0, largestInput, tr(" mm"));
+        other->setValue(0.0);
+        other->setToolTip(tr("The distance on the other face at each edge. 0 makes both sides "
+                             "the same."));
         break;
+    }
     case FeatureKind::Shell:
         m_size =
             addField(QStringLiteral("size"), tr("Wall thickness"), 0.0, largestInput, tr(" mm"));
@@ -1131,6 +1145,9 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
     if (m_size != nullptr) {
         m_size->setValue(feature.size);
     }
+    if (auto* other = findChild<QDoubleSpinBox*>(QStringLiteral("size2"))) {
+        other->setValue(feature.size2);
+    }
     if (feature.kind == FeatureKind::OffsetFace || feature.kind == FeatureKind::MoveFace) {
         // An existing feature's direction is what the user chose.
         m_directionChosen = feature.kind == FeatureKind::MoveFace;
@@ -1172,6 +1189,7 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
             m_body->setCurrentIndex(index);
         }
         m_copy->setChecked(feature.copy);
+        findChild<QDoubleSpinBox*>(QStringLiteral("scale"))->setValue(feature.scale);
         m_moveX->setValue(feature.moveX);
         m_moveY->setValue(feature.moveY);
         m_moveZ->setValue(feature.moveZ);
@@ -1627,6 +1645,7 @@ void FeaturePanel::readFields() {
             m_feature.body = chosen;
             m_feature.tools.clear();
         }
+        m_feature.scale = findChild<QDoubleSpinBox*>(QStringLiteral("scale"))->value();
         m_feature.moveX = m_moveX->value();
         m_feature.moveY = m_moveY->value();
         m_feature.moveZ = m_moveZ->value();
@@ -1668,6 +1687,9 @@ void FeaturePanel::readFields() {
     }
     if (m_size != nullptr) {
         m_feature.size = m_size->value();
+    }
+    if (auto* other = findChild<QDoubleSpinBox*>(QStringLiteral("size2"))) {
+        m_feature.size2 = other->value();
     }
     if (m_path != nullptr) {
         const document::ObjectId chosen{
