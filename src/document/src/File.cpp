@@ -589,6 +589,12 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["reference"] = feature.reference;
         out["visible"] = feature.visible;
     }
+    // A plane at an angle or a midplane: written only for those, so that offset planes read
+    // as they did.
+    if (feature.kind == FeatureKind::Plane && feature.planeKind != PlaneKind::Offset) {
+        out["planeKind"] = toString(feature.planeKind);
+        out["reference2"] = feature.reference2;
+    }
     // A revolve about an origin axis or a construction axis; the direction of a face moved.
     if ((feature.kind == FeatureKind::Revolve && !feature.reference.empty()) ||
         feature.kind == FeatureKind::MoveFace) {
@@ -703,6 +709,15 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     if (feature.kind == FeatureKind::Plane || feature.kind == FeatureKind::Axis) {
         feature.reference = stringMember(entry, "reference", where, path);
         feature.visible = boolMember(entry, "visible", where, path);
+    }
+    if (feature.kind == FeatureKind::Plane && entry.contains("planeKind")) {
+        const std::string planeKind = stringMember(entry, "planeKind", where, path);
+        const auto known = planeKindFromString(planeKind);
+        if (!known.has_value()) {
+            damaged(path, where + " is a plane of the unknown kind \"" + planeKind + "\"");
+        }
+        feature.planeKind = *known;
+        feature.reference2 = stringMember(entry, "reference2", where, path);
     }
     if ((feature.kind == FeatureKind::Revolve && entry.contains("reference")) ||
         feature.kind == FeatureKind::MoveFace) {

@@ -74,6 +74,9 @@ public:
     /// the direction, or the axis. `description` says what it is, for the list.
     void setPickedReference(document::ObjectId body, const std::string& name,
                             const QString& description);
+    /// Plane at an angle: a straight edge of a body, by name, picked to turn about.
+    void setPickedEdge(document::ObjectId body, const std::string& name,
+                       const QString& description);
 
     /// Whether what the feature needs has been picked.
     [[nodiscard]] bool hasInput() const;
@@ -112,6 +115,8 @@ private:
     void fillAxes();
     void fillSources();
     void fillReferences();
+    /// Plane: the axes it can turn about, or the planes it can be halfway to.
+    void fillPlaneSecond();
     /// Adds the construction planes or axes there are at this point in the timeline to a list.
     void addConstruction(QComboBox* box, document::FeatureKind kind) const;
     void fillSketches();
@@ -158,6 +163,12 @@ private:
     document::ObjectId m_pickedBody;
     // Sweep
     QComboBox* m_path = nullptr;
+    // Plane: how it is placed, and its second reference: the axis it turns about, or the plane
+    // it is halfway to. What was picked in the 3D view for that.
+    QComboBox* m_planeKind = nullptr;
+    QComboBox* m_planeSecond = nullptr;
+    std::string m_secondName;
+    QString m_secondDescription;
     // Hole
     QComboBox* m_sketch = nullptr;
     QComboBox* m_holeKind = nullptr;

@@ -109,6 +109,27 @@ std::optional<Operation> operationFromString(const std::string& name) {
     return std::nullopt;
 }
 
+const char* toString(PlaneKind kind) {
+    switch (kind) {
+    case PlaneKind::Offset:
+        return "Offset";
+    case PlaneKind::AtAngle:
+        return "At Angle";
+    case PlaneKind::Midplane:
+        return "Midplane";
+    }
+    return "Offset";
+}
+
+std::optional<PlaneKind> planeKindFromString(const std::string& name) {
+    for (const PlaneKind kind : {PlaneKind::Offset, PlaneKind::AtAngle, PlaneKind::Midplane}) {
+        if (name == toString(kind)) {
+            return kind;
+        }
+    }
+    return std::nullopt;
+}
+
 std::vector<ObjectId> sketchesOf(const Feature& feature) {
     std::vector<ObjectId> sketches;
     const auto add = [&sketches](ObjectId id) {

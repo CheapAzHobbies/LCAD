@@ -263,18 +263,26 @@ its sketches when they change, and puts them away when it is made.
 
 ## Construction planes
 
-**Offset Plane** (under **Create**, and the plane button in the toolbar) adds a plane to sketch
-on: pick an origin plane in the panel,
-or click a flat face in the 3D view, and type how far from it. Planes are listed under
-**Construction** in the browser (uncheck to hide, double-click to move), and drawn in amber.
-To sketch on one, select it in the browser and click **New Sketch**, or click **New Sketch** and
-then the plane in the 3D view.
+**Construction Plane** (under **Create**, and the plane button in the toolbar) adds a plane to
+sketch on. Choose its **Type** in the panel:
+
+- **Offset:** pick an origin plane or another construction plane in the panel, or click a flat
+  face in the 3D view, and type how far from it.
+- **At Angle:** a plane through an axis, turned from a plane by the angle typed. Pick the axis
+  in the panel (an origin axis or a construction axis) or click a straight edge in the 3D view.
+- **Midplane:** halfway between two planes: click two flat faces, or pick planes in the panel.
+  If the two are not parallel, it halves the angle between them, through the line where they
+  meet.
+
+Planes are listed under **Construction** in the browser (uncheck to hide, double-click to
+change), and drawn in amber. To sketch on one, select it in the browser and click **New
+Sketch**, or click **New Sketch** and then the plane in the 3D view.
 
 A sketch drawn on a construction plane, or started on a flat face of a body, follows it: move
 the plane or change the body, and the sketch and what was made from it move too.
 
-**Axis** (under **Create**, and the plane button in the toolbar) adds a construction axis: pick an origin axis in the panel, or click
-a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
+**Axis** (under **Create**, and the plane button in the toolbar) adds a construction axis: pick
+an origin axis in the panel, or click a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
 listed under **Construction** too and drawn as dashed amber lines. A revolve can turn about one,
 and a pattern go along or around one; when the edge or face it runs along moves, the axis and
 what uses it follow.
