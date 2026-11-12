@@ -2,6 +2,8 @@
 
 #include <lcad/document/Feature.h>
 
+#include <algorithm>
+
 namespace lcad::document {
 
 namespace {
@@ -26,6 +28,8 @@ constexpr KindName kindNames[] = {
     {FeatureKind::MoveFace, "Move Face"},
     {FeatureKind::DeleteFace, "Delete Face"},
     {FeatureKind::Repair, "Repair"},
+    {FeatureKind::Loft, "Loft"},
+    {FeatureKind::Sweep, "Sweep"},
 };
 
 struct HoleKindName {
@@ -103,6 +107,21 @@ std::optional<Operation> operationFromString(const std::string& name) {
         }
     }
     return std::nullopt;
+}
+
+std::vector<ObjectId> sketchesOf(const Feature& feature) {
+    std::vector<ObjectId> sketches;
+    const auto add = [&sketches](ObjectId id) {
+        if (id.isValid() && std::find(sketches.begin(), sketches.end(), id) == sketches.end()) {
+            sketches.push_back(id);
+        }
+    };
+    add(feature.sketch);
+    for (const LoftSection& section : feature.sections) {
+        add(section.sketch);
+    }
+    add(feature.pathSketch);
+    return sketches;
 }
 
 } // namespace lcad::document

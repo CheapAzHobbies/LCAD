@@ -126,10 +126,12 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, or `Repair`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, or `Sweep`. |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
+| `sections` | A loft only: its sections after the first, in order, each `{"sketch", "region"}`: a sketch and one closed area of it, by the ids of the curves around it, sorted. The first section is the loft's `sketch` and the one area in its `regions`. |
+| `pathSketch` | A sweep only: the sketch whose curves, joined end to end, its `regions` are moved along. |
 | `operation` | `NewBody`, `Join`, `Cut`, or `Intersect`. |
 | `distance`, `distanceBack`, `symmetric` | How far a pull goes along the sketch's normal, how far the other way (0 for one side), and whether `distance` is split evenly to both sides. |
 | `axis`, `angle` | The sketch line a revolve turns about, and how far, in degrees. A circular pattern's `angle` too. |

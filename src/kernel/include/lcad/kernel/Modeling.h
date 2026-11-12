@@ -98,6 +98,22 @@ struct Region {
 [[nodiscard]] NamedShape revolve(const Plane& plane, const std::vector<Region>& regions,
                                  const Axis& axis, double angle, const std::string& tag);
 
+/// A solid through closed outlines, in order: from the first to the last, smoothly through
+/// those between. Each outline is a closed chain of curves in model space, usually in a plane of
+/// its own. The sides are named `tag`/side/<curve name> after the curves of the first outline,
+/// and the ends `tag`/start/<name> and `tag`/end/<name> as by pull(). Throws
+/// std::invalid_argument for fewer than two outlines, and kernel::Error if they cannot be
+/// joined into a solid.
+[[nodiscard]] NamedShape loft(const std::vector<std::vector<OutlineCurve>>& sections,
+                              const std::string& tag);
+
+/// Moves regions of a plane along a path: the edges of `path`, in model space, joined end to
+/// end into one chain, open or closed. The regions keep their place, so the path usually
+/// starts on them. Faces are named as by pull(). Throws kernel::Error if the edges do not join
+/// into one chain, or what is swept is not a valid solid.
+[[nodiscard]] NamedShape sweep(const Plane& plane, const std::vector<Region>& regions,
+                               const Shape& path, const std::string& tag);
+
 /// How two solids are combined.
 enum class Combination {
     Join,      ///< everything that is in either

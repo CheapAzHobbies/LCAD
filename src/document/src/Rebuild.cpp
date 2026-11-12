@@ -134,6 +134,48 @@ kernel::NamedShape madeBy(const Feature& feature, const Document& document,
         throw FeatureFailure("The sketch it was made from is gone.");
     }
     const std::vector<kernel::Region> regions = regionsOf(feature, *sketch);
+    if (feature.kind == FeatureKind::Loft) {
+        if (regions.size() != 1) {
+            throw FeatureFailure("Each section of a loft is one closed outline, and " +
+                                 sketch->name + " gives it " + std::to_string(regions.size()) +
+                                 ".");
+        }
+        if (feature.sections.empty()) {
+            throw FeatureFailure("A loft needs a second outline, on another sketch.");
+        }
+        const auto solidOnly = [](const kernel::Region& region, const std::string& name) {
+            if (!region.holes.empty()) {
+                throw FeatureFailure("The outline it goes through in " + name +
+                                     " has a hole in it. A loft takes outlines without holes; "
+                                     "cut the hole after it.");
+            }
+        };
+        solidOnly(regions.front(), sketch->name);
+        std::vector<std::vector<kernel::OutlineCurve>> outlines{regions.front().outer};
+        for (const LoftSection& section : feature.sections) {
+            const SketchItem* item = document.findSketch(section.sketch);
+            if (item == nullptr) {
+                throw FeatureFailure("A sketch it goes through is gone.");
+            }
+            Feature one;
+            one.regions = {section.region};
+            const std::vector<kernel::Region> found = regionsOf(one, *item);
+            solidOnly(found.front(), item->name);
+            outlines.push_back(found.front().outer);
+        }
+        return kernel::loft(outlines, tag);
+    }
+    if (feature.kind == FeatureKind::Sweep) {
+        const SketchItem* path = document.findSketch(feature.pathSketch);
+        if (path == nullptr) {
+            throw FeatureFailure("The sketch of its path is gone.");
+        }
+        const kernel::Shape curves = sketchShape(*path, SketchPart::Ordinary);
+        if (curves.isNull()) {
+            throw FeatureFailure("Its path, " + path->name + ", has no curves.");
+        }
+        return kernel::sweep(sketch->plane, regions, curves, tag);
+    }
     if (feature.kind == FeatureKind::Pull && !feature.extentFace.empty()) {
         const Body* target = document.findBody(feature.extentBody);
         const bool exists = target != nullptr && bodies != nullptr &&
@@ -755,6 +797,8 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
         switch (feature.kind) {
         case FeatureKind::Pull:
         case FeatureKind::Revolve:
+        case FeatureKind::Loft:
+        case FeatureKind::Sweep:
             return placed(feature, document, bodies, keep(madeBy(feature, document, &bodies)));
         case FeatureKind::Mirror:
         case FeatureKind::RectangularPattern:

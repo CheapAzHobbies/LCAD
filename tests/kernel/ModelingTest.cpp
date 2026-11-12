@@ -669,3 +669,54 @@ TEST_CASE("A pull can taper, and can go up to a face", "[kernel][modeling]") {
     through.xDirection = {1.0 / len, 0.0, 1.0 / len};
     CHECK_THROWS_AS(pullTo(planeXY(), square, through, "8"), Error);
 }
+
+TEST_CASE("A loft goes through outlines on planes of their own", "[kernel][modeling]") {
+    // A 20 by 20 square at the bottom, a 10 by 10 square 30 above it, centered over each other:
+    // a frustum of a pyramid.
+    const Plane top = makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0});
+    const std::vector<OutlineCurve> bottom = rectangle(planeXY(), -10.0, -10.0, 20.0, 20.0);
+    const std::vector<OutlineCurve> upper = rectangle(top, -5.0, -5.0, 10.0, 10.0, 5);
+    const NamedShape frustum = loft({bottom, upper}, "7");
+    CHECK(countTopology(frustum.shape).solids == 1);
+    // h/3 (A1 + A2 + sqrt(A1 A2)).
+    CHECK_THAT(volume(frustum.shape), WithinRel(30.0 / 3.0 * (400.0 + 100.0 + 200.0), 1e-6));
+    // Four sides, named after the first outline, and the two ends.
+    CHECK(asSet(frustum.faceNames) == std::set<std::string>{"7/side/1", "7/side/2", "7/side/3",
+                                                            "7/side/4", "7/start/1", "7/end/5"});
+
+    // A circle to a square, through a smaller circle.
+    const Plane middle = makePlane({0.0, 0.0, 15.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0});
+    const NamedShape blend =
+        loft({circle(planeXY(), 0.0, 0.0, 8.0, "a"), circle(middle, 0.0, 0.0, 4.0, "b"), upper},
+             "8");
+    CHECK(countTopology(blend.shape).solids == 1);
+    CHECK(volume(blend.shape) > 0.0);
+
+    CHECK_THROWS_AS(loft({bottom}, "7"), std::invalid_argument);
+    // Two outlines in the same place make nothing.
+    CHECK_THROWS(loft({bottom, bottom}, "7"));
+}
+
+TEST_CASE("A sweep moves an outline along a path", "[kernel][modeling]") {
+    // A 4 by 4 square in the XZ plane, moved along a straight line up Y and then a quarter turn.
+    const Region square{rectangle(planeXZ(), -2.0, -2.0, 4.0, 4.0), {}};
+    const Shape line = makeSegment({0.0, 0.0, 0.0}, {0.0, -25.0, 0.0});
+    const NamedShape bar = sweep(planeXZ(), {square}, line, "7");
+    CHECK(countTopology(bar.shape).solids == 1);
+    CHECK_THAT(volume(bar.shape), WithinRel(16.0 * 25.0, 1e-6));
+    CHECK(findFace(bar, "7/start/1") >= 0);
+    CHECK(findFace(bar, "7/end/1") >= 0);
+    CHECK(findFace(bar, "7/side/1") >= 0);
+
+    // Along a line and an arc joined at their ends, given in any order: Pappus again for the
+    // bend, of radius 20 about the Z axis through (20, -25).
+    const Shape bend = makeArcEdge(planeXY(), 20.0, -25.0, 0.0, -25.0, 20.0, -45.0);
+    const NamedShape elbow = sweep(planeXZ(), {square}, makeCompound({bend, line}), "8");
+    CHECK(countTopology(elbow.shape).solids == 1);
+    CHECK_THAT(volume(elbow.shape), WithinRel(16.0 * 25.0 + 16.0 * 20.0 * pi / 2.0, 1e-4));
+
+    // Curves that do not join make no path.
+    const Shape apart = makeSegment({50.0, 0.0, 0.0}, {60.0, 0.0, 0.0});
+    CHECK_THROWS_AS(sweep(planeXZ(), {square}, makeCompound({line, apart}), "7"), Error);
+    CHECK_THROWS_AS(sweep(planeXZ(), {}, line, "7"), std::invalid_argument);
+}

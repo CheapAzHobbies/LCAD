@@ -676,7 +676,8 @@ void Document::requireOwnComponent(ObjectId component, const char* function) con
 
 ObjectId Document::componentForFeature(const Feature& feature) const {
     const bool makes =
-        (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve) &&
+        (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
+         feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep) &&
         feature.operation == Operation::NewBody;
     if (!makes) {
         if (const Body* body = findBody(feature.body)) {
@@ -708,7 +709,8 @@ std::string Document::componentProblem(const Feature& feature) const {
                ": a feature works within one component.";
     };
     const bool makes =
-        (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve) &&
+        (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
+         feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep) &&
         feature.operation == Operation::NewBody;
     if (const Body* body = findBody(feature.body); body != nullptr && !makes) {
         if (!body->linkKey.empty()) {
@@ -718,9 +720,11 @@ std::string Document::componentProblem(const Feature& feature) const {
             return problem;
         }
     }
-    if (const SketchItem* sketch = findSketch(feature.sketch)) {
-        if (std::string problem = check(sketch->component, sketch->name); !problem.empty()) {
-            return problem;
+    for (const ObjectId id : sketchesOf(feature)) {
+        if (const SketchItem* sketch = findSketch(id)) {
+            if (std::string problem = check(sketch->component, sketch->name); !problem.empty()) {
+                return problem;
+            }
         }
     }
     if (const Body* limit = findBody(feature.extentBody)) {
@@ -1127,8 +1131,10 @@ ObjectId Document::makeComponent(std::string name, const std::vector<ObjectId>& 
             const Feature* feature = findFeature(id);
             take(constructionNamed(feature->reference));
             take(constructionNamed(feature->reference2));
-            if (const SketchItem* sketch = findSketch(feature->sketch)) {
-                sketches.insert(sketch->id);
+            for (const ObjectId used : sketchesOf(*feature)) {
+                if (const SketchItem* sketch = findSketch(used)) {
+                    sketches.insert(sketch->id);
+                }
             }
         }
         for (const SketchItem& sketch : m_sketches) {
@@ -1156,8 +1162,10 @@ ObjectId Document::makeComponent(std::string name, const std::vector<ObjectId>& 
                                             " belong to together.");
             }
         };
-        if (const SketchItem* sketch = findSketch(feature.sketch)) {
-            conflict(sketch->id, sketch->name);
+        for (const ObjectId id : sketchesOf(feature)) {
+            if (const SketchItem* sketch = findSketch(id)) {
+                conflict(sketch->id, sketch->name);
+            }
         }
         if (const Body* limit = findBody(feature.extentBody)) {
             conflict(limit->id, limit->name);
@@ -1350,6 +1358,10 @@ ObjectId Document::copyComponent(ObjectId occurrenceId) {
                     edit.feature.tag = detail::tagOf(*feature);
                     edit.feature.body = map(feature->body);
                     edit.feature.sketch = map(feature->sketch);
+                    edit.feature.pathSketch = map(feature->pathSketch);
+                    for (LoftSection& section : edit.feature.sections) {
+                        section.sketch = map(section.sketch);
+                    }
                     edit.feature.extentBody = map(feature->extentBody);
                     edit.feature.reference = remapped(feature->reference, ids);
                     edit.feature.reference2 = remapped(feature->reference2, ids);
