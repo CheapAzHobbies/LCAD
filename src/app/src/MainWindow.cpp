@@ -913,6 +913,22 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasSketch;
         m_commands->add(std::move(c));
 
+        c = make("solid.loft", tr("&Loft"), create,
+                 tr("Make a solid through closed areas of two or more sketches, in order"));
+        c.iconName = QStringLiteral("loft");
+        c.aliases = {tr("blend"), tr("transition"), tr("through sections"), tr("skin")};
+        c.run = [this](bool) { startFeature(FeatureKind::Loft); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
+        c = make("solid.sweep", tr("S&weep"), create,
+                 tr("Move closed areas of a sketch along the curves of another sketch"));
+        c.iconName = QStringLiteral("sweep");
+        c.aliases = {tr("pipe"), tr("along path"), tr("tube"), tr("follow path")};
+        c.run = [this](bool) { startFeature(FeatureKind::Sweep); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
         c = make("solid.mirror", tr("&Mirror"), create,
                  tr("Add the mirror image of features, or of a whole body, in a plane"));
         c.iconName = QStringLiteral("mirror");
@@ -1761,7 +1777,8 @@ void MainWindow::createTopBar() {
     }
 
     QMenu* create = m_menuBar->addMenu(tr("&Create"));
-    create->addActions({action("solid.pull"), action("solid.revolve"), action("solid.hole")});
+    create->addActions({action("solid.pull"), action("solid.revolve"), action("solid.loft"),
+                        action("solid.sweep"), action("solid.hole")});
     QMenu* pattern = create->addMenu(tr("&Pattern"));
     pattern->setObjectName(QStringLiteral("menu.pattern"));
     pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
@@ -1991,6 +2008,28 @@ void MainWindow::createToolbar() {
     for (const char* id : {"sketch.new", "solid.pull", "solid.revolve"}) {
         toolbar->addAction(action(id));
     }
+    // Loft and Sweep: buttons of their own while there is room, and in a narrow window one
+    // button that lists both. See fitToolbar().
+    for (const char* id : {"solid.loft", "solid.sweep"}) {
+        auto* button = new QToolButton(toolbar);
+        button->setObjectName(QLatin1String(id));
+        button->setDefaultAction(action(id));
+        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        m_shapeButtons.append(toolbar->addWidget(button));
+    }
+    auto* shapes = new QToolButton(toolbar);
+    shapes->setObjectName(QStringLiteral("shapesButton"));
+    shapes->setToolTip(tr("Loft, Sweep, and construction planes and axes"));
+    shapes->setPopupMode(QToolButton::InstantPopup);
+    shapes->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    shapes->setIcon(icon(QStringLiteral("loft")));
+    auto* shapesMenu = new QMenu(shapes);
+    shapesMenu->addActions({action("solid.loft"), action("solid.sweep")});
+    shapesMenu->addSeparator();
+    shapesMenu->addActions({action("construct.offsetPlane"), action("construct.axis")});
+    shapes->setMenu(shapesMenu);
+    m_shapesFolded = toolbar->addWidget(shapes);
+    m_shapesFolded->setVisible(false);
     auto* patterns = new QToolButton(toolbar);
     patterns->setObjectName(QStringLiteral("patternButton"));
     patterns->setToolTip(tr("Pattern and mirror"));
@@ -2013,7 +2052,7 @@ void MainWindow::createToolbar() {
     constructMenu->addActions({action("construct.offsetPlane"), action("construct.axis")});
     construct->setMenu(constructMenu);
     construct->setIcon(icon(QStringLiteral("plane")));
-    toolbar->addWidget(construct);
+    m_shapeButtons.append(toolbar->addWidget(construct));
     for (const char* id :
          {"create.box", "create.cylinder", "create.sphere", "create.cone", "create.torus"}) {
         toolbar->addAction(action(id));
@@ -2228,6 +2267,19 @@ void MainWindow::fitToolbar() {
     foldAssembly(false);
     if (wanted(m_modelToolbar) > width()) {
         foldAssembly(true);
+    }
+    // Then Loft, Sweep, and the construction button share one button.
+    const auto foldShapes = [this](bool folded) {
+        for (QAction* button : std::as_const(m_shapeButtons)) {
+            button->setVisible(!folded);
+        }
+        if (m_shapesFolded != nullptr) {
+            m_shapesFolded->setVisible(folded);
+        }
+    };
+    foldShapes(false);
+    if (wanted(m_modelToolbar) > width()) {
+        foldShapes(true);
     }
     // The commands most used keep their labels longest.
     if (wanted(m_modelToolbar) > width()) {
@@ -3334,7 +3386,8 @@ void MainWindow::deleteSelectedBodies() {
 namespace {
 
 bool usesProfiles(document::FeatureKind kind) {
-    return kind == document::FeatureKind::Pull || kind == document::FeatureKind::Revolve;
+    return kind == document::FeatureKind::Pull || kind == document::FeatureKind::Revolve ||
+           kind == document::FeatureKind::Loft || kind == document::FeatureKind::Sweep;
 }
 
 bool copiesFeatures(document::FeatureKind kind) {
@@ -3527,8 +3580,14 @@ bool MainWindow::editFeature(document::ObjectId id) {
     m_featurePanel->setFeature(feature);
     m_settingPicks = true;
     if (usesProfiles(feature.kind)) {
-        m_viewport->setProfileSketches(profileSketches(feature.sketch),
-                                       feature.kind == document::FeatureKind::Pull);
+        // Hidden sketches it is made from can be picked again too.
+        std::vector<document::ObjectId> sketches = profileSketches(feature.sketch);
+        for (const document::ObjectId used : document::sketchesOf(feature)) {
+            if (std::find(sketches.begin(), sketches.end(), used) == sketches.end()) {
+                sketches.push_back(used);
+            }
+        }
+        m_viewport->setProfileSketches(sketches, feature.kind == document::FeatureKind::Pull);
         std::vector<viewport::Profile> profiles;
         for (const viewport::Profile& profile : m_viewport->pickableProfiles()) {
             const bool used =
@@ -3536,6 +3595,14 @@ bool MainWindow::editFeature(document::ObjectId id) {
                                                      profile.outline) != feature.regions.end();
             if (profile.sketch == feature.sketch && used) {
                 profiles.push_back(profile);
+            }
+        }
+        // A loft's other sections, in order.
+        for (const document::LoftSection& section : feature.sections) {
+            for (const viewport::Profile& profile : m_viewport->pickableProfiles()) {
+                if (profile.sketch == section.sketch && profile.outline == section.region) {
+                    profiles.push_back(profile);
+                }
             }
         }
         m_viewport->setPickedProfiles(profiles);
@@ -3695,8 +3762,34 @@ void MainWindow::takeFeaturePicks() {
             }
             break;
         }
-        // All from one sketch: the one clicked last.
         std::vector<viewport::Profile> picked = m_viewport->pickedProfiles();
+        if (kind == document::FeatureKind::Loft) {
+            // One area of each sketch, in the order they were clicked: another of a sketch
+            // already in the loft takes that one's place.
+            std::vector<viewport::Profile> sections;
+            for (const viewport::Profile& profile : picked) {
+                const auto same = std::find_if(
+                    sections.begin(), sections.end(),
+                    [&profile](const viewport::Profile& p) { return p.sketch == profile.sketch; });
+                if (same != sections.end()) {
+                    *same = profile;
+                } else {
+                    sections.push_back(profile);
+                }
+            }
+            if (sections.size() != picked.size()) {
+                m_viewport->setPickedProfiles(sections);
+            }
+            std::vector<std::pair<document::ObjectId, std::vector<sketch::EntityId>>> taken;
+            for (const viewport::Profile& profile : sections) {
+                taken.emplace_back(profile.sketch, std::vector<sketch::EntityId>(
+                                                       profile.outline.begin(),
+                                                       profile.outline.end()));
+            }
+            m_featurePanel->setSections(taken);
+            return;
+        }
+        // All from one sketch: the one clicked last.
         if (picked.empty()) {
             m_featurePanel->setProfiles({}, {});
             return;
@@ -3948,7 +4041,10 @@ void MainWindow::acceptFeature() {
             const document::ObjectId id = document()->addFeature(feature);
             // The sketch has done its work, and its lines would only clutter the solid.
             if (usesProfiles(feature.kind) || feature.kind == document::FeatureKind::Hole) {
-                document()->setSketchVisible(feature.sketch, false);
+                // A loft's sections and a sweep's path too.
+                for (const document::ObjectId sketch : document::sketchesOf(feature)) {
+                    document()->setSketchVisible(sketch, false);
+                }
             }
             transaction.commit();
             m_timeline->setSelectedItem(id);

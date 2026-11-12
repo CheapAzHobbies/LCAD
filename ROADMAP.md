@@ -353,6 +353,22 @@ From trying the app. Branch `sketch-feedback`.
       toolbars, and no seam on round surfaces, drawn or picked.
 - [x] A navigation cube of 26 parts in place of OCCT's view cube.
 
+## Modeling and sketching, from use (2026-11-12)
+
+From trying the app. Branch `claude/ecstatic-franklin-iq9r7o`.
+
+- [x] Loft through closed outlines of two or more sketches, in the order they are clicked.
+- [x] Sweep closed outlines along the curves of another sketch.
+- [x] Offset Plane and Axis on the toolbar, not only in the Create menu.
+- [x] A sketch point dragged onto another point, the origin among them, or onto a curve joins it.
+- [x] A dimension's value can be dragged elsewhere, and stays there.
+- [x] Midpoint makes a point at the middle of a line or an arc with one click on it.
+- [x] Fillet in the sketch: a corner of two lines rounded with a tangent arc and its radius.
+
+Left for later: loft sections with holes, guide rails and a center line for a loft, twist and
+scale along a sweep, picking single curves as a sweep's path, and a sketch fillet between a line
+and an arc.
+
 ## Phase 7: Advanced capabilities (2028-01-16 onward)
 
 Surface modeling, sheet metal, advanced mesh repair, advanced assembly motion, rendering, simulation

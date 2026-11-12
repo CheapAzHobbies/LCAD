@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -77,6 +78,10 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Delete Face");
     case FeatureKind::Repair:
         return FeaturePanel::tr("Repair");
+    case FeatureKind::Loft:
+        return FeaturePanel::tr("Loft");
+    case FeatureKind::Sweep:
+        return FeaturePanel::tr("Sweep");
     }
     return {};
 }
@@ -96,7 +101,8 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
 
     m_form = new QFormLayout;
     layout->addLayout(m_form);
-    const bool fromSketch = kind == FeatureKind::Pull || kind == FeatureKind::Revolve;
+    const bool fromSketch = kind == FeatureKind::Pull || kind == FeatureKind::Revolve ||
+                            kind == FeatureKind::Loft || kind == FeatureKind::Sweep;
     if (fromSketch) {
         m_operation = new QComboBox(this);
         m_operation->setObjectName(QStringLiteral("operation"));
@@ -211,6 +217,17 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_form->addRow(tr("Axis"), m_axis);
         m_angle = addField(QStringLiteral("angle"), tr("Angle"), -360.0, 360.0, tr("°"));
         m_angle->setValue(360.0);
+        break;
+    case FeatureKind::Sweep:
+        m_path = new QComboBox(this);
+        m_path->setObjectName(QStringLiteral("path"));
+        m_path->setToolTip(tr("The sketch whose curves the outline moves along. They have to "
+                              "join end to end, and usually start on the outline."));
+        connect(m_path, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Path"), m_path);
+        fillPaths();
+        break;
+    case FeatureKind::Loft:
         break;
     case FeatureKind::Fillet:
         m_size = addField(QStringLiteral("size"), tr("Radius"), 0.0, largestInput, tr(" mm"));
@@ -544,6 +561,33 @@ void FeaturePanel::setPickedReference(document::ObjectId body, const std::string
     readFields();
 }
 
+void FeaturePanel::fillPaths() {
+    if (m_path == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_path);
+    m_path->clear();
+    for (const document::SketchItem& sketch : m_document->sketches()) {
+        if (sketch.id != m_feature.sketch) {
+            m_path->addItem(QString::fromStdString(sketch.name),
+                            QVariant::fromValue<qulonglong>(sketch.id.value));
+        }
+    }
+    int index = m_path->findData(QVariant::fromValue<qulonglong>(m_feature.pathSketch.value));
+    if (index < 0) {
+        // A path is usually open, so a sketch with no closed outline is the likeliest one; and
+        // of those, the one drawn last.
+        for (int i = m_path->count() - 1; i >= 0 && index < 0; --i) {
+            const document::SketchItem* sketch =
+                m_document->findSketch(document::ObjectId{m_path->itemData(i).toULongLong()});
+            if (sketch != nullptr && sketch->geometry.profiles().empty()) {
+                index = i;
+            }
+        }
+    }
+    m_path->setCurrentIndex(index >= 0 ? index : m_path->count() - 1);
+}
+
 void FeaturePanel::fillSketches() {
     if (m_sketch == nullptr) {
         return;
@@ -809,6 +853,7 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         }
     }
     fillAxes();
+    fillPaths();
     for (ExpressionBox* box : findChildren<ExpressionBox*>()) {
         const auto expression = feature.expressions.find(box->objectName().toStdString());
         box->setExpression(expression == feature.expressions.end()
@@ -829,6 +874,25 @@ void FeaturePanel::setProfiles(document::ObjectId sketch,
     }
     if (newSketch) {
         fillAxes();
+        fillPaths();
+    }
+    readFields();
+}
+
+void FeaturePanel::setSections(
+    const std::vector<std::pair<document::ObjectId, std::vector<sketch::EntityId>>>& sections) {
+    m_feature.sketch = {};
+    m_feature.regions.clear();
+    m_feature.sections.clear();
+    for (const auto& [sketch, outline] : sections) {
+        std::vector<sketch::EntityId> curves = outline;
+        std::sort(curves.begin(), curves.end());
+        if (!m_feature.sketch.isValid()) {
+            m_feature.sketch = sketch;
+            m_feature.regions = {curves};
+        } else {
+            m_feature.sections.push_back(document::LoftSection{sketch, curves});
+        }
     }
     readFields();
 }
@@ -899,6 +963,12 @@ bool FeaturePanel::hasInput() const {
         return !m_feature.reference.empty();
     case FeatureKind::Hole:
         return m_feature.sketch.isValid() && m_feature.body.isValid();
+    case FeatureKind::Loft:
+        return m_feature.sketch.isValid() && m_feature.regions.size() == 1 &&
+               !m_feature.sections.empty();
+    case FeatureKind::Sweep:
+        return m_feature.sketch.isValid() && !m_feature.regions.empty() &&
+               m_feature.pathSketch.isValid();
     }
     return false;
 }
@@ -1081,6 +1151,10 @@ void FeaturePanel::readFields() {
     if (m_size != nullptr) {
         m_feature.size = m_size->value();
     }
+    if (m_path != nullptr) {
+        m_feature.pathSketch = document::ObjectId{
+            m_path->count() > 0 ? m_path->currentData().toULongLong() : 0};
+    }
     // Values worked out from parameters, of the boxes that are in use.
     for (const ExpressionBox* box : findChildren<ExpressionBox*>()) {
         const std::string field = box->objectName().toStdString();
@@ -1109,6 +1183,40 @@ void FeaturePanel::updatePicked() {
                 (count == 1 ? tr("1 area of %1 picked.") : tr("%1 areas of %2 picked.").arg(count))
                     .arg(QString::fromStdString(sketch->name)) +
                 QLatin1Char(' ') + tr("Click an area to pick it or let it go.");
+        }
+        break;
+    }
+    case FeatureKind::Loft: {
+        const std::size_t count = m_feature.sketch.isValid() ? m_feature.sections.size() + 1 : 0;
+        if (count == 0) {
+            text = tr("Click a closed area of a sketch in the 3D view, then one of another "
+                      "sketch, such as one on an offset plane. The loft goes through them in "
+                      "the order they are clicked.");
+        } else {
+            QStringList names;
+            for (const document::ObjectId id : document::sketchesOf(m_feature)) {
+                if (const document::SketchItem* sketch = m_document->findSketch(id)) {
+                    names.push_back(QString::fromStdString(sketch->name));
+                }
+            }
+            text = (count == 1 ? tr("Through %1. Click an area of another sketch to go on to it.")
+                               : tr("Through %1, in that order. Click an area of another sketch "
+                                    "to go on to it, or a picked one to let it go."))
+                       .arg(names.join(QStringLiteral(" → ")));
+        }
+        break;
+    }
+    case FeatureKind::Sweep: {
+        const document::SketchItem* sketch = m_document->findSketch(m_feature.sketch);
+        if (sketch == nullptr || m_feature.regions.empty()) {
+            text = tr("Click the closed areas of a sketch in the 3D view to sweep them, and "
+                      "choose the sketch of the path below.");
+        } else {
+            const std::size_t count = m_feature.regions.size();
+            text =
+                (count == 1 ? tr("1 area of %1 picked.") : tr("%1 areas of %2 picked.").arg(count))
+                    .arg(QString::fromStdString(sketch->name)) +
+                QLatin1Char(' ') + tr("It moves along the curves of the path below.");
         }
         break;
     }

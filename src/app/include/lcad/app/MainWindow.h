@@ -514,6 +514,10 @@ private:
     /// The toolbar's buttons for New Component and Joint, which a narrow window puts away: the
     /// assembly list beside them has both.
     QList<QAction*> m_assemblyButtons;
+    /// Loft, Sweep, and the construction planes and axes: buttons of their own, and one that
+    /// lists them all for a narrow window.
+    QList<QAction*> m_shapeButtons;
+    QAction* m_shapesFolded = nullptr;
     QToolButton* m_finishButton = nullptr;
     QLabel* m_selectionLabel = nullptr;
     QLabel* m_commandLabel = nullptr;

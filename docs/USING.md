@@ -247,9 +247,24 @@ one was. Expressions take units (mm, cm, m, in, ft for lengths; deg, rad for ang
 and ^, parentheses, and sqrt, abs, sin, cos, tan, asin, acos, atan, min, max, round, floor, ceil,
 and pi.
 
+**Loft** makes a solid through closed areas of two or more sketches, usually each on an offset
+plane of its own: click an area of the first sketch in the 3D view, then one of the next, and so
+on. The loft goes through them in the order they are clicked; click a picked one again to let
+it go, or another area of the same sketch to take its place. A square to a circle, or a large
+outline to a small one, both work. Each area has to be an outline without holes in it.
+
+**Sweep** moves closed areas of a sketch along a path: the curves of another sketch, which have
+to join end to end, open or closed. Click the areas in the 3D view and choose the path's sketch
+under **Path** (a sketch with no closed outline is offered first). The areas stay where they
+are, so draw the path starting on them, for instance on a plane through the profile's center.
+
+Like a pull, a loft or a sweep makes a body of its own or joins, cuts, or intersects one, follows
+its sketches when they change, and puts them away when it is made.
+
 ## Construction planes
 
-**Offset Plane** (under **Create**) adds a plane to sketch on: pick an origin plane in the panel,
+**Offset Plane** (under **Create**, and the plane button in the toolbar) adds a plane to sketch
+on: pick an origin plane in the panel,
 or click a flat face in the 3D view, and type how far from it. Planes are listed under
 **Construction** in the browser (uncheck to hide, double-click to move), and drawn in amber.
 To sketch on one, select it in the browser and click **New Sketch**, or click **New Sketch** and
@@ -258,7 +273,7 @@ then the plane in the 3D view.
 A sketch drawn on a construction plane, or started on a flat face of a body, follows it: move
 the plane or change the body, and the sketch and what was made from it move too.
 
-**Axis** (under **Create**) adds a construction axis: pick an origin axis in the panel, or click
+**Axis** (under **Create**, and the plane button in the toolbar) adds a construction axis: pick an origin axis in the panel, or click
 a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
 listed under **Construction** too and drawn as dashed amber lines. A revolve can turn about one,
 and a pattern go along or around one; when the edge or face it runs along moves, the axis and

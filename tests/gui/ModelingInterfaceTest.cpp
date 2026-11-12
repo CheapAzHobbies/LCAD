@@ -104,6 +104,7 @@ private slots:
     void aFailingFeatureSaysWhy();
     void edgesArePickedInTheViewForAFilletOrChamfer();
     void shellAndRevolveWork();
+    void loftAndSweepWork();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
@@ -748,6 +749,96 @@ void ModelingInterfaceTest::shellAndRevolveWork() {
     QVERIFY(nearly(volumeOf(window, ring), pi * (400.0 - 100.0) * 20.0, 1e-5));
     QCOMPARE(window.document()->bodies().size(), std::size_t{2});
     Q_UNUSED(body);
+}
+
+void ModelingInterfaceTest::loftAndSweepWork() {
+    MainWindow window;
+    show(window);
+    // A 20 by 20 square on the XY plane, and a circle of radius 5 on a plane 30 above it.
+    const ObjectId base = window.document()->addSketch("Base", lcad::kernel::planeXY());
+    lcad::sketch::Sketch square = window.document()->findSketch(base)->geometry;
+    lcad::sketch::addRectangle(square, {-10.0, -10.0}, {10.0, 10.0});
+    window.document()->setSketchGeometry(base, square, "Rectangle");
+    const ObjectId top = window.document()->addSketch(
+        "Top", lcad::kernel::makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch round = window.document()->findSketch(top)->geometry;
+    round.addCircle({0.0, 0.0}, 5.0);
+    window.document()->setSketchGeometry(top, round, "Circle");
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    QVERIFY(action(window, "solid.loft") != nullptr);
+    QVERIFY(trigger(window, "solid.loft"));
+    FeaturePanel* loft = panel(window);
+    QVERIFY(loft != nullptr);
+    QCOMPARE(loft->kind(), lcad::document::FeatureKind::Loft);
+    QVERIFY(!okButton(loft)->isEnabled());
+    // The square, then the circle: the order they are clicked is the order of the loft.
+    const QPoint onSquare = at(window, 8.0, -8.0, 0.0);
+    const QPoint onCircle = at(window, 0.0, 0.0, 30.0);
+    QVERIFY(window.viewport()->profileAt(onSquare).has_value());
+    QCOMPARE(window.viewport()->profileAt(onSquare)->sketch, base);
+    QCOMPARE(window.viewport()->profileAt(onCircle)->sketch, top);
+    click(window, onSquare);
+    QCOMPARE(loft->feature().sketch, base);
+    QVERIFY(loft->feature().sections.empty());
+    QVERIFY(!okButton(loft)->isEnabled());
+    click(window, onCircle);
+    QCOMPARE(loft->feature().sections.size(), std::size_t{1});
+    QCOMPARE(loft->feature().sections.front().sketch, top);
+    QVERIFY(loft->findChild<QLabel*>(QStringLiteral("featureInput"))
+                ->text()
+                .contains(QStringLiteral("Base")));
+    QTRY_VERIFY(loft->errorText().isEmpty());
+    QVERIFY(okButton(loft)->isEnabled());
+    QTest::mouseClick(okButton(loft), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId lofted = window.document()->features().back().id;
+    QCOMPARE(window.document()->findFeature(lofted)->kind, lcad::document::FeatureKind::Loft);
+    const double volume = volumeOf(window, lofted);
+    QVERIFY(volume < 400.0 * 30.0);
+    QVERIFY(volume > pi * 25.0 * 30.0);
+    // Its sketches have done their work and are put away.
+    QVERIFY(!window.document()->findSketch(base)->visible);
+    QVERIFY(!window.document()->findSketch(top)->visible);
+
+    // Sweep: a circle on the XZ plane well away from the loft, along a line from its center.
+    const ObjectId profile = window.document()->addSketch("Profile", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch disc = window.document()->findSketch(profile)->geometry;
+    disc.addCircle({100.0, 10.0}, 2.0);
+    window.document()->setSketchGeometry(profile, disc, "Circle");
+    const ObjectId path = window.document()->addSketch(
+        "Path", lcad::kernel::makePlane({0.0, 0.0, 10.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch line = window.document()->findSketch(path)->geometry;
+    line.addLine({100.0, 0.0}, {100.0, -40.0});
+    window.document()->setSketchGeometry(path, line, "Line");
+    window.viewport()->fitAll();
+    render(window);
+    QVERIFY(trigger(window, "solid.sweep"));
+    FeaturePanel* sweep = panel(window);
+    QVERIFY(sweep != nullptr);
+    // The sketch without a closed outline is taken as the path.
+    auto* paths = sweep->findChild<QComboBox*>(QStringLiteral("path"));
+    QVERIFY(paths != nullptr);
+    QCOMPARE(sweep->feature().pathSketch, path);
+    const std::vector<lcad::viewport::Profile> pickable = window.viewport()->pickableProfiles();
+    const auto disk = std::find_if(pickable.begin(), pickable.end(),
+                                   [profile](const auto& p) { return p.sketch == profile; });
+    QVERIFY(disk != pickable.end());
+    window.viewport()->setPickedProfiles({*disk});
+    sweep->setProfiles(profile, {disk->outline});
+    QCOMPARE(sweep->feature().operation, Operation::NewBody);
+    QTRY_VERIFY2(sweep->errorText().isEmpty(), qPrintable(sweep->errorText()));
+    QTest::mouseClick(okButton(sweep), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId swept = window.document()->features().back().id;
+    QCOMPARE(window.document()->findFeature(swept)->kind, lcad::document::FeatureKind::Sweep);
+    QVERIFY(nearly(volumeOf(window, swept), pi * 4.0 * 40.0, 1e-5));
+    QCOMPARE(window.document()->bodies().size(), std::size_t{2});
+    window.viewport()->fitAll();
+    render(window);
+    lcad::test::keepFrame(window.grab().toImage(), "loft-and-sweep");
 }
 
 void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {

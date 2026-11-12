@@ -9,6 +9,7 @@
 #include <QWidget>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 class QCheckBox;
@@ -50,6 +51,9 @@ public:
     /// Pull and revolve: the profiles, all of one sketch, each by the curves of its outline.
     void setProfiles(document::ObjectId sketch,
                      const std::vector<std::vector<sketch::EntityId>>& outlines);
+    /// Loft: the sections, in order, each a sketch and the curves of one outline of it.
+    void setSections(
+        const std::vector<std::pair<document::ObjectId, std::vector<sketch::EntityId>>>& sections);
     /// Fillet and chamfer: the edges, of one body, by name.
     void setEdges(document::ObjectId body, const std::vector<std::string>& edges);
     /// Shell: the faces to leave open, of one body, by name.
@@ -111,6 +115,8 @@ private:
     /// Adds the construction planes or axes there are at this point in the timeline to a list.
     void addConstruction(QComboBox* box, document::FeatureKind kind) const;
     void fillSketches();
+    /// Sweep: the sketches its path can be, every one but the profile's.
+    void fillPaths();
     /// Shows the boxes that go with the kind of hole.
     void showHoleFields();
     /// Reads the boxes into m_feature and shows or hides what depends on them.
@@ -150,6 +156,8 @@ private:
     std::string m_pickedName;
     QString m_pickedDescription;
     document::ObjectId m_pickedBody;
+    // Sweep
+    QComboBox* m_path = nullptr;
     // Hole
     QComboBox* m_sketch = nullptr;
     QComboBox* m_holeKind = nullptr;
