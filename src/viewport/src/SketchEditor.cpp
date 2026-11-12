@@ -344,6 +344,11 @@ public:
     int markerDragIndex = 0;
     double markerDragShift = 0.0;
     int markerDragSide = 0;
+    // A dimension's value being dragged: where it is now, from what it hangs on, and how far
+    // from the value's middle it was picked up.
+    ConstraintId labelDrag = 0;
+    std::optional<Point2> labelDragAt;
+    Point2 labelGrab;
     EntityId dragEntity = 0;
     // A point being dragged: what it would join if let go now, and what it cannot join because
     // it is already one with it or is its own curve.
@@ -525,38 +530,64 @@ public:
     }
 
     // Adds the lines and arrows of a distance between the points at `p1` and `p2` to `a`, and
-    // returns where its value goes.
-    QPointF drawDistance(Annotation& a, ConstraintKind kind, Point2 p1, Point2 p2) const {
+    // returns where its value goes: `placed` from the middle of the two points, if it was put
+    // somewhere, and otherwise a little way out.
+    QPointF drawDistance(Annotation& a, ConstraintKind kind, Point2 p1, Point2 p2,
+                         std::optional<Point2> placed = std::nullopt) const {
         const double mm = millimetersPerPixel();
         const double off = dimensionOffset * mm;
+        const Point2 mid = (p1 + p2) * 0.5;
         Point2 q1;
         Point2 q2;
+        Point2 label;
         if (kind == ConstraintKind::Distance) {
             // To the right of the way from the first point to the second, which is the outside
             // of an outline drawn counter-clockwise.
             const Point2 d = unit(p2 - p1);
             const Point2 n{d.y, -d.x};
-            q1 = p1 + n * off;
-            q2 = p2 + n * off;
+            const double across = placed ? placed->x * n.x + placed->y * n.y : off;
+            const double alongBy = placed ? placed->x * d.x + placed->y * d.y : 0.0;
+            q1 = p1 + n * across;
+            q2 = p2 + n * across;
+            label = mid + n * across + d * alongBy;
         } else if (kind == ConstraintKind::DistanceX) {
-            const double level = std::min(p1.y, p2.y) - off;
+            const double level = placed ? mid.y + placed->y : std::min(p1.y, p2.y) - off;
             q1 = {p1.x, level};
             q2 = {p2.x, level};
+            label = {placed ? mid.x + placed->x : mid.x, level};
         } else {
-            const double level = std::max(p1.x, p2.x) + off;
+            const double level = placed ? mid.x + placed->x : std::max(p1.x, p2.x) + off;
             q1 = {level, p1.y};
             q2 = {level, p2.y};
+            label = {level, placed ? mid.y + placed->y : mid.y};
         }
         const auto line = [this, &a](Point2 from, Point2 to) {
             a.lines.moveTo(toWidget(from));
             a.lines.lineTo(toWidget(to));
         };
-        line(p1, q1 + unit(q1 - p1) * (5.0 * mm));
-        line(p2, q2 + unit(q2 - p2) * (5.0 * mm));
+        // The extension lines, unless the dimension lies on what it measures.
+        if (apart(p1, q1) > 1e-9) {
+            line(p1, q1 + unit(q1 - p1) * (5.0 * mm));
+        }
+        if (apart(p2, q2) > 1e-9) {
+            line(p2, q2 + unit(q2 - p2) * (5.0 * mm));
+        }
         line(q1, q2);
+        // A value put beyond an end: the dimension line goes on to it.
+        const Point2 span = q2 - q1;
+        const double length2 = span.x * span.x + span.y * span.y;
+        if (length2 > 1e-18) {
+            const double t =
+                ((label.x - q1.x) * span.x + (label.y - q1.y) * span.y) / length2;
+            if (t < 0.0) {
+                line(q1, label);
+            } else if (t > 1.0) {
+                line(q2, label);
+            }
+        }
         a.arrows.push_back(arrowAt(toWidget(q1), toWidget(q2)));
         a.arrows.push_back(arrowAt(toWidget(q2), toWidget(q1)));
-        return (toWidget(q1) + toWidget(q2)) / 2.0;
+        return toWidget(label);
     }
 
     // Which distance a value put at `placedAt` asks for between the points at `a` and `b`:
@@ -767,6 +798,8 @@ public:
                 continue;
             }
 
+            // Where its value was put, if it was: being dragged, or as kept.
+            const std::optional<Point2> placed = c.id == labelDrag ? labelDragAt : c.label;
             QPointF labelAt;
             switch (c.kind) {
             case ConstraintKind::Distance:
@@ -775,7 +808,8 @@ public:
                 if (second == nullptr) {
                     continue;
                 }
-                labelAt = drawDistance(a, c.kind, g.position(c.first), g.position(c.second));
+                labelAt = drawDistance(a, c.kind, g.position(c.first), g.position(c.second),
+                                       placed);
                 a.text = formatValue(c.value);
                 break;
             }
@@ -796,6 +830,11 @@ public:
                 a.arrows.push_back(arrowAt(toWidget(p), toWidget(onLine)));
                 a.arrows.push_back(arrowAt(toWidget(onLine), toWidget(p)));
                 labelAt = (toWidget(p) + toWidget(onLine)) / 2.0;
+                if (placed) {
+                    const Point2 middle = (p + onLine) * 0.5;
+                    line(a.lines, middle, middle + *placed);
+                    labelAt = toWidget(middle + *placed);
+                }
                 a.text = formatValue(c.value);
                 break;
             }
@@ -810,7 +849,9 @@ public:
                                          ? stroke.from + stroke.sweep / 2.0
                                      : first->kind == EntityKind::Ellipse ? stroke.from
                                                                           : 0.25 * pi;
-                const Point2 out = direction(angle);
+                // Toward its value, if that was put somewhere.
+                const Point2 out =
+                    placed && norm(*placed) > 1e-9 ? unit(*placed) : direction(angle);
                 const Point2 rim = stroke.center + out * stroke.radius;
                 const Point2 from = c.kind == ConstraintKind::Radius
                                         ? stroke.center
@@ -828,6 +869,13 @@ public:
                 const QPointF away = beyond - rimAt;
                 const double length = std::max(std::hypot(away.x(), away.y()), 1e-6);
                 labelAt = beyond + away / length * (metrics.horizontalAdvance(a.text) / 2.0 + 8.0);
+                if (placed) {
+                    const Point2 at = stroke.center + *placed;
+                    if (norm(*placed) > stroke.radius) {
+                        line(a.lines, rim, at);
+                    }
+                    labelAt = toWidget(at);
+                }
                 break;
             }
             case ConstraintKind::Angle: {
@@ -846,7 +894,9 @@ public:
                     corner = a1 + d1 * ((between.x * d2.y - between.y * d2.x) / denominator);
                 }
                 const double start = std::atan2(d1.y, d1.x);
-                const double radius = 34.0 * mm;
+                // Through its value, if that was put somewhere.
+                const double radius =
+                    placed ? std::max(norm(*placed) - 6.0 * mm, 6.0 * mm) : 34.0 * mm;
                 const int pieces = 24;
                 for (int i = 0; i <= pieces; ++i) {
                     const QPointF at =
@@ -857,8 +907,9 @@ public:
                         a.lines.lineTo(at);
                     }
                 }
-                labelAt =
-                    toWidget(corner + direction(start + c.value / 2.0) * (radius + 18.0 * mm));
+                labelAt = placed ? toWidget(corner + *placed)
+                                 : toWidget(corner + direction(start + c.value / 2.0) *
+                                                         (radius + 18.0 * mm));
                 a.text = formatValue(std::abs(c.value) * 180.0 / pi) + QStringLiteral("°");
                 break;
             }
@@ -1702,9 +1753,11 @@ public:
                 pending.clear();
                 break;
             }
-            // The same line or arc clicked again: a new point goes on its middle.
-            if (constraintKind == ConstraintKind::Midpoint && pending.size() == 1 &&
-                pending.front() == hover && g.find(hover)->kind != EntityKind::Point) {
+            // A line or an arc clicked first: a new point goes on its middle at once. A point
+            // clicked first goes to the middle of the curve clicked next.
+            const EntityKind hoverKind = g.find(hover)->kind;
+            if (constraintKind == ConstraintKind::Midpoint && pending.empty() &&
+                (hoverKind == EntityKind::Line || hoverKind == EntityKind::Arc)) {
                 const EntityId curve = hover;
                 pending.clear();
                 addMiddlePoint(curve);
@@ -1882,8 +1935,8 @@ public:
         case ConstraintKind::Concentric:
             return tr("Concentric takes two circles or arcs.");
         case ConstraintKind::Midpoint:
-            return tr("Midpoint takes a point and a line or an arc. Or click a line or an arc "
-                      "twice for a new point at its middle.");
+            return tr("Click a line or an arc for a new point at its middle, or a point and "
+                      "then a line or an arc to put the point there.");
         case ConstraintKind::Symmetric:
             return tr("Symmetric takes two points and the line between them.");
         case ConstraintKind::Fix:
@@ -2333,6 +2386,108 @@ public:
         }
         shift = std::clamp(shift, -0.5, 0.5);
         markerDragShift = std::abs(shift) * length < markerCenterReach * mm ? 0.0 : shift;
+        update();
+    }
+
+    // What a dimension's value is placed from: the middle of a distance, the center of a circle
+    // or an arc, the corner of an angle. See Constraint::label.
+    [[nodiscard]] std::optional<Point2> labelAnchor(const Constraint& c) const {
+        const sketch::Sketch& g = geometry();
+        const Entity* first = g.find(c.first);
+        const Entity* second = g.find(c.second);
+        if (first == nullptr) {
+            return std::nullopt;
+        }
+        switch (c.kind) {
+        case ConstraintKind::Distance:
+        case ConstraintKind::DistanceX:
+        case ConstraintKind::DistanceY:
+            if (second == nullptr) {
+                return std::nullopt;
+            }
+            return (g.position(c.first) + g.position(c.second)) * 0.5;
+        case ConstraintKind::PointLineDistance: {
+            if (second == nullptr || second->kind != EntityKind::Line) {
+                return std::nullopt;
+            }
+            const Point2 p = g.position(c.first);
+            const Point2 s = g.position(second->start);
+            const Point2 d = unit(g.position(second->end) - s);
+            const Point2 onLine = s + d * ((p.x - s.x) * d.x + (p.y - s.y) * d.y);
+            return (p + onLine) * 0.5;
+        }
+        case ConstraintKind::Radius:
+        case ConstraintKind::Diameter:
+            if (first->kind == EntityKind::Point || first->kind == EntityKind::Line) {
+                return std::nullopt;
+            }
+            return strokeOf(g, *first).center;
+        case ConstraintKind::Angle: {
+            if (second == nullptr || first->kind != EntityKind::Line ||
+                second->kind != EntityKind::Line) {
+                return std::nullopt;
+            }
+            const Point2 a1 = g.position(first->start);
+            const Point2 d1 = g.position(first->end) - a1;
+            const Point2 a2 = g.position(second->start);
+            const Point2 d2 = g.position(second->end) - a2;
+            const double denominator = d1.x * d2.y - d1.y * d2.x;
+            if (std::abs(denominator) <= 1e-12) {
+                return (a1 + a2) * 0.5;
+            }
+            const Point2 between = a2 - a1;
+            return a1 + d1 * ((between.x * d2.y - between.y * d2.x) / denominator);
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    // Picks up a dimension's value where the pointer was pressed on it.
+    bool startLabelDrag() {
+        const Constraint* c = geometry().findConstraint(pressHit.constraint);
+        if (c == nullptr || !sketch::isDimension(c->kind) || !labelAnchor(*c).has_value()) {
+            return false;
+        }
+        const auto at = toSketch(pressPosition);
+        if (!at.has_value()) {
+            return false;
+        }
+        for (const Annotation& a : layout()) {
+            if (a.id == c->id) {
+                if (const auto middle = toSketch(a.rect.center())) {
+                    labelGrab = *at - *middle;
+                }
+                break;
+            }
+        }
+        labelDrag = c->id;
+        labelDragAt = c->label;
+        return true;
+    }
+
+    void dragLabelTo(const QPointF& position) {
+        const Constraint* c = geometry().findConstraint(labelDrag);
+        const auto at = toSketch(position);
+        if (c == nullptr || !at.has_value()) {
+            return;
+        }
+        if (const auto anchor = labelAnchor(*c)) {
+            labelDragAt = *at - labelGrab - *anchor;
+        }
+        update();
+    }
+
+    void finishLabelDrag(bool keep) {
+        const ConstraintId id = labelDrag;
+        const std::optional<Point2> at = labelDragAt;
+        labelDrag = 0;
+        labelDragAt.reset();
+        if (keep && at.has_value() && geometry().findConstraint(id) != nullptr) {
+            sketch::Sketch next = geometry();
+            next.setConstraintLabel(id, at);
+            commit(std::move(next), tr("Move Dimension"));
+        }
         update();
     }
 
@@ -2798,6 +2953,9 @@ void SketchEditor::setTool(SketchTool tool) {
     if (m_impl->dragging) {
         m_impl->finishDrag(false);
     }
+    if (m_impl->labelDrag != 0) {
+        m_impl->finishLabelDrag(false);
+    }
     m_impl->pressed = false;
     m_impl->boxing = false;
     m_impl->resetTool();
@@ -2831,7 +2989,8 @@ sketch::ConstraintKind SketchEditor::constraintTool() const {
 }
 
 bool SketchEditor::canCancel() const {
-    return isActive() && (m_impl->field != nullptr || m_impl->dragging || !m_impl->clicks.empty() ||
+    return isActive() && (m_impl->field != nullptr || m_impl->dragging ||
+                          m_impl->labelDrag != 0 || !m_impl->clicks.empty() ||
                           !m_impl->pending.empty() || m_impl->tool != SketchTool::Select);
 }
 
@@ -2843,6 +3002,9 @@ void SketchEditor::cancel() {
         m_impl->closeField();
     } else if (m_impl->dragging) {
         m_impl->finishDrag(false);
+        m_impl->pressed = false;
+    } else if (m_impl->labelDrag != 0) {
+        m_impl->finishLabelDrag(false);
         m_impl->pressed = false;
     } else if (m_impl->tool == SketchTool::Spline && m_impl->clicks.size() >= 3) {
         // As Esc ends a line, it ends a spline, keeping what was drawn.
@@ -3470,6 +3632,8 @@ void SketchEditor::end() {
     m_impl->pressed = false;
     m_impl->boxing = false;
     m_impl->markerDrag = 0;
+    m_impl->labelDrag = 0;
+    m_impl->labelDragAt.reset();
     m_impl->shown = 0;
     m_impl->pinned = 0;
     m_impl->refused.clear();
@@ -3529,11 +3693,14 @@ void SketchEditor::mouseMove(const QPointF& position, Qt::MouseButtons buttons,
         return;
     }
     if (m_impl->pressed && buttons.testFlag(Qt::LeftButton)) {
-        if (!m_impl->dragging && !m_impl->boxing &&
+        if (!m_impl->dragging && !m_impl->boxing && m_impl->labelDrag == 0 &&
             (position - m_impl->pressPosition).manhattanLength() >=
                 QApplication::startDragDistance()) {
             if (m_impl->pressHit.entity != 0) {
                 m_impl->startDrag();
+            } else if (m_impl->pressHit.constraint != 0 && m_impl->pressHit.marker < 0 &&
+                       m_impl->startLabelDrag()) {
+                // A dimension's value, picked up to be put elsewhere.
             } else if (m_impl->pressHit.constraint == 0) {
                 m_impl->boxing = true;
             } else if (m_impl->pressHit.marker >= 0) {
@@ -3550,6 +3717,9 @@ void SketchEditor::mouseMove(const QPointF& position, Qt::MouseButtons buttons,
         }
         if (m_impl->markerDrag != 0) {
             m_impl->dragSymbolTo(position);
+        }
+        if (m_impl->labelDrag != 0) {
+            m_impl->dragLabelTo(position);
         }
         if (m_impl->boxing) {
             m_impl->boxEnd = position;
@@ -3575,6 +3745,11 @@ void SketchEditor::mouseRelease(const QPointF& position, Qt::KeyboardModifiers m
         modifiers.testFlag(Qt::ShiftModifier) || modifiers.testFlag(Qt::ControlModifier);
     if (m_impl->markerDrag != 0) {
         m_impl->finishSymbolDrag();
+        return;
+    }
+    if (m_impl->labelDrag != 0) {
+        m_impl->finishLabelDrag(true);
+        emit changed();
         return;
     }
     if (m_impl->dragging) {

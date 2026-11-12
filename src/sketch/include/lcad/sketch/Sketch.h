@@ -116,6 +116,10 @@ struct Constraint {
     /// And on which side: for a line +1 is left of the way it runs and -1 right, for a circle or
     /// an arc +1 is outside and -1 inside. 0 is where the symbol goes by itself.
     std::array<int, 2> markerSide{0, 0};
+    /// For a dimension whose value was moved: where the value is, in millimeters, from the
+    /// middle of what a distance measures, the center of a circle or an arc, or the corner of
+    /// an angle. It moves with the geometry. Nothing where the value goes by itself.
+    std::optional<Point2> label;
 };
 
 enum class SolveStatus {
@@ -242,6 +246,9 @@ public:
     /// Puts the symbol of a constraint elsewhere on the curve it hangs on: `index` is 0 or 1 for
     /// the first or second of its curves. See Constraint::markerShift and markerSide.
     void setConstraintMarker(ConstraintId id, int index, double shift, int side);
+    /// Puts a dimension's value elsewhere, or with nothing back where it goes by itself. See
+    /// Constraint::label.
+    void setConstraintLabel(ConstraintId id, std::optional<Point2> label);
     [[nodiscard]] const std::vector<Constraint>& constraints() const { return m_constraints; }
     [[nodiscard]] const Constraint* findConstraint(ConstraintId id) const;
     /// What a dimension would read if it were measured now, whatever its stored value.

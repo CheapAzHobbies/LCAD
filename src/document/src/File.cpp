@@ -334,6 +334,10 @@ nlohmann::ordered_json writeSketch(const SketchItem& item) {
             c["markers"] = {constraint.markerShift[0], constraint.markerSide[0],
                             constraint.markerShift[1], constraint.markerSide[1]};
         }
+        // Only for a value that was moved.
+        if (constraint.label.has_value()) {
+            c["label"] = {constraint.label->x, constraint.label->y};
+        }
         out["constraints"].push_back(std::move(c));
     }
     return out;
@@ -471,6 +475,15 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
             }
             constraint.markerShift = {markers[0].get<double>(), markers[2].get<double>()};
             constraint.markerSide = {markers[1].get<int>(), markers[3].get<int>()};
+        }
+        if (c.contains("label")) {
+            const json& label = c["label"];
+            if (!label.is_array() || label.size() != 2 || !label[0].is_number() ||
+                !label[1].is_number() || !std::isfinite(label[0].get<double>()) ||
+                !std::isfinite(label[1].get<double>())) {
+                damaged(path, "\"label\" of " + in + " is not two numbers");
+            }
+            constraint.label = sketch::Point2{label[0].get<double>(), label[1].get<double>()};
         }
         constraints.push_back(constraint);
     }
