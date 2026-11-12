@@ -66,6 +66,12 @@ enum class SketchTool {
     /// Copies of what is selected, each moved by the step between two points clicked; the
     /// count is typed.
     RectangularPattern,
+    /// Moves what is selected from the first point clicked to the second; Ctrl makes a copy.
+    MoveSketch,
+    /// Turns what is selected about the point clicked, by the angle typed.
+    RotateSketch,
+    /// Scales what is selected about the point clicked, by the factor typed.
+    ScaleSketch,
     Offset,
     Mirror,
     /// Click an edge or a corner of a body to bring it into the sketch as reference geometry.

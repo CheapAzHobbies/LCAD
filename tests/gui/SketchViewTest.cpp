@@ -118,6 +118,7 @@ private slots:
     void patternsCopyWhatIsSelected();
     void linesLineUpWithOtherLinesAndCrossings();
     void clicksGoToRoundNumbersOnTheGrid();
+    void selectedGeometryIsMovedTurnedAndScaled();
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
@@ -2043,6 +2044,54 @@ void SketchViewTest::clicksGoToRoundNumbersOnTheGrid() {
     editor()->cancel();
     QVERIFY(apart(startOf(curves(EntityKind::Line).back().id), {40.0, 20.0}) < 1e-9);
     editor()->setGridSnap(false);
+}
+
+void SketchViewTest::selectedGeometryIsMovedTurnedAndScaled() {
+    openSketch();
+    editor()->setInference(false);
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, 0.0));
+    click(at(20.0, 0.0));
+    editor()->cancel();
+    const Entity line = curves(EntityKind::Line).front();
+
+    // Moved 10 up.
+    editor()->setSelection({line.id});
+    editor()->setTool(SketchTool::MoveSketch);
+    QCOMPARE(editor()->tool(), SketchTool::MoveSketch);
+    click(at(0.0, 0.0));
+    click(at(0.0, 10.0));
+    QVERIFY(apart(startOf(line.id), {0.0, 10.0}) < 1e-6);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Move"));
+    QCOMPARE(editor()->tool(), SketchTool::Select);
+
+    // Copied with Ctrl: two lines.
+    editor()->setSelection({line.id});
+    editor()->setTool(SketchTool::MoveSketch);
+    click(at(0.0, 10.0));
+    click(at(0.0, 30.0), Qt::ControlModifier);
+    QCOMPARE(curves(EntityKind::Line).size(), std::size_t{2});
+    QVERIFY(apart(startOf(line.id), {0.0, 10.0}) < 1e-6);
+
+    // Turned a quarter about its start, typed.
+    editor()->setSelection({line.id});
+    editor()->setTool(SketchTool::RotateSketch);
+    click(at(0.0, 10.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(editor()->valueField()->text(), QStringLiteral("90"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QVERIFY(apart(endOf(line.id), {0.0, 30.0}) < 1e-6);
+
+    // Scaled to half about its start.
+    editor()->setSelection({line.id});
+    editor()->setTool(SketchTool::ScaleSketch);
+    click(at(0.0, 10.0));
+    editor()->valueField()->selectAll();
+    type(QStringLiteral("0.5"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QVERIFY(apart(endOf(line.id), {0.0, 20.0}) < 1e-6);
 }
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {

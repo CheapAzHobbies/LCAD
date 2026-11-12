@@ -29,7 +29,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Trim, extend, offset, mirror | Have | |
 | Break, split | No | |
 | Sketch patterns (rectangular, circular) | Have | Each copy keeps the constraints among the originals; the copies are not tied to each other. |
-| Move, copy, rotate, scale | No | Dragging only. |
+| Move, copy, rotate, scale | Have | Since 2026-11-12, of what is selected. |
 | Project edges of a body | Have | |
 | Intersect, project to surface | No | |
 | Constraints: coincident, horizontal, vertical, parallel, perpendicular, tangent, equal, concentric, midpoint, collinear, symmetric, fix | Have | |

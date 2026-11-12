@@ -537,6 +537,9 @@ coincident with it), then add dimensions until nothing is blue.
 | Extend | | Click a line or an arc near an end. It grows to the next curve it meets. |
 | Circular Pattern | | Select curves first. Click the point to copy them around; type how many there are to be in all, and press Enter. The copies show before they are made. In the list beside Mirror. |
 | Rectangular Pattern | | Select curves first. Click a point, then where that point goes in the next copy; type how many in all, and press Enter. In the list beside Mirror. |
+| Move/Copy | | Select curves first. Click a point, then where that point goes; hold Ctrl on the second click to make a copy instead. In the list beside Mirror. |
+| Rotate | | Select curves first. Click the point to turn about, type the angle, and press Enter. |
+| Scale | | Select curves first. Click the point to scale about, type how many times as large, and press Enter. A dimension that holds the size stops it; a copy is not held. |
 | Chamfer | | Click a corner where two lines meet. A line cuts it, the same distance back on each line, and that distance opens to be typed. |
 | Fillet | | Click a corner where two lines meet. An arc rounds it, tangent to both lines, and its radius opens to be typed. Its center shows like any arc's, and its radius is a dimension: double-click it to change it. A construction point stays where the corner was, so dimensions to the corner still hold. |
 | Offset | O | Click a curve, which takes the whole outline it belongs to. Then click where the copy should go. |

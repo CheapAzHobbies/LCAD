@@ -1801,6 +1801,27 @@ void MainWindow::defineSketchCommands() {
          "pattern-rectangular",
          {},
          {tr("linear pattern"), tr("array"), tr("sketch pattern")}},
+        {SketchTool::MoveSketch,
+         "sketch.move",
+         tr("Mo&ve/Copy"),
+         tr("Move what is selected from one point to another; hold Ctrl to copy it"),
+         "move-body",
+         {},
+         {tr("move"), tr("copy"), tr("translate"), tr("duplicate")}},
+        {SketchTool::RotateSketch,
+         "sketch.rotate",
+         tr("Rota&te"),
+         tr("Turn what is selected about a point, by the angle typed"),
+         "revolve",
+         {},
+         {tr("rotate"), tr("turn"), tr("spin geometry")}},
+        {SketchTool::ScaleSketch,
+         "sketch.scale",
+         tr("Sca&le"),
+         tr("Scale what is selected about a point, by the factor typed"),
+         "rectangle-center",
+         {},
+         {tr("scale"), tr("resize"), tr("enlarge"), tr("shrink")}},
         {SketchTool::Project,
          "sketch.project",
          tr("Pro&ject"),
@@ -2049,8 +2070,8 @@ void MainWindow::createTopBar() {
     sketchMenu->addSeparator();
     for (const char* id :
          {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset",
-          "sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern",
-          "sketch.project"}) {
+          "sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern", "sketch.move",
+          "sketch.rotate", "sketch.scale", "sketch.project"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
@@ -2385,8 +2406,9 @@ void MainWindow::createSketchToolbar() {
         toolbar->addAction(action(id));
     }
     // Mirror, and the patterns in the list beside it.
-    variants("mirrorButton",
-             {"sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern"});
+    variants("mirrorButton", {"sketch.mirror", "sketch.circularPattern",
+                              "sketch.rectangularPattern", "sketch.move", "sketch.rotate",
+                              "sketch.scale"});
     toolbar->addAction(action("sketch.project"));
     toolbar->addSeparator();
     toolbar->addAction(action("sketch.dimension"));

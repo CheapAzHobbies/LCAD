@@ -355,6 +355,10 @@ public:
     // How many there were in the last patterns made, to start the next from.
     int circularCount = 6;
     int rectangularCount = 3;
+    // Rotate and Scale: what was last typed, to start the next from. Move: Ctrl held, to copy.
+    double rotateAngle = 90.0;
+    double scaleFactor = 2.0;
+    bool copying = false;
     // A dimension's value being dragged: where it is now, from what it hangs on, and how far
     // from the value's middle it was picked up.
     ConstraintId labelDrag = 0;
@@ -1584,12 +1588,77 @@ public:
         emit q->changed();
     }
 
+    // How Move, Rotate, or Scale would place what is selected, with the pointer at `at`.
+    [[nodiscard]] std::optional<sketch::Placing> placingNow(Point2 at) const {
+        if (clicks.empty()) {
+            return std::nullopt;
+        }
+        sketch::Placing placing;
+        placing.center = clicks.front().position;
+        double typed = 0.0;
+        bool ok = false;
+        if (field != nullptr) {
+            typed = field->text().trimmed().toDouble(&ok);
+        }
+        switch (tool) {
+        case SketchTool::MoveSketch:
+            placing.move = at - clicks.front().position;
+            break;
+        case SketchTool::RotateSketch:
+            placing.angle = (ok ? typed : rotateAngle) * pi / 180.0;
+            break;
+        case SketchTool::ScaleSketch:
+            placing.scale = ok && typed > 0.0 ? typed : scaleFactor;
+            break;
+        default:
+            return std::nullopt;
+        }
+        return placing;
+    }
+
+    void commitPlace(Point2 at, bool copy) {
+        const auto placing = placingNow(at);
+        if (!placing.has_value()) {
+            return;
+        }
+        if (tool == SketchTool::RotateSketch) {
+            rotateAngle = placing->angle * 180.0 / pi;
+        } else if (tool == SketchTool::ScaleSketch) {
+            scaleFactor = placing->scale;
+        }
+        sketch::Sketch g = geometry();
+        std::vector<EntityId> placed;
+        try {
+            placed = sketch::place(g, patterned(), *placing, copy);
+        } catch (const std::invalid_argument&) {
+            const QString why = tr("The constraints on it, or a dimension, do not let it go "
+                                   "there. A copy (hold Ctrl) can.");
+            if (field != nullptr) {
+                markField(why);
+            } else {
+                emit q->message(why);
+            }
+            return;
+        }
+        closeField();
+        commit(std::move(g), copy                                   ? tr("Copy")
+                             : tool == SketchTool::RotateSketch ? tr("Rotate")
+                             : tool == SketchTool::ScaleSketch  ? tr("Scale")
+                                                                : tr("Move"));
+        clicks.clear();
+        selected = placed;
+        tool = SketchTool::Select;
+        emit q->changed();
+    }
+
     void askPatternCount() {
         const QPointF at = toWidget(cursor.position);
-        openField(QRectF(at + QPointF(0.0, 28.0), QSizeF(40.0, 20.0)),
-                  QString::number(tool == SketchTool::CircularPattern ? circularCount
-                                                                      : rectangularCount),
-                  true);
+        const QString start =
+            tool == SketchTool::RotateSketch  ? QString::number(rotateAngle)
+            : tool == SketchTool::ScaleSketch ? QString::number(scaleFactor)
+            : QString::number(tool == SketchTool::CircularPattern ? circularCount
+                                                                  : rectangularCount);
+        openField(QRectF(at + QPointF(0.0, 28.0), QSizeF(40.0, 20.0)), start, true);
         QObject::connect(field, &QLineEdit::textEdited, q, [this] { update(); });
     }
 
@@ -1793,6 +1862,26 @@ public:
                 strokes.push_back(circle(first, apart(first, at)));
             }
             break;
+        case SketchTool::MoveSketch:
+        case SketchTool::RotateSketch:
+        case SketchTool::ScaleSketch: {
+            // Where it would go, drawn as a copy.
+            sketch::Sketch scratch = geometry();
+            if (const auto placing = placingNow(at)) {
+                try {
+                    for (const EntityId id : sketch::place(scratch, patterned(), *placing, true)) {
+                        if (scratch.find(id)->kind != EntityKind::Point) {
+                            strokes.push_back(strokeOf(scratch, *scratch.find(id)));
+                        }
+                    }
+                } catch (const std::invalid_argument&) {
+                }
+            }
+            if (tool == SketchTool::MoveSketch) {
+                strokes.push_back(segment(first, at));
+            }
+            break;
+        }
         case SketchTool::CircularPattern:
         case SketchTool::RectangularPattern: {
             sketch::Sketch scratch = geometry();
@@ -2010,6 +2099,8 @@ public:
                            tool == SketchTool::ThreePointArc || tool == SketchTool::TangentArc ||
                            tool == SketchTool::CircularPattern ||
                            tool == SketchTool::RectangularPattern ||
+                           tool == SketchTool::MoveSketch || tool == SketchTool::RotateSketch ||
+                           tool == SketchTool::ScaleSketch ||
                            tool == SketchTool::Point || tool == SketchTool::Polygon ||
                            tool == SketchTool::Slot || tool == SketchTool::Ellipse ||
                            tool == SketchTool::Spline;
@@ -2155,6 +2246,20 @@ public:
                 clicks.push_back(cursor);
             } else {
                 addTangentArc(clicks.front(), cursor);
+            }
+            break;
+        case SketchTool::MoveSketch:
+            if (clicks.empty()) {
+                clicks.push_back(cursor);
+            } else {
+                commitPlace(cursor.position, copying);
+            }
+            break;
+        case SketchTool::RotateSketch:
+        case SketchTool::ScaleSketch:
+            if (clicks.empty() && field == nullptr) {
+                clicks.push_back(cursor);
+                askPatternCount();
             }
             break;
         case SketchTool::CircularPattern:
@@ -2718,6 +2823,10 @@ public:
         const Snap first = clicks.front();
         if (tool == SketchTool::CircularPattern || tool == SketchTool::RectangularPattern) {
             commitPattern();
+            return;
+        }
+        if (tool == SketchTool::RotateSketch || tool == SketchTool::ScaleSketch) {
+            commitPlace(cursor.position, copying);
             return;
         }
         if (tool == SketchTool::Rectangle) {
@@ -3516,6 +3625,12 @@ void SketchEditor::setTool(SketchTool tool) {
         emit message(tr("Select what to copy first, then choose the pattern."));
         m_impl->tool = SketchTool::Select;
     }
+    if ((tool == SketchTool::MoveSketch || tool == SketchTool::RotateSketch ||
+         tool == SketchTool::ScaleSketch) &&
+        m_impl->patterned().empty()) {
+        emit message(tr("Select what to move first, then choose the tool."));
+        m_impl->tool = SketchTool::Select;
+    }
     m_impl->update();
     emit changed();
 }
@@ -4024,6 +4139,15 @@ QString SketchEditor::hint() const {
     case SketchTool::TangentArc:
         return placed == 0 ? tr("Tangent Arc: click the end of a line or an arc")
                            : tr("Tangent Arc: click where it ends");
+    case SketchTool::MoveSketch:
+        return placed == 0 ? tr("Move: click a point to move from")
+                           : tr("Move: click where that point goes. Hold Ctrl to make a copy");
+    case SketchTool::RotateSketch:
+        return placed == 0 ? tr("Rotate: click the point to turn about")
+                           : tr("Rotate: type the angle in degrees, and press Enter");
+    case SketchTool::ScaleSketch:
+        return placed == 0 ? tr("Scale: click the point to scale about")
+                           : tr("Scale: type how many times as large, and press Enter");
     case SketchTool::CircularPattern:
         return placed == 0 ? tr("Circular Pattern: click the point to copy around")
                            : tr("Circular Pattern: type how many in all, and press Enter");
@@ -4250,6 +4374,7 @@ void SketchEditor::mousePress(const QPointF& position, Qt::KeyboardModifiers mod
     }
     m_impl->lastPosition = position;
     m_impl->freeAngle = modifiers.testFlag(Qt::ShiftModifier);
+    m_impl->copying = modifiers.testFlag(Qt::ControlModifier);
     if (m_impl->field != nullptr && m_impl->editing != 0) {
         m_impl->closeField();
     }
