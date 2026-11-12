@@ -842,3 +842,52 @@ TEST_CASE("Extend lengthens a curve to the next one it meets", "[sketch][edit]")
         CHECK_FALSE(extend(sketch, sketch.origin(), {0.0, 0.0}));
     }
 }
+
+TEST_CASE("A corner between two lines is rounded with a tangent arc", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts r = addRectangle(sketch, {0.0, 0.0}, {40.0, 20.0});
+    // The width as a dimension on the corner that is rounded.
+    const ConstraintId width = sketch.addConstraint(
+        ConstraintKind::Distance, sketch.find(r.bottom)->start, sketch.find(r.bottom)->end, 0, 40.0);
+    // Held at the origin, and as tall as it is, so that only what is changed moves.
+    sketch.addConstraint(ConstraintKind::Coincident, sketch.find(r.bottom)->start, sketch.origin());
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.left)->start,
+                         sketch.find(r.left)->end, 0, 20.0);
+    sketch.solve();
+    const double before = sketch.profiles()[0].area;
+
+    const EntityId corner = sketch.find(r.right)->end;
+    const FilletParts f = fillet(sketch, corner, 5.0);
+    const Entity* arc = sketch.find(f.arc);
+    REQUIRE(arc != nullptr);
+    CHECK(arc->kind == EntityKind::Arc);
+    CHECK_THAT(sketch.radiusOf(f.arc), WithinAbs(5.0, lengthTolerance));
+    // Its center is in from both sides of the corner, and the lines stop where it starts.
+    CHECK_THAT(centerOf(sketch, f.arc).x, WithinAbs(35.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, f.arc).y, WithinAbs(15.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, r.right).y, WithinAbs(15.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.top).x, WithinAbs(35.0, lengthTolerance));
+    // Still one closed outline, short of the bit of corner cut off.
+    REQUIRE(sketch.profiles().size() == 1);
+    CHECK_THAT(sketch.profiles()[0].area, WithinAbs(before - (25.0 - 25.0 * pi / 4.0), 1e-3));
+    // The construction point is where the corner was.
+    CHECK(sketch.find(f.corner)->construction);
+    CHECK_THAT(sketch.position(f.corner).x, WithinAbs(40.0, lengthTolerance));
+    CHECK_THAT(sketch.position(f.corner).y, WithinAbs(20.0, lengthTolerance));
+
+    // The radius is a dimension like any other, and the arc stays tangent as it changes.
+    REQUIRE(tryDimensionValue(sketch, f.radius, 8.0).ok());
+    CHECK_THAT(endOf(sketch, r.right).y, WithinAbs(12.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.top).x, WithinAbs(32.0, lengthTolerance));
+    // A dimension that was on the corner holds through the virtual corner.
+    REQUIRE(tryDimensionValue(sketch, width, 50.0).ok());
+    CHECK_THAT(sketch.position(f.corner).x, WithinAbs(50.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, f.arc).x, WithinAbs(42.0, lengthTolerance));
+
+    // What cannot be rounded leaves the sketch as it was.
+    const Sketch kept = sketch;
+    CHECK_THROWS_AS(fillet(sketch, sketch.find(r.bottom)->start, 30.0), std::invalid_argument);
+    CHECK_THROWS_AS(fillet(sketch, sketch.find(f.arc)->start, 1.0), std::invalid_argument);
+    CHECK_THROWS_AS(fillet(sketch, sketch.find(r.left)->start, 0.0), std::invalid_argument);
+    CHECK(same(sketch, kept));
+}

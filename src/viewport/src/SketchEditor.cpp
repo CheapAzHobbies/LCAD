@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <stdexcept>
 
@@ -1620,7 +1621,10 @@ public:
             // change curves are not.
             const bool takesPoints =
                 tool == SketchTool::Dimension || tool == SketchTool::Constraint;
-            hover = takesPoints ? hitAt(position, true).entity : curveAt(position, curveReach);
+            // Fillet rounds corners, which are points and nothing else.
+            hover = tool == SketchTool::Fillet ? pointAt(position, pointReach)
+                    : takesPoints              ? hitAt(position, true).entity
+                                               : curveAt(position, curveReach);
         }
         cursorValid = true;
         if (hoveredNow() != hoveredBefore) {
@@ -1795,6 +1799,42 @@ public:
                                     ? tr("Nothing crosses that curve, so there is nothing to cut.")
                                     : tr("That end meets no other curve if it is lengthened."));
             }
+            break;
+        }
+        case SketchTool::Fillet: {
+            const Entity* picked = hover != 0 ? g.find(hover) : nullptr;
+            if (picked == nullptr || picked->kind != EntityKind::Point) {
+                emit q->message(tr("Click a corner where two lines meet."));
+                break;
+            }
+            // A size to start from that fits: a fifth of the shorter line, rounded, and no more
+            // than 5 mm. The value is typed over straight away.
+            double shortest = std::numeric_limits<double>::infinity();
+            for (const EntityId id : sketch::pointsTogether(g, hover)) {
+                const Entity* line = g.find(g.find(id)->owner);
+                if (line != nullptr && line->kind == EntityKind::Line) {
+                    shortest = std::min(shortest, apart(g.position(line->start),
+                                                        g.position(line->end)));
+                }
+            }
+            double radius = std::isfinite(shortest) ? std::min(5.0, shortest / 5.0) : 5.0;
+            if (radius >= 1.0) {
+                radius = std::floor(radius);
+            }
+            sketch::Sketch next = g;
+            sketch::FilletParts made;
+            try {
+                made = sketch::fillet(next, hover, radius);
+            } catch (const std::invalid_argument&) {
+                emit q->message(tr("Only a corner where two lines meet at an angle can be "
+                                   "rounded, with room on both lines for the arc."));
+                break;
+            }
+            hover = 0;
+            commit(std::move(next), tr("Fillet"));
+            selected.clear();
+            selectedConstraints = {made.radius};
+            q->editDimension(made.radius);
             break;
         }
         case SketchTool::Offset: {
@@ -2865,7 +2905,8 @@ public:
         }
         const bool draws = tool != SketchTool::Select && tool != SketchTool::Dimension &&
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
-                           tool != SketchTool::Extend && tool != SketchTool::Offset &&
+                           tool != SketchTool::Extend && tool != SketchTool::Fillet &&
+                           tool != SketchTool::Offset &&
                            tool != SketchTool::Mirror && tool != SketchTool::Project;
         // What a tool's click, or a dragged point, would land on.
         const auto drawSnap = [&](const Snap& snap) {
@@ -3447,6 +3488,8 @@ QString SketchEditor::hint() const {
         return tr("Cut: click the part of a curve to remove");
     case SketchTool::Extend:
         return tr("Extend: click a line or an arc near the end to lengthen");
+    case SketchTool::Fillet:
+        return tr("Fillet: click a corner where two lines meet, then type the radius");
     case SketchTool::Offset:
         return m_impl->selected.empty() ? tr("Offset: click the curve to offset")
                                         : tr("Offset: click where the copy should go");

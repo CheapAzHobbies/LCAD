@@ -155,4 +155,22 @@ bool trim(Sketch& sketch, EntityId curve, Point2 nearPoint);
 /// holds that end on the curve. Returns false, changing nothing, if it meets none.
 bool extend(Sketch& sketch, EntityId curve, Point2 nearPoint);
 
+/// What fillet() made: the arc that rounds the corner, and the point where the corner was.
+struct FilletParts {
+    EntityId arc = 0;
+    /// A construction point held on both lines where they would meet, which the constraints
+    /// and dimensions that were on the corner are now on.
+    EntityId corner = 0;
+    /// The arc's radius.
+    ConstraintId radius = 0;
+};
+
+/// Rounds the corner where two lines meet at `corner` (an end of either) with an arc of
+/// `radius`: shortens both lines, joins the arc to them and holds it tangent to both, and gives
+/// it its radius as a dimension. What was on the corner moves to a construction point where
+/// the lines would meet, so a dimension to the corner still holds. Throws std::invalid_argument,
+/// leaving the sketch as it was, if two lines do not meet there, they are in line, or the arc
+/// does not fit on them.
+FilletParts fillet(Sketch& sketch, EntityId corner, double radius);
+
 } // namespace lcad::sketch

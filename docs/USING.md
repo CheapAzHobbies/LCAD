@@ -432,6 +432,7 @@ coincident with it), then add dimensions until nothing is blue.
 |---|---|---|
 | Cut | T | Click the part of a curve to remove. It goes up to where other curves cross it. |
 | Extend | | Click a line or an arc near an end. It grows to the next curve it meets. |
+| Fillet | | Click a corner where two lines meet. An arc rounds it, tangent to both lines, and its radius opens to be typed. Its center shows like any arc's, and its radius is a dimension: double-click it to change it. A construction point stays where the corner was, so dimensions to the corner still hold. |
 | Offset | O | Click a curve, which takes the whole outline it belongs to. Then click where the copy should go. |
 | Mirror | | Select what to mirror, choose Mirror, and click the line to mirror in. |
 | Project | P | Click an edge or a corner of a body. It comes into the sketch as reference geometry, in its own color, and does not move. |

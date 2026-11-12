@@ -1571,6 +1571,13 @@ void MainWindow::defineSketchCommands() {
          "extend",
          {},
          {tr("lengthen")}},
+        {SketchTool::Fillet,
+         "sketch.fillet",
+         tr("&Fillet"),
+         tr("Round a corner where two lines meet with an arc of the radius typed"),
+         "fillet",
+         {},
+         {tr("round corner"), tr("radius corner"), tr("sketch fillet")}},
         {SketchTool::Offset,
          "sketch.offset",
          tr("&Offset"),
@@ -1811,7 +1818,8 @@ void MainWindow::createTopBar() {
     }
     sketchMenu->addSeparator();
     for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project"}) {
+         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.offset", "sketch.mirror",
+          "sketch.project"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
@@ -2097,7 +2105,8 @@ void MainWindow::createSketchToolbar() {
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
     for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror", "sketch.project"}) {
+         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.offset", "sketch.mirror",
+          "sketch.project"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();

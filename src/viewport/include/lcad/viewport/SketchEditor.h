@@ -49,6 +49,8 @@ enum class SketchTool {
     Constraint,
     Trim,
     Extend,
+    /// Click a corner where two lines meet to round it, then type the radius.
+    Fillet,
     Offset,
     Mirror,
     /// Click an edge or a corner of a body to bring it into the sketch as reference geometry.
