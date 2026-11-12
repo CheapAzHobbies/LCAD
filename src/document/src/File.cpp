@@ -617,6 +617,18 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["countersinkAngle"] = feature.countersinkAngle;
         out["flipped"] = feature.flipped;
     }
+    if (feature.kind == FeatureKind::Loft) {
+        out["sections"] = ordered_json::array();
+        for (const LoftSection& section : feature.sections) {
+            ordered_json s;
+            s["sketch"] = section.sketch.value;
+            s["region"] = section.region;
+            out["sections"].push_back(std::move(s));
+        }
+    }
+    if (feature.kind == FeatureKind::Sweep) {
+        out["pathSketch"] = feature.pathSketch.value;
+    }
     if (feature.kind == FeatureKind::Mirror || feature.kind == FeatureKind::RectangularPattern ||
         feature.kind == FeatureKind::CircularPattern) {
         out["sources"] = ordered_json::array();
@@ -716,6 +728,34 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     if (entry.contains("extentFace")) {
         feature.extentBody = ObjectId{idMember(entry, "extentBody", where, path)};
         feature.extentFace = stringMember(entry, "extentFace", where, path);
+    }
+    if (feature.kind == FeatureKind::Loft) {
+        const json& sections = member(entry, "sections", where, path);
+        if (!sections.is_array()) {
+            damaged(path, "\"sections\" in " + where + " is not a list");
+        }
+        for (const json& s : sections) {
+            if (!s.is_object()) {
+                damaged(path, "\"sections\" in " + where + " holds something that is not a section");
+            }
+            LoftSection section;
+            section.sketch = ObjectId{idMember(s, "sketch", where, path)};
+            const json& region = member(s, "region", where, path);
+            if (!region.is_array()) {
+                damaged(path, "a section in " + where + " has no list of curves");
+            }
+            for (const json& curve : region) {
+                if (!curve.is_number_unsigned()) {
+                    damaged(path, "a section in " + where + " holds something that is not a curve");
+                }
+                section.region.push_back(curve.get<sketch::EntityId>());
+            }
+            std::sort(section.region.begin(), section.region.end());
+            feature.sections.push_back(std::move(section));
+        }
+    }
+    if (feature.kind == FeatureKind::Sweep) {
+        feature.pathSketch = ObjectId{idMember(entry, "pathSketch", where, path)};
     }
     if (feature.kind == FeatureKind::Hole) {
         const std::string holeKind = stringMember(entry, "holeKind", where, path);

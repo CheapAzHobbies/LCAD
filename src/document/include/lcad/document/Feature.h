@@ -48,9 +48,17 @@ enum class FeatureKind {
     DeleteFace,
     /// Puts right what is wrong with a body's geometry, where that can be done.
     Repair,
+    /// A solid through outlines of two or more sketches, in order, each usually on a plane of
+    /// its own.
+    Loft,
+    /// Moves outlines of a sketch along a path: the curves of another sketch.
+    Sweep,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
+struct Feature;
+/// Every sketch a feature is made from: its own, a loft's other sections', and a sweep's path.
+[[nodiscard]] std::vector<ObjectId> sketchesOf(const Feature& feature);
 [[nodiscard]] std::optional<FeatureKind> featureKindFromString(const std::string& name);
 
 /// What a pull or a revolve does with the solid it makes.
@@ -76,6 +84,15 @@ enum class HoleKind {
 [[nodiscard]] const char* toString(HoleKind kind);
 [[nodiscard]] std::optional<HoleKind> holeKindFromString(const std::string& name);
 
+/// A section of a loft after its first: one outline of a sketch, by the curves of its outline,
+/// sorted.
+struct LoftSection {
+    ObjectId sketch;
+    std::vector<sketch::EntityId> region;
+
+    friend bool operator==(const LoftSection&, const LoftSection&) = default;
+};
+
 /// One step in the making of the model: what to do, to what, and by how much. The document
 /// keeps features in the order they are applied, and builds the bodies from them.
 ///
@@ -99,9 +116,10 @@ struct Feature {
     /// The body the feature changes. For Operation::NewBody: the body it makes.
     ObjectId body;
 
-    // Pull and Revolve
+    // Pull, Revolve, Loft, and Sweep
 
-    /// The sketch the outlines are taken from.
+    /// The sketch the outlines are taken from. For a loft, its first section, which is the one
+    /// region in `regions`.
     ObjectId sketch;
     /// The regions used, each given by the curves of its outer outline, sorted. Empty means
     /// every region of the sketch.
@@ -166,6 +184,12 @@ struct Feature {
     double spacing2 = 10.0;
     /// Plane: whether it is shown.
     bool visible = true;
+    // Loft
+    /// The sections after the first, in the order the loft goes through them.
+    std::vector<LoftSection> sections;
+    // Sweep
+    /// The sketch whose curves, joined end to end, the outlines are moved along.
+    ObjectId pathSketch;
     // Hole. Its sketch's free-standing points are where the holes go, its `size` is their
     // diameter and its `distance` their depth.
     HoleKind holeKind = HoleKind::Simple;

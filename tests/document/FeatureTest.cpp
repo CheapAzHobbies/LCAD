@@ -1947,3 +1947,111 @@ TEST_CASE("Long work can be stopped, and what was there stays", "[document][feat
         CHECK_FALSE(lcad::kernel::stopRequested());
     }
 }
+
+TEST_CASE("A loft goes through outlines of sketches on planes of their own",
+          "[document][feature]") {
+    Document document;
+    // A 20 by 20 square on the XY plane, and a circle of radius 5 on a plane 30 above it.
+    const ObjectId base = document.addSketch("Base", lcad::kernel::planeXY());
+    lcad::sketch::Sketch square;
+    const lcad::sketch::RectangleParts r =
+        lcad::sketch::addRectangle(square, {-10.0, -10.0}, {10.0, 10.0});
+    const lcad::sketch::ConstraintId width = square.addConstraint(
+        ConstraintKind::Distance, square.find(r.bottom)->start, square.find(r.bottom)->end, 0, 20.0);
+    document.setSketchGeometry(base, square, "Draw");
+    const ObjectId top = document.addSketch(
+        "Top", lcad::kernel::makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch round;
+    const lcad::sketch::EntityId circle = round.addCircle({0.0, 0.0}, 5.0);
+    document.setSketchGeometry(top, round, "Draw");
+
+    Feature loft;
+    loft.kind = FeatureKind::Loft;
+    loft.sketch = base;
+    loft.regions = {document.findSketch(base)->geometry.regions().front().key};
+    loft.sections = {LoftSection{top, {circle}}};
+    const ObjectId made = document.addFeature(loft);
+    CHECK(document.featureError(made).empty());
+    CHECK(document.findFeature(made)->name == "Loft 1");
+    const ObjectId body = document.findFeature(made)->body;
+    const double volume = lcad::kernel::volume(document.findBody(body)->shape);
+    // Between the prism of the square and the cylinder of the circle.
+    CHECK(volume < 400.0 * 30.0);
+    CHECK(volume > pi * 25.0 * 30.0);
+
+    // It follows its sketches.
+    lcad::sketch::Sketch wider = document.findSketch(base)->geometry;
+    REQUIRE(lcad::sketch::tryDimensionValue(wider, width, 30.0).ok());
+    document.setSketchGeometry(base, wider, "Change Dimension");
+    CHECK(document.featureError(made).empty());
+    CHECK(lcad::kernel::volume(document.findBody(body)->shape) > volume);
+
+    // Saved and opened again, it is the same loft.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("loft.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    const Feature* reread = loaded.document->findFeature(made);
+    REQUIRE(reread != nullptr);
+    CHECK(reread->sections == document.findFeature(made)->sections);
+    CHECK(loaded.document->featureError(made).empty());
+
+    // Without its second section it says so.
+    Feature alone = *document.findFeature(made);
+    alone.sections.clear();
+    document.changeFeature(made, alone);
+    CHECK_THAT(document.featureError(made), ContainsSubstring("second outline"));
+}
+
+TEST_CASE("A sweep moves an outline along the curves of another sketch", "[document][feature]") {
+    Document document;
+    // A circle of radius 2 on the XZ plane, swept along a line of 40 along -Y from its center.
+    const ObjectId profile = document.addSketch("Profile", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch round;
+    round.addCircle({0.0, 0.0}, 2.0);
+    document.setSketchGeometry(profile, round, "Draw");
+    const ObjectId path = document.addSketch("Path", lcad::kernel::planeXY());
+    lcad::sketch::Sketch line;
+    line.addLine({0.0, 0.0}, {0.0, -40.0});
+    document.setSketchGeometry(path, line, "Draw");
+
+    Feature sweep;
+    sweep.kind = FeatureKind::Sweep;
+    sweep.sketch = profile;
+    sweep.pathSketch = path;
+    const ObjectId made = document.addFeature(sweep);
+    CHECK(document.featureError(made).empty());
+    CHECK(document.findFeature(made)->name == "Sweep 1");
+    const ObjectId body = document.findFeature(made)->body;
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel(pi * 4.0 * 40.0, 1e-6));
+
+    // The path's sketch changed, and the sweep follows.
+    lcad::sketch::Sketch longer;
+    longer.addLine({0.0, 0.0}, {0.0, -60.0});
+    document.setSketchGeometry(path, longer, "Draw");
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel(pi * 4.0 * 60.0, 1e-6));
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto file = directory.file("sweep.lcad");
+    saveDocument(document, file);
+    const LoadedDocument loaded = loadDocument(file);
+    CHECK(loaded.warnings.empty());
+    REQUIRE(loaded.document->findFeature(made) != nullptr);
+    CHECK(loaded.document->findFeature(made)->pathSketch == path);
+    CHECK(loaded.document->featureError(made).empty());
+
+    // A path that is not one chain is refused, with the reason.
+    lcad::sketch::Sketch broken;
+    broken.addLine({0.0, 0.0}, {0.0, -20.0});
+    broken.addLine({10.0, -30.0}, {10.0, -50.0});
+    document.setSketchGeometry(path, broken, "Draw");
+    CHECK_THAT(document.featureError(made), ContainsSubstring("one chain"));
+    // And a feature without a path sketch is refused outright.
+    Feature without = sweep;
+    without.pathSketch = ObjectId{9999};
+    CHECK_THROWS_AS(document.addFeature(without), std::invalid_argument);
+}

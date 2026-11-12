@@ -46,13 +46,39 @@ Document::WorkRunner& workRunner() {
 
 // Whether a feature makes a body of its own, as against changing one that is there.
 bool makesBody(const Feature& feature) {
-    return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve) &&
+    return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
+            feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep) &&
            feature.operation == Operation::NewBody;
 }
 
 bool usesSketch(const Feature& feature) {
     return feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
-           feature.kind == FeatureKind::Hole;
+           feature.kind == FeatureKind::Hole || feature.kind == FeatureKind::Loft ||
+           feature.kind == FeatureKind::Sweep;
+}
+
+// Whether every sketch a feature is made from is in the document. `missing` is set to the
+// first that is not.
+template <typename Find>
+bool hasSketches(const Feature& feature, Find&& find, ObjectId& missing) {
+    if (!usesSketch(feature)) {
+        return true;
+    }
+    missing = feature.sketch;
+    if (find(feature.sketch) == nullptr) {
+        return false;
+    }
+    if (feature.kind == FeatureKind::Sweep && find(feature.pathSketch) == nullptr) {
+        missing = feature.pathSketch;
+        return false;
+    }
+    for (const ObjectId id : sketchesOf(feature)) {
+        if (find(id) == nullptr) {
+            missing = id;
+            return false;
+        }
+    }
+    return true;
 }
 
 // Whether a body has a place of its own in the timeline. One that holds a solid of a feature's is
@@ -604,9 +630,10 @@ std::string Document::uniqueFeatureName(std::string_view base) const {
 }
 
 ObjectId Document::addFeature(Feature feature) {
-    if (usesSketch(feature) && findSketch(feature.sketch) == nullptr) {
+    if (ObjectId missing;
+        !hasSketches(feature, [this](ObjectId sketch) { return findSketch(sketch); }, missing)) {
         throw std::invalid_argument("addFeature: there is no sketch with id " +
-                                    std::to_string(feature.sketch.value));
+                                    std::to_string(missing.value));
     }
     const bool makes = makesBody(feature);
     if (!makes && needsBody(feature) && findBody(feature.body) == nullptr) {
@@ -656,9 +683,10 @@ void Document::changeFeature(ObjectId id, Feature definition) {
     if (isBlank(definition.name)) {
         definition.name = old.name;
     }
-    if (usesSketch(definition) && findSketch(definition.sketch) == nullptr) {
+    if (ObjectId missing;
+        !hasSketches(definition, [this](ObjectId sketch) { return findSketch(sketch); }, missing)) {
         throw std::invalid_argument("changeFeature: there is no sketch with id " +
-                                    std::to_string(definition.sketch.value));
+                                    std::to_string(missing.value));
     }
     for (std::vector<sketch::EntityId>& outline : definition.regions) {
         std::sort(outline.begin(), outline.end());
@@ -1909,10 +1937,12 @@ std::string Document::orderProblem(const std::vector<ObjectId>& order) const {
     for (const Feature& feature : m_features) {
         const std::size_t place = at(feature.id);
         if (usesSketch(feature)) {
-            const SketchItem* sketch = findSketch(feature.sketch);
-            if (sketch != nullptr && at(sketch->id) > place) {
-                return feature.name + " is made from " + sketch->name +
-                       ", so it cannot come before it.";
+            for (const ObjectId id : sketchesOf(feature)) {
+                const SketchItem* sketch = findSketch(id);
+                if (sketch != nullptr && at(sketch->id) > place) {
+                    return feature.name + " is made from " + sketch->name +
+                           ", so it cannot come before it.";
+                }
             }
         }
         for (const std::string& reference : {feature.reference, feature.reference2}) {
@@ -2194,8 +2224,12 @@ void Document::rebuild() {
         const bool stale =
             m_rebuildAll || !built.done || m_touched.contains(item) ||
             m_touched.contains(feature.body) ||
-            (feature.sketch.isValid() &&
-             (m_touched.contains(feature.sketch) || moved.contains(feature.sketch))) ||
+            [&] {
+                const std::vector<ObjectId> sketches = sketchesOf(feature);
+                return std::any_of(sketches.begin(), sketches.end(), [&](ObjectId id) {
+                    return m_touched.contains(id) || moved.contains(id);
+                });
+            }() ||
             changed.contains(feature.body) ||
             (feature.extentBody.isValid() &&
              (changed.contains(feature.extentBody) || m_touched.contains(feature.extentBody))) ||

@@ -26,7 +26,9 @@
 #include <BRepGProp.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepOffset_Mode.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
@@ -728,6 +730,76 @@ NamedShape revolve(const Plane& plane, const std::vector<Region>& regions, doubl
                     return whole ? std::make_unique<BRepPrimAPI_MakeRevol>(face, axis)
                                  : std::make_unique<BRepPrimAPI_MakeRevol>(face, axis, angle);
                 }));
+        }
+        return joinAll(std::move(solids));
+    });
+}
+
+NamedShape loft(const std::vector<std::vector<OutlineCurve>>& sections, const std::string& tag) {
+    if (sections.size() < 2) {
+        throw std::invalid_argument("loft: it needs two outlines or more");
+    }
+    return occt::guarded("loft", [&] {
+        BRepOffsetAPI_ThruSections maker(Standard_True, Standard_False, 1e-6);
+        maker.CheckCompatibility(Standard_True);
+        std::vector<TopoDS_Wire> wires;
+        for (const std::vector<OutlineCurve>& section : sections) {
+            wires.push_back(wireOf(section));
+            maker.AddWire(wires.back());
+        }
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        maker.Build(stoppable->Start());
+        if (!maker.IsDone() || !hasSolid(maker.Shape())) {
+            throw Error("loft", "the outlines could not be joined into a solid");
+        }
+        const TopoDS_Shape solid = maker.Shape();
+        requireValid(solid, "loft");
+        FaceNamer namer(solid);
+        Region first;
+        first.outer = sections.front();
+        Region last;
+        last.outer = sections.back();
+        const TopTools_IndexedMapOfShape edges = mapOf(wires.front(), TopAbs_EDGE);
+        for (int i = 1; i <= edges.Extent(); ++i) {
+            namer.offerAll(maker.Generated(edges(i)),
+                           tag + "/side/" + curveNameOf(first, TopoDS::Edge(edges(i))));
+        }
+        namer.offer(maker.FirstShape(), tag + "/start/" + keyOf(first));
+        namer.offer(maker.LastShape(), tag + "/end/" + keyOf(last));
+        return named(solid, namer, tag);
+    });
+}
+
+NamedShape sweep(const Plane& plane, const std::vector<Region>& regions, const Shape& path,
+                 const std::string& tag) {
+    if (regions.empty()) {
+        throw std::invalid_argument("sweep: there is nothing to sweep");
+    }
+    if (path.isNull()) {
+        throw std::invalid_argument("sweep: it needs a path");
+    }
+    return occt::guarded("sweep", [&] {
+        Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape();
+        for (TopExp_Explorer it(occt::unwrap(path), TopAbs_EDGE); it.More(); it.Next()) {
+            edges->Append(it.Current());
+        }
+        if (edges->IsEmpty()) {
+            throw Error("sweep", "the path has no curves");
+        }
+        Handle(TopTools_HSequenceOfShape) wires;
+        ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, outlineTolerance, Standard_False,
+                                                      wires);
+        if (wires.IsNull() || wires->Length() != 1) {
+            throw Error("sweep", "the curves of the path do not join end to end into one chain");
+        }
+        const TopoDS_Wire spine = TopoDS::Wire(wires->Value(1));
+        std::vector<NamedShape> solids;
+        for (const Region& region : regions) {
+            solids.push_back(sweepRegion(plane, region, nullptr, tag, "sweep",
+                                         [&spine](const TopoDS_Face& face) {
+                                             return std::make_unique<BRepOffsetAPI_MakePipe>(spine,
+                                                                                             face);
+                                         }));
         }
         return joinAll(std::move(solids));
     });
