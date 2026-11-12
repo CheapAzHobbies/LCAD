@@ -345,6 +345,9 @@ public:
     int markerDragIndex = 0;
     double markerDragShift = 0.0;
     int markerDragSide = 0;
+    // How many there were in the last patterns made, to start the next from.
+    int circularCount = 6;
+    int rectangularCount = 3;
     // A dimension's value being dragged: where it is now, from what it hangs on, and how far
     // from the value's middle it was picked up.
     ConstraintId labelDrag = 0;
@@ -1363,6 +1366,75 @@ public:
         clicks.clear();
     }
 
+    // What a pattern copies: the curves and free-standing points selected.
+    [[nodiscard]] std::vector<EntityId> patterned() const {
+        const sketch::Sketch& g = geometry();
+        std::vector<EntityId> found;
+        for (const EntityId id : selected) {
+            const Entity* entity = g.find(id);
+            if (entity != nullptr && entity->owner == 0 && id != g.origin() && !entity->fixed) {
+                found.push_back(id);
+            }
+        }
+        return found;
+    }
+
+    // How many there are to be in a pattern: what is typed, or else what was last used.
+    [[nodiscard]] int patternCountNow() const {
+        if (field != nullptr) {
+            bool ok = false;
+            const int typed = field->text().trimmed().toInt(&ok);
+            if (ok && typed >= 2 && typed <= 1000) {
+                return typed;
+            }
+        }
+        return tool == SketchTool::CircularPattern ? circularCount : rectangularCount;
+    }
+
+    // A pattern of what is selected, with `count` in all, made in `g`. Nothing if it cannot be.
+    std::optional<std::vector<EntityId>> makePattern(sketch::Sketch& g, int count,
+                                                     Point2 at) const {
+        try {
+            if (tool == SketchTool::CircularPattern && !clicks.empty()) {
+                return sketch::patternCircular(g, patterned(), clicks.front().position, count);
+            }
+            if (tool == SketchTool::RectangularPattern && !clicks.empty()) {
+                const Point2 to = clicks.size() > 1 ? clicks[1].position : at;
+                return sketch::patternRectangular(g, patterned(), to - clicks.front().position,
+                                                  count);
+            }
+        } catch (const std::invalid_argument&) {
+        }
+        return std::nullopt;
+    }
+
+    void commitPattern() {
+        const int count = patternCountNow();
+        sketch::Sketch g = geometry();
+        const auto made = makePattern(g, count, cursor.position);
+        if (!made.has_value()) {
+            markField(tr("Type how many there are to be in all, from 2 to 1000."));
+            return;
+        }
+        (tool == SketchTool::CircularPattern ? circularCount : rectangularCount) = count;
+        closeField();
+        commit(std::move(g), tool == SketchTool::CircularPattern ? tr("Circular Pattern")
+                                                                 : tr("Rectangular Pattern"));
+        clicks.clear();
+        selected = *made;
+        tool = SketchTool::Select;
+        emit q->changed();
+    }
+
+    void askPatternCount() {
+        const QPointF at = toWidget(cursor.position);
+        openField(QRectF(at + QPointF(0.0, 28.0), QSizeF(40.0, 20.0)),
+                  QString::number(tool == SketchTool::CircularPattern ? circularCount
+                                                                      : rectangularCount),
+                  true);
+        QObject::connect(field, &QLineEdit::textEdited, q, [this] { update(); });
+    }
+
     // The point of `ids` nearest to a place.
     [[nodiscard]] static EntityId nearestOf(const sketch::Sketch& g,
                                             std::initializer_list<EntityId> ids, Point2 where) {
@@ -1563,6 +1635,21 @@ public:
                 strokes.push_back(circle(first, apart(first, at)));
             }
             break;
+        case SketchTool::CircularPattern:
+        case SketchTool::RectangularPattern: {
+            sketch::Sketch scratch = geometry();
+            if (const auto made = makePattern(scratch, patternCountNow(), at)) {
+                for (const EntityId id : *made) {
+                    if (scratch.find(id)->kind != EntityKind::Point) {
+                        strokes.push_back(strokeOf(scratch, *scratch.find(id)));
+                    }
+                }
+            }
+            if (tool == SketchTool::RectangularPattern) {
+                strokes.push_back(segment(first, clicks.size() > 1 ? clicks[1].position : at));
+            }
+            break;
+        }
         case SketchTool::CenterRectangle: {
             const Point2 o{2.0 * first.x - at.x, 2.0 * first.y - at.y};
             strokes.push_back(segment(o, {at.x, o.y}));
@@ -1763,6 +1850,8 @@ public:
                            tool == SketchTool::CenterRectangle ||
                            tool == SketchTool::ThreePointCircle ||
                            tool == SketchTool::ThreePointArc || tool == SketchTool::TangentArc ||
+                           tool == SketchTool::CircularPattern ||
+                           tool == SketchTool::RectangularPattern ||
                            tool == SketchTool::Point || tool == SketchTool::Polygon ||
                            tool == SketchTool::Slot || tool == SketchTool::Ellipse ||
                            tool == SketchTool::Spline;
@@ -1908,6 +1997,25 @@ public:
                 clicks.push_back(cursor);
             } else {
                 addTangentArc(clicks.front(), cursor);
+            }
+            break;
+        case SketchTool::CircularPattern:
+            if (clicks.empty() && field == nullptr) {
+                clicks.push_back(cursor);
+                askPatternCount();
+            }
+            break;
+        case SketchTool::RectangularPattern:
+            if (clicks.empty()) {
+                clicks.push_back(cursor);
+            } else if (clicks.size() == 1 && field == nullptr) {
+                if (apart(clicks.front().position, cursor.position) < 1e-9) {
+                    emit q->message(tr("Click a second point, as far from the first as the copies "
+                                       "are to be apart."));
+                    break;
+                }
+                clicks.push_back(cursor);
+                askPatternCount();
             }
             break;
         case SketchTool::Point:
@@ -2450,6 +2558,10 @@ public:
             return;
         }
         const Snap first = clicks.front();
+        if (tool == SketchTool::CircularPattern || tool == SketchTool::RectangularPattern) {
+            commitPattern();
+            return;
+        }
         if (tool == SketchTool::Rectangle) {
             const QStringList parts =
                 text.split(QRegularExpression(QStringLiteral("[\\sx×;]+")), Qt::SkipEmptyParts);
@@ -3222,6 +3334,11 @@ void SketchEditor::setTool(SketchTool tool) {
                         "mirror in."));
         m_impl->tool = SketchTool::Select;
     }
+    if ((tool == SketchTool::CircularPattern || tool == SketchTool::RectangularPattern) &&
+        m_impl->patterned().empty()) {
+        emit message(tr("Select what to copy first, then choose the pattern."));
+        m_impl->tool = SketchTool::Select;
+    }
     m_impl->update();
     emit changed();
 }
@@ -3722,6 +3839,14 @@ QString SketchEditor::hint() const {
     case SketchTool::TangentArc:
         return placed == 0 ? tr("Tangent Arc: click the end of a line or an arc")
                            : tr("Tangent Arc: click where it ends");
+    case SketchTool::CircularPattern:
+        return placed == 0 ? tr("Circular Pattern: click the point to copy around")
+                           : tr("Circular Pattern: type how many in all, and press Enter");
+    case SketchTool::RectangularPattern:
+        return placed == 0   ? tr("Rectangular Pattern: click a point to measure the step from")
+               : placed == 1 ? tr("Rectangular Pattern: click where that point goes in the "
+                                  "next copy")
+                             : tr("Rectangular Pattern: type how many in all, and press Enter");
     case SketchTool::Offset:
         return m_impl->selected.empty() ? tr("Offset: click the curve to offset")
                                         : tr("Offset: click where the copy should go");

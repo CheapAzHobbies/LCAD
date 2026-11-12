@@ -115,6 +115,7 @@ private slots:
     void trimAndExtendActOnTheCurveClicked();
     void aCornerIsRoundedAndItsRadiusTyped();
     void moreWaysToDrawAndACornerCutStraight();
+    void patternsCopyWhatIsSelected();
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
@@ -1874,6 +1875,59 @@ void SketchViewTest::moreWaysToDrawAndACornerCutStraight() {
     QTest::keyClick(editor()->valueField(), Qt::Key_Return);
     render();
     QCOMPARE(sketch().profiles().size(), std::size_t{2});
+}
+
+void SketchViewTest::patternsCopyWhatIsSelected() {
+    openSketch();
+    editor()->setTool(SketchTool::Circle);
+    click(at(20.0, 0.0));
+    click(at(23.0, 0.0));
+    editor()->setTool(SketchTool::Select);
+    const Entity hole = curves(EntityKind::Circle).front();
+
+    // Not without something selected.
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    editor()->setTool(SketchTool::CircularPattern);
+    QCOMPARE(editor()->tool(), SketchTool::Select);
+    QVERIFY(messages.count() >= 1);
+
+    // Around the origin: the count is typed, the copies shown before Enter makes them.
+    editor()->setSelection({hole.id});
+    editor()->setTool(SketchTool::CircularPattern);
+    QCOMPARE(editor()->tool(), SketchTool::CircularPattern);
+    click(at(0.0, 0.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(editor()->valueField()->text(), QStringLiteral("6"));
+    editor()->valueField()->selectAll();
+    type(QStringLiteral("4"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QCOMPARE(curves(EntityKind::Circle).size(), std::size_t{4});
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Circular Pattern"));
+    bool atTop = false;
+    for (const Entity& c : curves(EntityKind::Circle)) {
+        atTop = atTop || apart(sketch().position(c.center), {0.0, 20.0}) < 0.5;
+    }
+    QVERIFY(atTop);
+    // The copies are selected, ready for the next.
+    QCOMPARE(editor()->selectedEntities().size(), std::size_t{3});
+    m_document->undo();
+    QCOMPARE(curves(EntityKind::Circle).size(), std::size_t{1});
+
+    // In a row: from one point to the next is the step.
+    editor()->setSelection({hole.id});
+    editor()->setTool(SketchTool::RectangularPattern);
+    click(at(20.0, 0.0));
+    click(at(20.0, 10.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QCOMPARE(curves(EntityKind::Circle).size(), std::size_t{3});
+    bool highest = false;
+    for (const Entity& c : curves(EntityKind::Circle)) {
+        highest = highest || apart(sketch().position(c.center), {20.0, 20.0}) < 0.5;
+    }
+    QVERIFY(highest);
 }
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {

@@ -1718,10 +1718,12 @@ void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
     QVERIFY2(around->errorText().isEmpty(), qPrintable(around->errorText()));
     QTest::mouseClick(okButton(around), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
-    const auto box = lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
-    QVERIFY(box.has_value());
-    QVERIFY(nearly(box->max.x, 170.0, 1e-6));
-    QVERIFY(nearly(box->max.y, 150.0, 1e-6));
+    // Long work is done off the window's thread, so the copy may take a moment to arrive.
+    const auto boxOfRing = [&window, ringBody] {
+        return lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
+    };
+    QTRY_VERIFY(boxOfRing().has_value() && nearly(boxOfRing()->max.x, 170.0, 1e-6) &&
+                nearly(boxOfRing()->max.y, 150.0, 1e-6));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-axes");
 

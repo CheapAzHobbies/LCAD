@@ -1219,13 +1219,15 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
         {"rectangleButton", {QStringLiteral("sketch.centerRectangle")}},
         {"circleButton", {QStringLiteral("sketch.circle3")}},
         {"arcButton", {QStringLiteral("sketch.arc3"), QStringLiteral("sketch.tangentArc")}},
+        {"mirrorButton",
+         {QStringLiteral("sketch.circularPattern"), QStringLiteral("sketch.rectangularPattern")}},
     };
     for (const auto& [name, ids] : variants) {
         auto* button = toolbar->findChild<QToolButton*>(QLatin1String(name));
         QVERIFY2(button != nullptr && button->menu() != nullptr, name);
-        for (const QString& id : ids) {
-            QVERIFY2(button->menu()->actions().contains(window.commands()->action(id)),
-                     qPrintable(id));
+        for (const QString& tool : ids) {
+            QVERIFY2(button->menu()->actions().contains(window.commands()->action(tool)),
+                     qPrintable(tool));
         }
     }
     // The constraints have a button each where there is room, and otherwise one button that

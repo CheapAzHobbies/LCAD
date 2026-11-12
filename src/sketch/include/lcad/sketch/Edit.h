@@ -160,6 +160,20 @@ Outcome tryDimensionValue(Sketch& sketch, ConstraintId dimension, double value);
 /// Throws std::invalid_argument if `axis` is not a line or is among `entities`.
 std::vector<EntityId> mirror(Sketch& sketch, const std::vector<EntityId>& entities, EntityId axis);
 
+/// Copies of curves and free-standing points turned about `center`: `count` in all, the
+/// originals among them, spread evenly over `angle` radians (a full turn by default, which
+/// leaves no copy on top of the originals). The constraints among the originals, such as a
+/// rectangle's or its dimensions, are copied too. Returns the copies. Throws
+/// std::invalid_argument for a count below 2 or an entity that cannot be copied.
+std::vector<EntityId> patternCircular(Sketch& sketch, const std::vector<EntityId>& entities,
+                                      Point2 center, int count,
+                                      double angle = 2.0 * 3.14159265358979323846);
+
+/// Copies moved by `step` each time: `count` in all, the originals among them. Otherwise as
+/// patternCircular().
+std::vector<EntityId> patternRectangular(Sketch& sketch, const std::vector<EntityId>& entities,
+                                         Point2 step, int count);
+
 /// Adds copies of lines, arcs, and circles at `distance` from the originals, on the side
 /// `side` is on. Curves that are joined end to end are offset as one outline, and the copy is
 /// joined at its corners too. Each new line is held parallel to its original and each new arc or

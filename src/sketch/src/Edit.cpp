@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -950,6 +952,141 @@ std::vector<EntityId> mirror(Sketch& sketch, const std::vector<EntityId>& entiti
         }
         work.setConstruction(copy, entity.construction);
         made.push_back(copy);
+    }
+    work.solve();
+    sketch = std::move(work);
+    return made;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Patterns
+
+namespace {
+
+// Adds a copy of entities, each point put where `place` says, with the constraints that are
+// among them only. Returns the copies, in the order of `entities`.
+std::vector<EntityId> copyPlaced(Sketch& work, const Sketch& sketch,
+                                 const std::vector<EntityId>& entities,
+                                 const std::function<Point2(Point2)>& place) {
+    std::map<EntityId, EntityId> copies;
+    std::vector<EntityId> made;
+    const auto map = [&copies](EntityId from, EntityId to) { copies[from] = to; };
+    for (const EntityId id : entities) {
+        const Entity* found = sketch.find(id);
+        if (found == nullptr || found->owner != 0 || id == sketch.origin()) {
+            throw std::invalid_argument("pattern: choose curves and free-standing points");
+        }
+        const Entity entity = *found;
+        const auto at = [&](EntityId point) { return place(sketch.position(point)); };
+        EntityId copy = 0;
+        switch (entity.kind) {
+        case EntityKind::Point:
+            copy = work.addPoint(place({entity.x, entity.y}));
+            break;
+        case EntityKind::Line:
+            copy = work.addLine(at(entity.start), at(entity.end));
+            map(entity.start, work.find(copy)->start);
+            map(entity.end, work.find(copy)->end);
+            break;
+        case EntityKind::Circle:
+            copy = work.addCircle(at(entity.center), entity.radius);
+            map(entity.center, work.find(copy)->center);
+            break;
+        case EntityKind::Arc:
+            copy = work.addArc(at(entity.center), at(entity.start), at(entity.end));
+            map(entity.center, work.find(copy)->center);
+            map(entity.start, work.find(copy)->start);
+            map(entity.end, work.find(copy)->end);
+            break;
+        case EntityKind::Ellipse:
+            copy = work.addEllipse(at(entity.center), at(entity.start), entity.radius);
+            map(entity.center, work.find(copy)->center);
+            map(entity.start, work.find(copy)->start);
+            break;
+        case EntityKind::Spline: {
+            std::vector<Point2> placed;
+            for (const EntityId point : entity.points) {
+                placed.push_back(at(point));
+            }
+            copy = work.addSpline(placed);
+            const std::vector<EntityId> copied = work.find(copy)->points;
+            for (std::size_t i = 0; i < copied.size(); ++i) {
+                map(entity.points[i], copied[i]);
+            }
+            break;
+        }
+        }
+        map(entity.id, copy);
+        work.setConstruction(copy, entity.construction);
+        made.push_back(copy);
+    }
+    // What holds the originals together holds each copy together. Not what holds them in
+    // place: a lock, or a constraint on something that was not copied.
+    for (const Constraint& c : sketch.constraints()) {
+        if (c.kind == ConstraintKind::Fix) {
+            continue;
+        }
+        const auto inside = [&copies](EntityId id) { return id == 0 || copies.contains(id); };
+        if (!inside(c.first) || !inside(c.second) || !inside(c.third)) {
+            continue;
+        }
+        const auto to = [&copies](EntityId id) { return id == 0 ? 0 : copies.at(id); };
+        work.addConstraint(c.kind, to(c.first), to(c.second), to(c.third), c.value);
+    }
+    return made;
+}
+
+} // namespace
+
+std::vector<EntityId> patternCircular(Sketch& sketch, const std::vector<EntityId>& entities,
+                                      Point2 center, int count, double angle) {
+    if (count < 2 || count > 1000) {
+        throw std::invalid_argument("pattern: it needs from 2 to 1000 in all");
+    }
+    if (!std::isfinite(angle) || std::abs(angle) < 1e-9 || std::abs(angle) > 2.0 * pi + 1e-9) {
+        throw std::invalid_argument("pattern: the angle has to be more than 0 and at most a turn");
+    }
+    if (entities.empty()) {
+        throw std::invalid_argument("pattern: there is nothing to copy");
+    }
+    // A full turn spreads them evenly without the last landing on the first.
+    const bool whole = std::abs(std::abs(angle) - 2.0 * pi) < 1e-9;
+    const double step = angle / (whole ? count : count - 1);
+    Sketch work = sketch;
+    std::vector<EntityId> made;
+    for (int i = 1; i < count; ++i) {
+        const double a = step * i;
+        const double c = std::cos(a);
+        const double s = std::sin(a);
+        const auto turned = [&](Point2 p) {
+            const Point2 d{p.x - center.x, p.y - center.y};
+            return Point2{center.x + c * d.x - s * d.y, center.y + s * d.x + c * d.y};
+        };
+        const std::vector<EntityId> copies = copyPlaced(work, sketch, entities, turned);
+        made.insert(made.end(), copies.begin(), copies.end());
+    }
+    work.solve();
+    sketch = std::move(work);
+    return made;
+}
+
+std::vector<EntityId> patternRectangular(Sketch& sketch, const std::vector<EntityId>& entities,
+                                         Point2 step, int count) {
+    if (count < 2 || count > 1000) {
+        throw std::invalid_argument("pattern: it needs from 2 to 1000 in all");
+    }
+    if (!(std::hypot(step.x, step.y) > 1e-9)) {
+        throw std::invalid_argument("pattern: the copies need a distance between them");
+    }
+    if (entities.empty()) {
+        throw std::invalid_argument("pattern: there is nothing to copy");
+    }
+    Sketch work = sketch;
+    std::vector<EntityId> made;
+    for (int i = 1; i < count; ++i) {
+        const auto moved = [&](Point2 p) { return Point2{p.x + step.x * i, p.y + step.y * i}; };
+        const std::vector<EntityId> copies = copyPlaced(work, sketch, entities, moved);
+        made.insert(made.end(), copies.begin(), copies.end());
     }
     work.solve();
     sketch = std::move(work);

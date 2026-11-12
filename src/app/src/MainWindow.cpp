@@ -1660,6 +1660,20 @@ void MainWindow::defineSketchCommands() {
          "mirror",
          {},
          {tr("reflect"), tr("flip")}},
+        {SketchTool::CircularPattern,
+         "sketch.circularPattern",
+         tr("C&ircular Pattern"),
+         tr("Copy what is selected around a point, as many as typed"),
+         "pattern-circular",
+         {},
+         {tr("polar pattern"), tr("radial pattern"), tr("bolt circle"), tr("sketch pattern")}},
+        {SketchTool::RectangularPattern,
+         "sketch.rectangularPattern",
+         tr("Rectan&gular Pattern"),
+         tr("Copy what is selected in a row, a step apart, as many as typed"),
+         "pattern-rectangular",
+         {},
+         {tr("linear pattern"), tr("array"), tr("sketch pattern")}},
         {SketchTool::Project,
          "sketch.project",
          tr("Pro&ject"),
@@ -1889,7 +1903,8 @@ void MainWindow::createTopBar() {
     sketchMenu->addSeparator();
     for (const char* id :
          {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset",
-          "sketch.mirror", "sketch.project"}) {
+          "sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern",
+          "sketch.project"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
@@ -2218,10 +2233,13 @@ void MainWindow::createSketchToolbar() {
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
     for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset",
-          "sketch.mirror", "sketch.project"}) {
+         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset"}) {
         toolbar->addAction(action(id));
     }
+    // Mirror, and the patterns in the list beside it.
+    variants("mirrorButton",
+             {"sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern"});
+    toolbar->addAction(action("sketch.project"));
     toolbar->addSeparator();
     toolbar->addAction(action("sketch.dimension"));
     // Each constraint has a button of its own while there is room. In a narrow window they
