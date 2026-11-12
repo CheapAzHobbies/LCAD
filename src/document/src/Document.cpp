@@ -50,7 +50,8 @@ bool makesBody(const Feature& feature) {
         return feature.copy;
     }
     // A surface is always a body of its own.
-    if (feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch) {
+    if (feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
+        feature.kind == FeatureKind::OffsetSurface) {
         return true;
     }
     return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||

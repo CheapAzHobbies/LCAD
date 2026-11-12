@@ -2511,3 +2511,29 @@ TEST_CASE("A body scaled about its middle", "[document][feature]") {
     saveDocument(document, path);
     CHECK_THAT(loadDocument(path).document->findFeature(grown)->scale, WithinAbs(2.0, 1e-12));
 }
+
+TEST_CASE("A surface offset from another", "[document][feature]") {
+    Document document;
+    const ObjectId base = document.addSketch("Base", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {20.0, 10.0});
+    document.setSketchGeometry(base, s, "Draw");
+    Feature fill;
+    fill.kind = FeatureKind::Patch;
+    fill.sketch = base;
+    const ObjectId sheet = document.findFeature(document.addFeature(fill))->body;
+    Feature offset;
+    offset.kind = FeatureKind::OffsetSurface;
+    offset.tools = {sheet};
+    offset.size = 5.0;
+    const ObjectId made = document.addFeature(offset);
+    CHECK(document.featureError(made).empty());
+    const ObjectId copy = document.findFeature(made)->body;
+    REQUIRE(copy != sheet);
+    CHECK(!document.findBody(sheet)->shape.isNull());
+    CHECK_THAT(lcad::kernel::surfaceArea(document.findBody(copy)->shape), WithinRel(200.0, 1e-9));
+    const auto box = lcad::kernel::boundingBox(document.findBody(copy)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(std::abs(box->min.z), WithinAbs(5.0, 1e-6));
+    CHECK_THAT(box->max.z - box->min.z, WithinAbs(0.0, 1e-6));
+}

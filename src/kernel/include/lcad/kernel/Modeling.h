@@ -171,6 +171,12 @@ struct Region {
 [[nodiscard]] NamedShape thicken(const NamedShape& surface, double thickness,
                                  const std::string& tag);
 
+/// A surface `distance` away from another, along its faces' normals, or the other way for a
+/// negative distance, joined where its faces meet. The faces keep their names. Throws
+/// kernel::Error if it cannot be offset that far.
+[[nodiscard]] NamedShape offsetSurface(const NamedShape& surface, double distance,
+                                       const std::string& tag);
+
 /// How two solids are combined.
 enum class Combination {
     Join,      ///< everything that is in either

@@ -116,6 +116,10 @@ public:
     /// existing points or curves stay there, and nearly level or upright lines become exactly
     /// so. On until switched off.
     void setInference(bool on);
+    /// Clicks that land on nothing else go to round numbers in the sketch: steps of 0.1, 0.5,
+    /// 1, 5, 10 mm and so on, the smallest at least 8 pixels apart at the zoom. Off at first.
+    void setGridSnap(bool on);
+    [[nodiscard]] bool hasGridSnap() const;
     [[nodiscard]] bool hasInference() const;
     /// Whether the drawing tools make construction geometry.
     void setConstructionMode(bool on);

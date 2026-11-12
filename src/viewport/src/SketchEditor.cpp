@@ -306,6 +306,7 @@ public:
     SketchTool tool = SketchTool::Select;
     ConstraintKind constraintKind = ConstraintKind::Coincident;
     bool inference = true;
+    bool gridSnap = false;
     bool constructionMode = false;
     int polygonSides = 6;
 
@@ -1012,6 +1013,9 @@ public:
         Snap snap;
         snap.position = at;
         if (!inference) {
+            if (gridSnap) {
+                snapToGrid(snap, position);
+            }
             return snap;
         }
         const sketch::Sketch& g = geometry();
@@ -1123,6 +1127,10 @@ public:
                 alignLine(snap, *anchor, at);
             }
         }
+        if (gridSnap && !snap.horizontal && !snap.vertical && !snap.locked &&
+            snap.alignedTo == 0) {
+            snapToGrid(snap, position);
+        }
         return snap;
     }
 
@@ -1187,6 +1195,18 @@ public:
             }
         }
         return snap;
+    }
+
+    // Moves a snap that landed on nothing to the nearest round numbers: the smallest step of
+    // 0.1, 0.5, 1, 5, 10 mm and so on that is at least 8 pixels at this zoom.
+    void snapToGrid(Snap& snap, const QPointF& position) const {
+        const double mm = millimetersPerPixel(position);
+        double step = 0.1;
+        for (int i = 0; step / mm < 8.0 && i < 20; ++i) {
+            step *= i % 2 == 0 ? 5.0 : 2.0;
+        }
+        snap.position = {std::round(snap.position.x / step) * step,
+                         std::round(snap.position.y / step) * step};
     }
 
     // Holds the end of a line being drawn from `anchor` parallel or perpendicular to another
@@ -3548,6 +3568,14 @@ void SketchEditor::cancel() {
     }
     m_impl->update();
     emit changed();
+}
+
+void SketchEditor::setGridSnap(bool on) {
+    m_impl->gridSnap = on;
+}
+
+bool SketchEditor::hasGridSnap() const {
+    return m_impl->gridSnap;
 }
 
 void SketchEditor::setInference(bool on) {

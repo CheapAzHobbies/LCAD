@@ -327,6 +327,8 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("stitch");
         case FeatureKind::Thicken:
             return QStringLiteral("thicken");
+        case FeatureKind::OffsetSurface:
+            return QStringLiteral("offset-face");
         }
     }
     return QStringLiteral("box");
@@ -353,7 +355,8 @@ QString TimelineStrip::describe(document::ObjectId item) const {
                  (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
                   feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
                   feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil)) ||
-                feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch;
+                feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
+                feature.kind == FeatureKind::OffsetSurface;
             const bool copiesIt = std::find(feature.sources.begin(), feature.sources.end(), id) !=
                                   feature.sources.end();
             const std::vector<document::ObjectId> sketches = document::sketchesOf(feature);
@@ -418,7 +421,8 @@ QString TimelineStrip::describe(document::ObjectId item) const {
                   feature->kind == FeatureKind::Loft || feature->kind == FeatureKind::Sweep ||
                   feature->kind == FeatureKind::Pipe || feature->kind == FeatureKind::Coil) ||
                  (feature->kind == FeatureKind::MoveBody && feature->copy) ||
-                 feature->kind == FeatureKind::SurfacePull || feature->kind == FeatureKind::Patch);
+                 feature->kind == FeatureKind::SurfacePull || feature->kind == FeatureKind::Patch ||
+                 feature->kind == FeatureKind::OffsetSurface);
             lines.append(makes ? tr("Makes %1").arg(name(body->name))
                                : tr("Works on %1").arg(name(body->name)));
             if (makes) {

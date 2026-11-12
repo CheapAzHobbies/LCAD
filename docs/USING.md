@@ -110,6 +110,8 @@ A surface is a body of faces that need not enclose anything: a sheet. Surfaces a
   surfaces sewn on are used up.
 - **Thicken** makes a surface into a solid of the thickness typed, out along its faces'
   normals, or the other way for a negative thickness; the corners are joined.
+- **Offset Surface** makes a new surface at the distance typed from the one you click, leaving
+  that one as it is.
 
 A surface has an area but no volume. Like other bodies, surfaces follow the sketches they are
 made from.
@@ -435,6 +437,8 @@ While drawing, LCAD lines things up and holds them so, with a mark by the pointe
   lit; one that goes on from the end of an arc nearly the way it goes is made tangent (◠).
 - Hold Shift to draw at any angle, or turn all of this off with **Sketch > Pick Up Constraints
   While Drawing**.
+- **Sketch > Snap to Grid** puts clicks that land on nothing on round numbers: steps of 0.1,
+  0.5, 1, 5, 10 mm and so on, whichever is the smallest that suits the zoom.
 ### Selecting and moving
 
 Press Esc until no tool is active. Then:

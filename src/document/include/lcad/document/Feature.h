@@ -82,6 +82,8 @@ enum class FeatureKind {
     Stitch,
     /// Makes `body`, a surface, into a solid `size` thick.
     Thicken,
+    /// A new surface, `body`, `size` away from the surface of `tools`' one body.
+    OffsetSurface,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);

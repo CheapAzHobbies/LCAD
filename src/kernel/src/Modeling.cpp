@@ -1286,6 +1286,26 @@ NamedShape thicken(const NamedShape& surface, double thickness, const std::strin
     });
 }
 
+NamedShape offsetSurface(const NamedShape& surface, double distance, const std::string& tag) {
+    if (surface.shape.isNull()) {
+        throw std::invalid_argument("offsetSurface: there is no surface");
+    }
+    if (!std::isfinite(distance) || std::abs(distance) < 1e-7) {
+        throw std::invalid_argument("offsetSurface: the distance has to be other than zero");
+    }
+    return occt::guarded("offset a surface", [&] {
+        BRepOffsetAPI_MakeOffsetShape maker;
+        maker.PerformByJoin(occt::unwrap(surface.shape), distance, 1e-6, BRepOffset_Skin,
+                            Standard_False, Standard_False, GeomAbs_Intersection);
+        if (!maker.IsDone() || maker.Shape().IsNull()) {
+            throw Error("offset a surface", "the surface could not be offset that far");
+        }
+        FaceNamer namer(maker.Shape());
+        namer.inherit(surface, maker);
+        return named(maker.Shape(), namer, tag);
+    });
+}
+
 NamedShape combine(const NamedShape& body, const NamedShape& tool, Combination how) {
     if (body.shape.isNull() || tool.shape.isNull()) {
         throw std::invalid_argument("combine: both shapes are needed");
