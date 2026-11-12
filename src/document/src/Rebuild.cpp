@@ -1192,6 +1192,15 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
         }
         case FeatureKind::Thicken:
             return kernel::thicken(targetOf(feature, document, bodies), feature.size, tag);
+        case FeatureKind::OffsetSurface: {
+            const auto found =
+                feature.tools.empty() ? bodies.end() : bodies.find(feature.tools.front());
+            if (found == bodies.end() || found->second.shape.isNull()) {
+                throw FeatureFailure("The surface it is offset from does not exist at this point "
+                                     "in the timeline.");
+            }
+            return kernel::offsetSurface(found->second, feature.size, tag);
+        }
         case FeatureKind::Thread: {
             const kernel::NamedShape& body = targetOf(feature, document, bodies);
             if (feature.faces.empty()) {

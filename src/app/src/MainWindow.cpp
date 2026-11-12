@@ -1019,6 +1019,14 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasBody;
         m_commands->add(std::move(c));
 
+        c = make("surface.offset", tr("&Offset Surface"), modify,
+                 tr("Make a surface at a distance from another"));
+        c.iconName = QStringLiteral("offset-face");
+        c.aliases = {tr("offset sheet"), tr("parallel surface"), tr("surface offset")};
+        c.run = [this](bool) { startFeature(FeatureKind::OffsetSurface); };
+        c.isEnabled = hasBody;
+        m_commands->add(std::move(c));
+
         c = make("solid.mirror", tr("&Mirror"), create,
                  tr("Add the mirror image of features, or of a whole body, in a plane"));
         c.iconName = QStringLiteral("mirror");
@@ -1869,6 +1877,17 @@ void MainWindow::defineSketchCommands() {
         c.isEnabled = sketching;
         c.isChecked = [editor] { return editor()->hasInference(); };
         m_commands->add(std::move(c));
+
+        c = make("sketch.gridSnap", tr("Snap to &Grid"),
+                 tr("Put clicks that land on nothing on round numbers, in steps that suit the "
+                    "zoom"),
+                 "grid");
+        c.checkable = true;
+        c.aliases = {tr("grid snap"), tr("snap increment"), tr("round numbers")};
+        c.run = [editor](bool on) { editor()->setGridSnap(on); };
+        c.isEnabled = sketching;
+        c.isChecked = [editor] { return editor()->hasGridSnap(); };
+        m_commands->add(std::move(c));
     }
 
     // Constraints
@@ -1969,7 +1988,8 @@ void MainWindow::createTopBar() {
     QMenu* surfaces = create->addMenu(tr("S&urface"));
     surfaces->setObjectName(QStringLiteral("menu.surface"));
     surfaces->addActions({action("surface.pull"), action("surface.patch"),
-                          action("surface.stitch"), action("surface.thicken")});
+                          action("surface.stitch"), action("surface.thicken"),
+                          action("surface.offset")});
     QMenu* pattern = create->addMenu(tr("&Pattern"));
     pattern->setObjectName(QStringLiteral("menu.pattern"));
     pattern->addActions({action("solid.patternRectangular"), action("solid.patternCircular")});
@@ -2044,7 +2064,8 @@ void MainWindow::createTopBar() {
         constrain->addAction(action(id));
     }
     sketchMenu->addSeparator();
-    sketchMenu->addActions({action("sketch.construction"), action("sketch.inference")});
+    sketchMenu->addActions({action("sketch.construction"), action("sketch.inference"),
+                            action("sketch.gridSnap")});
 
     QMenu* view = m_menuBar->addMenu(tr("&View"));
     view->addActions({action("view.fit"), action("view.fitSelection"), action("view.section")});
@@ -3692,7 +3713,8 @@ void MainWindow::startFeature(document::FeatureKind kind) {
     // Combine, Move Body, Stitch, and Thicken start from the body selected, or else the first
     // there is.
     if (kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody ||
-        kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken) {
+        kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken ||
+        kind == document::FeatureKind::OffsetSurface) {
         const std::vector<document::ObjectId> bodies = targetBodies();
         if (!bodies.empty()) {
             seed.body = bodies.front();
@@ -3807,7 +3829,8 @@ void MainWindow::startFeature(document::FeatureKind kind) {
                kind == document::FeatureKind::MoveBody || kind == document::FeatureKind::Pipe ||
                kind == document::FeatureKind::Coil || kind == document::FeatureKind::Stitch ||
                kind == document::FeatureKind::Thicken ||
-               kind == document::FeatureKind::SurfacePull) {
+               kind == document::FeatureKind::SurfacePull ||
+               kind == document::FeatureKind::OffsetSurface) {
         m_featurePanel->setFeature(seed);
         m_settingPicks = true;
         m_viewport->clearSelection();
@@ -3927,7 +3950,8 @@ void MainWindow::openFeaturePanel(document::FeatureKind kind) {
         SelectionFilter filter = SelectionFilter::Edges;
         if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody ||
             kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody ||
-            kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken) {
+            kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken ||
+        kind == document::FeatureKind::OffsetSurface) {
             filter = SelectionFilter::Bodies;
         } else if (picksFaces(kind) || kind == document::FeatureKind::Mirror) {
             filter = SelectionFilter::Faces;
@@ -4118,7 +4142,8 @@ void MainWindow::takeFeaturePicks() {
     }
     if (kind == document::FeatureKind::Repair || kind == document::FeatureKind::SplitBody ||
         kind == document::FeatureKind::Combine || kind == document::FeatureKind::MoveBody ||
-        kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken) {
+        kind == document::FeatureKind::Stitch || kind == document::FeatureKind::Thicken ||
+        kind == document::FeatureKind::OffsetSurface) {
         // The body clicked is the one to repair, split, move, or thicken, or to combine with
         // or sew on.
         for (const SelectedItem& item : m_viewport->selection()) {

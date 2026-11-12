@@ -117,6 +117,7 @@ private slots:
     void moreWaysToDrawAndACornerCutStraight();
     void patternsCopyWhatIsSelected();
     void linesLineUpWithOtherLinesAndCrossings();
+    void clicksGoToRoundNumbersOnTheGrid();
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
@@ -2021,6 +2022,27 @@ void SketchViewTest::linesLineUpWithOtherLinesAndCrossings() {
     }();
     QVERIFY(apart(sketch().position(top.id), {100.0, -50.0}) < 1e-6);
     QVERIFY(has(ConstraintKind::PointOnCircle, top.id, ring));
+}
+
+void SketchViewTest::clicksGoToRoundNumbersOnTheGrid() {
+    openSketch();
+    QVERIFY(!editor()->hasGridSnap());
+    editor()->setGridSnap(true);
+    // At 3 pixels to the millimeter the steps are 5 mm: 1 mm would be closer than 8 pixels.
+    editor()->setTool(SketchTool::Line);
+    click(at(11.0, 4.0));
+    click(at(39.0, 21.0));
+    editor()->cancel();
+    const Entity line = curves(EntityKind::Line).front();
+    QVERIFY2(apart(startOf(line.id), {10.0, 5.0}) < 1e-9,
+             qPrintable(QStringLiteral("%1 %2").arg(startOf(line.id).x).arg(startOf(line.id).y)));
+    QVERIFY(apart(endOf(line.id), {40.0, 20.0}) < 1e-9);
+    // Points and curves still win over the grid.
+    click(at(40.6, 20.6));
+    click(at(61.0, 41.0));
+    editor()->cancel();
+    QVERIFY(apart(startOf(curves(EntityKind::Line).back().id), {40.0, 20.0}) < 1e-9);
+    editor()->setGridSnap(false);
 }
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {

@@ -53,7 +53,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Equal lengths and radii detected | No | |
 | Snap to intersections | Have | Since 2026-11-12. |
 | Snap to quadrants | Have | Since 2026-11-12. |
-| Grid snapping | No | |
+| Grid snapping | Have | Steps that follow the zoom. |
 | Marker showing the snap before release | Have | |
 | Inference can be switched off | Have | |
 
@@ -102,7 +102,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Item | State | Note |
 |---|---|---|
 | Surface bodies; surface pull, patch, stitch, thicken | Have | Since 2026-11-12. |
-| Surface revolve, sweep, loft; trim, extend, offset surfaces; boundary surfaces | No | |
+| Offset surface | Have | Since 2026-11-12. |
+| Surface revolve, sweep, loft; trim, extend surfaces; boundary surfaces | No | |
 | Subdivision (freeform) modeling | No | See the top of this page. |
 | Mesh import (STL, OBJ, 3MF) to solids | Part | Pull request #15, not merged. |
 | Mesh export (STL, 3MF, OBJ) | Have | |

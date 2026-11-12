@@ -104,6 +104,8 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Stitch");
     case FeatureKind::Thicken:
         return FeaturePanel::tr("Thicken");
+    case FeatureKind::OffsetSurface:
+        return FeaturePanel::tr("Offset Surface");
     }
     return {};
 }
@@ -193,7 +195,7 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         fillBodies();
         fillTools();
     }
-    if (kind == FeatureKind::Thicken) {
+    if (kind == FeatureKind::Thicken || kind == FeatureKind::OffsetSurface) {
         m_body = new QComboBox(this);
         m_body->setObjectName(QStringLiteral("body"));
         m_body->setToolTip(tr("The surface to thicken. Click it in the 3D view to pick it."));
@@ -318,6 +320,13 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_size = addField(QStringLiteral("size"), tr("Close gaps up to"), 0.000001, 10.0, tr(" mm"));
         m_size->setDecimals(4);
         m_size->setValue(0.01);
+        break;
+    case FeatureKind::OffsetSurface:
+        m_size = addField(QStringLiteral("size"), tr("Distance"), -largestInput, largestInput,
+                          tr(" mm"));
+        m_size->setValue(5.0);
+        m_size->setToolTip(tr("How far the new surface is, along the faces' normals. Negative "
+                              "goes the other way."));
         break;
     case FeatureKind::Thicken:
         m_size = addField(QStringLiteral("size"), tr("Thickness"), -largestInput, largestInput,
@@ -1161,13 +1170,17 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         fillReferences();
     }
     if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::Stitch ||
-        feature.kind == FeatureKind::Thicken) {
+        feature.kind == FeatureKind::Thicken || feature.kind == FeatureKind::OffsetSurface) {
         if (feature.kind == FeatureKind::Combine) {
             m_operation->setCurrentIndex(
                 m_operation->findData(static_cast<int>(feature.operation)));
         }
         fillBodies();
-        const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
+        const document::ObjectId shown =
+            feature.kind == FeatureKind::OffsetSurface && !feature.tools.empty()
+                ? feature.tools.front()
+                : feature.body;
+        const int index = m_body->findData(QVariant::fromValue<qulonglong>(shown.value));
         if (index >= 0) {
             m_body->setCurrentIndex(index);
         }
@@ -1339,7 +1352,8 @@ void FeaturePanel::setBody(document::ObjectId body) {
     if (m_body == nullptr ||
         (m_feature.kind != FeatureKind::Repair && m_feature.kind != FeatureKind::SplitBody &&
          m_feature.kind != FeatureKind::Combine && m_feature.kind != FeatureKind::MoveBody &&
-         m_feature.kind != FeatureKind::Stitch && m_feature.kind != FeatureKind::Thicken)) {
+         m_feature.kind != FeatureKind::Stitch && m_feature.kind != FeatureKind::Thicken &&
+         m_feature.kind != FeatureKind::OffsetSurface)) {
         return;
     }
     // A body clicked for a combine or a stitch is one to take in, or let go.
@@ -1390,6 +1404,8 @@ bool FeaturePanel::hasInput() const {
         return m_feature.body.isValid() && !m_feature.tools.empty();
     case FeatureKind::Thicken:
         return m_feature.body.isValid();
+    case FeatureKind::OffsetSurface:
+        return !m_feature.tools.empty() && m_feature.tools.front().isValid();
     case FeatureKind::SurfacePull:
         return m_feature.sketch.isValid();
     case FeatureKind::Patch:
@@ -1708,6 +1724,15 @@ void FeaturePanel::readFields() {
         m_feature.body =
             document::ObjectId{m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
     }
+    if (m_feature.kind == FeatureKind::OffsetSurface) {
+        // The new surface is a body of its own, made from the one chosen.
+        const document::ObjectId chosen{
+            m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
+        if (m_feature.tools != std::vector<document::ObjectId>{chosen}) {
+            m_feature.body = {};
+        }
+        m_feature.tools = {chosen};
+    }
     // Values worked out from parameters, of the boxes that are in use.
     for (const ExpressionBox* box : findChildren<ExpressionBox*>()) {
         const std::string field = box->objectName().toStdString();
@@ -1881,6 +1906,10 @@ void FeaturePanel::updatePicked() {
         break;
     case FeatureKind::Thicken:
         text = tr("Click the surface to thicken in the 3D view, and type how thick.");
+        break;
+    case FeatureKind::OffsetSurface:
+        text = tr("Click the surface to offset in the 3D view, and type how far. The new "
+                  "surface is a body of its own.");
         break;
     case FeatureKind::Combine:
         text = m_feature.tools.empty()
