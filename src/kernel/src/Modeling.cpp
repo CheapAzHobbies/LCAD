@@ -40,6 +40,7 @@
 #include <gp_Ax3.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepOffset_MakeOffset.hxx>
 #include <BRepOffset_Mode.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
@@ -1152,6 +1153,136 @@ NamedShape thread(const NamedShape& body, int face, double pitch, const std::str
         namer.inherit(body, cut);
         namer.inherit(cutter, cut);
         return named(cut.Shape(), namer, tag);
+    });
+}
+
+NamedShape pullSurface(const Plane& plane, const std::vector<OutlineCurve>& curves, double from,
+                       double to, const std::string& tag) {
+    if (curves.empty()) {
+        throw Error("pull a surface", "there are no curves to pull");
+    }
+    if (!std::isfinite(from) || !std::isfinite(to) || std::abs(to - from) < 1e-7) {
+        throw std::invalid_argument("pullSurface: the distance has to be more than zero");
+    }
+    return occt::guarded("pull a surface", [&] {
+        const gp_Vec n(plane.normal.x, plane.normal.y, plane.normal.z);
+        gp_Trsf start;
+        start.SetTranslation(n * from);
+        BRepBuilderAPI_Sewing sewing(outlineTolerance);
+        std::vector<std::pair<TopoDS_Shape, std::string>> made;
+        for (const OutlineCurve& curve : curves) {
+            const TopoDS_Shape edge =
+                BRepBuilderAPI_Transform(occt::unwrap(curve.edge), start, Standard_True).Shape();
+            BRepPrimAPI_MakePrism prism(edge, n * (to - from));
+            if (!prism.IsDone()) {
+                throw Error("pull a surface", "a curve could not be pulled into a face");
+            }
+            for (TopExp_Explorer it(prism.Shape(), TopAbs_FACE); it.More(); it.Next()) {
+                sewing.Add(it.Current());
+                made.emplace_back(it.Current(), tag + "/side/" + curve.name);
+            }
+        }
+        sewing.Perform();
+        const TopoDS_Shape sewn = sewing.SewedShape();
+        FaceNamer namer(sewn);
+        for (const auto& [face, name] : made) {
+            namer.offer(sewing.IsModified(face) ? sewing.Modified(face) : face, name);
+        }
+        return named(sewn, namer, tag);
+    });
+}
+
+NamedShape patch(const Plane& plane, const Region& region, const std::string& tag) {
+    return occt::guarded("patch", [&] {
+        const TopoDS_Face face = faceOf(plane, region);
+        FaceNamer namer(face);
+        namer.offer(face, tag + "/patch/" + keyOf(region));
+        return named(face, namer, tag);
+    });
+}
+
+NamedShape stitch(const std::vector<NamedShape>& pieces, double tolerance, const std::string& tag) {
+    if (pieces.empty()) {
+        throw std::invalid_argument("stitch: there is nothing to sew");
+    }
+    if (!std::isfinite(tolerance) || tolerance <= 0.0) {
+        throw std::invalid_argument("stitch: the widest gap has to be more than zero");
+    }
+    return occt::guarded("stitch", [&] {
+        BRepBuilderAPI_Sewing sewing(tolerance);
+        std::vector<std::pair<TopoDS_Shape, std::string>> faces;
+        for (const NamedShape& piece : pieces) {
+            const TopTools_IndexedMapOfShape map = mapOf(occt::unwrap(piece.shape), TopAbs_FACE);
+            for (int i = 1; i <= map.Extent(); ++i) {
+                sewing.Add(map(i));
+                faces.emplace_back(map(i), piece.faceNames.at(static_cast<std::size_t>(i - 1)));
+            }
+        }
+        sewing.Perform();
+        const TopoDS_Shape result = sewing.SewedShape();
+        // One shell, closed all round: a solid.
+        std::vector<TopoDS_Shell> shells;
+        for (TopExp_Explorer it(result, TopAbs_SHELL); it.More(); it.Next()) {
+            shells.push_back(TopoDS::Shell(it.Current()));
+        }
+        if (shells.size() == 1 && BRep_Tool::IsClosed(shells.front())) {
+            BRepBuilderAPI_MakeSolid solid(shells.front());
+            if (solid.IsDone()) {
+                ShapeFix_Solid fix(solid.Solid());
+                fix.Perform();
+                const TopoDS_Shape closed = fix.Solid();
+                if (hasSolid(closed) && solidVolume(closed) > 0.0) {
+                    // The same faces, in a solid: their names carry over by where they are.
+                    FaceNamer namer(closed);
+                    for (const auto& [face, name] : faces) {
+                        const TopoDS_Shape sewn =
+                            sewing.IsModified(face) ? sewing.Modified(face) : face;
+                        namer.offerUnnamedAt(centerOf(sewn), name);
+                    }
+                    return named(closed, namer, tag);
+                }
+            }
+        }
+        FaceNamer namer(result);
+        for (const auto& [face, name] : faces) {
+            namer.offer(sewing.IsModified(face) ? sewing.Modified(face) : face, name);
+        }
+        return named(result, namer, tag);
+    });
+}
+
+NamedShape thicken(const NamedShape& surface, double thickness, const std::string& tag) {
+    if (surface.shape.isNull()) {
+        throw std::invalid_argument("thicken: there is no surface");
+    }
+    if (!std::isfinite(thickness) || std::abs(thickness) < 1e-7) {
+        throw std::invalid_argument("thicken: the thickness has to be other than zero");
+    }
+    return occt::guarded("thicken", [&] {
+        // Offset in its thickening mode, joined at the corners, so that a surface of several
+        // faces thickens as one. The simple way, face by face, leaves the corners out.
+        BRepOffset_MakeOffset maker;
+        maker.Initialize(occt::unwrap(surface.shape), thickness, 1e-6, BRepOffset_Skin,
+                         Standard_False, Standard_False, GeomAbs_Intersection, Standard_True);
+        maker.MakeOffsetShape();
+        if (!maker.IsDone() || !hasSolid(maker.Shape())) {
+            throw Error("thicken", "the surface could not be thickened that much");
+        }
+        TopoDS_Shape solid = maker.Shape();
+        // Inside out, as it comes for some surfaces: turned the right way.
+        if (solidVolume(solid) < 0.0) {
+            solid.Reverse();
+        }
+        requireValid(solid, "thicken");
+        // The faces it starts from keep their names; the others are named after where they
+        // are, in the order of where they are.
+        FaceNamer namer(solid);
+        const TopTools_IndexedMapOfShape faces = mapOf(occt::unwrap(surface.shape), TopAbs_FACE);
+        for (int i = 1; i <= faces.Extent(); ++i) {
+            namer.offerUnnamedAt(centerOf(faces(i)),
+                                 surface.faceNames.at(static_cast<std::size_t>(i - 1)));
+        }
+        return named(solid, namer, tag);
     });
 }
 

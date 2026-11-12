@@ -2403,3 +2403,81 @@ TEST_CASE("Pipes and coils and threads as features", "[document][feature]") {
     CHECK_THAT(loaded.document->findFeature(coiled)->turns, WithinAbs(3.0, 1e-12));
     CHECK_THAT(loaded.document->findFeature(threaded)->pitch, WithinAbs(1.0, 1e-12));
 }
+
+TEST_CASE("A box made of surfaces and a thickened wall", "[document][feature]") {
+    Document document;
+    // A rectangle on the XY plane and the same on a plane 5 above.
+    const ObjectId base = document.addSketch("Base", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {20.0, 10.0});
+    document.setSketchGeometry(base, s, "Draw");
+    const ObjectId lid = document.addSketch(
+        "Lid", lcad::kernel::makePlane({0.0, 0.0, 5.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    document.setSketchGeometry(lid, s, "Draw");
+
+    Feature walls;
+    walls.kind = FeatureKind::SurfacePull;
+    walls.sketch = base;
+    walls.distance = 5.0;
+    const ObjectId pulled = document.addFeature(walls);
+    CHECK(document.featureError(pulled).empty());
+    const ObjectId sides = document.findFeature(pulled)->body;
+    CHECK(document.findFeature(pulled)->name == "Surface Pull 1");
+    CHECK_THAT(lcad::kernel::surfaceArea(document.findBody(sides)->shape),
+               WithinRel(2.0 * (20.0 + 10.0) * 5.0, 1e-9));
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sides)->shape), WithinAbs(0.0, 1e-9));
+
+    Feature bottom;
+    bottom.kind = FeatureKind::Patch;
+    bottom.sketch = base;
+    const ObjectId floor = document.findFeature(document.addFeature(bottom))->body;
+    Feature top = bottom;
+    top.sketch = lid;
+    const ObjectId cap = document.findFeature(document.addFeature(top))->body;
+
+    // Sewn: a solid box, and the patches used up.
+    Feature sew;
+    sew.kind = FeatureKind::Stitch;
+    sew.body = sides;
+    sew.tools = {floor, cap};
+    sew.size = 0.01;
+    const ObjectId sewn = document.addFeature(sew);
+    CHECK(document.featureError(sewn).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sides)->shape), WithinRel(1000.0, 1e-6));
+    CHECK(document.findBody(floor)->shape.isNull());
+    // It follows the sides: taller than the lid, they no longer close, and it is a surface.
+    walls = *document.findFeature(pulled);
+    walls.distance = 8.0;
+    document.changeFeature(pulled, walls);
+    CHECK(document.featureError(sewn).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sides)->shape), WithinAbs(0.0, 1e-6));
+    document.undo();
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sides)->shape), WithinRel(1000.0, 1e-6));
+
+    // An open wall thickened into a solid.
+    const ObjectId line = document.addSketch("Line", lcad::kernel::planeXY());
+    lcad::sketch::Sketch l;
+    l.addLine({0.0, 30.0}, {40.0, 30.0});
+    document.setSketchGeometry(line, l, "Draw");
+    Feature fence;
+    fence.kind = FeatureKind::SurfacePull;
+    fence.sketch = line;
+    fence.distance = 10.0;
+    const ObjectId sheet = document.findFeature(document.addFeature(fence))->body;
+    Feature thick;
+    thick.kind = FeatureKind::Thicken;
+    thick.body = sheet;
+    thick.size = 2.0;
+    const ObjectId thickened = document.addFeature(thick);
+    CHECK(document.featureError(thickened).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sheet)->shape), WithinRel(800.0, 1e-6));
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("surfaces.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(sewn)->tools == sew.tools);
+    CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(sides)->shape),
+               WithinRel(1000.0, 1e-6));
+}

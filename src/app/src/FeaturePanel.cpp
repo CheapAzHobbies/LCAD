@@ -96,6 +96,14 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Coil");
     case FeatureKind::Thread:
         return FeaturePanel::tr("Thread");
+    case FeatureKind::SurfacePull:
+        return FeaturePanel::tr("Surface Pull");
+    case FeatureKind::Patch:
+        return FeaturePanel::tr("Patch");
+    case FeatureKind::Stitch:
+        return FeaturePanel::tr("Stitch");
+    case FeatureKind::Thicken:
+        return FeaturePanel::tr("Thicken");
     }
     return {};
 }
@@ -144,7 +152,8 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_operation->setCurrentIndex(
             m_body->count() == 0 || kind == FeatureKind::Pipe || kind == FeatureKind::Coil ? 0 : 1);
     }
-    if (kind == FeatureKind::Combine) {
+    if (kind == FeatureKind::Combine || kind == FeatureKind::Stitch) {
+        if (kind == FeatureKind::Combine) {
         m_operation = new QComboBox(this);
         m_operation->setObjectName(QStringLiteral("operation"));
         m_operation->addItem(tr("Join"), static_cast<int>(Operation::Join));
@@ -157,9 +166,12 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
             readFields();
         });
         m_form->addRow(tr("Operation"), m_operation);
+        }
         m_body = new QComboBox(this);
         m_body->setObjectName(QStringLiteral("body"));
-        m_body->setToolTip(tr("The body that is changed."));
+        m_body->setToolTip(kind == FeatureKind::Combine ? tr("The body that is changed.")
+                                                        : tr("The surface the others are sewn "
+                                                             "to."));
         connect(m_body, &QComboBox::activated, this, [this] {
             fillTools();
             readFields();
@@ -176,8 +188,18 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_keepTools->setObjectName(QStringLiteral("keepTools"));
         connect(m_keepTools, &QCheckBox::toggled, this, [this] { readFields(); });
         m_form->addRow(QString(), m_keepTools);
+        // What a stitch sews on is always used up.
+        m_keepTools->setVisible(kind == FeatureKind::Combine);
         fillBodies();
         fillTools();
+    }
+    if (kind == FeatureKind::Thicken) {
+        m_body = new QComboBox(this);
+        m_body->setObjectName(QStringLiteral("body"));
+        m_body->setToolTip(tr("The surface to thicken. Click it in the 3D view to pick it."));
+        connect(m_body, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Surface"), m_body);
+        fillBodies();
     }
     if (kind == FeatureKind::MoveBody) {
         m_body = new QComboBox(this);
@@ -291,6 +313,36 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_angle->setValue(360.0);
         break;
     case FeatureKind::Combine:
+        break;
+    case FeatureKind::Stitch:
+        m_size = addField(QStringLiteral("size"), tr("Close gaps up to"), 0.000001, 10.0, tr(" mm"));
+        m_size->setDecimals(4);
+        m_size->setValue(0.01);
+        break;
+    case FeatureKind::Thicken:
+        m_size = addField(QStringLiteral("size"), tr("Thickness"), -largestInput, largestInput,
+                          tr(" mm"));
+        m_size->setValue(2.0);
+        m_size->setToolTip(tr("How thick, out along the surface's normals. Negative goes the "
+                              "other way."));
+        break;
+    case FeatureKind::Patch:
+        break;
+    case FeatureKind::SurfacePull:
+        m_path = new QComboBox(this);
+        m_path->setObjectName(QStringLiteral("path"));
+        m_path->setToolTip(tr("The sketch whose curves are pulled, open or closed."));
+        connect(m_path, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Sketch"), m_path);
+        fillPaths();
+        m_distance = addField(QStringLiteral("distance"), tr("Distance"), -largestInput,
+                              largestInput, tr(" mm"));
+        m_distance->setValue(10.0);
+        m_distance->setToolTip(tr("How far to pull. A negative distance pulls the other way."));
+        m_bothSides = new QCheckBox(tr("Half each way"), this);
+        m_bothSides->setObjectName(QStringLiteral("symmetric"));
+        connect(m_bothSides, &QCheckBox::toggled, this, [this] { readFields(); });
+        m_form->addRow(QString(), m_bothSides);
         break;
     case FeatureKind::MoveBody:
         m_moveX = addField(QStringLiteral("moveX"), tr("X"), -largestInput, largestInput, tr(" mm"));
@@ -847,13 +899,16 @@ void FeaturePanel::fillPaths() {
     }
     const QSignalBlocker blocker(m_path);
     m_path->clear();
+    // A surface pull chooses its own sketch here; a path is any sketch but the profile's.
+    const bool own = m_feature.kind == FeatureKind::SurfacePull;
     for (const document::SketchItem& sketch : m_document->sketches()) {
-        if (sketch.id != m_feature.sketch) {
+        if (own || sketch.id != m_feature.sketch) {
             m_path->addItem(QString::fromStdString(sketch.name),
                             QVariant::fromValue<qulonglong>(sketch.id.value));
         }
     }
-    int index = m_path->findData(QVariant::fromValue<qulonglong>(m_feature.pathSketch.value));
+    int index = m_path->findData(QVariant::fromValue<qulonglong>(
+        (own ? m_feature.sketch : m_feature.pathSketch).value));
     if (index < 0) {
         // A path is usually open, so a sketch with no closed outline is the likeliest one; and
         // of those, the one drawn last.
@@ -1088,15 +1143,25 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         m_pickedName.clear();
         fillReferences();
     }
-    if (feature.kind == FeatureKind::Combine) {
-        m_operation->setCurrentIndex(m_operation->findData(static_cast<int>(feature.operation)));
+    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::Stitch ||
+        feature.kind == FeatureKind::Thicken) {
+        if (feature.kind == FeatureKind::Combine) {
+            m_operation->setCurrentIndex(
+                m_operation->findData(static_cast<int>(feature.operation)));
+        }
         fillBodies();
         const int index = m_body->findData(QVariant::fromValue<qulonglong>(feature.body.value));
         if (index >= 0) {
             m_body->setCurrentIndex(index);
         }
         fillTools();
-        m_keepTools->setChecked(feature.keepTools);
+        if (m_keepTools != nullptr) {
+            m_keepTools->setChecked(feature.keepTools);
+        }
+    }
+    if (m_bothSides != nullptr) {
+        m_bothSides->setChecked(feature.symmetric);
+        m_distance->setValue(feature.distance);
     }
     if (feature.kind == FeatureKind::MoveBody) {
         fillBodies();
@@ -1255,11 +1320,12 @@ void FeaturePanel::setFaces(document::ObjectId body, const std::vector<std::stri
 void FeaturePanel::setBody(document::ObjectId body) {
     if (m_body == nullptr ||
         (m_feature.kind != FeatureKind::Repair && m_feature.kind != FeatureKind::SplitBody &&
-         m_feature.kind != FeatureKind::Combine && m_feature.kind != FeatureKind::MoveBody)) {
+         m_feature.kind != FeatureKind::Combine && m_feature.kind != FeatureKind::MoveBody &&
+         m_feature.kind != FeatureKind::Stitch && m_feature.kind != FeatureKind::Thicken)) {
         return;
     }
-    // A body clicked for a combine is one to combine with, taken in or let go.
-    if (m_feature.kind == FeatureKind::Combine) {
+    // A body clicked for a combine or a stitch is one to take in, or let go.
+    if (m_feature.kind == FeatureKind::Combine || m_feature.kind == FeatureKind::Stitch) {
         const document::ObjectId target{
             m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
         if (body == target) {
@@ -1302,7 +1368,14 @@ bool FeaturePanel::hasInput() const {
     case FeatureKind::SplitBody:
         return m_feature.body.isValid() && !m_feature.reference.empty();
     case FeatureKind::Combine:
+    case FeatureKind::Stitch:
         return m_feature.body.isValid() && !m_feature.tools.empty();
+    case FeatureKind::Thicken:
+        return m_feature.body.isValid();
+    case FeatureKind::SurfacePull:
+        return m_feature.sketch.isValid();
+    case FeatureKind::Patch:
+        return m_feature.sketch.isValid() && !m_feature.regions.empty();
     case FeatureKind::MoveBody:
         return m_feature.copy ? !m_feature.tools.empty() && m_feature.tools.front().isValid()
                               : m_feature.body.isValid();
@@ -1597,8 +1670,21 @@ void FeaturePanel::readFields() {
         m_feature.size = m_size->value();
     }
     if (m_path != nullptr) {
-        m_feature.pathSketch = document::ObjectId{
+        const document::ObjectId chosen{
             m_path->count() > 0 ? m_path->currentData().toULongLong() : 0};
+        if (m_feature.kind == FeatureKind::SurfacePull) {
+            m_feature.sketch = chosen;
+        } else {
+            m_feature.pathSketch = chosen;
+        }
+    }
+    if (m_bothSides != nullptr) {
+        m_feature.symmetric = m_bothSides->isChecked();
+        m_feature.distance = m_distance->value();
+    }
+    if (m_feature.kind == FeatureKind::Thicken) {
+        m_feature.body =
+            document::ObjectId{m_body->count() > 0 ? m_body->currentData().toULongLong() : 0};
     }
     // Values worked out from parameters, of the boxes that are in use.
     for (const ExpressionBox* box : findChildren<ExpressionBox*>()) {
@@ -1753,6 +1839,27 @@ void FeaturePanel::updatePicked() {
         }
         break;
     }
+    case FeatureKind::SurfacePull:
+        text = tr("Choose the sketch below: every curve of it, open or closed, is pulled into a "
+                  "surface.");
+        break;
+    case FeatureKind::Patch:
+        text = m_feature.regions.empty()
+                   ? tr("Click the closed areas of a sketch in the 3D view to fill them with "
+                        "flat faces.")
+                   : tr("%n area(s) filled. Click an area to take it in or let it go.", nullptr,
+                        static_cast<int>(m_feature.regions.size()));
+        break;
+    case FeatureKind::Stitch:
+        text = m_feature.tools.empty()
+                   ? tr("Choose the surface to sew to, and click the others in the 3D view. "
+                        "Where they close all round, they become a solid.")
+                   : tr("%n surface(s) sewn on. Click one to take it in or let it go.", nullptr,
+                        static_cast<int>(m_feature.tools.size()));
+        break;
+    case FeatureKind::Thicken:
+        text = tr("Click the surface to thicken in the 3D view, and type how thick.");
+        break;
     case FeatureKind::Combine:
         text = m_feature.tools.empty()
                    ? tr("Choose the body to change, and click the bodies to combine with it in "

@@ -158,6 +158,17 @@ kernel::Region kernelRegion(const SketchItem& sketch, const sketch::Region& regi
     return made;
 }
 
+std::vector<kernel::OutlineCurve> sketchCurves(const SketchItem& sketch) {
+    std::vector<kernel::OutlineCurve> curves;
+    for (const sketch::Entity& entity : sketch.geometry.entities()) {
+        if (entity.kind == sketch::EntityKind::Point || entity.construction || entity.fixed) {
+            continue;
+        }
+        curves.push_back({curveShape(sketch, entity), std::to_string(entity.id)});
+    }
+    return curves;
+}
+
 std::vector<kernel::Shape> sketchRegionFaces(const SketchItem& sketch) {
     std::vector<kernel::Shape> faces;
     for (const sketch::Region& region : sketch.geometry.regions()) {

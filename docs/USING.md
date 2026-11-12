@@ -97,6 +97,23 @@ a whole body: select the feature in the timeline first, or check it in the panel
 direction, or axis is one through the origin, a construction plane or axis, or an edge or face
 you click in the 3D view.
 
+## Surfaces
+
+A surface is a body of faces that need not enclose anything: a sheet. Surfaces are made under
+**Create > Surface**, and end up as solids:
+
+- **Surface Pull** pulls every curve of a sketch, open or closed, into a surface: choose the
+  sketch, type the distance, and check **Half each way** for both sides of the sketch.
+- **Patch** fills closed areas of a sketch, clicked in the 3D view, with flat faces.
+- **Stitch** sews surfaces to a surface where their edges meet, closing gaps up to the size
+  typed. Where they close all round, the result is a solid; otherwise it stays a surface. The
+  surfaces sewn on are used up.
+- **Thicken** makes a surface into a solid of the thickness typed, out along its faces'
+  normals, or the other way for a negative thickness; the corners are joined.
+
+A surface has an area but no volume. Like other bodies, surfaces follow the sketches they are
+made from.
+
 ## Holes
 
 Draw where the holes go in a sketch on the face to drill into: points, or circles. Then press **H**,

@@ -71,6 +71,17 @@ enum class FeatureKind {
     Coil,
     /// A screw thread of `pitch` cut into the cylindrical face `faces` names.
     Thread,
+    // Surfaces: bodies of faces that need not enclose anything.
+    /// Pulls every curve of `sketch`, open or closed, into a surface, `distance` along the
+    /// sketch's normal, or half each way if `symmetric`.
+    SurfacePull,
+    /// Fills closed areas of `sketch` with flat faces, as a surface.
+    Patch,
+    /// Sews `tools` to `body` where their edges meet to within `size`; a solid where they close
+    /// all round. The tools are used up.
+    Stitch,
+    /// Makes `body`, a surface, into a solid `size` thick.
+    Thicken,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);

@@ -1130,6 +1130,54 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             }
             return placed(feature, document, bodies, keep(made));
         }
+        case FeatureKind::SurfacePull: {
+            const SketchItem* sketch = document.findSketch(feature.sketch);
+            if (sketch == nullptr) {
+                throw FeatureFailure("The sketch it was made from is gone.");
+            }
+            const std::vector<kernel::OutlineCurve> curves = sketchCurves(*sketch);
+            if (curves.empty()) {
+                throw FeatureFailure("Its sketch, " + sketch->name + ", has no curves.");
+            }
+            const double from = feature.symmetric ? -feature.distance / 2.0 : 0.0;
+            const double to = feature.symmetric ? feature.distance / 2.0 : feature.distance;
+            if (!std::isfinite(feature.distance) || std::abs(feature.distance) < 1e-7) {
+                throw FeatureFailure("Its distance is zero.");
+            }
+            return kernel::pullSurface(sketch->plane, curves, from, to, tag);
+        }
+        case FeatureKind::Patch: {
+            const SketchItem* sketch = document.findSketch(feature.sketch);
+            if (sketch == nullptr) {
+                throw FeatureFailure("The sketch it was made from is gone.");
+            }
+            const std::vector<kernel::Region> regions = regionsOf(feature, *sketch);
+            std::vector<kernel::NamedShape> faces;
+            for (const kernel::Region& region : regions) {
+                faces.push_back(kernel::patch(sketch->plane, region, tag));
+            }
+            return faces.size() == 1 ? faces.front() : kernel::stitch(faces, 1e-6, tag);
+        }
+        case FeatureKind::Stitch: {
+            std::vector<kernel::NamedShape> pieces{targetOf(feature, document, bodies)};
+            if (feature.tools.empty()) {
+                throw FeatureFailure("It has no bodies to sew on.");
+            }
+            for (const ObjectId id : feature.tools) {
+                const auto found = bodies.find(id);
+                if (id == feature.body || found == bodies.end() || found->second.shape.isNull()) {
+                    throw FeatureFailure("A body it sews on does not exist at this point in the "
+                                         "timeline.");
+                }
+                pieces.push_back(found->second);
+            }
+            if (!std::isfinite(feature.size) || feature.size <= 0.0) {
+                throw FeatureFailure("The widest gap it closes has to be more than zero.");
+            }
+            return kernel::stitch(pieces, feature.size, tag);
+        }
+        case FeatureKind::Thicken:
+            return kernel::thicken(targetOf(feature, document, bodies), feature.size, tag);
         case FeatureKind::Thread: {
             const kernel::NamedShape& body = targetOf(feature, document, bodies);
             if (feature.faces.empty()) {
