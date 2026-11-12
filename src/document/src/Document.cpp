@@ -46,8 +46,12 @@ Document::WorkRunner& workRunner() {
 
 // Whether a feature makes a body of its own, as against changing one that is there.
 bool makesBody(const Feature& feature) {
+    if (feature.kind == FeatureKind::MoveBody) {
+        return feature.copy;
+    }
     return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
-            feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep) &&
+            feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
+            feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
            feature.operation == Operation::NewBody;
 }
 
@@ -61,6 +65,10 @@ bool usesSketch(const Feature& feature) {
 // first that is not.
 template <typename Find>
 bool hasSketches(const Feature& feature, Find&& find, ObjectId& missing) {
+    if (feature.kind == FeatureKind::Pipe) {
+        missing = feature.pathSketch;
+        return find(feature.pathSketch) != nullptr;
+    }
     if (!usesSketch(feature)) {
         return true;
     }
@@ -1936,13 +1944,11 @@ std::string Document::orderProblem(const std::vector<ObjectId>& order) const {
     }
     for (const Feature& feature : m_features) {
         const std::size_t place = at(feature.id);
-        if (usesSketch(feature)) {
-            for (const ObjectId id : sketchesOf(feature)) {
-                const SketchItem* sketch = findSketch(id);
-                if (sketch != nullptr && at(sketch->id) > place) {
-                    return feature.name + " is made from " + sketch->name +
-                           ", so it cannot come before it.";
-                }
+        for (const ObjectId id : sketchesOf(feature)) {
+            const SketchItem* sketch = findSketch(id);
+            if (sketch != nullptr && at(sketch->id) > place) {
+                return feature.name + " is made from " + sketch->name +
+                       ", so it cannot come before it.";
             }
         }
         for (const std::string& reference : {feature.reference, feature.reference2}) {
@@ -2025,6 +2031,10 @@ void Document::rebuild() {
     std::unordered_set<ObjectId> changed;
     const auto markChanged = [this, &changed](const Feature& feature) {
         changed.insert(feature.body);
+        // A combine uses its tools up.
+        if (feature.kind == FeatureKind::Combine) {
+            changed.insert(feature.tools.begin(), feature.tools.end());
+        }
         for (const ObjectId piece : piecesOf(feature.id)) {
             changed.insert(piece);
         }
@@ -2032,6 +2042,14 @@ void Document::rebuild() {
     // What a feature leaves goes into its bodies. With fewer of them than solids, for now, it all
     // stays together: settlePieces() is about to make the rest.
     const auto leave = [this, &state](const Feature& feature, const Built& built) {
+        // What a combine uses up is gone from here on.
+        if (feature.kind == FeatureKind::Combine && !feature.keepTools) {
+            for (const ObjectId tool : feature.tools) {
+                if (tool != feature.body) {
+                    state[tool] = kernel::NamedShape{};
+                }
+            }
+        }
         const std::vector<ObjectId> pieces = piecesOf(feature.id);
         if (built.solids.size() < 2 || built.solids.size() > pieces.size() + 1) {
             state[feature.body] = built.result;
@@ -2231,6 +2249,10 @@ void Document::rebuild() {
                 });
             }() ||
             changed.contains(feature.body) ||
+            std::any_of(feature.tools.begin(), feature.tools.end(),
+                        [&](ObjectId tool) {
+                            return changed.contains(tool) || m_touched.contains(tool);
+                        }) ||
             (feature.extentBody.isValid() &&
              (changed.contains(feature.extentBody) || m_touched.contains(feature.extentBody))) ||
             movedConstruction.contains(constructionIn(feature.reference)) ||

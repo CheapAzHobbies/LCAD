@@ -638,8 +638,33 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
             out["sections"].push_back(std::move(s));
         }
     }
-    if (feature.kind == FeatureKind::Sweep) {
+    if (feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::Pipe) {
         out["pathSketch"] = feature.pathSketch.value;
+    }
+    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::MoveBody) {
+        out["tools"] = ordered_json::array();
+        for (const ObjectId tool : feature.tools) {
+            out["tools"].push_back(tool.value);
+        }
+    }
+    if (feature.kind == FeatureKind::Combine) {
+        out["keepTools"] = feature.keepTools;
+    }
+    if (feature.kind == FeatureKind::MoveBody) {
+        out["move"] = {feature.moveX, feature.moveY, feature.moveZ};
+        out["copy"] = feature.copy;
+        out["reference"] = feature.reference;
+    }
+    if (feature.kind == FeatureKind::Pipe) {
+        out["wall"] = feature.wall;
+    }
+    if (feature.kind == FeatureKind::Coil || feature.kind == FeatureKind::Thread) {
+        out["pitch"] = feature.pitch;
+    }
+    if (feature.kind == FeatureKind::Coil) {
+        out["reference"] = feature.reference;
+        out["turns"] = feature.turns;
+        out["section"] = feature.section;
     }
     if (feature.kind == FeatureKind::Mirror || feature.kind == FeatureKind::RectangularPattern ||
         feature.kind == FeatureKind::CircularPattern) {
@@ -779,8 +804,46 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
             feature.sections.push_back(std::move(section));
         }
     }
-    if (feature.kind == FeatureKind::Sweep) {
+    if (feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::Pipe) {
         feature.pathSketch = ObjectId{idMember(entry, "pathSketch", where, path)};
+    }
+    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::MoveBody) {
+        const json& tools = member(entry, "tools", where, path);
+        if (!tools.is_array()) {
+            damaged(path, "\"tools\" in " + where + " is not a list");
+        }
+        for (const json& tool : tools) {
+            if (!tool.is_number_unsigned()) {
+                damaged(path, "\"tools\" in " + where + " holds something that is not a body");
+            }
+            feature.tools.push_back(ObjectId{tool.get<std::uint64_t>()});
+        }
+    }
+    if (feature.kind == FeatureKind::Combine) {
+        feature.keepTools = boolMember(entry, "keepTools", where, path);
+    }
+    if (feature.kind == FeatureKind::MoveBody) {
+        const json& move = member(entry, "move", where, path);
+        if (!move.is_array() || move.size() != 3 ||
+            !std::all_of(move.begin(), move.end(), [](const json& v) { return v.is_number(); })) {
+            damaged(path, "\"move\" in " + where + " is not three numbers");
+        }
+        feature.moveX = move[0].get<double>();
+        feature.moveY = move[1].get<double>();
+        feature.moveZ = move[2].get<double>();
+        feature.copy = boolMember(entry, "copy", where, path);
+        feature.reference = stringMember(entry, "reference", where, path);
+    }
+    if (feature.kind == FeatureKind::Pipe) {
+        feature.wall = numberMember(entry, "wall", where, path);
+    }
+    if (feature.kind == FeatureKind::Coil || feature.kind == FeatureKind::Thread) {
+        feature.pitch = numberMember(entry, "pitch", where, path);
+    }
+    if (feature.kind == FeatureKind::Coil) {
+        feature.reference = stringMember(entry, "reference", where, path);
+        feature.turns = numberMember(entry, "turns", where, path);
+        feature.section = numberMember(entry, "section", where, path);
     }
     if (feature.kind == FeatureKind::Hole) {
         const std::string holeKind = stringMember(entry, "holeKind", where, path);

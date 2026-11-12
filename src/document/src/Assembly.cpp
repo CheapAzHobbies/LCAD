@@ -676,9 +676,11 @@ void Document::requireOwnComponent(ObjectId component, const char* function) con
 
 ObjectId Document::componentForFeature(const Feature& feature) const {
     const bool makes =
-        (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
-         feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep) &&
-        feature.operation == Operation::NewBody;
+        (feature.kind == FeatureKind::MoveBody && feature.copy) ||
+        ((feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
+          feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
+          feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
+         feature.operation == Operation::NewBody);
     if (!makes) {
         if (const Body* body = findBody(feature.body)) {
             return body->component;
@@ -686,6 +688,14 @@ ObjectId Document::componentForFeature(const Feature& feature) const {
     }
     if (const SketchItem* sketch = findSketch(feature.sketch)) {
         return sketch->component;
+    }
+    if (const SketchItem* path = findSketch(feature.pathSketch)) {
+        return path->component;
+    }
+    if (!feature.tools.empty()) {
+        if (const Body* tool = findBody(feature.tools.front())) {
+            return tool->component;
+        }
     }
     for (const std::string& reference : {feature.reference, feature.reference2}) {
         if (const Feature* construction = findFeature(constructionNamed(reference))) {
@@ -709,9 +719,11 @@ std::string Document::componentProblem(const Feature& feature) const {
                ": a feature works within one component.";
     };
     const bool makes =
-        (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
-         feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep) &&
-        feature.operation == Operation::NewBody;
+        (feature.kind == FeatureKind::MoveBody && feature.copy) ||
+        ((feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
+          feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
+          feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
+         feature.operation == Operation::NewBody);
     if (const Body* body = findBody(feature.body); body != nullptr && !makes) {
         if (!body->linkKey.empty()) {
             return body->name + " is linked from another document; change it there.";

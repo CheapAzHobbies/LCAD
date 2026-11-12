@@ -127,6 +127,27 @@ struct Region {
 /// Throws kernel::Error if the plane does not pass through the body.
 [[nodiscard]] NamedShape split(const NamedShape& body, const Plane& plane, const std::string& tag);
 
+/// A round pipe along a path: the edges of `path` joined end to end, as for sweep(). Its
+/// outside diameter is `diameter`; with a `wall` thickness short of the radius it is hollow,
+/// and with 0 solid. Its faces are named `tag`/side/outside, `tag`/side/inside, `tag`/start/pipe,
+/// and `tag`/end/pipe. Throws kernel::Error if the path does not join into one chain or the
+/// pipe runs into itself, and std::invalid_argument for sizes that make no pipe.
+[[nodiscard]] NamedShape pipe(const Shape& path, double diameter, double wall,
+                              const std::string& tag);
+
+/// A coil: a round section of `section` diameter wound about `axis` at `diameter`, rising
+/// `pitch` each turn, for `turns` turns, starting where the axis's origin is. Faces are named
+/// `tag`/side/coil, `tag`/start/coil, and `tag`/end/coil. Throws std::invalid_argument if the
+/// section is too thick for the pitch or the diameter.
+[[nodiscard]] NamedShape coil(const Axis& axis, double diameter, double pitch, double turns,
+                              double section, const std::string& tag);
+
+/// Cuts a 60-degree screw thread of `pitch` into a cylindrical face of a body, all along it: on
+/// the outside of a rod, or the inside of a hole. The faces it makes are named `tag`/thread/....
+/// Throws kernel::Error if the face is not cylindrical or the thread cannot be cut.
+[[nodiscard]] NamedShape thread(const NamedShape& body, int face, double pitch,
+                                const std::string& tag);
+
 /// How two solids are combined.
 enum class Combination {
     Join,      ///< everything that is in either

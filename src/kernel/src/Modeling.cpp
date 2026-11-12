@@ -27,6 +27,17 @@
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepAdaptor_CompCurve.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepLib.hxx>
+#include <BRepTools.hxx>
+#include <Geom_CylindricalSurface.hxx>
+#include <Geom2d_Line.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Ax3.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepOffset_Mode.hxx>
@@ -893,6 +904,242 @@ NamedShape sweep(const Plane& plane, const std::vector<Region>& regions, const S
                                          }));
         }
         return joinAll(std::move(solids));
+    });
+}
+
+namespace {
+
+// The edges of a shape joined end to end into one wire.
+TopoDS_Wire chainOf(const Shape& path, const char* operation) {
+    Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape();
+    for (TopExp_Explorer it(occt::unwrap(path), TopAbs_EDGE); it.More(); it.Next()) {
+        edges->Append(it.Current());
+    }
+    if (edges->IsEmpty()) {
+        throw Error(operation, "the path has no curves");
+    }
+    Handle(TopTools_HSequenceOfShape) wires;
+    ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, outlineTolerance, Standard_False, wires);
+    if (wires.IsNull() || wires->Length() != 1) {
+        throw Error(operation, "the curves of the path do not join end to end into one chain");
+    }
+    return TopoDS::Wire(wires->Value(1));
+}
+
+// A helix about an axis: `radius` out, rising `pitch` a turn, for `turns` turns, starting on the
+// axis's x direction.
+TopoDS_Wire helixOf(const gp_Ax3& frame, double radius, double pitch, double turns) {
+    const Handle(Geom_CylindricalSurface) surface = new Geom_CylindricalSurface(frame, radius);
+    const gp_Dir2d way(2.0 * M_PI, pitch);
+    const Handle(Geom2d_Line) line = new Geom2d_Line(gp_Pnt2d(0.0, 0.0), way);
+    const double length = turns * std::hypot(2.0 * M_PI, pitch);
+    TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(line, surface, 0.0, length).Edge();
+    BRepLib::BuildCurves3d(edge);
+    return BRepBuilderAPI_MakeWire(edge).Wire();
+}
+
+// Sweeps a closed wire along a helix, keeping it square to the axis as it goes round, into a
+// solid named `tag`/side/<side>, `tag`/start/<side>, `tag`/end/<side>.
+NamedShape helicalSweep(const TopoDS_Wire& spine, const TopoDS_Wire& profile,
+                        const gp_Dir& axis, const std::string& tag, const std::string& side,
+                        const char* operation) {
+    BRepOffsetAPI_MakePipeShell maker(spine);
+    maker.SetMode(axis);
+    maker.Add(profile);
+    maker.Build();
+    if (!maker.IsDone() || !maker.MakeSolid()) {
+        throw Error(operation, "the section could not be wound round into a solid");
+    }
+    const TopoDS_Shape solid = maker.Shape();
+    if (!hasSolid(solid)) {
+        throw Error(operation, "the section could not be wound round into a solid");
+    }
+    requireValid(solid, operation);
+    FaceNamer namer(solid);
+    for (TopExp_Explorer it(profile, TopAbs_EDGE); it.More(); it.Next()) {
+        namer.offerAll(maker.Generated(it.Current()), tag + "/side/" + side);
+    }
+    namer.offer(maker.FirstShape(), tag + "/start/" + side);
+    namer.offer(maker.LastShape(), tag + "/end/" + side);
+    namer.offerUnnamed([&](const TopoDS_Face&) { return tag + "/side/" + side; });
+    return named(solid, namer, tag);
+}
+
+} // namespace
+
+NamedShape pipe(const Shape& path, double diameter, double wall, const std::string& tag) {
+    if (!std::isfinite(diameter) || diameter <= 1e-7) {
+        throw std::invalid_argument("pipe: its diameter has to be more than zero");
+    }
+    if (!std::isfinite(wall) || wall < 0.0 || wall >= diameter / 2.0 - 1e-7) {
+        throw std::invalid_argument("pipe: its wall has to be thinner than its radius, or 0 for "
+                                    "a solid rod");
+    }
+    if (path.isNull()) {
+        throw std::invalid_argument("pipe: it needs a path");
+    }
+    return occt::guarded("pipe", [&] {
+        const TopoDS_Wire spine = chainOf(path, "pipe");
+        // A circle square to the path where it starts.
+        BRepAdaptor_CompCurve along(spine);
+        gp_Pnt start;
+        gp_Vec tangent;
+        along.D1(along.FirstParameter(), start, tangent);
+        if (tangent.Magnitude() < 1e-12) {
+            throw Error("pipe", "the path has no direction where it starts");
+        }
+        const gp_Ax2 frame(start, gp_Dir(tangent));
+        const TopoDS_Edge outer =
+            BRepBuilderAPI_MakeEdge(gp_Circ(frame, diameter / 2.0)).Edge();
+        BRepBuilderAPI_MakeFace section(BRepBuilderAPI_MakeWire(outer).Wire(), Standard_True);
+        TopoDS_Edge inner;
+        if (wall > 0.0) {
+            inner = BRepBuilderAPI_MakeEdge(gp_Circ(frame, diameter / 2.0 - wall)).Edge();
+            TopoDS_Wire hole = BRepBuilderAPI_MakeWire(inner).Wire();
+            hole.Reverse();
+            section.Add(hole);
+        }
+        ShapeFix_Face fix(section.Face());
+        fix.FixOrientation();
+        fix.Perform();
+        const TopoDS_Face face = fix.Face();
+        BRepOffsetAPI_MakePipe maker(spine, face);
+        maker.Build();
+        if (!maker.IsDone() || !hasSolid(maker.Shape())) {
+            throw Error("pipe", "the circle could not be moved along the path");
+        }
+        const TopoDS_Shape solid = maker.Shape();
+        requireValid(solid, "pipe");
+        FaceNamer namer(solid);
+        for (TopExp_Explorer it(face, TopAbs_EDGE); it.More(); it.Next()) {
+            const double radius =
+                BRepAdaptor_Curve(TopoDS::Edge(it.Current())).Circle().Radius();
+            namer.offerAll(maker.Generated(it.Current()),
+                           tag + (radius > diameter / 2.0 - 1e-9 ? "/side/outside"
+                                                                 : "/side/inside"));
+        }
+        namer.offer(maker.FirstShape(), tag + "/start/pipe");
+        namer.offer(maker.LastShape(), tag + "/end/pipe");
+        return named(solid, namer, tag);
+    });
+}
+
+NamedShape coil(const Axis& axis, double diameter, double pitch, double turns, double section,
+                const std::string& tag) {
+    const double length = std::sqrt(axis.direction.x * axis.direction.x +
+                                    axis.direction.y * axis.direction.y +
+                                    axis.direction.z * axis.direction.z);
+    if (!(length > 1e-12)) {
+        throw std::invalid_argument("coil: the axis needs a direction");
+    }
+    if (!std::isfinite(diameter) || !std::isfinite(pitch) || !std::isfinite(turns) ||
+        !std::isfinite(section) || diameter <= 1e-7 || std::abs(pitch) <= 1e-7 || turns <= 1e-7 ||
+        section <= 1e-7) {
+        throw std::invalid_argument("coil: its diameter, pitch, turns, and section have to be "
+                                    "more than zero");
+    }
+    if (section >= std::abs(pitch)) {
+        throw std::invalid_argument("coil: the section is as thick as the pitch, so the turns "
+                                    "would run into each other");
+    }
+    if (section >= diameter) {
+        throw std::invalid_argument("coil: the section is as thick as the coil is wide");
+    }
+    return occt::guarded("coil", [&] {
+        const gp_Dir up(axis.direction.x, axis.direction.y, axis.direction.z);
+        const gp_Ax3 frame(gp_Pnt(axis.origin.x, axis.origin.y, axis.origin.z), up);
+        const double radius = diameter / 2.0;
+        const TopoDS_Wire spine = helixOf(frame, radius, pitch, turns);
+        BRepAdaptor_CompCurve along(spine);
+        gp_Pnt start;
+        gp_Vec tangent;
+        along.D1(along.FirstParameter(), start, tangent);
+        const TopoDS_Edge round =
+            BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(start, gp_Dir(tangent)), section / 2.0)).Edge();
+        return helicalSweep(spine, BRepBuilderAPI_MakeWire(round).Wire(), up, tag, "coil",
+                            "coil");
+    });
+}
+
+NamedShape thread(const NamedShape& body, int face, double pitch, const std::string& tag) {
+    if (body.shape.isNull()) {
+        throw std::invalid_argument("thread: there is no body");
+    }
+    if (!std::isfinite(pitch) || pitch <= 1e-6) {
+        throw std::invalid_argument("thread: its pitch has to be more than zero");
+    }
+    return occt::guarded("thread", [&] {
+        const TopTools_IndexedMapOfShape faces = mapOf(occt::unwrap(body.shape), TopAbs_FACE);
+        if (face < 0 || face >= faces.Extent()) {
+            throw std::out_of_range("thread: there is no face " + std::to_string(face));
+        }
+        const TopoDS_Face round = TopoDS::Face(faces(face + 1));
+        BRepAdaptor_Surface surface(round);
+        if (surface.GetType() != GeomAbs_Cylinder) {
+            throw Error("thread", "a thread goes on a cylindrical face");
+        }
+        const gp_Cylinder cylinder = surface.Cylinder();
+        const double radius = cylinder.Radius();
+        double uMin = 0.0;
+        double uMax = 0.0;
+        double vMin = 0.0;
+        double vMax = 0.0;
+        BRepTools::UVBounds(round, uMin, uMax, vMin, vMax);
+        const double length = vMax - vMin;
+        if (length < pitch) {
+            throw Error("thread", "the face is shorter than one turn of the thread");
+        }
+        if (pitch > radius) {
+            throw Error("thread", "the pitch is too coarse for so small a diameter");
+        }
+        // Outside a rod, the face looks away from the axis; inside a hole, toward it.
+        gp_Pnt on;
+        gp_Vec du;
+        gp_Vec dv;
+        surface.D1((uMin + uMax) / 2.0, (vMin + vMax) / 2.0, on, du, dv);
+        gp_Vec normal = du.Crossed(dv);
+        if (round.Orientation() == TopAbs_REVERSED) {
+            normal.Reverse();
+        }
+        const gp_Ax1 line = cylinder.Axis();
+        const gp_Vec out(gp_Pnt(line.Location().XYZ() +
+                                gp_Vec(line.Direction()).Multiplied(
+                                    gp_Vec(line.Location(), on).Dot(gp_Vec(line.Direction())))
+                                    .XYZ()),
+                         on);
+        const bool outside = normal.Dot(out) > 0.0;
+        // The thread starts where the face does along the axis.
+        const gp_Ax3 frame(line.Location().Translated(gp_Vec(line.Direction()) * vMin),
+                           line.Direction(), cylinder.Position().XDirection());
+        const TopoDS_Wire spine = helixOf(frame, radius, pitch, length / pitch);
+        // A 60-degree groove, 0.6134 of the pitch deep (the external depth of ISO metric
+        // threads), reaching a little past the surface so that it cuts cleanly.
+        const double depth = 0.6134 * pitch;
+        const double past = 0.1 * pitch;
+        const double half = (depth + past) * std::tan(M_PI / 6.0);
+        const gp_Pnt start = frame.Location().Translated(gp_Vec(frame.XDirection()) * radius);
+        const gp_Vec radial(frame.XDirection());
+        const gp_Vec axial(frame.Direction());
+        const double sign = outside ? 1.0 : -1.0;
+        const gp_Pnt mouthA = start.Translated(radial * (sign * past) + axial * half);
+        const gp_Pnt mouthB = start.Translated(radial * (sign * past) - axial * half);
+        const gp_Pnt tip = start.Translated(radial * (-sign * depth));
+        const TopoDS_Wire groove = BRepBuilderAPI_MakePolygon(mouthA, tip, mouthB, Standard_True).Wire();
+        const NamedShape cutter =
+            helicalSweep(spine, groove, frame.Direction(), tag + "/thread", "groove", "thread");
+        // Not combine(): a thread leaves no faces to merge, and looking for them along a long
+        // helix takes minutes.
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        BRepAlgoAPI_Cut cut(occt::unwrap(body.shape), occt::unwrap(cutter.shape),
+                            stoppable->Start());
+        if (!cut.IsDone() || cut.HasErrors() || !hasSolid(cut.Shape())) {
+            throw Error("thread", "the thread could not be cut into the face");
+        }
+        requireValid(cut.Shape(), "thread");
+        FaceNamer namer(cut.Shape());
+        namer.inherit(body, cut);
+        namer.inherit(cutter, cut);
+        return named(cut.Shape(), namer, tag);
     });
 }
 

@@ -2257,3 +2257,149 @@ TEST_CASE("Pull through all and draft and split body", "[document][feature]") {
     CHECK(loaded.document->findFeature(halves)->reference == split.reference);
     CHECK(loaded.document->featureError(halves).empty());
 }
+
+TEST_CASE("Combine and move bodies", "[document][feature]") {
+    Document document;
+    // Two plates, the second over half of the first.
+    const ObjectId a = document.addSketch("A", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {40.0, 20.0});
+    document.setSketchGeometry(a, s, "Draw");
+    const ObjectId b = document.addSketch("B", lcad::kernel::planeXY());
+    lcad::sketch::Sketch t;
+    lcad::sketch::addRectangle(t, {20.0, 0.0}, {60.0, 20.0});
+    document.setSketchGeometry(b, t, "Draw");
+    const ObjectId first = document.addFeature(pullOf(a, 10.0));
+    const ObjectId second = document.addFeature(pullOf(b, 10.0));
+    const ObjectId body = document.findFeature(first)->body;
+    const ObjectId other = document.findFeature(second)->body;
+    REQUIRE(body != other);
+
+    // The second cut out of the first, and used up.
+    Feature cut;
+    cut.kind = FeatureKind::Combine;
+    cut.body = body;
+    cut.tools = {other};
+    cut.operation = Operation::Cut;
+    const ObjectId combined = document.addFeature(cut);
+    CHECK(document.featureError(combined).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape), WithinRel(20.0 * 20.0 * 10.0, 1e-9));
+    CHECK(document.findBody(other)->shape.isNull());
+    // It follows the tool: a narrower second plate takes less.
+    lcad::sketch::Sketch narrower;
+    lcad::sketch::addRectangle(narrower, {30.0, 0.0}, {60.0, 20.0});
+    document.setSketchGeometry(b, narrower, "Draw");
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape), WithinRel(30.0 * 20.0 * 10.0, 1e-9));
+    document.undo();
+    // Kept, the tool stays a body.
+    cut = *document.findFeature(combined);
+    cut.keepTools = true;
+    cut.operation = Operation::Join;
+    document.changeFeature(combined, cut);
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape), WithinRel(60.0 * 20.0 * 10.0, 1e-9));
+    CHECK(!document.findBody(other)->shape.isNull());
+
+    // Moved 100 along X and turned a quarter about Z.
+    Feature move;
+    move.kind = FeatureKind::MoveBody;
+    move.body = other;
+    move.moveX = 100.0;
+    const ObjectId moved = document.addFeature(move);
+    CHECK(document.featureError(moved).empty());
+    auto box = lcad::kernel::boundingBox(document.findBody(other)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->min.x, WithinAbs(120.0, 1e-6));
+    // A copy of it, as a body of its own, 50 up.
+    Feature copy;
+    copy.kind = FeatureKind::MoveBody;
+    copy.copy = true;
+    copy.tools = {other};
+    copy.moveZ = 50.0;
+    const ObjectId copied = document.addFeature(copy);
+    CHECK(document.featureError(copied).empty());
+    const ObjectId copyBody = document.findFeature(copied)->body;
+    REQUIRE(copyBody != other);
+    box = lcad::kernel::boundingBox(document.findBody(copyBody)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->min.z, WithinAbs(50.0, 1e-6));
+    CHECK_THAT(box->min.x, WithinAbs(120.0, 1e-6));
+    // Turned a quarter about the Z axis: from x 120..160 to y 120..160.
+    move = *document.findFeature(moved);
+    move.reference = "Z";
+    move.angle = 90.0;
+    document.changeFeature(moved, move);
+    box = lcad::kernel::boundingBox(document.findBody(other)->shape);
+    CHECK_THAT(box->min.y, WithinAbs(120.0, 1e-6));
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("combine.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(combined)->tools == std::vector<ObjectId>{other});
+    CHECK(loaded.document->findFeature(copied)->copy);
+    CHECK_THAT(loaded.document->findFeature(moved)->angle, WithinAbs(90.0, 1e-12));
+}
+
+TEST_CASE("Pipes and coils and threads as features", "[document][feature]") {
+    Document document;
+    // A pipe along a line of 50 up from the origin.
+    const ObjectId path = document.addSketch("Path", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch line;
+    line.addLine({0.0, 0.0}, {0.0, 50.0});
+    document.setSketchGeometry(path, line, "Line");
+    Feature tube;
+    tube.kind = FeatureKind::Pipe;
+    tube.pathSketch = path;
+    tube.size = 10.0;
+    tube.wall = 1.0;
+    const ObjectId piped = document.addFeature(tube);
+    CHECK(document.featureError(piped).empty());
+    const ObjectId pipeBody = document.findFeature(piped)->body;
+    CHECK_THAT(lcad::kernel::volume(document.findBody(pipeBody)->shape),
+               WithinRel(pi * (25.0 - 16.0) * 50.0, 1e-6));
+
+    // A coil about the Z axis.
+    Feature spring;
+    spring.kind = FeatureKind::Coil;
+    spring.reference = "Z";
+    spring.size = 30.0;
+    spring.pitch = 4.0;
+    spring.turns = 3.0;
+    spring.section = 2.0;
+    const ObjectId coiled = document.addFeature(spring);
+    CHECK(document.featureError(coiled).empty());
+    // Too thick a wire for the pitch, said so.
+    spring = *document.findFeature(coiled);
+    spring.section = 5.0;
+    document.changeFeature(coiled, spring);
+    CHECK_THAT(document.featureError(coiled), ContainsSubstring("pitch"));
+    document.undo();
+
+    // A thread inside the pipe.
+    std::string inside;
+    for (const std::string& name : document.findBody(pipeBody)->faceNames) {
+        if (name.find("/side/inside") != std::string::npos) {
+            inside = name;
+        }
+    }
+    REQUIRE(!inside.empty());
+    const double before = lcad::kernel::volume(document.findBody(pipeBody)->shape);
+    Feature screw;
+    screw.kind = FeatureKind::Thread;
+    screw.body = pipeBody;
+    screw.faces = {inside};
+    screw.pitch = 1.0;
+    const ObjectId threaded = document.addFeature(screw);
+    CHECK(document.featureError(threaded).empty());
+    CHECK(lcad::kernel::volume(document.findBody(pipeBody)->shape) < before);
+
+    const lcad::test::TempDir directory;
+    const auto file = directory.file("pipe.lcad");
+    saveDocument(document, file);
+    const LoadedDocument loaded = loadDocument(file);
+    CHECK(loaded.warnings.empty());
+    CHECK_THAT(loaded.document->findFeature(piped)->wall, WithinAbs(1.0, 1e-12));
+    CHECK_THAT(loaded.document->findFeature(coiled)->turns, WithinAbs(3.0, 1e-12));
+    CHECK_THAT(loaded.document->findFeature(threaded)->pitch, WithinAbs(1.0, 1e-12));
+}

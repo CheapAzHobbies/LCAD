@@ -1055,6 +1055,93 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             const kernel::NamedShape& body = targetOf(feature, document, bodies);
             return kernel::split(body, planeNamed(feature.reference, body, document), tag);
         }
+        case FeatureKind::Combine: {
+            kernel::NamedShape body = targetOf(feature, document, bodies);
+            if (feature.tools.empty()) {
+                throw FeatureFailure("It has no bodies to combine with.");
+            }
+            const kernel::Combination how =
+                feature.operation == Operation::Cut         ? kernel::Combination::Cut
+                : feature.operation == Operation::Intersect ? kernel::Combination::Intersect
+                                                            : kernel::Combination::Join;
+            for (const ObjectId id : feature.tools) {
+                const auto found = bodies.find(id);
+                const Body* other = document.findBody(id);
+                if (id == feature.body) {
+                    throw FeatureFailure("A body cannot be combined with itself.");
+                }
+                if (found == bodies.end() || found->second.shape.isNull()) {
+                    throw FeatureFailure(other != nullptr
+                                             ? "The body " + other->name +
+                                                   " does not exist at this point in the timeline."
+                                             : std::string("A body it combines is gone."));
+                }
+                body = kernel::combine(body, found->second, how);
+            }
+            if (kernel::volume(body.shape) <= 1e-12) {
+                throw FeatureFailure("Nothing is left of the body.");
+            }
+            return body;
+        }
+        case FeatureKind::MoveBody: {
+            const kernel::NamedShape* source = nullptr;
+            if (feature.copy) {
+                const auto found = feature.tools.empty() ? bodies.end()
+                                                         : bodies.find(feature.tools.front());
+                if (found == bodies.end() || found->second.shape.isNull()) {
+                    throw FeatureFailure("The body it copies does not exist at this point in the "
+                                         "timeline.");
+                }
+                source = &found->second;
+            } else {
+                source = &targetOf(feature, document, bodies);
+            }
+            if (!std::isfinite(feature.moveX) || !std::isfinite(feature.moveY) ||
+                !std::isfinite(feature.moveZ) || !std::isfinite(feature.angle)) {
+                throw FeatureFailure("How far it moves is not a number.");
+            }
+            kernel::Placement where = kernel::translation({feature.moveX, feature.moveY,
+                                                           feature.moveZ});
+            if (!feature.reference.empty() && std::abs(feature.angle) > 1e-12) {
+                const kernel::Axis about = axisNamed(feature.reference, *source, document);
+                // Moved first, then turned about the axis where it stands.
+                where = kernel::rotation(about, feature.angle * pi / 180.0) * where;
+            }
+            return kernel::NamedShape{kernel::placed(source->shape, where), source->faceNames};
+        }
+        case FeatureKind::Pipe:
+        case FeatureKind::Coil: {
+            kernel::NamedShape made;
+            if (feature.kind == FeatureKind::Pipe) {
+                const SketchItem* path = document.findSketch(feature.pathSketch);
+                if (path == nullptr) {
+                    throw FeatureFailure("The sketch of its path is gone.");
+                }
+                const kernel::Shape curves = sketchShape(*path, SketchPart::Ordinary);
+                if (curves.isNull()) {
+                    throw FeatureFailure("Its path, " + path->name + ", has no curves.");
+                }
+                made = kernel::pipe(curves, feature.size, feature.wall, tag);
+            } else {
+                const kernel::Axis about =
+                    axisNamed(feature.reference, kernel::NamedShape{}, document);
+                made = kernel::coil(about, feature.size, feature.pitch, feature.turns,
+                                    feature.section, tag);
+            }
+            return placed(feature, document, bodies, keep(made));
+        }
+        case FeatureKind::Thread: {
+            const kernel::NamedShape& body = targetOf(feature, document, bodies);
+            if (feature.faces.empty()) {
+                throw FeatureFailure("It has no face to go on.");
+            }
+            const int face = kernel::findFace(body, feature.faces.front());
+            if (face < 0) {
+                throw FeatureFailure("The face it goes on no longer exists: " +
+                                     describeName(document, feature.faces.front()) + ".");
+            }
+            return kernel::thread(body, face, feature.pitch, tag);
+        }
         case FeatureKind::Repair:
             if (!std::isfinite(feature.size) || feature.size <= 0.0) {
                 throw FeatureFailure("The widest gap it closes has to be more than zero.");

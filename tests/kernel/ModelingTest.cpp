@@ -769,3 +769,50 @@ TEST_CASE("A split cuts a body in two along a plane", "[kernel][modeling]") {
     const Plane beside = makePlane({50.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
     CHECK_THROWS_AS(split(block, beside, "8"), Error);
 }
+
+TEST_CASE("Pipes, coils, and threads", "[kernel][modeling]") {
+    // A pipe along a line of 50: solid, then with walls 1 thick.
+    const Shape line = makeSegment({0.0, 0.0, 0.0}, {0.0, 0.0, 50.0});
+    const NamedShape rod = pipe(line, 10.0, 0.0, "7");
+    CHECK(countTopology(rod.shape).solids == 1);
+    CHECK_THAT(volume(rod.shape), WithinRel(pi * 25.0 * 50.0, 1e-6));
+    CHECK(findFace(rod, "7/side/outside") >= 0);
+    CHECK(findFace(rod, "7/start/pipe") >= 0);
+    const NamedShape tube = pipe(line, 10.0, 1.0, "7");
+    CHECK_THAT(volume(tube.shape), WithinRel(pi * (25.0 - 16.0) * 50.0, 1e-6));
+    CHECK(findFace(tube, "7/side/inside") >= 0);
+    // Round a bend too.
+    const Shape bend = makeArcEdge(planeXZ(), 20.0, 50.0, 0.0, 50.0, 20.0, 70.0);
+    CHECK(countTopology(pipe(makeCompound({line, bend}), 4.0, 0.0, "7").shape).solids == 1);
+    CHECK_THROWS_AS(pipe(line, 10.0, 5.0, "7"), std::invalid_argument);
+
+    // A coil of 3 turns, 20 across, rising 5 a turn, with a section 2 across: a tube of the
+    // helix's length.
+    const NamedShape spring = coil({{0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}}, 20.0, 5.0, 3.0, 2.0, "8");
+    CHECK(countTopology(spring.shape).solids == 1);
+    const double helix = 3.0 * std::hypot(2.0 * pi * 10.0, 5.0);
+    CHECK_THAT(volume(spring.shape), WithinRel(pi * 1.0 * helix, 1e-2));
+    const auto box = boundingBox(spring.shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->max.x, WithinAbs(11.0, 0.05));
+    CHECK_THROWS_AS(coil({{0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}}, 20.0, 2.0, 3.0, 2.0, "8"),
+                    std::invalid_argument);
+
+    // A thread of pitch 1.5 on the outside of a rod 10 across and 20 long.
+    const NamedShape bolt = nameFaces(makeCylinder(5.0, 20.0), "9");
+    int side = -1;
+    for (int i = 0; i < subShapeCount(bolt.shape, SubShapeKind::Face); ++i) {
+        if (!planeOfFace(subShape(bolt.shape, SubShapeKind::Face, i)).has_value()) {
+            side = i;
+        }
+    }
+    REQUIRE(side >= 0);
+    const NamedShape threaded = thread(bolt, side, 1.5, "10");
+    CHECK(countTopology(threaded.shape).solids == 1);
+    const double before = volume(bolt.shape);
+    const double after = volume(threaded.shape);
+    CHECK(after < before);
+    // A groove 0.92 deep takes off less than a ring that deep would.
+    CHECK(after > pi * (5.0 - 0.92) * (5.0 - 0.92) * 20.0);
+    CHECK_THROWS_AS(thread(bolt, side == 0 ? 1 : 0, 1.5, "10"), Error);
+}

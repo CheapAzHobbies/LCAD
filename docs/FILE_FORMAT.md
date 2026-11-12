@@ -126,7 +126,7 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, or `Split Body`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, `Split Body`, `Combine`, `Move Body`, `Pipe`, `Coil`, or `Thread`. |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
@@ -142,6 +142,11 @@ optional, and a file without them opens as it always did.
 | `taper` | A pull only, and only when not zero: how far its sides lean in, in degrees. |
 | `throughAll` (pull) | A pull only, written only when true: it goes through every body, the way `distance` points, or both ways if `symmetric`; `distance` gives only the way. |
 | `faces`, `reference`, `angle` (draft) | A draft only: the faces it tilts, the plane they are tilted about (`XY`, `XZ`, `YZ`, `plane:` and an id, or a flat face of `body`), and by how many degrees. |
+| `tools`, `keepTools` (combine) | A combine only: the bodies joined to, cut out of, or intersected with `body`, as `operation` says, and whether they stay bodies of their own. |
+| `move`, `copy`, `reference`, `angle`, `tools` (move body) | A move only: how far along X, Y, and Z; the axis it is turned about (empty for none) and by how many degrees; and whether it makes a moved copy of the body in `tools` as `body` rather than moving `body`. |
+| `pathSketch`, `size`, `wall` (pipe) | A pipe only: the sketch whose curves it runs along, its outside diameter, and its wall thickness (0 for a solid rod). |
+| `reference`, `size`, `pitch`, `turns`, `section` (coil) | A coil only: the axis it winds about, its diameter, the rise of a turn, how many turns, and the diameter of its wire. |
+| `faces`, `pitch` (thread) | A thread only: the cylindrical face of `body` it is cut into, and its pitch. |
 | `reference` (split body) | A split only: the plane `body` is cut in two along, as for a draft. |
 | `extentBody`, `extentFace` | A pull up to a face only: the body, and the name of its flat face, that the pull ends in. |
 | `sources`, `reference`, `reference2`, `count`, `count2`, `spacing`, `spacing2` | Mirror and patterns only: the features copied (empty: the whole body), the plane, direction, or axis (`XY`, `XZ`, `YZ`, `X`, `Y`, `Z`, a face or edge name, `plane:` and the id of a construction plane, or `axis:` and the id of a construction axis), how many, and how far apart. |

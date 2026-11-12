@@ -57,6 +57,20 @@ enum class FeatureKind {
     Draft,
     /// Cuts a body in two along the plane `reference`.
     SplitBody,
+    /// Joins `tools` to `body`, cuts them out of it, or keeps only what they share, as
+    /// `operation` says. The tools are used up unless `keepTools`.
+    Combine,
+    /// Moves `body` by `move`, and turns it `angle` degrees about the axis `reference`. With
+    /// `copy`, makes a moved copy of `tools`' one body instead, as `body`.
+    MoveBody,
+    /// A round pipe, or rod, along the curves of `pathSketch`: `size` across, with walls
+    /// `wall` thick or solid.
+    Pipe,
+    /// A coil about the axis `reference`: `size` across, `pitch` a turn, `turns` turns, a round
+    /// section `section` across.
+    Coil,
+    /// A screw thread of `pitch` cut into the cylindrical face `faces` names.
+    Thread,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
@@ -207,9 +221,29 @@ struct Feature {
     // Loft
     /// The sections after the first, in the order the loft goes through them.
     std::vector<LoftSection> sections;
-    // Sweep
+    // Sweep and Pipe
     /// The sketch whose curves, joined end to end, the outlines are moved along.
     ObjectId pathSketch;
+    // Combine and Move Body
+    /// Combine: the bodies combined with `body`. Move Body with `copy`: the body copied.
+    std::vector<ObjectId> tools;
+    /// Combine: the tools stay bodies of their own.
+    bool keepTools = false;
+    /// Move Body: how far along X, Y, and Z, in millimeters.
+    double moveX = 0.0;
+    double moveY = 0.0;
+    double moveZ = 0.0;
+    /// Move Body: a moved copy, as a new body, rather than the body moved.
+    bool copy = false;
+    // Pipe, Coil, Thread
+    /// Pipe: wall thickness; 0 is a solid rod.
+    double wall = 0.0;
+    /// Coil and Thread: the rise of one turn, in millimeters.
+    double pitch = 2.0;
+    /// Coil: how many turns.
+    double turns = 5.0;
+    /// Coil: how thick the wire is.
+    double section = 1.0;
     // Hole. Its sketch's free-standing points are where the holes go, its `size` is their
     // diameter and its `distance` their depth.
     HoleKind holeKind = HoleKind::Simple;
