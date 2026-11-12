@@ -28,7 +28,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Chamfer | Have | Equal distance, between two lines. |
 | Trim, extend, offset, mirror | Have | |
 | Break, split | No | |
-| Sketch patterns (rectangular, circular) | No | |
+| Sketch patterns (rectangular, circular) | Have | Each copy keeps the constraints among the originals; the copies are not tied to each other. |
 | Move, copy, rotate, scale | No | Dragging only. |
 | Project edges of a body | Have | |
 | Intersect, project to surface | No | |
@@ -174,8 +174,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 
 1. **Construction geometry:** plane at angle and midplane. Done.
 2. **Solids:** pull through all, draft, split body. Done.
-3. **Sketching:** center rectangle, three-point circle and arc, tangent arc, chamfer: done.
-   Sketch patterns next.
+3. **Sketching:** center rectangle, three-point circle and arc, tangent arc, chamfer, and sketch
+   patterns. Done.
 4. **Snapping:** parallel, perpendicular, and tangent detected while drawing, and intersections.
 5. **Solids, second round:** thread, coil, pipe, combine as a command, and moving bodies.
 6. **Inspection:** a section view in the 3D view.

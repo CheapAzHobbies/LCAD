@@ -61,6 +61,11 @@ enum class SketchTool {
     ThreePointArc,
     /// On from the end of a line or an arc, tangent to it, to the point clicked.
     TangentArc,
+    /// Copies of what is selected around the point clicked; the count is typed.
+    CircularPattern,
+    /// Copies of what is selected, each moved by the step between two points clicked; the
+    /// count is typed.
+    RectangularPattern,
     Offset,
     Mirror,
     /// Click an edge or a corner of a body to bring it into the sketch as reference geometry.

@@ -994,3 +994,43 @@ TEST_CASE("A corner with construction geometry at it can still be cut", "[sketch
     CHECK_THAT(endOf(sketch, r.diagonal).x, WithinAbs(20.0, lengthTolerance));
     CHECK(sketch.solve().status != SolveStatus::Conflicting);
 }
+
+TEST_CASE("Sketch patterns copy geometry around a point and along a step", "[sketch][edit]") {
+    Sketch sketch;
+    // A circle of radius 2 at (20, 0), and a dimensioned rectangle.
+    const EntityId hole = sketch.addCircle({20.0, 0.0}, 2.0);
+    sketch.addConstraint(ConstraintKind::Diameter, hole, 0, 0, 4.0);
+    const std::vector<EntityId> round = patternCircular(sketch, {hole}, {0.0, 0.0}, 6);
+    REQUIRE(round.size() == 5);
+    // Evenly round: the second at 60 degrees, each with its diameter.
+    CHECK_THAT(centerOf(sketch, round[0]).x, WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, round[0]).y, WithinAbs(20.0 * std::sin(pi / 3.0), lengthTolerance));
+    std::size_t diameters = 0;
+    for (const Constraint& c : sketch.constraints()) {
+        diameters += c.kind == ConstraintKind::Diameter ? 1 : 0;
+    }
+    CHECK(diameters == 6);
+    // Over half a turn, the last lands at the end of it.
+    Sketch half;
+    const EntityId dot = half.addPoint({10.0, 0.0});
+    const std::vector<EntityId> fan = patternCircular(half, {dot}, {0.0, 0.0}, 3, pi);
+    CHECK_THAT(half.position(fan.back()).x, WithinAbs(-10.0, lengthTolerance));
+
+    Sketch rows;
+    const RectangleParts r = addRectangle(rows, {0.0, 0.0}, {5.0, 3.0});
+    const std::vector<EntityId> sides{r.bottom, r.right, r.top, r.left};
+    const std::vector<EntityId> copies = patternRectangular(rows, sides, {10.0, 0.0}, 3);
+    REQUIRE(copies.size() == 8);
+    CHECK_THAT(startOf(rows, copies[4]).x, WithinAbs(20.0, lengthTolerance));
+    // Each copy is a closed rectangle that stays one.
+    CHECK(rows.profiles().size() == 3);
+    rows.dragBy(rows.find(copies[1])->end, 2.0, 2.0);
+    CHECK_THAT(startOf(rows, copies[2]).y, WithinAbs(endOf(rows, copies[2]).y, 1e-6));
+
+    const Sketch kept = rows;
+    CHECK_THROWS_AS(patternRectangular(rows, sides, {0.0, 0.0}, 3), std::invalid_argument);
+    CHECK_THROWS_AS(patternCircular(rows, sides, {0.0, 0.0}, 1), std::invalid_argument);
+    CHECK_THROWS_AS(patternCircular(rows, {rows.find(r.bottom)->start}, {0.0, 0.0}, 3),
+                    std::invalid_argument);
+    CHECK(same(rows, kept));
+}
