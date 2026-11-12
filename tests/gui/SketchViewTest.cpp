@@ -107,6 +107,7 @@ private slots:
     // Selecting and moving
     void clicksAndABoxSelect();
     void draggingMovesFreeGeometryAsOneUndoStep();
+    void aDraggedPointJoinsWhatItIsLetGoOn();
     void deleteAndConstructionActOnTheSelection();
 
     // Modifying
@@ -1670,6 +1671,59 @@ void SketchViewTest::draggingMovesFreeGeometryAsOneUndoStep() {
     drag(at(46.0, -40.0), at(60.0, -40.0));
     QVERIFY(qAbs(sketch().radiusOf(circle.id) - 16.0) < 1e-9);
     QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Pin"));
+}
+
+void SketchViewTest::aDraggedPointJoinsWhatItIsLetGoOn() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    editor()->setTool(SketchTool::Line);
+    click(at(80.0, -20.0));
+    click(at(100.0, -10.0));
+    QTest::keyClick(m_viewport, Qt::Key_Escape);
+    render();
+    editor()->setTool(SketchTool::Select);
+    const Sketch drawn = sketch();
+    const std::vector<Entity> lines = curves(EntityKind::Line);
+    QCOMPARE(lines.size(), std::size_t{5});
+    const Entity loose = lines.back();
+    const auto joins = [this](ConstraintKind kind, EntityId a, EntityId b) {
+        const auto& all = sketch().constraints();
+        return std::any_of(all.begin(), all.end(), [&](const auto& c) {
+            return c.kind == kind &&
+                   ((c.first == a && c.second == b) || (c.first == b && c.second == a));
+        });
+    };
+
+    // A corner let go near the origin goes onto it and stays there, and the rectangle follows.
+    drag(at(10.0, 10.0), at(1.0, -1.0));
+    const Point2 joined = startOf(lines[0].id);
+    QVERIFY2(apart(joined, {0.0, 0.0}) < 1e-6,
+             qPrintable(QStringLiteral("%1 %2").arg(joined.x).arg(joined.y)));
+    QVERIFY(joins(ConstraintKind::Coincident, lines[0].start, sketch().origin()) ||
+            joins(ConstraintKind::Coincident, lines[3].end, sketch().origin()));
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Drag"));
+
+    // The end of a loose line, onto a corner of the rectangle.
+    drag(at(80.0, -20.0), at(59.0, 41.0));
+    QVERIFY(apart(startOf(loose.id), endOf(lines[1].id)) < 1e-6);
+    QVERIFY(joins(ConstraintKind::Coincident, loose.start, lines[1].end) ||
+            joins(ConstraintKind::Coincident, loose.start, lines[2].start));
+    // The corner it joined stays put when the line's other end is dragged.
+    const Point2 corner = endOf(lines[1].id);
+    drag(at(100.0, -10.0), at(110.0, 0.0));
+    QVERIFY(apart(startOf(loose.id), corner) < 1e-6);
+
+    // One undo takes back each drag with what it joined.
+    m_document->undo();
+    m_document->undo();
+    QVERIFY(apart(startOf(loose.id), {80.0, -20.0}) < 1e-6);
+    QVERIFY(!joins(ConstraintKind::Coincident, loose.start, lines[1].end) &&
+            !joins(ConstraintKind::Coincident, loose.start, lines[2].start));
+    m_document->undo();
+    QCOMPARE(sketch().constraints().size(), drawn.constraints().size());
+    QVERIFY(apart(startOf(lines[0].id), {10.0, 10.0}) < 1e-6);
 }
 
 void SketchViewTest::deleteAndConstructionActOnTheSelection() {
