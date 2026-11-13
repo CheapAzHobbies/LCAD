@@ -1097,12 +1097,12 @@ public:
         turnToOrientation(heading().Multiplied(aboutRight).Multiplied(aboutUp), false);
     }
 
-    // Spins the view around the line of sight, by as much as makes the cube look the same again.
+    // Spins the view around the line of sight, by the cube's step from where it looks.
     // A camera spun one way spins what is on the screen the other way.
     void spin(bool clockwise) {
         const gp_Quaternion from = heading();
         const gp_Vec back = from.Multiply(gp_Vec(0.0, 0.0, 1.0));
-        const double step = NavigationCube::spinStep(QVector3D(
+        const double step = cube->spinFrom(QVector3D(
             static_cast<float>(back.X()), static_cast<float>(back.Y()), static_cast<float>(back.Z())));
         const gp_Quaternion around(gp_Vec(0.0, 0.0, 1.0), clockwise ? step : -step);
         turnToOrientation(from.Multiplied(around), false);
@@ -2167,6 +2167,7 @@ ViewportWidget::ViewportWidget(QWidget* parent)
             [this](double aroundRight, double aroundUp) { m_impl->turnBy(aroundRight, aroundUp); });
     connect(m_impl->cube, &NavigationCube::spinAsked, this,
             [this](bool clockwise) { m_impl->spin(clockwise); });
+    connect(m_impl->cube, &NavigationCube::stepsChosen, this, &ViewportWidget::cubeStepsChanged);
     connect(m_impl->cube, &NavigationCube::projectionToggled, this, [this] {
         setProjection(projection() == Projection::Perspective ? Projection::Orthographic
                                                               : Projection::Perspective);
@@ -2890,6 +2891,23 @@ void ViewportWidget::setAnimated(bool animated) {
 
 bool ViewportWidget::isAnimated() const {
     return m_impl->animated;
+}
+
+void ViewportWidget::setCubeSteps(double turn, double spin) {
+    m_impl->cube->setTurnStep(turn);
+    m_impl->cube->setSpinStep(spin);
+}
+
+double ViewportWidget::cubeTurnStep() const {
+    return m_impl->cube->turnStep();
+}
+
+double ViewportWidget::cubeSpinStep() const {
+    return m_impl->cube->spinStep();
+}
+
+void ViewportWidget::askCubeStep(bool spin) {
+    m_impl->cube->askStep(spin);
 }
 
 CameraState ViewportWidget::cameraState() const {
