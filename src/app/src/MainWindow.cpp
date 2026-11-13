@@ -1361,7 +1361,7 @@ void MainWindow::defineCommands() {
                                       "anywhere else")
                     : spin ? tr("Make the view cube's curved arrows spin the view %1°").arg(degrees)
                            : tr("Make the view cube's straight arrows turn the view %1°").arg(degrees);
-                step.aliases = {tr("view cube"), tr("step"), tr("angle")};
+                step.aliases = {tr("step"), tr("angle"), tr("arrows")};
                 step.checkable = true;
                 step.exclusiveGroup = kind;
                 step.run = [this, spin, degrees, degree](bool) {
@@ -1383,7 +1383,7 @@ void MainWindow::defineCommands() {
             other.group = view;
             other.description = spin ? tr("Type how far the view cube's curved arrows spin the view")
                                      : tr("Type how far the view cube's straight arrows turn the view");
-            other.aliases = {tr("view cube"), tr("step"), tr("angle")};
+            other.aliases = {tr("step"), tr("angle"), tr("arrows")};
             other.checkable = true;
             other.exclusiveGroup = kind;
             other.run = [this, spin](bool) {
