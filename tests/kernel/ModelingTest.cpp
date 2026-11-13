@@ -861,3 +861,19 @@ TEST_CASE("A chamfer of two distances", "[kernel][modeling]") {
                WithinRel(2000.0 - 0.5 * 2.0 * 2.0 * 10.0, 1e-9));
     CHECK_THROWS_AS(chamfer(block, {upright.front()}, 2.0, "8", -1.0), std::invalid_argument);
 }
+
+TEST_CASE("Text is made into solid letters", "[kernel][modeling]") {
+    const NamedShape word = textSolid(planeXY(), 5.0, 5.0, "LCAD", 10.0, 0.0, 2.0, "Sans", "7");
+    CHECK(countTopology(word.shape).solids >= 4);
+    CHECK(volume(word.shape) > 20.0);
+    const auto box = boundingBox(word.shape);
+    REQUIRE(box.has_value());
+    // Starting where it was put, 2 deep, about as tall as asked, and wider than it is tall.
+    CHECK(box->min.x >= 5.0 - 1.0);
+    CHECK_THAT(box->max.z - box->min.z, WithinAbs(2.0, 1e-6));
+    CHECK(box->max.y - box->min.y > 5.0);
+    CHECK(box->max.y - box->min.y < 15.0);
+    CHECK(box->max.x - box->min.x > 15.0);
+    CHECK_THROWS_AS(textSolid(planeXY(), 0.0, 0.0, "  ", 10.0, 0.0, 2.0, "Sans", "7"),
+                    std::invalid_argument);
+}

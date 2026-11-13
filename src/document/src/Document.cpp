@@ -57,7 +57,8 @@ bool makesBody(const Feature& feature) {
     }
     return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
             feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
-            feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
+            feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil ||
+            feature.kind == FeatureKind::Text) &&
            feature.operation == Operation::NewBody;
 }
 
@@ -65,7 +66,8 @@ bool usesSketch(const Feature& feature) {
     return feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
            feature.kind == FeatureKind::Hole || feature.kind == FeatureKind::Loft ||
            feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::SurfacePull ||
-           feature.kind == FeatureKind::Patch || feature.kind == FeatureKind::SurfaceRevolve;
+           feature.kind == FeatureKind::Patch || feature.kind == FeatureKind::SurfaceRevolve ||
+           feature.kind == FeatureKind::Text;
 }
 
 // Whether every sketch a feature is made from is in the document. `missing` is set to the
@@ -1200,6 +1202,8 @@ Feature Document::resolved(const Feature& feature) const {
         {"section", "section"},
         {"size2", "second distance"},
         {"scale", "scale"},
+        {"textU", "place across"},
+        {"textV", "place up"},
     };
     Feature result = feature;
     for (const auto& [field, expression] : feature.expressions) {
@@ -1266,6 +1270,10 @@ Feature Document::resolved(const Feature& feature) const {
             result.size2 = value;
         } else if (field == "scale") {
             result.scale = value;
+        } else if (field == "textU") {
+            result.textU = value;
+        } else if (field == "textV") {
+            result.textV = value;
         }
     }
     return result;

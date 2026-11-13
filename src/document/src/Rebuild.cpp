@@ -1124,9 +1124,26 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             return kernel::NamedShape{kernel::placed(source->shape, where), source->faceNames};
         }
         case FeatureKind::Pipe:
-        case FeatureKind::Coil: {
+        case FeatureKind::Coil:
+        case FeatureKind::Text: {
             kernel::NamedShape made;
-            if (feature.kind == FeatureKind::Pipe) {
+            if (feature.kind == FeatureKind::Text) {
+                const SketchItem* sketch = document.findSketch(feature.sketch);
+                if (sketch == nullptr) {
+                    throw FeatureFailure("The sketch it is written on is gone.");
+                }
+                if (feature.text.find_first_not_of(" \t\n") == std::string::npos) {
+                    throw FeatureFailure("It has no text.");
+                }
+                if (!std::isfinite(feature.size) || feature.size <= 1e-6) {
+                    throw FeatureFailure("Its height has to be more than zero.");
+                }
+                if (!std::isfinite(feature.distance) || std::abs(feature.distance) < 1e-7) {
+                    throw FeatureFailure("Its depth is zero.");
+                }
+                made = kernel::textSolid(sketch->plane, feature.textU, feature.textV, feature.text,
+                                         feature.size, 0.0, feature.distance, feature.font, tag);
+            } else if (feature.kind == FeatureKind::Pipe) {
                 const SketchItem* path = document.findSketch(feature.pathSketch);
                 if (path == nullptr) {
                     throw FeatureFailure("The sketch of its path is gone.");

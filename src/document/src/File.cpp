@@ -669,6 +669,11 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     if (feature.kind == FeatureKind::Pipe) {
         out["wall"] = feature.wall;
     }
+    if (feature.kind == FeatureKind::Text) {
+        out["text"] = feature.text;
+        out["font"] = feature.font;
+        out["at"] = {feature.textU, feature.textV};
+    }
     // A chamfer of two distances.
     if (feature.kind == FeatureKind::Chamfer && feature.size2 != 0.0) {
         out["size2"] = feature.size2;
@@ -856,6 +861,16 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     }
     if (feature.kind == FeatureKind::Pipe) {
         feature.wall = numberMember(entry, "wall", where, path);
+    }
+    if (feature.kind == FeatureKind::Text) {
+        feature.text = stringMember(entry, "text", where, path);
+        feature.font = stringMember(entry, "font", where, path);
+        const json& at = member(entry, "at", where, path);
+        if (!at.is_array() || at.size() != 2 || !at[0].is_number() || !at[1].is_number()) {
+            damaged(path, "\"at\" in " + where + " is not two numbers");
+        }
+        feature.textU = at[0].get<double>();
+        feature.textV = at[1].get<double>();
     }
     if (feature.kind == FeatureKind::Chamfer && entry.contains("size2")) {
         feature.size2 = numberMember(entry, "size2", where, path);

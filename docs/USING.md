@@ -314,6 +314,12 @@ it.
 axis starts: its **Diameter**, the **Pitch** it rises each turn, how many **Turns**, and the
 **Wire** thickness, less than the pitch.
 
+**Text** writes letters on the plane of a sketch, from the fonts installed on the computer:
+type the text, choose the sketch it goes on, the font, the **Height** of the letters, the
+**Depth**, and where it starts (**Across** and **Up**, in the sketch, at the left of the line the
+letters stand on). As a new body, joined to a body to raise it, or with **Cut** and a negative
+depth to engrave it into a face.
+
 **Thread** cuts a 60° screw thread all along the round face you click: the outside of a rod, or
 the inside of a hole. Type its **Pitch**: 1.5 for M10, 1.25 for M8, 1 for M6, 0.8 for M5. The
 hole or rod should already be the size the thread is for.

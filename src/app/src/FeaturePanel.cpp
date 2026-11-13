@@ -14,6 +14,8 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QLineEdit>
+#include <QFontComboBox>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
@@ -108,6 +110,8 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Offset Surface");
     case FeatureKind::SurfaceRevolve:
         return FeaturePanel::tr("Surface Revolve");
+    case FeatureKind::Text:
+        return FeaturePanel::tr("Text");
     }
     return {};
 }
@@ -129,7 +133,8 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
     layout->addLayout(m_form);
     const bool fromSketch = kind == FeatureKind::Pull || kind == FeatureKind::Revolve ||
                             kind == FeatureKind::Loft || kind == FeatureKind::Sweep ||
-                            kind == FeatureKind::Pipe || kind == FeatureKind::Coil;
+                            kind == FeatureKind::Pipe || kind == FeatureKind::Coil ||
+                            kind == FeatureKind::Text;
     if (fromSketch) {
         m_operation = new QComboBox(this);
         m_operation->setObjectName(QStringLiteral("operation"));
@@ -154,7 +159,10 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         // Without a body to work on, a new body is what it can be. A pipe or a coil is
         // usually a part of its own.
         m_operation->setCurrentIndex(
-            m_body->count() == 0 || kind == FeatureKind::Pipe || kind == FeatureKind::Coil ? 0 : 1);
+            m_body->count() == 0 || kind == FeatureKind::Pipe || kind == FeatureKind::Coil ||
+                    kind == FeatureKind::Text
+                ? 0
+                : 1);
     }
     if (kind == FeatureKind::Combine || kind == FeatureKind::Stitch) {
         if (kind == FeatureKind::Combine) {
@@ -339,6 +347,39 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         break;
     case FeatureKind::Patch:
         break;
+    case FeatureKind::Text: {
+        m_text = new QLineEdit(this);
+        m_text->setObjectName(QStringLiteral("text"));
+        m_text->setPlaceholderText(tr("What to write"));
+        connect(m_text, &QLineEdit::textEdited, this, [this] { readFields(); });
+        m_form->addRow(tr("Text"), m_text);
+        m_path = new QComboBox(this);
+        m_path->setObjectName(QStringLiteral("path"));
+        m_path->setToolTip(tr("The sketch whose plane it is written on."));
+        connect(m_path, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("On"), m_path);
+        fillPaths();
+        m_font = new QFontComboBox(this);
+        m_font->setObjectName(QStringLiteral("font"));
+        m_font->setFontFilters(QFontComboBox::ScalableFonts);
+        connect(m_font, &QFontComboBox::currentFontChanged, this, [this] { readFields(); });
+        m_form->addRow(tr("Font"), m_font);
+        m_size = addField(QStringLiteral("size"), tr("Height"), 0.0, largestInput, tr(" mm"));
+        m_size->setValue(10.0);
+        m_size->setToolTip(tr("How tall the capital letters are, about."));
+        m_distance = addField(QStringLiteral("distance"), tr("Depth"), -largestInput,
+                              largestInput, tr(" mm"));
+        m_distance->setValue(1.0);
+        m_distance->setToolTip(tr("How far the letters go, along the sketch's normal. Negative "
+                                  "goes into the face it is on, to engrave with Cut."));
+        QDoubleSpinBox* across = addField(QStringLiteral("textU"), tr("Across"), -largestInput,
+                                          largestInput, tr(" mm"));
+        across->setToolTip(tr("Where it starts, in the sketch: the left of the first letter."));
+        QDoubleSpinBox* up = addField(QStringLiteral("textV"), tr("Up"), -largestInput,
+                                      largestInput, tr(" mm"));
+        up->setToolTip(tr("Where it starts, in the sketch: the line the letters stand on."));
+        break;
+    }
     case FeatureKind::SurfaceRevolve:
         m_path = new QComboBox(this);
         m_path->setObjectName(QStringLiteral("path"));
@@ -945,7 +986,8 @@ void FeaturePanel::fillPaths() {
     m_path->clear();
     // A surface pull chooses its own sketch here; a path is any sketch but the profile's.
     const bool own = m_feature.kind == FeatureKind::SurfacePull ||
-                     m_feature.kind == FeatureKind::SurfaceRevolve;
+                     m_feature.kind == FeatureKind::SurfaceRevolve ||
+                     m_feature.kind == FeatureKind::Text;
     for (const document::SketchItem& sketch : m_document->sketches()) {
         if (own || sketch.id != m_feature.sketch) {
             m_path->addItem(QString::fromStdString(sketch.name),
@@ -1215,6 +1257,13 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         m_bothSides->setChecked(feature.symmetric);
         m_distance->setValue(feature.distance);
     }
+    if (m_text != nullptr) {
+        m_text->setText(QString::fromStdString(feature.text));
+        m_font->setCurrentFont(QFont(QString::fromStdString(feature.font)));
+        m_distance->setValue(feature.distance);
+        findChild<QDoubleSpinBox*>(QStringLiteral("textU"))->setValue(feature.textU);
+        findChild<QDoubleSpinBox*>(QStringLiteral("textV"))->setValue(feature.textV);
+    }
     if (feature.kind == FeatureKind::MoveBody) {
         fillBodies();
         const document::ObjectId shown =
@@ -1432,6 +1481,9 @@ bool FeaturePanel::hasInput() const {
         return m_feature.sketch.isValid();
     case FeatureKind::SurfaceRevolve:
         return m_feature.sketch.isValid() && (m_feature.axis != 0 || !m_feature.reference.empty());
+    case FeatureKind::Text:
+        return m_feature.sketch.isValid() &&
+               m_feature.text.find_first_not_of(" \t") != std::string::npos;
     case FeatureKind::Patch:
         return m_feature.sketch.isValid() && !m_feature.regions.empty();
     case FeatureKind::MoveBody:
@@ -1735,7 +1787,7 @@ void FeaturePanel::readFields() {
         const document::ObjectId chosen{
             m_path->count() > 0 ? m_path->currentData().toULongLong() : 0};
         if (m_feature.kind == FeatureKind::SurfacePull ||
-            m_feature.kind == FeatureKind::SurfaceRevolve) {
+            m_feature.kind == FeatureKind::SurfaceRevolve || m_feature.kind == FeatureKind::Text) {
             m_feature.sketch = chosen;
         } else {
             m_feature.pathSketch = chosen;
@@ -1744,6 +1796,13 @@ void FeaturePanel::readFields() {
     if (m_bothSides != nullptr) {
         m_feature.symmetric = m_bothSides->isChecked();
         m_feature.distance = m_distance->value();
+    }
+    if (m_text != nullptr) {
+        m_feature.text = m_text->text().toStdString();
+        m_feature.font = m_font->currentFont().family().toStdString();
+        m_feature.distance = m_distance->value();
+        m_feature.textU = findChild<QDoubleSpinBox*>(QStringLiteral("textU"))->value();
+        m_feature.textV = findChild<QDoubleSpinBox*>(QStringLiteral("textV"))->value();
     }
     if (m_feature.kind == FeatureKind::Thicken) {
         m_feature.body =
@@ -1914,6 +1973,10 @@ void FeaturePanel::updatePicked() {
     case FeatureKind::SurfacePull:
         text = tr("Choose the sketch below: every curve of it, open or closed, is pulled into a "
                   "surface.");
+        break;
+    case FeatureKind::Text:
+        text = tr("Type the text, choose the sketch whose plane it goes on, and where on it. "
+                  "Join raises it from a body; Cut, with a negative depth, engraves it.");
         break;
     case FeatureKind::SurfaceRevolve:
         text = tr("Choose the sketch below and the axis to turn about: every curve of it but the "

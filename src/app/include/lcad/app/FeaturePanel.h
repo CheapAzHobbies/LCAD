@@ -18,6 +18,8 @@ class QDoubleSpinBox;
 class QFormLayout;
 class QLabel;
 class QListWidget;
+class QFontComboBox;
+class QLineEdit;
 class QPushButton;
 class QSpinBox;
 
@@ -173,6 +175,9 @@ private:
     QCheckBox* m_copy = nullptr;
     /// Surface Pull: half each way.
     QCheckBox* m_bothSides = nullptr;
+    // Text
+    QLineEdit* m_text = nullptr;
+    QFontComboBox* m_font = nullptr;
     QComboBox* m_turnAxis = nullptr;
     QDoubleSpinBox* m_moveX = nullptr;
     QDoubleSpinBox* m_moveY = nullptr;

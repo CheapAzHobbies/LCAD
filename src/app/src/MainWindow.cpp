@@ -985,6 +985,15 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasBody;
         m_commands->add(std::move(c));
 
+        c = make("solid.text", tr("Te&xt"), create,
+                 tr("Write text on the plane of a sketch: raised from a body, cut into it, or a "
+                    "body of its own"));
+        c.iconName = QStringLiteral("text");
+        c.aliases = {tr("emboss"), tr("engrave"), tr("lettering"), tr("label"), tr("font")};
+        c.run = [this](bool) { startFeature(FeatureKind::Text); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
         // Surfaces: faces that need not enclose anything, made into solids at the end.
         c = make("surface.pull", tr("Surface &Pull"), create,
                  tr("Pull every curve of a sketch, open or closed, into a surface"));
@@ -2013,7 +2022,7 @@ void MainWindow::createTopBar() {
     QMenu* create = m_menuBar->addMenu(tr("&Create"));
     create->addActions({action("solid.pull"), action("solid.revolve"), action("solid.loft"),
                         action("solid.sweep"), action("solid.pipe"), action("solid.coil"),
-                        action("solid.hole"), action("solid.thread")});
+                        action("solid.hole"), action("solid.thread"), action("solid.text")});
     QMenu* surfaces = create->addMenu(tr("S&urface"));
     surfaces->setObjectName(QStringLiteral("menu.surface"));
     surfaces->addActions({action("surface.pull"), action("surface.revolve"), action("surface.patch"),
@@ -3766,6 +3775,13 @@ void MainWindow::startFeature(document::FeatureKind kind) {
             }
         }
     }
+    if (kind == document::FeatureKind::Text) {
+        seed.sketch = from;
+        seed.text = "LCAD";
+        seed.size = 10.0;
+        seed.distance = 1.0;
+        seed.operation = document::Operation::NewBody;
+    }
     if (kind == document::FeatureKind::SurfacePull || kind == document::FeatureKind::SurfaceRevolve) {
         seed.sketch = from;
         seed.distance = 10.0;
@@ -3862,7 +3878,8 @@ void MainWindow::startFeature(document::FeatureKind kind) {
                kind == document::FeatureKind::Thicken ||
                kind == document::FeatureKind::SurfacePull ||
                kind == document::FeatureKind::SurfaceRevolve ||
-               kind == document::FeatureKind::OffsetSurface) {
+               kind == document::FeatureKind::OffsetSurface ||
+               kind == document::FeatureKind::Text) {
         m_featurePanel->setFeature(seed);
         m_settingPicks = true;
         m_viewport->clearSelection();

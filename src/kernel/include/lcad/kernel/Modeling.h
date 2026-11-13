@@ -183,6 +183,14 @@ struct Region {
 [[nodiscard]] NamedShape offsetSurface(const NamedShape& surface, double distance,
                                        const std::string& tag);
 
+/// Text as a solid: the letters of `text`, `height` tall, in the font named (or another if the
+/// system has none by that name), starting at (u, v) of the plane along its X direction, pulled
+/// from `from` to `to` along the plane's normal. Faces are named `tag`/text/... in the order of
+/// where they are. Throws kernel::Error if no font can be found or the text makes nothing.
+[[nodiscard]] NamedShape textSolid(const Plane& plane, double u, double v, const std::string& text,
+                                   double height, double from, double to,
+                                   const std::string& font, const std::string& tag);
+
 /// How two solids are combined.
 enum class Combination {
     Join,      ///< everything that is in either

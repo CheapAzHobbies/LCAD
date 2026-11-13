@@ -242,6 +242,14 @@ const QHash<QString, Drawing>& drawings() {
              i.poly({{3, 11}, {21, 11}, {21, 18}, {3, 18}});
              i.line(12, 7, 12, 10);
          }},
+        {QStringLiteral("text"),
+         [](const Ink& i) {
+             // A capital A raised from a slab.
+             i.fill({{3, 18}, {21, 18}, {21, 21}, {3, 21}});
+             i.poly({{3, 18}, {21, 18}, {21, 21}, {3, 21}});
+             i.poly({{6, 16}, {12, 3}, {18, 16}}, false);
+             i.line(8.5, 11, 15.5, 11);
+         }},
         {QStringLiteral("combine"),
          [](const Ink& i) {
              // Two blocks overlapping, made one.

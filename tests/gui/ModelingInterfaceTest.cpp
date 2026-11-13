@@ -111,6 +111,7 @@ private slots:
     void aSectionCutsTheView();
     void surfacesArePulledPatchedStitchedAndThickened();
     void theLastCommandCanBeRepeated();
+    void textIsWrittenRaisedAndEngraved();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
@@ -1218,6 +1219,44 @@ void ModelingInterfaceTest::theLastCommandCanBeRepeated() {
     QVERIFY(trigger(window, "edit.repeat"));
     QVERIFY(panel(window) != nullptr);
     QCOMPARE(panel(window)->kind(), lcad::document::FeatureKind::Fillet);
+}
+
+void ModelingInterfaceTest::textIsWrittenRaisedAndEngraved() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const double whole = volumeOf(window, plate);
+
+    // Engraved into the top of the plate: a sketch there, Cut, half a millimeter in.
+    const ObjectId top = window.document()->addSketch(
+        "Top", lcad::kernel::makePlane({0.0, 0.0, 8.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    window.browser()->setSelection({}, {top});
+    QVERIFY(trigger(window, "solid.text"));
+    FeaturePanel* text = panel(window);
+    QVERIFY(text != nullptr);
+    QCOMPARE(text->feature().sketch, top);
+    auto* words = text->findChild<QLineEdit*>(QStringLiteral("text"));
+    QVERIFY(words != nullptr);
+    words->selectAll();
+    QTest::keyClicks(words, QStringLiteral("LCAD 01"));
+    QCOMPARE(text->feature().text, std::string("LCAD 01"));
+    typeInto(text, "textU", 10.0);
+    typeInto(text, "textV", 10.0);
+    typeInto(text, "distance", -0.5);
+    text->setChoice(QStringLiteral("operation"), 2);
+    QCOMPARE(text->feature().operation, Operation::Cut);
+    QTRY_VERIFY2(text->errorText().isEmpty(), qPrintable(text->errorText()));
+    QTest::mouseClick(okButton(text), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(volumeOf(window, plate) < whole);
+    QVERIFY(volumeOf(window, plate) > whole - 100.0);
+    QCOMPARE(window.document()->features().back().kind, lcad::document::FeatureKind::Text);
+    window.viewport()->setStandardView(StandardView::Top);
+    window.viewport()->fitAll();
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-text");
 }
 
 void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {

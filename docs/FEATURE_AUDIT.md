@@ -23,7 +23,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Arc | Have | Center, start, and end; three points; tangent on from a curve. |
 | Ellipse, polygon, slot, spline, point | Have | Polygon is inscribed only; spline is fit-point only. |
 | Construction geometry | Have | Any curve can be made construction. |
-| Sketch text | No | |
+| Sketch text | Part | Text is a feature (Create > Text), raised, engraved, or a body; not text in a sketch. |
 | Fillet | Have | Between two lines. |
 | Chamfer | Have | Equal distance, between two lines. |
 | Trim, extend, offset, mirror | Have | |
@@ -83,7 +83,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Hole: simple, counterbore, countersink | Have | |
 | Thread | Have | Modeled 60° thread, outside or inside, by pitch. No thread tables yet. |
 | Coil, pipe | Have | Since 2026-11-12. |
-| Rib, web, emboss | No | |
+| Emboss and engrave text | Have | Create > Text. |
+| Rib, web, emboss of a sketch onto a curved face | No | |
 | Primitives: box, cylinder, sphere, cone, torus | Have | |
 | Fillet, chamfer, shell | Have | One radius or distance per feature; chamfer by one distance or two. |
 | Draft | Have | Since 2026-11-12, about an origin or construction plane. |
