@@ -84,6 +84,9 @@ enum class FeatureKind {
     Thicken,
     /// A new surface, `body`, `size` away from the surface of `tools`' one body.
     OffsetSurface,
+    /// Turns every curve of `sketch`, open or closed, about the line `axis` of it, or the axis
+    /// `reference`, by `angle` degrees, into a surface.
+    SurfaceRevolve,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);

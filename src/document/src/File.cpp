@@ -603,7 +603,8 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
     }
     // A revolve about an origin axis or a construction axis; the direction of a face moved;
     // the plane of a draft or a split.
-    if ((feature.kind == FeatureKind::Revolve && !feature.reference.empty()) ||
+    if (((feature.kind == FeatureKind::Revolve || feature.kind == FeatureKind::SurfaceRevolve) &&
+         !feature.reference.empty()) ||
         feature.kind == FeatureKind::MoveFace || feature.kind == FeatureKind::Draft ||
         feature.kind == FeatureKind::SplitBody) {
         out["reference"] = feature.reference;
@@ -764,7 +765,8 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
         feature.planeKind = *known;
         feature.reference2 = stringMember(entry, "reference2", where, path);
     }
-    if ((feature.kind == FeatureKind::Revolve && entry.contains("reference")) ||
+    if (((feature.kind == FeatureKind::Revolve || feature.kind == FeatureKind::SurfaceRevolve) &&
+         entry.contains("reference")) ||
         feature.kind == FeatureKind::MoveFace || feature.kind == FeatureKind::Draft ||
         feature.kind == FeatureKind::SplitBody) {
         feature.reference = stringMember(entry, "reference", where, path);

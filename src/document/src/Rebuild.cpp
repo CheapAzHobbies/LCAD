@@ -1160,6 +1160,40 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             }
             return kernel::pullSurface(sketch->plane, curves, from, to, tag);
         }
+        case FeatureKind::SurfaceRevolve: {
+            const SketchItem* sketch = document.findSketch(feature.sketch);
+            if (sketch == nullptr) {
+                throw FeatureFailure("The sketch it was made from is gone.");
+            }
+            kernel::Axis about;
+            std::vector<kernel::OutlineCurve> curves = sketchCurves(*sketch);
+            if (!feature.reference.empty()) {
+                about = axisNamed(feature.reference, kernel::NamedShape{}, document);
+            } else {
+                const sketch::Entity* axis = sketch->geometry.find(feature.axis);
+                if (axis == nullptr || axis->kind != sketch::EntityKind::Line) {
+                    throw FeatureFailure("The line it turns about is no longer in " +
+                                         sketch->name + ".");
+                }
+                const sketch::Point2 a = sketch->geometry.position(axis->start);
+                const sketch::Point2 b = sketch->geometry.position(axis->end);
+                const kernel::Point from = kernel::toWorld(sketch->plane, a.x, a.y);
+                const kernel::Point to = kernel::toWorld(sketch->plane, b.x, b.y);
+                about = {from, {to.x - from.x, to.y - from.y, to.z - from.z}};
+                // Not the axis itself, if it is drawn as an ordinary line.
+                std::erase_if(curves, [&](const kernel::OutlineCurve& curve) {
+                    return curve.name == std::to_string(feature.axis);
+                });
+            }
+            if (curves.empty()) {
+                throw FeatureFailure("Its sketch, " + sketch->name + ", has no curves to turn.");
+            }
+            if (!std::isfinite(feature.angle) || std::abs(feature.angle) < 1e-9 ||
+                std::abs(feature.angle) > 360.0 + 1e-9) {
+                throw FeatureFailure("Its angle has to be more than zero and at most 360 degrees.");
+            }
+            return kernel::revolveSurface(curves, about, feature.angle * pi / 180.0, tag);
+        }
         case FeatureKind::Patch: {
             const SketchItem* sketch = document.findSketch(feature.sketch);
             if (sketch == nullptr) {

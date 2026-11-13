@@ -1192,6 +1192,48 @@ NamedShape pullSurface(const Plane& plane, const std::vector<OutlineCurve>& curv
     });
 }
 
+NamedShape revolveSurface(const std::vector<OutlineCurve>& curves, const Axis& axis, double angle,
+                          const std::string& tag) {
+    if (curves.empty()) {
+        throw Error("revolve a surface", "there are no curves to turn");
+    }
+    const double fullTurn = 2.0 * M_PI;
+    if (!std::isfinite(angle) || std::abs(angle) < 1e-9 || std::abs(angle) > fullTurn + 1e-9) {
+        throw std::invalid_argument("revolveSurface: the angle must be between zero and a turn");
+    }
+    return occt::guarded("revolve a surface", [&] {
+        const gp_Ax1 line(toOcct(axis.origin),
+                          gp_Dir(axis.direction.x, axis.direction.y, axis.direction.z));
+        const bool whole = std::abs(std::abs(angle) - fullTurn) < 1e-9;
+        BRepBuilderAPI_Sewing sewing(outlineTolerance);
+        std::vector<std::pair<TopoDS_Shape, std::string>> faces;
+        for (const OutlineCurve& curve : curves) {
+            const TopoDS_Shape& edge = occt::unwrap(curve.edge);
+            std::unique_ptr<BRepPrimAPI_MakeRevol> made =
+                whole ? std::make_unique<BRepPrimAPI_MakeRevol>(edge, line)
+                      : std::make_unique<BRepPrimAPI_MakeRevol>(edge, line, angle);
+            BRepPrimAPI_MakeRevol& turn = *made;
+            if (!turn.IsDone()) {
+                throw Error("revolve a surface", "a curve could not be turned into a face");
+            }
+            for (TopExp_Explorer it(turn.Shape(), TopAbs_FACE); it.More(); it.Next()) {
+                sewing.Add(it.Current());
+                faces.emplace_back(it.Current(), tag + "/side/" + curve.name);
+            }
+        }
+        if (faces.empty()) {
+            throw Error("revolve a surface", "the curves lie on the axis, so they make nothing");
+        }
+        sewing.Perform();
+        const TopoDS_Shape sewn = sewing.SewedShape();
+        FaceNamer namer(sewn);
+        for (const auto& [face, name] : faces) {
+            namer.offer(sewing.IsModified(face) ? sewing.Modified(face) : face, name);
+        }
+        return named(sewn, namer, tag);
+    });
+}
+
 NamedShape patch(const Plane& plane, const Region& region, const std::string& tag) {
     return occt::guarded("patch", [&] {
         const TopoDS_Face face = faceOf(plane, region);

@@ -104,6 +104,9 @@ A surface is a body of faces that need not enclose anything: a sheet. Surfaces a
 
 - **Surface Pull** pulls every curve of a sketch, open or closed, into a surface: choose the
   sketch, type the distance, and check **Half each way** for both sides of the sketch.
+- **Surface Revolve** turns every curve of a sketch, open or closed, about an axis into a
+  surface: choose the sketch, the axis (a line of the sketch, which is left out, or an origin
+  or construction axis), and the angle. A vase from its side profile, for instance.
 - **Patch** fills closed areas of a sketch, clicked in the 3D view, with flat faces.
 - **Stitch** sews surfaces to a surface where their edges meet, closing gaps up to the size
   typed. Where they close all round, the result is a solid; otherwise it stays a surface. The

@@ -106,6 +106,8 @@ QString featureKindName(FeatureKind kind) {
         return FeaturePanel::tr("Thicken");
     case FeatureKind::OffsetSurface:
         return FeaturePanel::tr("Offset Surface");
+    case FeatureKind::SurfaceRevolve:
+        return FeaturePanel::tr("Surface Revolve");
     }
     return {};
 }
@@ -336,6 +338,25 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
                               "other way."));
         break;
     case FeatureKind::Patch:
+        break;
+    case FeatureKind::SurfaceRevolve:
+        m_path = new QComboBox(this);
+        m_path->setObjectName(QStringLiteral("path"));
+        m_path->setToolTip(tr("The sketch whose curves are turned, open or closed."));
+        connect(m_path, &QComboBox::activated, this, [this] {
+            readFields();
+            fillAxes();
+            readFields();
+        });
+        m_form->addRow(tr("Sketch"), m_path);
+        fillPaths();
+        m_axis = new QComboBox(this);
+        m_axis->setObjectName(QStringLiteral("axis"));
+        m_axis->setToolTip(tr("The line of the sketch to turn about, or an axis of the model."));
+        connect(m_axis, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Axis"), m_axis);
+        m_angle = addField(QStringLiteral("angle"), tr("Angle"), -360.0, 360.0, tr("°"));
+        m_angle->setValue(360.0);
         break;
     case FeatureKind::SurfacePull:
         m_path = new QComboBox(this);
@@ -923,7 +944,8 @@ void FeaturePanel::fillPaths() {
     const QSignalBlocker blocker(m_path);
     m_path->clear();
     // A surface pull chooses its own sketch here; a path is any sketch but the profile's.
-    const bool own = m_feature.kind == FeatureKind::SurfacePull;
+    const bool own = m_feature.kind == FeatureKind::SurfacePull ||
+                     m_feature.kind == FeatureKind::SurfaceRevolve;
     for (const document::SketchItem& sketch : m_document->sketches()) {
         if (own || sketch.id != m_feature.sketch) {
             m_path->addItem(QString::fromStdString(sketch.name),
@@ -1408,6 +1430,8 @@ bool FeaturePanel::hasInput() const {
         return !m_feature.tools.empty() && m_feature.tools.front().isValid();
     case FeatureKind::SurfacePull:
         return m_feature.sketch.isValid();
+    case FeatureKind::SurfaceRevolve:
+        return m_feature.sketch.isValid() && (m_feature.axis != 0 || !m_feature.reference.empty());
     case FeatureKind::Patch:
         return m_feature.sketch.isValid() && !m_feature.regions.empty();
     case FeatureKind::MoveBody:
@@ -1710,7 +1734,8 @@ void FeaturePanel::readFields() {
     if (m_path != nullptr) {
         const document::ObjectId chosen{
             m_path->count() > 0 ? m_path->currentData().toULongLong() : 0};
-        if (m_feature.kind == FeatureKind::SurfacePull) {
+        if (m_feature.kind == FeatureKind::SurfacePull ||
+            m_feature.kind == FeatureKind::SurfaceRevolve) {
             m_feature.sketch = chosen;
         } else {
             m_feature.pathSketch = chosen;
@@ -1889,6 +1914,10 @@ void FeaturePanel::updatePicked() {
     case FeatureKind::SurfacePull:
         text = tr("Choose the sketch below: every curve of it, open or closed, is pulled into a "
                   "surface.");
+        break;
+    case FeatureKind::SurfaceRevolve:
+        text = tr("Choose the sketch below and the axis to turn about: every curve of it but the "
+                  "axis, open or closed, is turned into a surface.");
         break;
     case FeatureKind::Patch:
         text = m_feature.regions.empty()

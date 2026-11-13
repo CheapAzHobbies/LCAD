@@ -51,7 +51,8 @@ bool makesBody(const Feature& feature) {
     }
     // A surface is always a body of its own.
     if (feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
-        feature.kind == FeatureKind::OffsetSurface) {
+        feature.kind == FeatureKind::OffsetSurface ||
+        feature.kind == FeatureKind::SurfaceRevolve) {
         return true;
     }
     return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
@@ -64,7 +65,7 @@ bool usesSketch(const Feature& feature) {
     return feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
            feature.kind == FeatureKind::Hole || feature.kind == FeatureKind::Loft ||
            feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::SurfacePull ||
-           feature.kind == FeatureKind::Patch;
+           feature.kind == FeatureKind::Patch || feature.kind == FeatureKind::SurfaceRevolve;
 }
 
 // Whether every sketch a feature is made from is in the document. `missing` is set to the

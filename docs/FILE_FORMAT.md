@@ -126,7 +126,7 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, `Split Body`, `Combine`, `Move Body`, `Pipe`, `Coil`, `Thread`, `Surface Pull`, `Patch`, `Stitch`, `Thicken`, or `Offset Surface`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, `Split Body`, `Combine`, `Move Body`, `Pipe`, `Coil`, `Thread`, `Surface Pull`, `Patch`, `Stitch`, `Thicken`, `Offset Surface`, or `Surface Revolve`. |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
@@ -147,6 +147,7 @@ optional, and a file without them opens as it always did.
 | `pathSketch`, `size`, `wall` (pipe) | A pipe only: the sketch whose curves it runs along, its outside diameter, and its wall thickness (0 for a solid rod). |
 | `reference`, `size`, `pitch`, `turns`, `section` (coil) | A coil only: the axis it winds about, its diameter, the rise of a turn, how many turns, and the diameter of its wire. |
 | `sketch`, `distance`, `symmetric` (surface pull) | A surface pull only: every curve of the sketch, pulled `distance` along its normal, or half each way. |
+| `sketch`, `axis`, `reference`, `angle` (surface revolve) | A surface revolve only: every curve of the sketch but its axis, turned about the sketch line `axis`, or the model axis `reference` as for a revolve, by `angle` degrees. |
 | `sketch`, `regions` (patch) | A patch only: the closed areas filled with flat faces. |
 | `tools`, `size` (stitch) | A stitch only: the bodies sewn to `body`, and the widest gap it closes. |
 | `tools`, `size` (offset surface) | An offset surface only: the surface it is offset from, and how far; `body` is the new surface. |
