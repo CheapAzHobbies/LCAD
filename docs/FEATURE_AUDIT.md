@@ -71,7 +71,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Axis through two points, two planes, perpendicular to a face | No | |
 | Construction points | No | |
 | Rename, hide, edit planes and axes | Have | |
-| Drag a plane's offset in the 3D view | No | Typed only. |
+| Drag a plane's offset in the 3D view | Have | Since 2026-11-13, with the pull's arrow. |
 
 ## 3. Solids
 

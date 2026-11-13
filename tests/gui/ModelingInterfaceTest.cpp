@@ -858,6 +858,23 @@ void ModelingInterfaceTest::planesAtAnAngleAndMidplanes() {
     window.viewport()->fitAll();
     render(window);
 
+    // Offset: an arrow in the 3D view, and what is typed beside it is the offset.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* offset = panel(window);
+    QVERIFY(offset != nullptr);
+    QTRY_VERIFY(window.viewport()->hasDistanceHandle());
+    render(window);
+    QLineEdit* field = window.viewport()->distanceField();
+    QVERIFY(field != nullptr);
+    field->setFocus();
+    field->selectAll();
+    QTest::keyClicks(field, QStringLiteral("15"));
+    QTest::keyClick(field, Qt::Key_Return);
+    QCOMPARE(offset->value(QStringLiteral("distance")), 15.0);
+    QTest::keyClick(offset, Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(!window.viewport()->hasDistanceHandle());
+
     // At an angle: the XY plane turned 30 degrees about the X axis, chosen in the panel.
     QVERIFY(trigger(window, "construct.offsetPlane"));
     FeaturePanel* angled = panel(window);

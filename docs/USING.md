@@ -330,7 +330,8 @@ hole or rod should already be the size the thread is for.
 sketch on. Choose its **Type** in the panel:
 
 - **Offset:** pick an origin plane or another construction plane in the panel, or click a flat
-  face in the 3D view, and type how far from it.
+  face in the 3D view, and type how far from it, or drag the arrow in the 3D view, or type into
+  the box beside it.
 - **At Angle:** a plane through an axis, turned from a plane by the angle typed. Pick the axis
   in the panel (an origin axis or a construction axis) or click a straight edge in the 3D view.
 - **Midplane:** halfway between two planes: click two flat faces, or pick planes in the panel.
