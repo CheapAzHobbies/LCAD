@@ -48,7 +48,9 @@ Each solid you create is one undo step. You can turn and zoom the view while the
 This is how most parts start: sketch an outline, then **Pull** it into a solid (what other
 programs call extrude).
 
-1. Draw a closed outline in a sketch. You do not have to finish the sketch first.
+1. Draw a closed outline in a sketch. You do not have to finish the sketch first. Its lines need
+   not meet end to end: sides that run on past each other at a corner close the area between
+   them, and a line drawn across an outline cuts it into areas you can pull one at a time.
 2. Press **E**, or click **Pull** under **Create**. If the sketch has one closed area, it is
    picked already; otherwise click the areas you want in the 3D view (they light up under the
    pointer; a second click lets one go).
@@ -433,13 +435,16 @@ coincident with it), then add dimensions until nothing is blue.
 
 Not there yet: tangent arcs in a chain of lines; patterns in a sketch; moving a dimension's
 value somewhere else; cutting, extending, or offsetting an ellipse or a spline, and
-constraining a point onto one. A curve that crosses another is not split there unless it is part
-of a closed outline: an open line across a shape does not divide it, so cut first. A projected
+constraining a point onto one. A curve that crosses another is not split there, but the areas
+are: an open line across a shape divides it into areas a pull can pick one at a time. A projected
 edge is a copy, and does not follow its body if the body changes.
 
 **Outlines that overlap.** Where closed outlines cross, each area they make can be picked on its
 own for a pull: either shape without the other, or just what they share. With nothing picked, a
-pull takes the outlines whole, as one solid. Ellipses and splines do not take part in this.
+pull takes the outlines whole, as one solid. Lines that are in no outline count the same way:
+sides that run on past each other at a corner close the area between them, and a line across a
+circle cuts it in two. The sketch tints every area that can be pulled. Ellipses and splines do
+not take part in this.
 
 ## Drawings
 

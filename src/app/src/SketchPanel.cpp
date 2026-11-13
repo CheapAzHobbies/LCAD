@@ -331,10 +331,11 @@ void SketchPanel::refresh(const QString& name) {
         m_state->style()->unpolish(m_state);
         m_state->style()->polish(m_state);
     }
-    const auto profiles = static_cast<int>(geometry.profiles().size());
-    m_profiles->setText(profiles == 0   ? tr("No closed outline yet")
-                        : profiles == 1 ? tr("1 closed outline")
-                                        : tr("%1 closed outlines").arg(profiles));
+    // The areas a pull can pick from, closed by outlines or by lines that cross.
+    const auto areas = static_cast<int>(geometry.regions().size());
+    m_profiles->setText(areas == 0   ? tr("No closed area yet")
+                        : areas == 1 ? tr("1 closed area")
+                                     : tr("%1 closed areas").arg(areas));
     {
         const QSignalBlocker a(m_inference);
         const QSignalBlocker b(m_construction);
