@@ -174,6 +174,12 @@ struct Region {
     /// For an area of outlines that cross: the pieces of curves around it, in order. Empty for
     /// any other region, which is bounded by whole curves.
     std::vector<CurvePiece> pieces;
+    /// Holes made of pieces of curves: the outsides of figures that loose lines and arcs make,
+    /// such as a rectangle whose sides run on past its corners, lying in this region.
+    std::vector<std::vector<CurvePiece>> holePieces;
+    /// An area that lines and arcs in no outline close, outside every outline: a shape made of
+    /// all the outlines (outlineRegions()) leaves it out, and one made of all the sketch takes it.
+    bool apart = false;
     /// What tells the region from every other, sorted: its curves, and where outlines cross,
     /// which of them it lies in, after a 0. This is how a feature refers to it.
     std::vector<EntityId> key;
@@ -267,6 +273,8 @@ public:
     /// The regions the closed outlines divide the plane into. A circle inside a rectangle gives
     /// two: the rectangle with a round hole, and the disc. Two circles that overlap give three:
     /// each without the other, and what they share.
+    /// Lines and arcs in no outline count where they cross: four lines that run on past each
+    /// other's ends close the square between them, and a line across a circle cuts it in two.
     [[nodiscard]] std::vector<Region> regions() const;
     /// One region per outline, in the order of profiles(), whether outlines cross or not: what
     /// a shape made of all the outlines is made of.

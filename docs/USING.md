@@ -48,7 +48,9 @@ Each solid you create is one undo step. You can turn and zoom the view while the
 This is how most parts start: sketch an outline, then **Pull** it into a solid (what other
 programs call extrude).
 
-1. Draw a closed outline in a sketch. You do not have to finish the sketch first.
+1. Draw a closed outline in a sketch. You do not have to finish the sketch first. Its lines need
+   not meet end to end: sides that run on past each other at a corner close the area between
+   them, and a line drawn across an outline cuts it into areas you can pull one at a time.
 2. Press **E**, or click **Pull** under **Create**. If the sketch has one closed area, it is
    picked already; otherwise click the areas you want in the 3D view (they light up under the
    pointer; a second click lets one go).

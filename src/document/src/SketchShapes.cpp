@@ -133,27 +133,38 @@ kernel::Region kernelRegion(const SketchItem& sketch, const sketch::Region& regi
     }
     // Pieces of curves, where outlines cross. A name each: one curve can be in here twice.
     std::map<sketch::EntityId, int> seen;
-    for (const sketch::CurvePiece& piece : region.pieces) {
-        const sketch::Entity* entity = sketch.geometry.find(piece.curve);
-        if (entity == nullptr) {
-            throw std::invalid_argument("the outline names a curve the sketch does not have");
-        }
-        const kernel::Plane& plane = sketch.plane;
-        kernel::Shape edge;
-        if (entity->kind == sketch::EntityKind::Line) {
-            edge = kernel::makeSegment(kernel::toWorld(plane, piece.start.x, piece.start.y),
-                                       kernel::toWorld(plane, piece.end.x, piece.end.y));
-        } else {
-            const sketch::Point2 c = sketch.geometry.position(entity->center);
-            edge = kernel::makeArcEdge(plane, c.x, c.y, piece.start.x, piece.start.y, piece.end.x,
-                                       piece.end.y);
-        }
-        const int number = seen[piece.curve]++;
-        made.outer.push_back({edge, std::to_string(piece.curve) +
+    const auto pieces = [&](const std::vector<sketch::CurvePiece>& all) {
+        std::vector<kernel::OutlineCurve> curves;
+        for (const sketch::CurvePiece& piece : all) {
+            const sketch::Entity* entity = sketch.geometry.find(piece.curve);
+            if (entity == nullptr) {
+                throw std::invalid_argument("the outline names a curve the sketch does not have");
+            }
+            const kernel::Plane& plane = sketch.plane;
+            kernel::Shape edge;
+            if (entity->kind == sketch::EntityKind::Line) {
+                edge = kernel::makeSegment(kernel::toWorld(plane, piece.start.x, piece.start.y),
+                                           kernel::toWorld(plane, piece.end.x, piece.end.y));
+            } else {
+                const sketch::Point2 c = sketch.geometry.position(entity->center);
+                edge = kernel::makeArcEdge(plane, c.x, c.y, piece.start.x, piece.start.y,
+                                           piece.end.x, piece.end.y);
+            }
+            const int number = seen[piece.curve]++;
+            curves.push_back({edge, std::to_string(piece.curve) +
                                         (number > 0 ? "." + std::to_string(number) : "")});
+        }
+        return curves;
+    };
+    if (!region.pieces.empty()) {
+        made.outer = pieces(region.pieces);
     }
     for (const std::vector<sketch::EntityId>& hole : region.holes) {
         made.holes.push_back(outline(hole));
+    }
+    // Holes that are the outsides of figures loose lines make.
+    for (const std::vector<sketch::CurvePiece>& hole : region.holePieces) {
+        made.holes.push_back(pieces(hole));
     }
     return made;
 }

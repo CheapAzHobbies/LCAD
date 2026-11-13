@@ -357,3 +357,148 @@ TEST_CASE("An outline is given as the points around it", "[sketch][profiles]") {
     }
     CHECK(sketch.outlinePolygon({}).empty());
 }
+
+TEST_CASE("Lines that are in no outline close areas where they cross", "[sketch][profiles]") {
+    const auto sizesOf = [](const std::vector<Region>& areas) {
+        std::vector<double> sizes;
+        for (const Region& area : areas) {
+            sizes.push_back(area.area);
+        }
+        std::sort(sizes.begin(), sizes.end());
+        return sizes;
+    };
+    const auto allApart = [](const std::vector<Region>& areas) {
+        for (std::size_t i = 0; i < areas.size(); ++i) {
+            for (std::size_t j = i + 1; j < areas.size(); ++j) {
+                if (areas[i].key == areas[j].key) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    // The four sides of a 10 by 10 square, each running on 1 past the corners.
+    const auto addSquareRunningOn = [](Sketch& sketch, double x, double y, double size) {
+        sketch.addLine({x - 1.0, y}, {x + size + 1.0, y});
+        sketch.addLine({x + size, y - 1.0}, {x + size, y + size + 1.0});
+        sketch.addLine({x + size + 1.0, y + size}, {x - 1.0, y + size});
+        sketch.addLine({x, y + size + 1.0}, {x, y - 1.0});
+    };
+
+    SECTION("Sides that run on past the corners close the square between them") {
+        Sketch sketch;
+        addSquareRunningOn(sketch, 0.0, 0.0, 10.0);
+        CHECK(sketch.profiles().empty());
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 1);
+        CHECK_THAT(areas[0].area, WithinAbs(100.0, 1e-6));
+        CHECK(areas[0].pieces.size() == 4);
+        CHECK(areas[0].outer.size() == 4);
+    }
+    SECTION("So does one side running on past two corners that are joined otherwise") {
+        Sketch sketch;
+        sketch.addLine({0.0, 0.0}, {10.0, 0.0});
+        sketch.addLine({10.0, 0.0}, {10.0, 10.0});
+        sketch.addLine({10.0, 10.0}, {0.0, 10.0});
+        sketch.addLine({0.0, 12.0}, {0.0, -2.0});
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 1);
+        CHECK_THAT(areas[0].area, WithinAbs(100.0, 1e-6));
+    }
+    SECTION("A line across a circle cuts it in two") {
+        Sketch sketch;
+        sketch.addCircle({0.0, 0.0}, 5.0);
+        const EntityId line = sketch.addLine({-8.0, 0.0}, {8.0, 0.0});
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 2);
+        CHECK(allApart(areas));
+        CHECK_THAT(areas[0].area, WithinAbs(12.5 * pi, 1e-6));
+        CHECK_THAT(areas[1].area, WithinAbs(12.5 * pi, 1e-6));
+        // Which half is which stays the same as the sketch changes.
+        Sketch moved = sketch;
+        moved.dragBy(moved.find(line)->end, 1.0, 1.0);
+        const std::vector<Region> after = moved.regions();
+        REQUIRE(after.size() == 2);
+        CHECK(after[0].key == areas[0].key);
+        CHECK(after[1].key == areas[1].key);
+    }
+    SECTION("A circle over the corner of a square whose sides run on: three areas") {
+        Sketch sketch;
+        addSquareRunningOn(sketch, 0.0, 0.0, 10.0);
+        sketch.addCircle({10.0, 10.0}, 3.0);
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 3);
+        CHECK(allApart(areas));
+        const std::vector<double> sizes = sizesOf(areas);
+        CHECK_THAT(sizes[0], WithinAbs(9.0 * pi / 4.0, 1e-6));
+        CHECK_THAT(sizes[1], WithinAbs(27.0 * pi / 4.0, 1e-6));
+        CHECK_THAT(sizes[2], WithinAbs(100.0 - 9.0 * pi / 4.0, 1e-6));
+    }
+    SECTION("A square whose sides run on, inside an outline, is a hole in it") {
+        Sketch sketch;
+        addRectangle(sketch, {-20.0, -20.0}, {30.0, 30.0});
+        addSquareRunningOn(sketch, 0.0, 0.0, 10.0);
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 2);
+        const std::vector<double> sizes = sizesOf(areas);
+        CHECK_THAT(sizes[0], WithinAbs(100.0, 1e-6));
+        CHECK_THAT(sizes[1], WithinAbs(2500.0 - 100.0, 1e-6));
+        const auto outer = std::find_if(areas.begin(), areas.end(),
+                                        [](const Region& r) { return r.area > 200.0; });
+        CHECK(outer->holes.empty());
+        REQUIRE(outer->holePieces.size() == 1);
+        CHECK(outer->holePieces[0].size() == 4);
+    }
+    SECTION("A circle inside such a square is a hole in the square, not in what is around it") {
+        Sketch sketch;
+        addRectangle(sketch, {-20.0, -20.0}, {30.0, 30.0});
+        addSquareRunningOn(sketch, 0.0, 0.0, 10.0);
+        sketch.addCircle({5.0, 5.0}, 2.0);
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 3);
+        const std::vector<double> sizes = sizesOf(areas);
+        CHECK_THAT(sizes[0], WithinAbs(4.0 * pi, 1e-6));
+        CHECK_THAT(sizes[1], WithinAbs(100.0 - 4.0 * pi, 1e-6));
+        CHECK_THAT(sizes[2], WithinAbs(2500.0 - 100.0, 1e-6));
+    }
+    SECTION("Lines that close nothing leave the areas as they were") {
+        Sketch sketch;
+        const std::vector<EntityId> box = addRectangle(sketch, 0.0, 0.0, 30.0, 20.0);
+        sketch.addCircle({50.0, 10.0}, 5.0);
+        const std::vector<Region> before = sketch.regions();
+        // A line from a corner, a line across nothing, and one from the box to the circle.
+        sketch.addLine({30.0, 20.0}, {40.0, 30.0});
+        sketch.addLine({-10.0, -10.0}, {-5.0, -12.0});
+        sketch.addLine({30.0, 10.0}, {45.0, 10.0});
+        const std::vector<Region> after = sketch.regions();
+        REQUIRE(after.size() == before.size());
+        for (std::size_t i = 0; i < after.size(); ++i) {
+            CHECK(after[i].key == before[i].key);
+            CHECK(after[i].pieces.empty());
+            CHECK(after[i].holePieces.empty());
+        }
+        CHECK(sorted(after[0].outer) == sorted(box));
+    }
+    SECTION("A line across a rectangle cuts it in two, and the whole is still known") {
+        Sketch sketch;
+        const std::vector<EntityId> box = addRectangle(sketch, 0.0, 0.0, 30.0, 20.0);
+        const std::vector<Region> before = sketch.regions();
+        sketch.addLine({10.0, -5.0}, {10.0, 25.0});
+        const std::vector<Region> areas = sketch.regions();
+        REQUIRE(areas.size() == 2);
+        CHECK(allApart(areas));
+        const std::vector<double> sizes = sizesOf(areas);
+        CHECK_THAT(sizes[0], WithinAbs(200.0, 1e-6));
+        CHECK_THAT(sizes[1], WithinAbs(400.0, 1e-6));
+        // A pull of the whole rectangle from before still finds it among the outlines.
+        REQUIRE(sketch.outlineRegions().size() == 1);
+        CHECK(sketch.outlineRegions()[0].key == before[0].key);
+    }
+    SECTION("Construction lines cut nothing") {
+        Sketch sketch;
+        sketch.addCircle({0.0, 0.0}, 5.0);
+        const EntityId line = sketch.addLine({-8.0, 0.0}, {8.0, 0.0});
+        sketch.setConstruction(line, true);
+        CHECK(sketch.regions().size() == 1);
+    }
+}

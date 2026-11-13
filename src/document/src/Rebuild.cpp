@@ -83,6 +83,12 @@ std::vector<kernel::Region> regionsOf(const Feature& feature, const SketchItem& 
         for (const sketch::Region& region : whole) {
             chosen.push_back(&region);
         }
+        // And what lines that are in no outline close outside them.
+        for (const sketch::Region& region : all) {
+            if (region.apart) {
+                chosen.push_back(&region);
+            }
+        }
     }
     for (const std::vector<sketch::EntityId>& wanted : feature.regions) {
         const auto named = [&wanted](const sketch::Region& r) { return r.key == wanted; };
