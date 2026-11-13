@@ -1353,14 +1353,13 @@ void MainWindow::defineCommands() {
             for (const int degrees : choices) {
                 Command step;
                 step.id = QStringLiteral("view.%1.%2")
-                              .arg(kind, degrees == 0 ? QStringLiteral("fit") : QString::number(degrees));
-                step.text = degrees == 0 ? tr("&Fit the Cube") : QStringLiteral("%1°").arg(degrees);
+                              .arg(kind, degrees == 0 ? QStringLiteral("auto") : QString::number(degrees));
+                step.text = degrees == 0 ? tr("&Auto") : QStringLiteral("%1°").arg(degrees);
                 step.group = view;
                 step.description =
-                    degrees == 0 ? tr("Spin the view as far as suits the cube: 120° at a corner, 90° "
-                                      "anywhere else")
-                    : spin ? tr("Make the view cube's curved arrows spin the view %1°").arg(degrees)
-                           : tr("Make the view cube's straight arrows turn the view %1°").arg(degrees);
+                    degrees == 0 ? tr("Spin the view 90°, or 120° when looking at a corner")
+                    : spin ? tr("Make the curved arrows spin the view %1°").arg(degrees)
+                           : tr("Make the straight arrows turn the view %1°").arg(degrees);
                 step.aliases = {tr("step"), tr("angle"), tr("arrows")};
                 step.checkable = true;
                 step.exclusiveGroup = kind;
@@ -1381,8 +1380,8 @@ void MainWindow::defineCommands() {
             other.id = QStringLiteral("view.%1.other").arg(kind);
             other.text = tr("&Other…");
             other.group = view;
-            other.description = spin ? tr("Type how far the view cube's curved arrows spin the view")
-                                     : tr("Type how far the view cube's straight arrows turn the view");
+            other.description = spin ? tr("Type how far the curved arrows spin the view")
+                                     : tr("Type how far the straight arrows turn the view");
             other.aliases = {tr("step"), tr("angle"), tr("arrows")};
             other.checkable = true;
             other.exclusiveGroup = kind;
@@ -1930,7 +1929,7 @@ void MainWindow::createTopBar() {
         QMenu* steps = view->addMenu(spin ? tr("Sp&in Step") : tr("T&urn Step"));
         steps->setObjectName(QStringLiteral("menu.") + kind);
         if (spin) {
-            steps->addAction(m_commands->action(QStringLiteral("view.spinStep.fit")));
+            steps->addAction(m_commands->action(QStringLiteral("view.spinStep.auto")));
         }
         for (const int degrees : viewport::NavigationCube::stepChoices) {
             steps->addAction(m_commands->action(QStringLiteral("view.%1.%2").arg(kind).arg(degrees)));

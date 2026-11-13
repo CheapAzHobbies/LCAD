@@ -699,7 +699,7 @@ void ViewportTest::aRightClickOnAnArrowChoosesHowFarItGoes() {
     QCOMPARE(menu->objectName(), QStringLiteral("spinSteps"));
     keepFrame(menu->grab().toImage(), "viewport-cube-spin-steps");
     for (QAction* action : menu->actions()) {
-        QCOMPARE(action->isChecked(), action->text() == QStringLiteral("Fit the Cube"));
+        QCOMPARE(action->isChecked(), action->text() == QStringLiteral("Auto"));
     }
     QVERIFY(choose(menu, QStringLiteral("30°")));
     QCOMPARE(chosen.count(), 1);

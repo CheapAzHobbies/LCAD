@@ -539,7 +539,7 @@ void NavigationCube::showSteps(bool spin, const QPoint& at) {
         });
     };
     if (spin) {
-        offer(tr("Fit the Cube"), 0.0);
+        offer(tr("Auto"), 0.0);
     }
     for (const int degrees : stepChoices) {
         offer(degreesOf(degrees * degree), degrees * degree);

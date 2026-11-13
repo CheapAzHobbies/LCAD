@@ -873,13 +873,13 @@ void ApplicationTest::cubeStepsAreRemembered() {
     {
         MainWindow window;
         // As far as suits the cube, and 45° for the straight arrows, until chosen otherwise.
-        QVERIFY(action(window, "view.spinStep.fit")->isChecked());
+        QVERIFY(action(window, "view.spinStep.auto")->isChecked());
         QVERIFY(action(window, "view.turnStep.45")->isChecked());
         QCOMPARE(window.viewport()->cubeSpinStep(), 0.0);
         action(window, "view.spinStep.15")->trigger();
         action(window, "view.turnStep.90")->trigger();
         QVERIFY(action(window, "view.spinStep.15")->isChecked());
-        QVERIFY(!action(window, "view.spinStep.fit")->isChecked());
+        QVERIFY(!action(window, "view.spinStep.auto")->isChecked());
         QVERIFY(std::abs(window.viewport()->cubeSpinStep() - 15.0 * degree) < 1e-9);
         QVERIFY(std::abs(window.viewport()->cubeTurnStep() - 90.0 * degree) < 1e-9);
     }
@@ -892,7 +892,7 @@ void ApplicationTest::cubeStepsAreRemembered() {
     window.viewport()->setCubeSteps(22.5 * degree, 0.0);
     window.commands()->refresh();
     QVERIFY(action(window, "view.turnStep.other")->isChecked());
-    QVERIFY(action(window, "view.spinStep.fit")->isChecked());
+    QVERIFY(action(window, "view.spinStep.auto")->isChecked());
     // Back as they were, for the tests after this one.
     action(window, "view.turnStep.45")->trigger();
     QVERIFY(action(window, "view.turnStep.45")->isChecked());
