@@ -103,7 +103,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 |---|---|---|
 | Surface bodies; surface pull, patch, stitch, thicken | Have | Since 2026-11-12. |
 | Offset surface | Have | Since 2026-11-12. |
-| Surface revolve, sweep, loft; trim, extend surfaces; boundary surfaces | No | |
+| Surface revolve | Have | Since 2026-11-13. |
+| Surface sweep, loft; trim, extend surfaces; boundary surfaces | No | |
 | Subdivision (freeform) modeling | No | See the top of this page. |
 | Mesh import (STL, OBJ, 3MF) to solids | Part | Pull request #15, not merged. |
 | Mesh export (STL, 3MF, OBJ) | Have | |

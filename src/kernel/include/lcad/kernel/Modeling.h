@@ -156,6 +156,12 @@ struct Region {
 [[nodiscard]] NamedShape pullSurface(const Plane& plane, const std::vector<OutlineCurve>& curves,
                                      double from, double to, const std::string& tag);
 
+/// Turns curves, open or closed, about `axis` by `angle` radians into a surface: a face from
+/// each, sewn together where they meet, named `tag`/side/<curve name>. Throws kernel::Error if
+/// there is nothing to turn.
+[[nodiscard]] NamedShape revolveSurface(const std::vector<OutlineCurve>& curves, const Axis& axis,
+                                        double angle, const std::string& tag);
+
 /// A flat face filling a region of a plane, named `tag`/patch/<name of the region>.
 [[nodiscard]] NamedShape patch(const Plane& plane, const Region& region, const std::string& tag);
 

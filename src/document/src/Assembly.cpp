@@ -682,7 +682,7 @@ ObjectId Document::componentForFeature(const Feature& feature) const {
           feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
          feature.operation == Operation::NewBody) ||
         feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
-        feature.kind == FeatureKind::OffsetSurface;
+        feature.kind == FeatureKind::OffsetSurface || feature.kind == FeatureKind::SurfaceRevolve;
     if (!makes) {
         if (const Body* body = findBody(feature.body)) {
             return body->component;
@@ -727,7 +727,7 @@ std::string Document::componentProblem(const Feature& feature) const {
           feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
          feature.operation == Operation::NewBody) ||
         feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
-        feature.kind == FeatureKind::OffsetSurface;
+        feature.kind == FeatureKind::OffsetSurface || feature.kind == FeatureKind::SurfaceRevolve;
     if (const Body* body = findBody(feature.body); body != nullptr && !makes) {
         if (!body->linkKey.empty()) {
             return body->name + " is linked from another document; change it there.";

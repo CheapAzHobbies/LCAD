@@ -994,6 +994,14 @@ void MainWindow::defineCommands() {
         c.isEnabled = hasSketch;
         m_commands->add(std::move(c));
 
+        c = make("surface.revolve", tr("Surface &Revolve"), create,
+                 tr("Turn every curve of a sketch, open or closed, about an axis into a surface"));
+        c.iconName = QStringLiteral("revolve");
+        c.aliases = {tr("revolve surface"), tr("lathe surface"), tr("surface of revolution")};
+        c.run = [this](bool) { startFeature(FeatureKind::SurfaceRevolve); };
+        c.isEnabled = hasSketch;
+        m_commands->add(std::move(c));
+
         c = make("surface.patch", tr("P&atch"), create,
                  tr("Fill closed areas of a sketch with flat faces, as a surface"));
         c.iconName = QStringLiteral("patch");
@@ -2008,7 +2016,7 @@ void MainWindow::createTopBar() {
                         action("solid.hole"), action("solid.thread")});
     QMenu* surfaces = create->addMenu(tr("S&urface"));
     surfaces->setObjectName(QStringLiteral("menu.surface"));
-    surfaces->addActions({action("surface.pull"), action("surface.patch"),
+    surfaces->addActions({action("surface.pull"), action("surface.revolve"), action("surface.patch"),
                           action("surface.stitch"), action("surface.thicken"),
                           action("surface.offset")});
     QMenu* pattern = create->addMenu(tr("&Pattern"));
@@ -3758,9 +3766,10 @@ void MainWindow::startFeature(document::FeatureKind kind) {
             }
         }
     }
-    if (kind == document::FeatureKind::SurfacePull) {
+    if (kind == document::FeatureKind::SurfacePull || kind == document::FeatureKind::SurfaceRevolve) {
         seed.sketch = from;
         seed.distance = 10.0;
+        seed.angle = 360.0;
     }
     if (kind == document::FeatureKind::Pipe) {
         seed.pathSketch = from;
@@ -3852,6 +3861,7 @@ void MainWindow::startFeature(document::FeatureKind kind) {
                kind == document::FeatureKind::Coil || kind == document::FeatureKind::Stitch ||
                kind == document::FeatureKind::Thicken ||
                kind == document::FeatureKind::SurfacePull ||
+               kind == document::FeatureKind::SurfaceRevolve ||
                kind == document::FeatureKind::OffsetSurface) {
         m_featurePanel->setFeature(seed);
         m_settingPicks = true;
@@ -4376,7 +4386,8 @@ void MainWindow::acceptFeature() {
             // The sketch has done its work, and its lines would only clutter the solid.
             if (usesProfiles(feature.kind) || feature.kind == document::FeatureKind::Hole ||
                 feature.kind == document::FeatureKind::Pipe ||
-                feature.kind == document::FeatureKind::SurfacePull) {
+                feature.kind == document::FeatureKind::SurfacePull ||
+                feature.kind == document::FeatureKind::SurfaceRevolve) {
                 // A loft's sections and a sweep's or a pipe's path too.
                 for (const document::ObjectId sketch : document::sketchesOf(feature)) {
                     document()->setSketchVisible(sketch, false);

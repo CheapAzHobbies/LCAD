@@ -2537,3 +2537,41 @@ TEST_CASE("A surface offset from another", "[document][feature]") {
     CHECK_THAT(std::abs(box->min.z), WithinAbs(5.0, 1e-6));
     CHECK_THAT(box->max.z - box->min.z, WithinAbs(0.0, 1e-6));
 }
+
+TEST_CASE("Open curves turned into a surface", "[document][feature]") {
+    Document document;
+    // A line 10 out from the Z axis, 20 long, on the XZ plane.
+    const ObjectId profile = document.addSketch("Profile", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch s;
+    s.addLine({10.0, 0.0}, {10.0, 20.0});
+    const lcad::sketch::EntityId axis = s.addLine({0.0, -5.0}, {0.0, 25.0});
+    document.setSketchGeometry(profile, s, "Draw");
+    Feature turn;
+    turn.kind = FeatureKind::SurfaceRevolve;
+    turn.sketch = profile;
+    turn.axis = axis;
+    turn.angle = 360.0;
+    const ObjectId made = document.addFeature(turn);
+    CHECK(document.featureError(made).empty());
+    const ObjectId body = document.findFeature(made)->body;
+    // A cylinder's side, without the axis line turned into anything.
+    CHECK_THAT(lcad::kernel::surfaceArea(document.findBody(body)->shape),
+               WithinRel(2.0 * pi * 10.0 * 20.0, 1e-6));
+    // Half a turn, about the Z axis of the model instead.
+    turn = *document.findFeature(made);
+    turn.axis = 0;
+    turn.reference = "Z";
+    turn.angle = 180.0;
+    document.changeFeature(made, turn);
+    CHECK(document.featureError(made).empty());
+    // The line drawn on the axis turns into nothing, as it lies on it: half the cylinder.
+    CHECK_THAT(lcad::kernel::surfaceArea(document.findBody(body)->shape),
+               WithinRel(pi * 10.0 * 20.0, 1e-6));
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("vase.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(made)->reference == "Z");
+}
