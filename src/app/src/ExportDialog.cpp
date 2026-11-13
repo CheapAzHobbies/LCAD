@@ -45,6 +45,8 @@ QString extensionOf(ExportFormat format) {
         return QStringLiteral("3mf");
     case ExportFormat::Obj:
         return QStringLiteral("obj");
+    case ExportFormat::Iges:
+        return QStringLiteral("igs");
     }
     return {};
 }
@@ -59,12 +61,14 @@ QString filterOf(ExportFormat format) {
         return ExportDialog::tr("3MF files (*.3mf)");
     case ExportFormat::Obj:
         return ExportDialog::tr("OBJ files (*.obj)");
+    case ExportFormat::Iges:
+        return ExportDialog::tr("IGES files (*.igs *.iges)");
     }
     return {};
 }
 
 bool isMesh(ExportFormat format) {
-    return format != ExportFormat::Step;
+    return format != ExportFormat::Step && format != ExportFormat::Iges;
 }
 
 ExportDialog::ExportDialog(int shown, int selected, QWidget* parent) : QDialog(parent) {
@@ -77,6 +81,8 @@ ExportDialog::ExportDialog(int shown, int selected, QWidget* parent) : QDialog(p
     m_format->setObjectName(QStringLiteral("exportFormat"));
     m_format->addItem(tr("STEP: exact solids, for other CAD programs"),
                       static_cast<int>(ExportFormat::Step));
+    m_format->addItem(tr("IGES: exact surfaces, for older CAD and CAM programs"),
+                      static_cast<int>(ExportFormat::Iges));
     m_format->addItem(tr("STL: triangles, for 3D printing"), static_cast<int>(ExportFormat::Stl));
     m_format->addItem(tr("3MF: triangles with names and units, for 3D printing"),
                       static_cast<int>(ExportFormat::ThreeMf));
