@@ -560,6 +560,10 @@ the pointer is on lights up and is named underneath, without moving anything.
   it points at.
 - Two **curved arrows** above it spin the view around the way you are looking: 120° at a corner,
   where the cube's three sides change places, and 90° anywhere else.
+- **Right-click** any of these arrows to choose how far it goes: 5°, 10°, 15°, 30°, 45° or 90°,
+  or **Other** to type any step up to 180°. **Auto**, for the curved arrows, is the 90° and 120°
+  above. The same choices are under **View > Turn Step** and **View > Spin Step**, and LCAD keeps
+  them for the next time it starts.
 
 Below it are **Home** and the switch between orthographic and perspective. The small X, Y, and Z
 beside it show how the axes lie.
