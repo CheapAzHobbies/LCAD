@@ -4331,6 +4331,20 @@ void MainWindow::updateFeaturePreview() {
 }
 
 void MainWindow::showPullHandle(const document::Feature& feature) {
+    // An offset plane's arrow: from where it would be with no offset, along the normal.
+    if (feature.kind == document::FeatureKind::Plane &&
+        feature.planeKind == document::PlaneKind::Offset) {
+        const document::FeatureTrial trial = document()->tryFeature(feature);
+        if (!trial.plane.has_value()) {
+            m_viewport->clearDistanceHandle();
+            return;
+        }
+        const kernel::Vector& n = trial.plane->plane.normal;
+        const kernel::Point& c = trial.plane->center;
+        const double d = feature.distance;
+        m_viewport->setDistanceHandle({c.x - n.x * d, c.y - n.y * d, c.z - n.z * d}, n, d);
+        return;
+    }
     const document::SketchItem* sketch = document()->findSketch(feature.sketch);
     if (feature.kind != document::FeatureKind::Pull || sketch == nullptr ||
         m_featurePanel->goesToFace() || !feature.extentFace.empty()) {
@@ -4373,6 +4387,11 @@ void MainWindow::showPullHandle(const document::Feature& feature) {
 }
 
 void MainWindow::setPullDistance(double distance) {
+    if (m_featurePanel != nullptr && m_featurePanel->kind() == document::FeatureKind::Plane) {
+        // The offset of a plane.
+        m_featurePanel->setValue(QStringLiteral("distance"), distance);
+        return;
+    }
     if (m_featurePanel == nullptr || m_featurePanel->kind() != document::FeatureKind::Pull) {
         return;
     }
