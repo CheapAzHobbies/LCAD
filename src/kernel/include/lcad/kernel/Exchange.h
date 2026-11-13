@@ -46,6 +46,10 @@ struct ImportResult {
 /// Writes shapes to a STEP file (AP214), each as a part with its name, in millimeters.
 void exportStep(const std::vector<NamedBody>& bodies, const std::filesystem::path& path);
 
+/// Writes bodies to an IGES file, in millimeters, as exact geometry: each as one solid where
+/// the reader takes solids, faces otherwise. Throws kernel::Error as exportStep() does.
+void exportIges(const std::vector<NamedBody>& bodies, const std::filesystem::path& path);
+
 /// How finely a shape is cut into triangles for a mesh file.
 struct MeshSettings {
     /// How far the triangles may lie from the surface, in millimeters.

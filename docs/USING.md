@@ -188,6 +188,8 @@ An imported body has no timeline of its own: change it with the commands above.
 
 - **STEP**: the exact solids, each a part with its name, for other CAD programs. Not the timeline:
   they get the shapes, not how they were made.
+- **IGES**: the exact solids and surfaces, in millimeters, for older CAD and CAM programs that do
+  not read STEP.
 - **STL**, **3MF**, or **OBJ**: triangles, for 3D printing and other tools. Choose how closely the
   triangles follow curved surfaces (Coarse, Medium, Fine, or your own deviation and angle). STL
   can be written as text; 3MF keeps each body's name and the unit. A mesh is an approximation of

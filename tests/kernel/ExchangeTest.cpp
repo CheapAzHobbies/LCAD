@@ -491,3 +491,20 @@ TEST_CASE("3MF files are a package with a millimeter model of named objects",
     CHECK_THAT(enclosedVolume(meshes[0]), WithinRel(plateVolume(), 2e-3));
     CHECK_THAT(enclosedVolume(meshes[1]), WithinRel(125.0, 1e-12));
 }
+
+TEST_CASE("IGES files are written exactly and read back", "[kernel][exchange]") {
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("parts.igs");
+    const Shape plate = plateWithHole();
+    const Shape pin = translated(makeCylinder(4.0, 25.0), 100.0, 0.0, 0.0);
+    exportIges({{"Bracket", plate}, {"Pin", pin}}, path);
+    const ImportResult read = importIges(path);
+    REQUIRE(read.bodies.size() == 2);
+    double total = 0.0;
+    for (const NamedBody& body : read.bodies) {
+        CHECK(isValid(body.shape));
+        total += volume(body.shape);
+    }
+    CHECK_THAT(total, WithinRel(plateVolume() + pi * 16.0 * 25.0, 1e-6));
+    CHECK_THROWS_AS(exportIges({}, path), Error);
+}

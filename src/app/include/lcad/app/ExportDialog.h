@@ -22,6 +22,7 @@ enum class ExportFormat {
     Stl,     ///< triangles, for 3D printing
     ThreeMf, ///< triangles with names and units, for 3D printing
     Obj,     ///< triangles, for rendering and other tools
+    Iges,    ///< exact surfaces and solids, for older CAD and CAM programs
 };
 
 /// What to export, and how.

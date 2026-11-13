@@ -25,6 +25,7 @@
 #include <Poly_Triangulation.hxx>
 #include <STEPControl_Controller.hxx>
 #include <STEPControl_Reader.hxx>
+#include <IGESControl_Writer.hxx>
 #include <STEPControl_Writer.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <ShapeFix_Solid.hxx>
@@ -518,6 +519,28 @@ void exportStep(const std::vector<NamedBody>& bodies, const std::filesystem::pat
         header.Apply(writer.Model());
         writeReplacing(path, operation, [&](const std::filesystem::path& temporary) {
             if (writer.Write(core::toUtf8(temporary).c_str()) != IFSelect_RetDone) {
+                throw Error(operation, "the file could not be written");
+            }
+        });
+    });
+}
+
+void exportIges(const std::vector<NamedBody>& bodies, const std::filesystem::path& path) {
+    const std::string operation = "write " + fileName(path);
+    requireBodies(bodies, operation);
+    occt::guarded(operation.c_str(), [&] {
+        const std::lock_guard lock(translatorSettings());
+        Interface_Static::SetCVal("xstep.cascade.unit", "MM");
+        // Mode 1: solids as B-rep, which readers that know them take whole.
+        IGESControl_Writer writer("MM", 1);
+        for (const NamedBody& body : bodies) {
+            if (!writer.AddShape(occt::unwrap(body.shape))) {
+                throw Error(operation, body.name + " could not be put into IGES");
+            }
+        }
+        writer.ComputeModel();
+        writeReplacing(path, operation, [&](const std::filesystem::path& temporary) {
+            if (!writer.Write(core::toUtf8(temporary).c_str())) {
                 throw Error(operation, "the file could not be written");
             }
         });

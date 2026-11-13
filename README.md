@@ -39,7 +39,7 @@ What works today:
 - **Parameters**: named values, with units and expressions, that feature values and sketch
   dimensions can be worked out from.
 - **Measuring** distances and angles between faces, edges, and bodies.
-- **Other programs' files.** Import STEP and IGES; export STEP, STL, 3MF, and OBJ. Change
+- **Other programs' files.** Import STEP and IGES; export STEP, IGES, STL, 3MF, and OBJ. Change
   imported solids directly with Offset Face, Move Face, and Delete Face, each a timeline step;
   check geometry and repair it.
 - **Assemblies.** Components, placed by hand or held together by joints (rigid, revolute,

@@ -162,7 +162,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 |---|---|---|
 | STEP, IGES import; STEP export | Have | |
 | STL, OBJ, 3MF export | Have | |
-| IGES export, SAT, DWG | No | |
+| IGES export | Have | Since 2026-11-13. |
+| SAT, DWG | No | |
 | Native files with crash recovery | Have | |
 
 ## 10. The interface

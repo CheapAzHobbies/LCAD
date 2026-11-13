@@ -5147,6 +5147,9 @@ bool MainWindow::exportGeometry(const QString& path, const ExportOptions& option
             case ExportFormat::Obj:
                 kernel::exportObj(bodies, toPath(path), options.mesh);
                 break;
+            case ExportFormat::Iges:
+                kernel::exportIges(bodies, toPath(path));
+                break;
             }
         });
     } catch (const kernel::Error& failure) {
