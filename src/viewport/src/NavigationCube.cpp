@@ -138,9 +138,7 @@ NavigationCube::Part NavigationCube::partFacing(const QVector3D& from) {
 double NavigationCube::spinStep(const QVector3D& from) {
     const Part part = partFacing(from);
     const int sides = std::abs(part.x) + std::abs(part.y) + std::abs(part.z);
-    return sides == 2   ? std::numbers::pi
-           : sides == 3 ? 2.0 * std::numbers::pi / 3.0
-                        : std::numbers::pi / 2.0;
+    return sides == 3 ? 2.0 * std::numbers::pi / 3.0 : std::numbers::pi / 2.0;
 }
 
 void NavigationCube::setView(const QVector3D& right, const QVector3D& up) {

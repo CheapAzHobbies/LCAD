@@ -596,13 +596,18 @@ void ViewportTest::theCurvedArrowsSpinTheViewAroundWhatItLooksAt() {
     render();
     QVERIFY(sameDirection(up(), home));
 
-    // Looking along an edge: half a turn.
+    // Looking along an edge: a quarter turn too, not a half that turns the view upside down.
     clickOnCube(cube()->placeOf({1, -1, 0}));
     render();
+    const QVector3D upright = up();
     hoverOver(right);
-    QCOMPARE(cube()->caption(), QStringLiteral("Spin 180°"));
+    QCOMPARE(cube()->caption(), QStringLiteral("Spin 90°"));
     click(right);
-    QVERIFY(sameDirection(up(), {0.0F, 0.0F, -1.0F}));
+    QVERIFY(sameDirection(up(), QVector3D(-1.0F, -1.0F, 0.0F).normalized()));
+    for (int more = 0; more < 3; ++more) {
+        click(right);
+    }
+    QVERIFY(sameDirection(up(), upright));
 
     // Between the parts of the cube: a quarter turn.
     m_viewport->setStandardView(StandardView::Home);

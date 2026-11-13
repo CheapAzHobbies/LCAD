@@ -52,9 +52,10 @@ public:
     [[nodiscard]] static QString nameOf(Part part);
     /// The part looked straight at from this direction. Not valid if the view lies between parts.
     [[nodiscard]] static Part partFacing(const QVector3D& from);
-    /// How far a spin around the line of sight goes from this direction, in radians: as far as it
-    /// takes for the cube to look the same again. A quarter turn at a face, a third at a corner, a
-    /// half at an edge, and a quarter when the view lies between them.
+    /// How far a spin around the line of sight goes from this direction, in radians. A third of a
+    /// turn at a corner, where the cube looks the same again with its sides changed round, and a
+    /// quarter anywhere else. At an edge that is a quarter too, not the half turn that would bring
+    /// the cube back, because a half turn there just turns the view upside down.
     [[nodiscard]] static double spinStep(const QVector3D& from);
 
     /// Where the camera is: which ways the right of the screen and its top lie in the model.
