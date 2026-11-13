@@ -50,6 +50,27 @@ public:
     [[nodiscard]] static std::vector<Part> parts();
     /// What a part is called: "Top", "Top + Front", "Top + Front + Right".
     [[nodiscard]] static QString nameOf(Part part);
+    /// The part looked straight at from this direction. Not valid if the view lies between parts.
+    [[nodiscard]] static Part partFacing(const QVector3D& from);
+    /// The spin around the line of sight that suits the cube from this direction, in radians. A
+    /// third of a turn at a corner, where the cube looks the same again with its sides changed
+    /// round, and a quarter anywhere else. At an edge that is a quarter too, not the half turn that
+    /// would bring the cube back, because a half turn there just turns the view upside down.
+    [[nodiscard]] static double cubeSpin(const QVector3D& from);
+
+    /// How far the straight arrows turn the view, in radians: 45° unless set.
+    void setTurnStep(double radians);
+    [[nodiscard]] double turnStep() const { return m_turnStep; }
+    /// How far the curved arrows spin it, in radians. 0, the default, goes as far as suits the
+    /// cube: see cubeSpin().
+    void setSpinStep(double radians);
+    [[nodiscard]] double spinStep() const { return m_spinStep; }
+    /// How far a curved arrow spins the view from this direction, in radians.
+    [[nodiscard]] double spinBy(const QVector3D& from) const;
+    /// Opens a box to type how far an arrow goes: the curved ones if `spin`, else the straight.
+    void askStep(bool spin);
+    /// The steps the menu of an arrow offers, in degrees, besides one typed in.
+    static constexpr std::array<int, 6> stepChoices{5, 10, 15, 30, 45, 90};
 
     /// Where the camera is: which ways the right of the screen and its top lie in the model.
     void setView(const QVector3D& right, const QVector3D& up);
@@ -74,6 +95,8 @@ public:
     [[nodiscard]] QRectF projectionButton() const;
     /// The arrow that turns the view a step: 0 up, 1 right, 2 down, 3 left.
     [[nodiscard]] QRectF arrow(int which) const;
+    /// The curved arrow that spins the view: 0 counter-clockwise, 1 clockwise.
+    [[nodiscard]] QRectF spinArrow(int which) const;
 
 signals:
     /// A part was clicked: look at the model from this direction.
@@ -85,6 +108,10 @@ signals:
     /// An arrow was clicked: turn the view this far around the right of the screen and its top,
     /// in radians.
     void turnAsked(double aroundRight, double aroundUp);
+    /// A curved arrow was clicked: spin what is on the screen around the line of sight.
+    void spinAsked(bool clockwise);
+    /// A step was chosen for the arrows, in the menu of one of them or in the box.
+    void stepsChosen();
     /// The cube is being dragged, to turn the view freely. Positions are in the parent.
     void orbitStarted(const QPointF& position);
     void orbitMoved(const QPointF& position);
@@ -101,7 +128,18 @@ protected:
     bool event(QEvent* event) override;
 
 private:
-    enum class Control { None, Cube, Home, Projection, ArrowUp, ArrowRight, ArrowDown, ArrowLeft };
+    enum class Control {
+        None,
+        Cube,
+        Home,
+        Projection,
+        ArrowUp,
+        ArrowRight,
+        ArrowDown,
+        ArrowLeft,
+        SpinLeft,
+        SpinRight,
+    };
 
     [[nodiscard]] QPointF project(const QVector3D& point) const;
     [[nodiscard]] Control controlAt(const QPointF& position) const;
@@ -109,8 +147,10 @@ private:
     void hover(const QPointF& position);
     void drawFace(class QPainter& painter, int axis, int sign) const;
     void drawArrow(QPainter& painter, int which, bool lit) const;
+    void drawSpin(QPainter& painter, int which, bool lit) const;
     void drawButtons(QPainter& painter) const;
     void drawAxes(QPainter& painter) const;
+    void showSteps(bool spin, const QPoint& at);
 
     QVector3D m_right{1.0F, 0.0F, 0.0F};
     QVector3D m_up{0.0F, 0.0F, 1.0F};
@@ -125,6 +165,8 @@ private:
     Part m_pressedPart;
     QPointF m_pressPosition;
     bool m_orbiting = false;
+    double m_turnStep;
+    double m_spinStep = 0.0;
 };
 
 } // namespace lcad::viewport

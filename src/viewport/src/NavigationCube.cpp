@@ -2,9 +2,13 @@
 
 #include <lcad/viewport/NavigationCube.h>
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QEnterEvent>
 #include <QHelpEvent>
+#include <QInputDialog>
+#include <QLocale>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -33,8 +37,27 @@ constexpr double buttonSize = 20.0;
 constexpr double band = 0.36;
 // The pointer counts as on the cube from a little outside it.
 constexpr double hitReach = 1.05;
-// How far an arrow turns the view.
+// How far an arrow turns the view unless set.
 constexpr double arrowStep = std::numbers::pi / 4.0;
+constexpr double degree = std::numbers::pi / 180.0;
+// The steps one can type in, in degrees.
+constexpr double fewestDegrees = 1.0;
+constexpr double mostDegrees = 180.0;
+// The curved arrows lie on a circle around the cube, clear of it however it is turned, this far
+// from the top on either side.
+constexpr double spinReach = 66.0;
+constexpr double spinFrom = 30.0 * std::numbers::pi / 180.0;
+constexpr double spinTo = 62.0 * std::numbers::pi / 180.0;
+constexpr double spinHitSize = 28.0;
+// A view counts as looking straight at a part within this: the cosine of 2 degrees.
+constexpr float straightAt = 0.99939F;
+
+// An angle as the menus and captions write it: "45°", "22.5°".
+QString degreesOf(double radians) {
+    const double degrees = radians / degree;
+    const bool whole = std::abs(degrees - std::round(degrees)) < 0.05;
+    return QLocale().toString(degrees, 'f', whole ? 0 : 1) + QChar(0x00B0);
+}
 
 float along(const QVector3D& v, int axis) {
     return v[axis];
@@ -79,7 +102,7 @@ QPolygonF softened(const QPolygonF& quad) {
 
 } // namespace
 
-NavigationCube::NavigationCube(QWidget* parent) : QWidget(parent) {
+NavigationCube::NavigationCube(QWidget* parent) : QWidget(parent), m_turnStep(arrowStep) {
     setObjectName(QStringLiteral("navigationCube"));
     setAttribute(Qt::WA_NoSystemBackground);
     setFocusPolicy(Qt::NoFocus);
@@ -113,6 +136,38 @@ QString NavigationCube::nameOf(Part part) {
         names << (part.x > 0 ? tr("Right") : tr("Left"));
     }
     return names.join(QStringLiteral(" + "));
+}
+
+NavigationCube::Part NavigationCube::partFacing(const QVector3D& from) {
+    for (const Part part : parts()) {
+        const QVector3D way =
+            QVector3D(static_cast<float>(part.x), static_cast<float>(part.y), static_cast<float>(part.z))
+                .normalized();
+        if (QVector3D::dotProduct(from, way) > straightAt) {
+            return part;
+        }
+    }
+    return {};
+}
+
+double NavigationCube::cubeSpin(const QVector3D& from) {
+    const Part part = partFacing(from);
+    const int sides = std::abs(part.x) + std::abs(part.y) + std::abs(part.z);
+    return sides == 3 ? 2.0 * std::numbers::pi / 3.0 : std::numbers::pi / 2.0;
+}
+
+void NavigationCube::setTurnStep(double radians) {
+    m_turnStep = std::clamp(radians, fewestDegrees * degree, mostDegrees * degree);
+    update();
+}
+
+void NavigationCube::setSpinStep(double radians) {
+    m_spinStep = radians <= 0.0 ? 0.0 : std::clamp(radians, fewestDegrees * degree, mostDegrees * degree);
+    update();
+}
+
+double NavigationCube::spinBy(const QVector3D& from) const {
+    return m_spinStep > 0.0 ? m_spinStep : cubeSpin(from);
 }
 
 void NavigationCube::setView(const QVector3D& right, const QVector3D& up) {
@@ -224,6 +279,16 @@ QRectF NavigationCube::arrow(int which) const {
     return QRectF(center.x() - size / 2.0, center.y() - size / 2.0, size, size);
 }
 
+QRectF NavigationCube::spinArrow(int which) const {
+    const double middle = (spinFrom + spinTo) / 2.0;
+    const double reach = spinReach * m_scale;
+    const QPointF center =
+        cubeCenter() + QPointF((which == 1 ? 1.0 : -1.0) * std::sin(middle) * reach,
+                               -std::cos(middle) * reach);
+    const double size = spinHitSize * m_scale;
+    return QRectF(center.x() - size / 2.0, center.y() - size / 2.0, size, size);
+}
+
 QRectF NavigationCube::homeButton() const {
     const double size = buttonSize * m_scale;
     return QRectF(width() / 2.0 - size - 2.0, height() - size - 1.0, size, size);
@@ -252,6 +317,12 @@ NavigationCube::Control NavigationCube::controlAt(const QPointF& position) const
                 return arrows[static_cast<std::size_t>(i)];
             }
         }
+        if (spinArrow(0).contains(position)) {
+            return Control::SpinLeft;
+        }
+        if (spinArrow(1).contains(position)) {
+            return Control::SpinRight;
+        }
     }
     return Control::None;
 }
@@ -268,7 +339,10 @@ QString NavigationCube::caption() const {
     case Control::ArrowRight:
     case Control::ArrowDown:
     case Control::ArrowLeft:
-        return tr("Turn 45°");
+        return tr("Turn %1").arg(degreesOf(m_turnStep));
+    case Control::SpinLeft:
+    case Control::SpinRight:
+        return tr("Spin %1").arg(degreesOf(spinBy(toward())));
     case Control::None:
         break;
     }
@@ -321,8 +395,20 @@ bool NavigationCube::event(QEvent* event) {
         case Control::ArrowRight:
         case Control::ArrowDown:
         case Control::ArrowLeft:
-            text = tr("Turn the view 45°");
+            text = tr("Turn the view %1. Right-click to choose how far.").arg(degreesOf(m_turnStep));
             break;
+        case Control::SpinLeft:
+        case Control::SpinRight: {
+            const Part part = partFacing(toward());
+            const int sides = std::abs(part.x) + std::abs(part.y) + std::abs(part.z);
+            text = sides == 1   ? tr("Spin the view %1 around the face you are looking at.")
+                   : sides == 2 ? tr("Spin the view %1 around the edge you are looking at.")
+                   : sides == 3 ? tr("Spin the view %1 around the corner you are looking at.")
+                                : tr("Spin the view %1 around the way you are looking.");
+            text = text.arg(degreesOf(spinBy(toward()))) + QLatin1Char(' ') +
+                   tr("Right-click to choose how far.");
+            break;
+        }
         case Control::None:
             break;
         }
@@ -333,6 +419,16 @@ bool NavigationCube::event(QEvent* event) {
 }
 
 void NavigationCube::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::RightButton) {
+        // On an arrow: how far it goes. Anywhere else the right button belongs to the view.
+        const Control control = controlAt(event->position());
+        if (control < Control::ArrowUp) {
+            event->ignore();
+            return;
+        }
+        showSteps(control >= Control::SpinLeft, event->globalPosition().toPoint());
+        return;
+    }
     const Control control =
         event->button() == Qt::LeftButton ? controlAt(event->position()) : Control::None;
     if (control == Control::None) {
@@ -395,23 +491,98 @@ void NavigationCube::mouseReleaseEvent(QMouseEvent* event) {
         break;
     // Each toward the side it points at: the arrow over the front leads to the top.
     case Control::ArrowUp:
-        emit turnAsked(-arrowStep, 0.0);
+        emit turnAsked(-m_turnStep, 0.0);
         break;
     case Control::ArrowDown:
-        emit turnAsked(arrowStep, 0.0);
+        emit turnAsked(m_turnStep, 0.0);
         break;
     case Control::ArrowLeft:
-        emit turnAsked(0.0, -arrowStep);
+        emit turnAsked(0.0, -m_turnStep);
         break;
     case Control::ArrowRight:
-        emit turnAsked(0.0, arrowStep);
+        emit turnAsked(0.0, m_turnStep);
+        break;
+    case Control::SpinLeft:
+        emit spinAsked(false);
+        break;
+    case Control::SpinRight:
+        emit spinAsked(true);
         break;
     case Control::None:
         break;
     }
 }
 
+void NavigationCube::showSteps(bool spin, const QPoint& at) {
+    auto* menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->setObjectName(spin ? QStringLiteral("spinSteps") : QStringLiteral("turnSteps"));
+    menu->addSection(spin ? tr("Spin by") : tr("Turn by"));
+    auto* group = new QActionGroup(menu);
+    const double now = spin ? m_spinStep : m_turnStep;
+    bool chosen = false;
+    const auto offer = [&](const QString& text, double radians) {
+        QAction* action = menu->addAction(text);
+        action->setCheckable(true);
+        action->setActionGroup(group);
+        if (std::abs(radians - now) < 1e-9) {
+            action->setChecked(true);
+            chosen = true;
+        }
+        connect(action, &QAction::triggered, this, [this, spin, radians] {
+            if (spin) {
+                setSpinStep(radians);
+            } else {
+                setTurnStep(radians);
+            }
+            emit stepsChosen();
+        });
+    };
+    if (spin) {
+        offer(tr("Auto"), 0.0);
+    }
+    for (const int degrees : stepChoices) {
+        offer(degreesOf(degrees * degree), degrees * degree);
+    }
+    QAction* other = menu->addAction(chosen ? tr("Other…") : tr("Other (%1)…").arg(degreesOf(now)));
+    other->setCheckable(true);
+    other->setChecked(!chosen);
+    other->setActionGroup(group);
+    connect(other, &QAction::triggered, this, [this, spin] { askStep(spin); });
+    menu->popup(at);
+}
+
+void NavigationCube::askStep(bool spin) {
+    auto* box = new QInputDialog(this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setObjectName(QStringLiteral("stepBox"));
+    box->setWindowTitle(spin ? tr("Spin Step") : tr("Turn Step"));
+    box->setLabelText(spin ? tr("How far the curved arrows spin the view, in degrees:")
+                           : tr("How far the straight arrows turn the view, in degrees:"));
+    box->setInputMode(QInputDialog::DoubleInput);
+    box->setDoubleRange(fewestDegrees, mostDegrees);
+    box->setDoubleDecimals(1);
+    const double now = spin ? m_spinStep : m_turnStep;
+    box->setDoubleValue(now > 0.0 ? now / degree : 90.0);
+    connect(box, &QInputDialog::doubleValueSelected, this, [this, spin](double degrees) {
+        if (spin) {
+            setSpinStep(degrees * degree);
+        } else {
+            setTurnStep(degrees * degree);
+        }
+        emit stepsChosen();
+    });
+    box->open();
+}
+
 void NavigationCube::mouseDoubleClickEvent(QMouseEvent* event) {
+    // Two quick clicks on an arrow are two steps.
+    const Control control =
+        event->button() == Qt::LeftButton ? controlAt(event->position()) : Control::None;
+    if (control >= Control::ArrowUp) {
+        mousePressEvent(event);
+        return;
+    }
     const Part part = event->button() == Qt::LeftButton ? partAt(event->position()) : Part{};
     if (!part.isValid()) {
         event->ignore();
@@ -519,6 +690,32 @@ void NavigationCube::drawArrow(QPainter& painter, int which, bool lit) const {
         QPolygonF({c - way * r * 0.6 + side * r, c + way * r * 0.7, c - way * r * 0.6 - side * r}));
 }
 
+void NavigationCube::drawSpin(QPainter& painter, int which, bool lit) const {
+    const QPointF center = cubeCenter();
+    const double sign = which == 1 ? 1.0 : -1.0;
+    const auto on = [&](double angle, double radius) {
+        return center + QPointF(sign * std::sin(angle) * radius, -std::cos(angle) * radius);
+    };
+    const double reach = spinReach * m_scale;
+    QPainterPath path(on(spinFrom, reach));
+    constexpr int pieces = 12;
+    for (int i = 1; i <= pieces; ++i) {
+        path.lineTo(on(spinFrom + (spinTo - spinFrom) * i / pieces, reach));
+    }
+    QColor ink = lit ? m_colors.highlight : m_colors.line;
+    ink.setAlpha(lit ? 255 : 150);
+    QPen pen(ink, 2.0);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawPath(path);
+    const double back = spinTo - 12.0 * std::numbers::pi / 180.0;
+    const double wide = 5.5 * m_scale;
+    painter.drawPolyline(
+        QPolygonF({on(back, reach + wide), on(spinTo, reach), on(back, reach - wide)}));
+}
+
 void NavigationCube::drawButtons(QPainter& painter) const {
     const auto backing = [&](const QRectF& box, bool lit) {
         QColor fill = lit ? m_colors.highlight : m_colors.side;
@@ -603,6 +800,8 @@ void NavigationCube::paintEvent(QPaintEvent*) {
         for (int i = 0; i < 4; ++i) {
             drawArrow(painter, i, m_control == arrows[static_cast<std::size_t>(i)]);
         }
+        drawSpin(painter, 0, m_control == Control::SpinLeft);
+        drawSpin(painter, 1, m_control == Control::SpinRight);
     }
     drawButtons(painter);
     const QString words = caption();
