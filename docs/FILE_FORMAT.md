@@ -126,7 +126,7 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, `Split Body`, `Combine`, `Move Body`, `Pipe`, `Coil`, `Thread`, `Surface Pull`, `Patch`, `Stitch`, `Thicken`, `Offset Surface`, or `Surface Revolve`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, `Split Body`, `Combine`, `Move Body`, `Pipe`, `Coil`, `Thread`, `Surface Pull`, `Patch`, `Stitch`, `Thicken`, `Offset Surface`, `Surface Revolve`, or `Text`. |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
@@ -151,6 +151,7 @@ optional, and a file without them opens as it always did.
 | `sketch`, `regions` (patch) | A patch only: the closed areas filled with flat faces. |
 | `tools`, `size` (stitch) | A stitch only: the bodies sewn to `body`, and the widest gap it closes. |
 | `tools`, `size` (offset surface) | An offset surface only: the surface it is offset from, and how far; `body` is the new surface. |
+| `text`, `font`, `at`, `size`, `distance` (text) | Text only: the words, in UTF-8; the font's family; where on its `sketch`'s plane it starts, `[u, v]`, the left of its baseline; how tall its letters are; and how far it is pulled. `operation` and `body` as for a pull. |
 | `size` (thicken) | A thicken only: how thick the solid made of the surface `body` is; negative is the other way. |
 | `size2` (chamfer) | A chamfer of two distances only: the distance on the other face at each edge, `size` being on the first. |
 | `faces`, `pitch` (thread) | A thread only: the cylindrical face of `body` it is cut into, and its pitch. |

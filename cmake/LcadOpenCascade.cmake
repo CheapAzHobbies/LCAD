@@ -102,6 +102,11 @@ add_library(lcad_occt_exchange INTERFACE)
 target_link_libraries(lcad_occt_exchange INTERFACE
     ${_lcad_occt_exchange_libraries} lcad_occt_modeling)
 
+# Text as geometry: OCCT turns the outlines of a font's letters into faces.
+add_library(lcad_occt_text INTERFACE)
+target_link_libraries(lcad_occt_text INTERFACE
+    "${LCAD_OCCT_TKV3d_LIBRARY}" "${LCAD_OCCT_TKService_LIBRARY}" lcad_occt_modeling)
+
 add_library(lcad_occt_visualization INTERFACE)
 target_link_libraries(lcad_occt_visualization INTERFACE
     ${_lcad_occt_visualization_libraries} lcad_occt_modeling)

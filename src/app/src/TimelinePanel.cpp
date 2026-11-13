@@ -331,6 +331,8 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("offset-face");
         case FeatureKind::SurfaceRevolve:
             return QStringLiteral("revolve");
+        case FeatureKind::Text:
+            return QStringLiteral("text");
         }
     }
     return QStringLiteral("box");
@@ -356,7 +358,8 @@ QString TimelineStrip::describe(document::ObjectId item) const {
                 (feature.operation == document::Operation::NewBody &&
                  (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
                   feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
-                  feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil)) ||
+                  feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil ||
+                  feature.kind == FeatureKind::Text)) ||
                 feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
                 feature.kind == FeatureKind::OffsetSurface ||
                 feature.kind == FeatureKind::SurfaceRevolve;
@@ -422,7 +425,8 @@ QString TimelineStrip::describe(document::ObjectId item) const {
                 feature->operation == document::Operation::NewBody &&
                 ((feature->kind == FeatureKind::Pull || feature->kind == FeatureKind::Revolve ||
                   feature->kind == FeatureKind::Loft || feature->kind == FeatureKind::Sweep ||
-                  feature->kind == FeatureKind::Pipe || feature->kind == FeatureKind::Coil) ||
+                  feature->kind == FeatureKind::Pipe || feature->kind == FeatureKind::Coil ||
+                  feature->kind == FeatureKind::Text) ||
                  (feature->kind == FeatureKind::MoveBody && feature->copy) ||
                  feature->kind == FeatureKind::SurfacePull || feature->kind == FeatureKind::Patch ||
                  feature->kind == FeatureKind::OffsetSurface ||

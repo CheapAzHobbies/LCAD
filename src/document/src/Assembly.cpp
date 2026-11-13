@@ -679,7 +679,8 @@ ObjectId Document::componentForFeature(const Feature& feature) const {
         (feature.kind == FeatureKind::MoveBody && feature.copy) ||
         ((feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
           feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
-          feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
+          feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil ||
+          feature.kind == FeatureKind::Text) &&
          feature.operation == Operation::NewBody) ||
         feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
         feature.kind == FeatureKind::OffsetSurface || feature.kind == FeatureKind::SurfaceRevolve;
@@ -724,7 +725,8 @@ std::string Document::componentProblem(const Feature& feature) const {
         (feature.kind == FeatureKind::MoveBody && feature.copy) ||
         ((feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
           feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
-          feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil) &&
+          feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil ||
+          feature.kind == FeatureKind::Text) &&
          feature.operation == Operation::NewBody) ||
         feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
         feature.kind == FeatureKind::OffsetSurface || feature.kind == FeatureKind::SurfaceRevolve;

@@ -87,6 +87,9 @@ enum class FeatureKind {
     /// Turns every curve of `sketch`, open or closed, about the line `axis` of it, or the axis
     /// `reference`, by `angle` degrees, into a surface.
     SurfaceRevolve,
+    /// `text` in letters `size` tall, starting at (`textU`, `textV`) of `sketch`'s plane, pulled
+    /// `distance` along its normal: a body of its own, or embossed or engraved by `operation`.
+    Text,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
@@ -264,6 +267,13 @@ struct Feature {
     double turns = 5.0;
     /// Coil: how thick the wire is.
     double section = 1.0;
+    // Text
+    std::string text;
+    /// The font's family; another is used where the system has none by that name.
+    std::string font = "Sans";
+    /// Where the text starts, in the sketch's coordinates: the left of its baseline.
+    double textU = 0.0;
+    double textV = 0.0;
     // Hole. Its sketch's free-standing points are where the holes go, its `size` is their
     // diameter and its `distance` their depth.
     HoleKind holeKind = HoleKind::Simple;

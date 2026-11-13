@@ -43,6 +43,7 @@ constexpr KindName kindNames[] = {
     {FeatureKind::Thicken, "Thicken"},
     {FeatureKind::OffsetSurface, "Offset Surface"},
     {FeatureKind::SurfaceRevolve, "Surface Revolve"},
+    {FeatureKind::Text, "Text"},
 };
 
 struct HoleKindName {
