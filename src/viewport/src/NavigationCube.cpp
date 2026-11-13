@@ -166,7 +166,7 @@ void NavigationCube::setSpinStep(double radians) {
     update();
 }
 
-double NavigationCube::spinFrom(const QVector3D& from) const {
+double NavigationCube::spinBy(const QVector3D& from) const {
     return m_spinStep > 0.0 ? m_spinStep : cubeSpin(from);
 }
 
@@ -342,7 +342,7 @@ QString NavigationCube::caption() const {
         return tr("Turn %1").arg(degreesOf(m_turnStep));
     case Control::SpinLeft:
     case Control::SpinRight:
-        return tr("Spin %1").arg(degreesOf(spinFrom(toward())));
+        return tr("Spin %1").arg(degreesOf(spinBy(toward())));
     case Control::None:
         break;
     }
@@ -405,7 +405,7 @@ bool NavigationCube::event(QEvent* event) {
                    : sides == 2 ? tr("Spin the view %1 around the edge you are looking at.")
                    : sides == 3 ? tr("Spin the view %1 around the corner you are looking at.")
                                 : tr("Spin the view %1 around the way you are looking.");
-            text = text.arg(degreesOf(spinFrom(toward()))) + QLatin1Char(' ') +
+            text = text.arg(degreesOf(spinBy(toward()))) + QLatin1Char(' ') +
                    tr("Right-click to choose how far.");
             break;
         }

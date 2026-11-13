@@ -66,7 +66,7 @@ public:
     void setSpinStep(double radians);
     [[nodiscard]] double spinStep() const { return m_spinStep; }
     /// How far a curved arrow spins the view from this direction, in radians.
-    [[nodiscard]] double spinFrom(const QVector3D& from) const;
+    [[nodiscard]] double spinBy(const QVector3D& from) const;
     /// Opens a box to type how far an arrow goes: the curved ones if `spin`, else the straight.
     void askStep(bool spin);
     /// The steps the menu of an arrow offers, in degrees, besides one typed in.

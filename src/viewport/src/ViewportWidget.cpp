@@ -1102,7 +1102,7 @@ public:
     void spin(bool clockwise) {
         const gp_Quaternion from = heading();
         const gp_Vec back = from.Multiply(gp_Vec(0.0, 0.0, 1.0));
-        const double step = cube->spinFrom(QVector3D(
+        const double step = cube->spinBy(QVector3D(
             static_cast<float>(back.X()), static_cast<float>(back.Y()), static_cast<float>(back.Z())));
         const gp_Quaternion around(gp_Vec(0.0, 0.0, 1.0), clockwise ? step : -step);
         turnToOrientation(from.Multiplied(around), false);
