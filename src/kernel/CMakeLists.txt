@@ -6,6 +6,9 @@ add_library(lcad_kernel STATIC
     src/Error.cpp
     src/Exchange.cpp
     src/Measure.cpp
+    src/MeshRead.cpp
+    src/MeshSolid.cpp
+    src/MeshSurfaces.cpp
     src/Messages.cpp
     src/Modeling.cpp
     src/Plane.cpp
@@ -19,8 +22,8 @@ add_library(lcad_kernel STATIC
     src/Version.cpp)
 add_library(lcad::kernel ALIAS lcad_kernel)
 target_include_directories(lcad_kernel PUBLIC include)
-# Exchange.cpp writes 3MF files, which are zip archives.
-target_link_libraries(lcad_kernel PRIVATE lcad::core lcad_occt_exchange lcad_libzip)
+# 3MF files are zip archives. Eigen does the fitting of surfaces to meshes.
+target_link_libraries(lcad_kernel PRIVATE lcad::core lcad_occt_exchange lcad_libzip lcad_eigen)
 lcad_target_defaults(lcad_kernel)
 
 # For the few modules that have to hand shapes to OCCT themselves (the viewport, kernel tests).

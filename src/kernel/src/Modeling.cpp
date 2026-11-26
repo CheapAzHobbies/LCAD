@@ -31,6 +31,7 @@
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
+#include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
@@ -46,6 +47,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shell.hxx>
@@ -520,6 +522,53 @@ std::vector<std::string> edgeNames(const NamedShape& shape) {
 int findFace(const NamedShape& shape, const std::string& name) {
     const auto found = std::find(shape.faceNames.begin(), shape.faceNames.end(), name);
     return found == shape.faceNames.end() ? -1 : static_cast<int>(found - shape.faceNames.begin());
+}
+
+int nearestEdge(const Shape& shape, const Point& at, double reach) {
+    return occt::guarded("find an edge", [&] {
+        TopTools_IndexedMapOfShape edges;
+        TopExp::MapShapes(occt::unwrap(shape), TopAbs_EDGE, edges);
+        TopTools_IndexedDataMapOfShapeListOfShape faces;
+        TopExp::MapShapesAndAncestors(occt::unwrap(shape), TopAbs_EDGE, TopAbs_FACE, faces);
+        const TopoDS_Vertex point = BRepBuilderAPI_MakeVertex(gp_Pnt(at.x, at.y, at.z));
+        int best = -1;
+        double nearest = reach;
+        for (int i = 1; i <= edges.Extent(); ++i) {
+            // The seam of a round face is no edge of the solid, though it runs up to one.
+            const TopTools_ListOfShape& around = faces.FindFromKey(edges(i));
+            if (around.Extent() < 2 || around.First().IsSame(around.Last())) {
+                continue;
+            }
+            BRepExtrema_DistShapeShape distance(point, edges(i));
+            if (distance.IsDone() && distance.Value() <= nearest) {
+                nearest = distance.Value();
+                best = i - 1;
+            }
+        }
+        return best;
+    });
+}
+
+double farthestFromFaces(const Shape& shape, const std::vector<Point>& points) {
+    return occt::guarded("measure against faces", [&] {
+        // Faces and not the solid: to a solid, a point inside it is no distance away.
+        BRep_Builder builder;
+        TopoDS_Compound faces;
+        builder.MakeCompound(faces);
+        for (TopExp_Explorer face(occt::unwrap(shape), TopAbs_FACE); face.More(); face.Next()) {
+            builder.Add(faces, face.Current());
+        }
+        BRepExtrema_DistShapeShape distance;
+        distance.LoadS1(faces);
+        double farthest = 0.0;
+        for (const Point& p : points) {
+            distance.LoadS2(BRepBuilderAPI_MakeVertex(gp_Pnt(p.x, p.y, p.z)));
+            if (distance.Perform()) {
+                farthest = std::max(farthest, distance.Value());
+            }
+        }
+        return farthest;
+    });
 }
 
 int findEdge(const NamedShape& shape, const std::string& name) {

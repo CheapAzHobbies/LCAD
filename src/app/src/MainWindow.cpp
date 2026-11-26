@@ -38,9 +38,11 @@
 #include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Stop.h>
+#include <lcad/recover/Recover.h>
 #include <lcad/kernel/SubShapes.h>
 #include <lcad/kernel/Transform.h>
 #include <lcad/kernel/Version.h>
+#include <lcad/viewport/NavigationCube.h>
 #include <lcad/viewport/SketchEditor.h>
 
 #include <QApplication>
@@ -74,8 +76,11 @@
 #include <QToolButton>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <numbers>
 #include <stdexcept>
+#include <vector>
 
 namespace lcad::app {
 
@@ -99,6 +104,9 @@ const char* const gridKey = "view/grid";
 const char* const axesKey = "view/axes";
 const char* const animateKey = "view/animate";
 const char* const navigationKey = "view/navigation";
+// How far the view cube's arrows go, in degrees. A spin of 0 goes as far as suits the cube.
+const char* const turnStepKey = "view/turnStep";
+const char* const spinStepKey = "view/spinStep";
 const char* const styleKey = "view/displayStyle";
 const char* const recentKey = "files/recent";
 const char* const directoryKey = "files/lastDirectory";
@@ -381,6 +389,10 @@ MainWindow::MainWindow(QWidget* parent)
             [this] { updateSelectionState(); });
     connect(m_viewport, &viewport::ViewportWidget::projectionChanged, this,
             [this] { m_commands->refresh(); });
+    connect(m_viewport, &viewport::ViewportWidget::cubeStepsChanged, this, [this] {
+        saveCubeSteps();
+        m_commands->refresh();
+    });
     connect(m_viewport, &viewport::ViewportWidget::pointPicked, this,
             [this](document::ObjectId sketch, std::uint32_t point) {
                 if (m_featurePanel != nullptr) {
@@ -1327,6 +1339,66 @@ void MainWindow::defineCommands() {
         c.isChecked = [this] { return m_viewport->isZoomReversed(); };
         m_commands->add(std::move(c));
 
+        // How far the view cube's arrows go: the same choices as in their own menus.
+        const double degree = std::numbers::pi / 180.0;
+        for (const bool spin : {false, true}) {
+            const QString kind = spin ? QStringLiteral("spinStep") : QStringLiteral("turnStep");
+            const auto current = [this, spin] {
+                return spin ? m_viewport->cubeSpinStep() : m_viewport->cubeTurnStep();
+            };
+            std::vector<int> choices(viewport::NavigationCube::stepChoices.begin(),
+                                     viewport::NavigationCube::stepChoices.end());
+            if (spin) {
+                choices.insert(choices.begin(), 0);
+            }
+            for (const int degrees : choices) {
+                Command step;
+                step.id = QStringLiteral("view.%1.%2")
+                              .arg(kind, degrees == 0 ? QStringLiteral("auto") : QString::number(degrees));
+                step.text = degrees == 0 ? tr("&Auto") : QStringLiteral("%1°").arg(degrees);
+                step.group = view;
+                step.description =
+                    degrees == 0 ? tr("Spin the view 90°, or 120° when looking at a corner")
+                    : spin ? tr("Make the curved arrows spin the view %1°").arg(degrees)
+                           : tr("Make the straight arrows turn the view %1°").arg(degrees);
+                step.aliases = {tr("step"), tr("angle"), tr("arrows")};
+                step.checkable = true;
+                step.exclusiveGroup = kind;
+                step.run = [this, spin, degrees, degree](bool) {
+                    if (spin) {
+                        m_viewport->setCubeSteps(m_viewport->cubeTurnStep(), degrees * degree);
+                    } else {
+                        m_viewport->setCubeSteps(degrees * degree, m_viewport->cubeSpinStep());
+                    }
+                    saveCubeSteps();
+                };
+                step.isChecked = [current, degrees, degree] {
+                    return std::abs(current() - degrees * degree) < 1e-9;
+                };
+                m_commands->add(std::move(step));
+            }
+            Command other;
+            other.id = QStringLiteral("view.%1.other").arg(kind);
+            other.text = tr("&Other…");
+            other.group = view;
+            other.description = spin ? tr("Type how far the curved arrows spin the view")
+                                     : tr("Type how far the straight arrows turn the view");
+            other.aliases = {tr("step"), tr("angle"), tr("arrows")};
+            other.checkable = true;
+            other.exclusiveGroup = kind;
+            other.run = [this, spin](bool) {
+                m_viewport->askCubeStep(spin);
+                // The box decides; until then the marks stay where they were.
+                m_commands->refresh();
+            };
+            other.isChecked = [current, choices, degree] {
+                return std::none_of(choices.begin(), choices.end(), [&](int degrees) {
+                    return std::abs(current() - degrees * degree) < 1e-9;
+                });
+            };
+            m_commands->add(std::move(other));
+        }
+
         c = make("view.animate", tr("A&nimate View Changes"), view,
                  tr("Turn the camera to a side of the view cube smoothly, not at once"));
         c.checkable = true;
@@ -1853,6 +1925,18 @@ void MainWindow::createTopBar() {
     mouse->addSeparator();
     mouse->addAction(action("view.reverseZoom"));
     view->addAction(action("view.animate"));
+    for (const bool spin : {false, true}) {
+        const QString kind = spin ? QStringLiteral("spinStep") : QStringLiteral("turnStep");
+        QMenu* steps = view->addMenu(spin ? tr("Sp&in Step") : tr("T&urn Step"));
+        steps->setObjectName(QStringLiteral("menu.") + kind);
+        if (spin) {
+            steps->addAction(m_commands->action(QStringLiteral("view.spinStep.auto")));
+        }
+        for (const int degrees : viewport::NavigationCube::stepChoices) {
+            steps->addAction(m_commands->action(QStringLiteral("view.%1.%2").arg(kind).arg(degrees)));
+        }
+        steps->addAction(m_commands->action(QStringLiteral("view.%1.other").arg(kind)));
+    }
 
     QMenu* window = m_menuBar->addMenu(tr("&Window"));
     window->addActions({action("window.search"), action("window.shortcuts")});
@@ -2294,12 +2378,22 @@ void MainWindow::createDocks() {
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
 }
 
+void MainWindow::saveCubeSteps() const {
+    const double degree = std::numbers::pi / 180.0;
+    QSettings settings;
+    settings.setValue(QLatin1String(turnStepKey), m_viewport->cubeTurnStep() / degree);
+    settings.setValue(QLatin1String(spinStepKey), m_viewport->cubeSpinStep() / degree);
+}
+
 void MainWindow::restoreSettings() {
     const QSettings settings;
     m_viewport->setZoomReversed(settings.value(QLatin1String(reverseZoomKey), false).toBool());
     m_viewport->setGridVisible(settings.value(QLatin1String(gridKey), true).toBool());
     m_viewport->setAxesVisible(settings.value(QLatin1String(axesKey), true).toBool());
     m_viewport->setAnimated(settings.value(QLatin1String(animateKey), true).toBool());
+    const double degree = std::numbers::pi / 180.0;
+    m_viewport->setCubeSteps(settings.value(QLatin1String(turnStepKey), 45.0).toDouble() * degree,
+                             settings.value(QLatin1String(spinStepKey), 0.0).toDouble() * degree);
     m_viewport->setNavigationPreset(settings.value(QLatin1String(navigationKey)).toInt() ==
                                             static_cast<int>(NavigationPreset::MiddleOrbits)
                                         ? NavigationPreset::MiddleOrbits
@@ -4407,6 +4501,98 @@ bool MainWindow::fileSaveAs() {
     return true;
 }
 
+namespace {
+
+// What became of a part of a mesh, in a sentence.
+QString meshReport(const recover::PartResult& part) {
+    const QString name = QString::fromStdString(part.name);
+    const QString why = QString::fromStdString(part.note);
+    QStringList made;
+    const auto count = [&made](int how, const QString& one, const QString& several) {
+        if (how == 1) {
+            made << one;
+        } else if (how > 1) {
+            made << several.arg(how);
+        }
+    };
+    count(part.pulls, MainWindow::tr("1 pull"), MainWindow::tr("%1 pulls"));
+    count(part.holes, MainWindow::tr("1 hole"), MainWindow::tr("%1 holes"));
+    count(part.fillets, MainWindow::tr("1 fillet"), MainWindow::tr("%1 fillets"));
+    count(part.chamfers, MainWindow::tr("1 chamfer"), MainWindow::tr("%1 chamfers"));
+    const QString features = made.join(QStringLiteral(", "));
+    switch (part.result) {
+    case recover::Result::Features:
+        return MainWindow::tr("%1 is rebuilt from sketches: %2.").arg(name, features);
+    case recover::Result::FeaturesOnSolid:
+        return MainWindow::tr("%1 is a solid with %2 in the timeline. The solid under them has no "
+                              "sketches, because %3.")
+            .arg(name, features, why);
+    case recover::Result::ExactSolid:
+        return MainWindow::tr("%1 is a solid of exact faces, without features, because %2.")
+            .arg(name, why);
+    case recover::Result::Facets:
+        return MainWindow::tr("%1 is a solid of flat facets, as in the mesh, because %2.")
+            .arg(name, why);
+    case recover::Result::Failed:
+        return MainWindow::tr("%1 was left out, because %2.").arg(name, why);
+    }
+    return {};
+}
+
+} // namespace
+
+bool MainWindow::importMesh(const QString& path, QString* error, QStringList* notes) {
+    const QString fileName = QFileInfo(path).fileName();
+    std::optional<recover::WorkedMesh> worked;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    kernel::clearStop();
+    try {
+        runLongWork(tr("reading %1").arg(fileName), [&] {
+            worked = recover::workOutMesh(kernel::readMesh(toPath(path)),
+                                          QFileInfo(path).completeBaseName().toStdString());
+        });
+    } catch (const kernel::Error& failure) {
+        QApplication::restoreOverrideCursor();
+        if (kernel::stopRequested()) {
+            kernel::clearStop();
+            statusBar()->showMessage(tr("Stopped reading %1.").arg(fileName), 6000);
+            return false;
+        }
+        if (error != nullptr) {
+            *error = tr("Could not %1.").arg(QString::fromStdString(failure.what()));
+        }
+        return false;
+    }
+    QApplication::restoreOverrideCursor();
+    if (isSketching()) {
+        finishSketch();
+    }
+    cancelCommand();
+    const recover::MeshResult result =
+        recover::addWorkedMesh(*document(), *worked, activeComponent());
+    QStringList report;
+    for (const recover::PartResult& part : result.parts) {
+        report.append(meshReport(part));
+    }
+    if (result.bodies.empty()) {
+        if (error != nullptr) {
+            *error = report.join(QLatin1Char('\n'));
+        }
+        return false;
+    }
+    if (notes != nullptr) {
+        *notes = report;
+    }
+    m_browser->setSelection(result.bodies, {});
+    m_viewport->fitAll();
+    statusBar()->showMessage((result.bodies.size() == 1
+                                  ? tr("Imported 1 body from %1.")
+                                  : tr("Imported %1 bodies from %2.").arg(result.bodies.size()))
+                                 .arg(fileName),
+                             12000);
+    return true;
+}
+
 bool MainWindow::importGeometry(const QString& path, QString* error, QStringList* notes) {
     const auto fail = [error](const QString& why) {
         if (error != nullptr) {
@@ -4415,6 +4601,10 @@ bool MainWindow::importGeometry(const QString& path, QString* error, QStringList
         return false;
     };
     const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QStringLiteral("stl") || suffix == QStringLiteral("obj") ||
+        suffix == QStringLiteral("3mf")) {
+        return importMesh(path, error, notes);
+    }
     const bool iges = suffix == QStringLiteral("igs") || suffix == QStringLiteral("iges");
     const bool step = suffix == QStringLiteral("step") || suffix == QStringLiteral("stp");
     kernel::ImportResult read;
@@ -4555,8 +4745,9 @@ bool MainWindow::fileImport() {
     }
     const QString path = QFileDialog::getOpenFileName(
         this, tr("Import"), directory,
-        tr("STEP and IGES files (*.step *.stp *.igs *.iges);;STEP files (*.step *.stp);;"
-           "IGES files (*.igs *.iges);;All files (*)"));
+        tr("Models and meshes (*.step *.stp *.igs *.iges *.stl *.obj *.3mf);;"
+           "STEP and IGES files (*.step *.stp *.igs *.iges);;STEP files (*.step *.stp);;"
+           "IGES files (*.igs *.iges);;Meshes (*.stl *.obj *.3mf);;All files (*)"));
     if (path.isEmpty()) {
         return false;
     }
