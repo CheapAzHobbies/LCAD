@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <lcad/kernel/Check.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Modeling.h>
@@ -876,4 +877,75 @@ TEST_CASE("Text is made into solid letters", "[kernel][modeling]") {
     CHECK(box->max.x - box->min.x > 15.0);
     CHECK_THROWS_AS(textSolid(planeXY(), 0.0, 0.0, "  ", 10.0, 0.0, 2.0, "Sans", "7"),
                     std::invalid_argument);
+}
+
+TEST_CASE("A split cuts a body along a face, or a wall pulled from curves", "[kernel][modeling]") {
+    const NamedShape block = plate(20.0, 10.0, 10.0);
+
+    SECTION("along a round face, taken on past its ends") {
+        // A rod 3 in radius standing at (10, 5), only 2 tall: its side is taken on through
+        // the block.
+        const Shape rod = translated(makeCylinder(3.0, 2.0), 10.0, 5.0, 4.0);
+        Shape side;
+        for (int i = 0; i < subShapeCount(rod, SubShapeKind::Face); ++i) {
+            const Shape face = subShape(rod, SubShapeKind::Face, i);
+            if (planeOfFace(face) == std::nullopt) {
+                side = face;
+            }
+        }
+        REQUIRE(!side.isNull());
+        const NamedShape cut = splitAlong(block, side, "9");
+        CHECK(countTopology(cut.shape).solids == 2);
+        CHECK_THAT(volume(cut.shape), WithinRel(2000.0, 1e-6));
+        const std::vector<NamedShape> pieces = separated(cut);
+        REQUIRE(pieces.size() == 2);
+        std::set<double> volumes{volume(pieces[0].shape), volume(pieces[1].shape)};
+        CHECK_THAT(*volumes.begin(), WithinRel(pi * 9.0 * 10.0, 1e-6));
+        CHECK(findFace(cut, "9/split/front") >= 0);
+        CHECK(findFace(cut, "9/split/back") >= 0);
+        CHECK(findFace(cut, "7/end/1") >= 0);
+    }
+
+    SECTION("along a flat face smaller than the body") {
+        // The end of a small block, at x = 5: as the plane through it does.
+        const Shape small = translated(makeBox(1.0, 1.0, 1.0), 4.0, 2.0, 2.0);
+        Shape end;
+        for (int i = 0; i < subShapeCount(small, SubShapeKind::Face); ++i) {
+            const Shape face = subShape(small, SubShapeKind::Face, i);
+            const auto plane = planeOfFace(face);
+            if (plane && std::abs(plane->normal.x - 1.0) < 1e-9) {
+                end = face;
+            }
+        }
+        REQUIRE(!end.isNull());
+        const NamedShape cut = splitAlong(block, end, "9");
+        const std::vector<NamedShape> pieces = separated(cut);
+        REQUIRE(pieces.size() == 2);
+        std::set<double> volumes{volume(pieces[0].shape), volume(pieces[1].shape)};
+        CHECK_THAT(*volumes.begin(), WithinRel(500.0, 1e-6));
+    }
+
+    SECTION("along a wall pulled up from a bent line") {
+        // From below the block up to (5, 5), then across past its end: the corner from x = 5
+        // and y below 5 comes off.
+        const Shape bent = makeCompound({makeSegment({5.0, -5.0, 0.0}, {5.0, 5.0, 0.0}),
+                                         makeSegment({5.0, 5.0, 0.0}, {25.0, 5.0, 0.0})});
+        const Shape wall = wallOf(bent, {0.0, 0.0, 1.0}, 50.0);
+        const NamedShape cut = splitAlong(block, wall, "9");
+        const std::vector<NamedShape> pieces = separated(cut);
+        REQUIRE(pieces.size() == 2);
+        std::set<double> volumes{volume(pieces[0].shape), volume(pieces[1].shape)};
+        CHECK_THAT(*volumes.begin(), WithinRel(750.0, 1e-6));
+        CHECK_THAT(*volumes.rbegin(), WithinRel(1250.0, 1e-6));
+        // Each piece is sound on its own; together they touch, as pieces of a cut do.
+        for (const NamedShape& piece : pieces) {
+            CHECK(checkGeometry(piece.shape).empty());
+        }
+    }
+
+    SECTION("a wall beside the body splits nothing") {
+        const Shape beside =
+            wallOf(makeSegment({50.0, 50.0, 0.0}, {60.0, 50.0, 0.0}), {0.0, 0.0, 1.0}, 5.0);
+        CHECK_THROWS_AS(splitAlong(block, beside, "9"), Error);
+    }
 }
