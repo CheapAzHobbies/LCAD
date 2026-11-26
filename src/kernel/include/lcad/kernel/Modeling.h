@@ -44,6 +44,13 @@ struct NamedShape {
 /// by a number, in the order of where they are.
 [[nodiscard]] std::vector<std::string> edgeNames(const NamedShape& shape);
 
+/// The number subShape() gives the edge nearest to a point, if one is within `reach`, or else -1.
+/// The seams of round faces do not count.
+[[nodiscard]] int nearestEdge(const Shape& shape, const Point& at, double reach);
+
+/// How far from the faces of a shape the farthest of some points is.
+[[nodiscard]] double farthestFromFaces(const Shape& shape, const std::vector<Point>& points);
+
 /// The number of the face or edge with that name, or -1 if the shape has none.
 [[nodiscard]] int findFace(const NamedShape& shape, const std::string& name);
 [[nodiscard]] int findEdge(const NamedShape& shape, const std::string& name);
