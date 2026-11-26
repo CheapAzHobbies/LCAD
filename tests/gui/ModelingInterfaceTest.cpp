@@ -1020,6 +1020,33 @@ void ModelingInterfaceTest::throughAllDraftAndSplit() {
         solids += b.shape.isNull() ? 0 : 1;
     }
     QCOMPARE(solids, 2);
+
+    // Along a sketch's line, chosen in the same list: a line right across, at y = 10, cuts the
+    // half the body is now in two.
+    const ObjectId cutLine = window.document()->addSketch("Cut", lcad::kernel::planeXY());
+    lcad::sketch::Sketch line = window.document()->findSketch(cutLine)->geometry;
+    line.addLine({-5.0, 10.0}, {65.0, 10.0});
+    window.document()->setSketchGeometry(cutLine, line, "Line");
+    QVERIFY(trigger(window, "solid.split"));
+    split = panel(window);
+    QVERIFY(split != nullptr);
+    window.viewport()->setSelection({SelectedItem{body, SelectedItem::Kind::Body, -1}});
+    along = split->findChild<QComboBox*>(QStringLiteral("reference"));
+    const int bySketch =
+        along->findData(QStringLiteral("sketch:%1").arg(QString::number(cutLine.value)));
+    QVERIFY(bySketch >= 0);
+    QCOMPARE(along->itemText(bySketch), QStringLiteral("Sketch: Cut"));
+    split->setChoice(QStringLiteral("reference"), bySketch);
+    QCOMPARE(split->feature().sketch, cutLine);
+    QVERIFY(split->feature().reference.empty());
+    QTRY_VERIFY2(split->errorText().isEmpty(), qPrintable(split->errorText()));
+    QTest::mouseClick(okButton(split), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    solids = 0;
+    for (const lcad::document::Body& b : window.document()->bodies()) {
+        solids += b.shape.isNull() ? 0 : 1;
+    }
+    QCOMPARE(solids, 3);
 }
 
 void ModelingInterfaceTest::combineMovePipeCoilAndThread() {
