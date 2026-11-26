@@ -941,7 +941,7 @@ void ApplicationTest::viewsAreSavedAndGoneBackTo() {
     QVERIFY(std::abs(viewport->cameraState().up[2] - front.up[2]) > 0.5);
     emit window.browser()->tree()->itemDoubleClicked(views->child(0), 0);
     const lcad::viewport::CameraState back = viewport->cameraState();
-    for (int i = 0; i < 3; ++i) {
+    for (std::size_t i = 0; i < 3; ++i) {
         QVERIFY(std::abs(back.eye[i] - front.eye[i]) < 1e-6);
         QVERIFY(std::abs(back.up[i] - front.up[i]) < 1e-6);
     }
