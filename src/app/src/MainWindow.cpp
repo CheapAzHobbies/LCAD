@@ -78,6 +78,7 @@
 #include <QToolButton>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <numbers>
@@ -103,6 +104,10 @@ const char* const geometryKey = "window/geometry";
 const char* const layoutKey = "window/layout";
 const char* const reverseZoomKey = "view/reverseZoom";
 const char* const gridKey = "view/grid";
+// The step of the sketch grid, in millimeters; 0 for one that suits the zoom.
+const char* const gridStepKey = "sketch/gridStep";
+// The steps it can be set to.
+constexpr std::array<double, 7> gridSteps{0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0};
 const char* const axesKey = "view/axes";
 const char* const animateKey = "view/animate";
 const char* const navigationKey = "view/navigation";
@@ -1764,6 +1769,13 @@ void MainWindow::defineSketchCommands() {
          "rectangle-center",
          {},
          {tr("rectangle from center"), tr("centered rectangle")}},
+        {SketchTool::ThreePointRectangle,
+         "sketch.rectangle3",
+         tr("3-Point Rect&angle"),
+         tr("Draw a rectangle at any angle by one side's two ends and how far across it reaches"),
+         "rectangle-3point",
+         {},
+         {tr("rotated rectangle"), tr("angled rectangle"), tr("three point rectangle")}},
         {SketchTool::Circle,
          "sketch.circle",
          tr("&Circle"),
@@ -1848,6 +1860,13 @@ void MainWindow::defineSketchCommands() {
          "extend",
          {},
          {tr("lengthen")}},
+        {SketchTool::Break,
+         "sketch.break",
+         tr("&Break"),
+         tr("Cut a curve in pieces where the curves crossing it are, keeping every piece"),
+         "break",
+         {},
+         {tr("split"), tr("divide")}},
         {SketchTool::Fillet,
          "sketch.fillet",
          tr("&Fillet"),
@@ -1998,6 +2017,29 @@ void MainWindow::defineSketchCommands() {
         c.isEnabled = sketching;
         c.isChecked = [editor] { return editor()->hasGridSnap(); };
         m_commands->add(std::move(c));
+
+        // How far apart the grid's steps are: one that suits the zoom, or one chosen.
+        std::vector<double> steps{0.0};
+        steps.insert(steps.end(), gridSteps.begin(), gridSteps.end());
+        for (const double step : steps) {
+            const QString size = QLocale().toString(step, 'g', 3);
+            Command s = make("", step == 0.0 ? tr("&Auto") : tr("%1 mm").arg(size),
+                             step == 0.0 ? tr("Snap to steps that suit the zoom")
+                                         : tr("Snap to steps of %1 mm").arg(size),
+                             "");
+            s.id = step == 0.0
+                       ? QStringLiteral("sketch.gridStep.auto")
+                       : QStringLiteral("sketch.gridStep.") + QLocale::c().toString(step, 'g', 3);
+            s.checkable = true;
+            s.exclusiveGroup = QStringLiteral("gridStep");
+            s.aliases = {tr("grid spacing"), tr("grid size"), tr("snap increment")};
+            s.run = [editor, step](bool) {
+                editor()->setGridStep(step);
+                QSettings().setValue(QLatin1String(gridStepKey), step);
+            };
+            s.isChecked = [editor, step] { return std::abs(editor()->gridStep() - step) < 1e-9; };
+            m_commands->add(std::move(s));
+        }
     }
 
     // Constraints
@@ -2152,15 +2194,16 @@ void MainWindow::createTopBar() {
     sketchMenu->addSeparator();
     for (const char* id :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.centerRectangle",
-          "sketch.circle", "sketch.circle3", "sketch.arc", "sketch.arc3", "sketch.tangentArc",
-          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
+          "sketch.rectangle3", "sketch.circle", "sketch.circle3", "sketch.arc", "sketch.arc3",
+          "sketch.tangentArc", "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse",
+          "sketch.spline"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
     for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset",
-          "sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern", "sketch.move",
-          "sketch.rotate", "sketch.scale", "sketch.project"}) {
+         {"sketch.trim", "sketch.extend", "sketch.break", "sketch.fillet", "sketch.chamfer",
+          "sketch.offset", "sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern",
+          "sketch.move", "sketch.rotate", "sketch.scale", "sketch.project"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
@@ -2176,6 +2219,13 @@ void MainWindow::createTopBar() {
     sketchMenu->addSeparator();
     sketchMenu->addActions({action("sketch.construction"), action("sketch.inference"),
                             action("sketch.gridSnap")});
+    QMenu* gridStep = sketchMenu->addMenu(tr("Grid &Step"));
+    gridStep->setObjectName(QStringLiteral("menu.gridStep"));
+    gridStep->addAction(action("sketch.gridStep.auto"));
+    for (const double step : gridSteps) {
+        gridStep->addAction(m_commands->action(QStringLiteral("sketch.gridStep.") +
+                                               QLocale::c().toString(step, 'g', 3)));
+    }
 
     QMenu* view = m_menuBar->addMenu(tr("&View"));
     view->addActions({action("view.fit"), action("view.fitSelection"), action("view.section")});
@@ -2493,7 +2543,8 @@ void MainWindow::createSketchToolbar() {
     };
     toolbar->addAction(action("sketch.select"));
     toolbar->addAction(action("sketch.line"));
-    variants("rectangleButton", {"sketch.rectangle", "sketch.centerRectangle"});
+    variants("rectangleButton",
+             {"sketch.rectangle", "sketch.centerRectangle", "sketch.rectangle3"});
     variants("circleButton", {"sketch.circle", "sketch.circle3"});
     variants("arcButton", {"sketch.arc", "sketch.arc3", "sketch.tangentArc"});
     for (const char* id :
@@ -2502,8 +2553,9 @@ void MainWindow::createSketchToolbar() {
     }
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
-    for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset"}) {
+    // Extend and Break in the list beside Cut.
+    variants("cutButton", {"sketch.trim", "sketch.extend", "sketch.break"});
+    for (const char* id : {"sketch.fillet", "sketch.chamfer", "sketch.offset"}) {
         toolbar->addAction(action(id));
     }
     // Mirror, and the patterns in the list beside it.
@@ -2738,6 +2790,8 @@ void MainWindow::saveCubeSteps() const {
 
 void MainWindow::restoreSettings() {
     const QSettings settings;
+    m_viewport->sketchEditor()->setGridStep(
+        settings.value(QLatin1String(gridStepKey), 0.0).toDouble());
     m_viewport->setZoomReversed(settings.value(QLatin1String(reverseZoomKey), false).toBool());
     m_viewport->setGridVisible(settings.value(QLatin1String(gridKey), true).toBool());
     m_viewport->setAxesVisible(settings.value(QLatin1String(axesKey), true).toBool());

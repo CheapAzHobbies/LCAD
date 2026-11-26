@@ -18,7 +18,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Item | State | Note |
 |---|---|---|
 | Line, chains of lines | Have | |
-| Rectangle | Part | Two corners, or center and corner. No three-point rectangle. |
+| Rectangle | Have | Two corners, center and corner, or three points at any angle (since 2026-11-25). |
 | Circle | Have | Center and radius, or three points. |
 | Arc | Have | Center, start, and end; three points; tangent on from a curve. |
 | Ellipse, polygon, slot, spline, point | Have | Polygon is inscribed only; spline is fit-point only. |
@@ -27,7 +27,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Fillet | Have | Between two lines. |
 | Chamfer | Have | Equal distance, between two lines. |
 | Trim, extend, offset, mirror | Have | |
-| Break, split | No | |
+| Break, split | Have | Since 2026-11-25: Break cuts a curve at the crossings either side of the click. |
 | Sketch patterns (rectangular, circular) | Have | Each copy keeps the constraints among the originals; the copies are not tied to each other. |
 | Move, copy, rotate, scale | Have | Since 2026-11-12, of what is selected. |
 | Project edges of a body | Have | |
@@ -176,7 +176,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Display styles, grid | Have | |
 | Repeat last command | Have | Edit menu, and first in the 3D view's right-click menu. |
 | Saved camera views | No | |
-| Grid spacing setting | No | |
+| Grid spacing setting | Have | Since 2026-11-25: Sketch > Grid Step. |
 
 ## Order of work
 

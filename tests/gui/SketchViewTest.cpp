@@ -86,6 +86,9 @@ private slots:
     // Drawing
     void lineToolDrawsJoinedLines();
     void anOutlineClosesOnItsFirstPoint();
+    void breakCutsTheCurveClickedWhereOthersCrossIt();
+    void aRectangleByThreePointsLiesAtAnyAngle();
+    void theGridStepCanBeChosen();
     void linesThatRunPastEachOtherTintTheAreaTheyClose();
     void nearlyLevelLinesBecomeHorizontalUnlessInferenceIsOff();
     void endsLandOnExistingGeometryAndStayThere();
@@ -987,6 +990,83 @@ void SketchViewTest::anOutlineClosesOnItsFirstPoint() {
     QVERIFY(qAbs(sketch().profiles()[0].area - 975.0) < 40.0);
     click(at(80.0, 10.0));
     QCOMPARE(curves(EntityKind::Line).size(), std::size_t{3});
+}
+
+void SketchViewTest::breakCutsTheCurveClickedWhereOthersCrossIt() {
+    openSketch();
+    Sketch s = sketch();
+    const EntityId flat = s.addLine({10.0, 20.0}, {90.0, 20.0});
+    s.addLine({30.0, 10.0}, {30.0, 30.0});
+    s.addLine({70.0, 10.0}, {70.0, 30.0});
+    m_document->setSketchGeometry(m_sketch, s, "Lines");
+    render();
+    editor()->setTool(SketchTool::Break);
+    // Between the two upright lines.
+    move(at(50.0, 20.0));
+    click(at(50.0, 20.0));
+    const std::vector<Entity> lines = curves(EntityKind::Line);
+    QCOMPARE(lines.size(), std::size_t{5});
+    QVERIFY(qAbs(endOf(flat).x - 30.0) < 1e-6);
+    // Nothing was taken away: the pieces still reach from 10 to 90.
+    double left = 100.0;
+    double right = 0.0;
+    for (const Entity& line : lines) {
+        if (qAbs(startOf(line.id).y - 20.0) < 1e-6 && qAbs(endOf(line.id).y - 20.0) < 1e-6) {
+            left = std::min({left, startOf(line.id).x, endOf(line.id).x});
+            right = std::max({right, startOf(line.id).x, endOf(line.id).x});
+        }
+    }
+    QVERIFY(qAbs(left - 10.0) < 1e-6);
+    QVERIFY(qAbs(right - 90.0) < 1e-6);
+    // One undo puts it back.
+    m_document->undo();
+    QCOMPARE(curves(EntityKind::Line).size(), std::size_t{3});
+}
+
+void SketchViewTest::aRectangleByThreePointsLiesAtAnyAngle() {
+    openSketch();
+    editor()->setInference(false);
+    editor()->setTool(SketchTool::ThreePointRectangle);
+    // One side from (20, 10) to (50, 50), and 10 across to its left.
+    click(at(20.0, 10.0));
+    click(at(50.0, 50.0));
+    move(at(42.0, 56.0));
+    render();
+    click(at(42.0, 56.0));
+    QCOMPARE(curves(EntityKind::Line).size(), std::size_t{4});
+    QCOMPARE(sketch().profiles().size(), std::size_t{1});
+    // 50 long and 10 across, to within the pixels clicked at three pixels a millimeter.
+    QVERIFY2(qAbs(sketch().profiles()[0].area - 500.0) < 25.0,
+             qPrintable(QString::number(sketch().profiles()[0].area)));
+    QCOMPARE(count(ConstraintKind::Perpendicular), 1);
+    QCOMPARE(count(ConstraintKind::Parallel), 2);
+}
+
+void SketchViewTest::theGridStepCanBeChosen() {
+    openSketch();
+    editor()->setInference(false);
+    editor()->setGridSnap(true);
+    QCOMPARE(editor()->gridStep(), 0.0);
+    editor()->setGridStep(5.0);
+    QCOMPARE(editor()->gridStep(), 5.0);
+    editor()->setTool(SketchTool::Point);
+    // At three pixels a millimeter the steps that suit the zoom are 5 mm too; 25 shows the
+    // choice is what counts.
+    editor()->setGridStep(25.0);
+    click(at(31.0, 12.0));
+    std::vector<Entity> points;
+    for (const Entity& entity : sketch().entities()) {
+        if (entity.kind == EntityKind::Point && entity.owner == 0 &&
+            entity.id != sketch().origin()) {
+            points.push_back(entity);
+        }
+    }
+    QCOMPARE(points.size(), std::size_t{1});
+    QVERIFY(qAbs(points[0].x - 25.0) < 1e-9);
+    QVERIFY(qAbs(points[0].y - 0.0) < 1e-9);
+    // Nothing, or nonsense, is the step that suits the zoom.
+    editor()->setGridStep(-1.0);
+    QCOMPARE(editor()->gridStep(), 0.0);
 }
 
 void SketchViewTest::linesThatRunPastEachOtherTintTheAreaTheyClose() {

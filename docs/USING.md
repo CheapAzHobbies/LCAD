@@ -435,6 +435,7 @@ in the 3D view.
 | Circle | C | Click the center, then a point on the circle. |
 | Arc | A | Click the center, then where it starts, then move round the center and click where it ends. |
 | Center Rectangle | | Click the center, then a corner. A construction diagonal holds it centered on the point. In the list beside Rectangle. |
+| 3-Point Rectangle | | Click the two ends of one side, at any angle, then how far across it reaches. Its corners stay square as it turns. In the list beside Rectangle. |
 | 3-Point Circle | | Click three points on the circle. In the list beside Circle. |
 | 3-Point Arc | | Click where it starts, where it ends, then a point it passes through. In the list beside Arc. |
 | Tangent Arc | | Click the end of a line or an arc, then where the arc ends. It goes on from the curve, joined and tangent to it. In the list beside Arc. |
@@ -470,7 +471,9 @@ While drawing, LCAD lines things up and holds them so, with a mark by the pointe
 - Hold Shift to draw at any angle, or turn all of this off with **Sketch > Pick Up Constraints
   While Drawing**.
 - **Sketch > Snap to Grid** puts clicks that land on nothing on round numbers: steps of 0.1,
-  0.5, 1, 5, 10 mm and so on, whichever is the smallest that suits the zoom.
+  0.5, 1, 5, 10 mm and so on, whichever is the smallest that suits the zoom. **Sketch > Grid
+  Step** sets one step instead, from 0.1 to 25 mm; **Auto** goes back to following the zoom.
+  LCAD keeps the choice for the next time it starts.
 ### Selecting and moving
 
 Press Esc until no tool is active. Then:
@@ -572,6 +575,7 @@ coincident with it), then add dimensions until nothing is blue.
 |---|---|---|
 | Cut | T | Click the part of a curve to remove. It goes up to where other curves cross it. |
 | Extend | | Click a line or an arc near an end. It grows to the next curve it meets. |
+| Break | | Click the part of a curve between curves that cross it. The curve is cut there, at the crossings on either side, and every piece stays, joined and in line. In the list beside Cut. |
 | Circular Pattern | | Select curves first. Click the point to copy them around; type how many there are to be in all, and press Enter. The copies show before they are made. In the list beside Mirror. |
 | Rectangular Pattern | | Select curves first. Click a point, then where that point goes in the next copy; type how many in all, and press Enter. In the list beside Mirror. |
 | Move/Copy | | Select curves first. Click a point, then where that point goes; hold Ctrl on the second click to make a copy instead. In the list beside Mirror. |

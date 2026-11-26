@@ -1096,3 +1096,135 @@ TEST_CASE("A reference dimension shows a size without setting it", "[sketch][edi
                         sketch.addConstraint(ConstraintKind::Horizontal, r.bottom), true),
                     std::invalid_argument);
 }
+
+TEST_CASE("Break cuts a curve where others cross it, and takes nothing away", "[sketch][edit]") {
+    Sketch sketch;
+    // A long horizontal line crossed by two upright ones at x = 10 and x = 30.
+    const EntityId flat = sketch.addLine({0.0, 0.0}, {40.0, 0.0});
+    sketch.addConstraint(ConstraintKind::Horizontal, flat);
+    const EntityId first = sketch.addLine({10.0, -5.0}, {10.0, 5.0});
+    const EntityId second = sketch.addLine({30.0, -5.0}, {30.0, 5.0});
+
+    SECTION("between two crossings: three lines in a row, the middle one the one clicked") {
+        const EntityId beyond = sketch.addLine({40.0, 0.0}, {50.0, 10.0});
+        sketch.addConstraint(ConstraintKind::Coincident, sketch.find(flat)->end,
+                             sketch.find(beyond)->start);
+        const std::vector<EntityId> pieces = breakAt(sketch, flat, {20.0, 0.5});
+        REQUIRE(pieces.size() == 3);
+        CHECK(curveCount(sketch) == 6);
+        const EntityId middle = pieces[0];
+        CHECK_THAT(startOf(sketch, middle).x, WithinAbs(10.0, lengthTolerance));
+        CHECK_THAT(endOf(sketch, middle).x, WithinAbs(30.0, lengthTolerance));
+        CHECK_THAT(startOf(sketch, flat).x, WithinAbs(0.0, lengthTolerance));
+        CHECK_THAT(endOf(sketch, flat).x, WithinAbs(10.0, lengthTolerance));
+        const EntityId last = pieces[2];
+        CHECK_THAT(startOf(sketch, last).x, WithinAbs(30.0, lengthTolerance));
+        CHECK_THAT(endOf(sketch, last).x, WithinAbs(40.0, lengthTolerance));
+        // Joined end to end, in line, held on the crossing lines, and still held at the far end.
+        CHECK(hasConstraint(sketch, ConstraintKind::Coincident, sketch.find(flat)->end,
+                            sketch.find(middle)->start));
+        CHECK(hasConstraint(sketch, ConstraintKind::Parallel, flat, middle));
+        CHECK(hasConstraint(sketch, ConstraintKind::PointOnLine, sketch.find(flat)->end, first));
+        CHECK(hasConstraint(sketch, ConstraintKind::Coincident, sketch.find(last)->end,
+                            sketch.find(beyond)->start));
+        const SolveResult state = sketch.solve();
+        CHECK(state.status == SolveStatus::Solved);
+        // The upright line moved: the break goes with it, and the pieces stay level.
+        sketch.dragBy(first, 3.0, 0.0);
+        CHECK_THAT(endOf(sketch, flat).x, WithinAbs(startOf(sketch, first).x, 1e-6));
+        CHECK_THAT(startOf(sketch, middle).y, WithinAbs(endOf(sketch, last).y, 1e-6));
+        CHECK_THAT(endOf(sketch, middle).y, WithinAbs(0.0, 1e-6));
+    }
+
+    SECTION("past the last crossing: two lines") {
+        const std::vector<EntityId> pieces = breakAt(sketch, flat, {36.0, 0.0});
+        REQUIRE(pieces.size() == 2);
+        CHECK_THAT(startOf(sketch, pieces[0]).x, WithinAbs(30.0, lengthTolerance));
+        CHECK_THAT(endOf(sketch, pieces[0]).x, WithinAbs(40.0, lengthTolerance));
+        CHECK(pieces[1] == flat);
+        CHECK_THAT(endOf(sketch, flat).x, WithinAbs(30.0, lengthTolerance));
+        CHECK(sketch.solve().status == SolveStatus::Solved);
+    }
+
+    SECTION("a length dimension still measures the whole") {
+        sketch.addConstraint(ConstraintKind::Distance, sketch.find(flat)->start,
+                             sketch.find(flat)->end, 0, 40.0);
+        const std::vector<EntityId> pieces = breakAt(sketch, flat, {20.0, 0.0});
+        REQUIRE(pieces.size() == 3);
+        CHECK(sketch.solve().status == SolveStatus::Solved);
+        CHECK_THAT(endOf(sketch, pieces[2]).x - startOf(sketch, flat).x,
+                   WithinAbs(40.0, lengthTolerance));
+    }
+
+    SECTION("a circle crossed twice: two arcs that make it up") {
+        const EntityId circle = sketch.addCircle({20.0, 0.0}, 5.0);
+        // The flat line crosses it at x = 15 and x = 25. Click its upper half.
+        const std::vector<EntityId> pieces = breakAt(sketch, circle, {20.0, 5.2});
+        REQUIRE(pieces.size() == 2);
+        CHECK(sketch.find(circle)->kind == EntityKind::Arc);
+        const EntityId upper = pieces[0];
+        CHECK(sketch.find(upper)->kind == EntityKind::Arc);
+        CHECK_THAT(distanceTo(sketch, upper, {20.0, 5.0}), WithinAbs(0.0, 1e-6));
+        CHECK_THAT(distanceTo(sketch, circle, {20.0, -5.0}), WithinAbs(0.0, 1e-6));
+        CHECK_THAT(sketch.radiusOf(upper), WithinAbs(5.0, lengthTolerance));
+        CHECK(sketch.solve().status == SolveStatus::Solved);
+    }
+
+    SECTION("an arc crossed once: two arcs on one circle") {
+        const EntityId arc = sketch.addArc({20.0, 0.0}, {30.0, 0.0}, {10.0, 0.0});
+        // The upright line at x = 30 runs up to 5, so take one through the top of the arc.
+        sketch.addLine({20.0, 5.0}, {20.0, 15.0});
+        // Clicked before the crossing, on the part that keeps the arc's start.
+        const std::vector<EntityId> pieces = breakAt(sketch, arc, {25.0, 9.0});
+        REQUIRE(pieces.size() == 2);
+        CHECK(pieces[0] == arc);
+        CHECK(hasConstraint(sketch, ConstraintKind::Concentric, arc, pieces[1]));
+        CHECK_THAT(sketch.radiusOf(pieces[1]), WithinAbs(10.0, lengthTolerance));
+        CHECK_THAT(endOf(sketch, arc).x, WithinAbs(20.0, lengthTolerance));
+        CHECK_THAT(endOf(sketch, arc).y, WithinAbs(10.0, lengthTolerance));
+        CHECK(sketch.solve().status == SolveStatus::Solved);
+    }
+
+    SECTION("nothing crossing it: nothing to break, and nothing changes") {
+        const EntityId alone = sketch.addLine({0.0, 20.0}, {40.0, 20.0});
+        const std::size_t before = sketch.entities().size();
+        CHECK(breakAt(sketch, alone, {20.0, 20.0}).empty());
+        CHECK(sketch.entities().size() == before);
+    }
+    (void)second;
+}
+
+TEST_CASE("A rectangle by three points lies at any angle", "[sketch][edit]") {
+    Sketch sketch;
+    // Its first side from (0, 0) to (30, 40), and 10 across, on the left of that.
+    const RectangleParts parts =
+        addThreePointRectangle(sketch, {0.0, 0.0}, {30.0, 40.0}, {-8.0, 6.0});
+    CHECK(curveCount(sketch) == 4);
+    CHECK_THAT(lengthOf(sketch, parts.bottom), WithinAbs(50.0, lengthTolerance));
+    CHECK_THAT(lengthOf(sketch, parts.right), WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, parts.right).x, WithinAbs(22.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, parts.right).y, WithinAbs(46.0, lengthTolerance));
+    REQUIRE(sketch.profiles().size() == 1);
+    CHECK_THAT(sketch.profiles()[0].area, WithinAbs(500.0, 1e-6));
+    // Square corners, opposite sides parallel: five ways to move, as a rectangle has.
+    const SolveResult state = sketch.solve();
+    CHECK(state.status == SolveStatus::Solved);
+    CHECK(state.degreesOfFreedom == 5);
+    // Turned by dragging a corner, it stays a rectangle.
+    sketch.dragBy(sketch.find(parts.right)->start, 5.0, -3.0);
+    const Point2 a = startOf(sketch, parts.bottom);
+    const Point2 b = endOf(sketch, parts.bottom);
+    const Point2 c = endOf(sketch, parts.right);
+    CHECK_THAT((b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y), WithinAbs(0.0, 1e-6));
+
+    // The third point on the other side: the same rectangle, mirrored, still counter-clockwise.
+    Sketch other;
+    addThreePointRectangle(other, {0.0, 0.0}, {30.0, 40.0}, {8.0, -6.0});
+    REQUIRE(other.profiles().size() == 1);
+    CHECK_THAT(other.profiles()[0].area, WithinAbs(500.0, 1e-6));
+    // A side of no length, or no width, is no rectangle.
+    CHECK_THROWS_AS(addThreePointRectangle(other, {0.0, 0.0}, {0.0, 0.0}, {1.0, 1.0}),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(addThreePointRectangle(other, {0.0, 0.0}, {10.0, 0.0}, {20.0, 0.0}),
+                    std::invalid_argument);
+}
