@@ -2476,8 +2476,8 @@ void MainWindow::createSketchToolbar() {
 
     // Rectangles, circles, and arcs drawn other ways are in a list beside each: the button
     // starts the tool it shows, which is the one picked from the list last.
-    const auto variants = [this, toolbar, &action](const char* name,
-                                                   std::initializer_list<const char*> ids) {
+    const auto variants = [toolbar, &action](const char* name,
+                                             std::initializer_list<const char*> ids) {
         auto* button = new QToolButton(toolbar);
         button->setObjectName(QLatin1String(name));
         button->setPopupMode(QToolButton::MenuButtonPopup);
@@ -2487,8 +2487,8 @@ void MainWindow::createSketchToolbar() {
         }
         button->setMenu(menu);
         button->setDefaultAction(action(*ids.begin()));
-        connect(menu, &QMenu::triggered, button,
-                [button](QAction* chosen) { button->setDefaultAction(chosen); });
+        QObject::connect(menu, &QMenu::triggered, button,
+                         [button](QAction* chosen) { button->setDefaultAction(chosen); });
         toolbar->addWidget(button);
     };
     toolbar->addAction(action("sketch.select"));
