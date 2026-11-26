@@ -91,7 +91,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Offset, move, delete face; repair | Have | |
 | Replace face | No | |
 | Split body along a plane | Have | Since 2026-11-12. |
-| Split body by a face or a sketch, split face | No | |
+| Split body by a face or a sketch | Have | Since 2026-11-25: along a sketch's curves, or another body's faces. |
+| Split face | No | |
 | Combine bodies as a command | Have | Since 2026-11-12. |
 | Move, copy bodies | Have | Since 2026-11-12, by distances and a turn about an axis. |
 | Scale bodies | Have | In Move/Copy Body, about the body's middle. |

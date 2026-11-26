@@ -1053,6 +1053,57 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
         }
         case FeatureKind::SplitBody: {
             const kernel::NamedShape& body = targetOf(feature, document, bodies);
+            const auto box = kernel::boundingBox(body.shape);
+            if (feature.sketch.isValid()) {
+                // Along the curves of a sketch, pulled through the body both ways.
+                const SketchItem* sketch = document.findSketch(feature.sketch);
+                if (sketch == nullptr) {
+                    throw FeatureFailure("The sketch it splits along is gone.");
+                }
+                const kernel::Shape curves = sketchShape(*sketch, SketchPart::Ordinary);
+                if (curves.isNull()) {
+                    throw FeatureFailure("The sketch it splits along, " + sketch->name +
+                                         ", has no curves.");
+                }
+                double reach = 100.0;
+                if (box.has_value()) {
+                    const kernel::Point& o = sketch->plane.origin;
+                    const double far = std::max(
+                        {std::abs(box->min.x - o.x), std::abs(box->max.x - o.x),
+                         std::abs(box->min.y - o.y), std::abs(box->max.y - o.y),
+                         std::abs(box->min.z - o.z), std::abs(box->max.z - o.z)});
+                    reach = 2.0 * far * std::sqrt(3.0) + 1.0;
+                }
+                try {
+                    return kernel::splitAlong(
+                        body, kernel::wallOf(curves, sketch->plane.normal, reach), tag);
+                } catch (const kernel::Error&) {
+                    throw FeatureFailure("The curves of " + sketch->name +
+                                         " do not cut the body in two.");
+                }
+            }
+            if (!feature.tools.empty()) {
+                // Along the faces of another body: a surface, or a solid's outside.
+                const ObjectId id = feature.tools.front();
+                const Body* other = document.findBody(id);
+                const auto found = bodies.find(id);
+                if (id == feature.body) {
+                    throw FeatureFailure("A body cannot be split along itself.");
+                }
+                if (found == bodies.end() || found->second.shape.isNull()) {
+                    throw FeatureFailure(other != nullptr
+                                             ? "The body it splits along, " + other->name +
+                                                   ", does not exist at this point in the "
+                                                   "timeline."
+                                             : std::string("The body it splits along is gone."));
+                }
+                try {
+                    return kernel::splitAlong(body, found->second.shape, tag);
+                } catch (const kernel::Error&) {
+                    throw FeatureFailure("The faces of " + other->name +
+                                         " do not cut the body in two.");
+                }
+            }
             return kernel::split(body, planeNamed(feature.reference, body, document), tag);
         }
         case FeatureKind::Combine: {

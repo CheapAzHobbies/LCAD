@@ -2575,3 +2575,84 @@ TEST_CASE("Open curves turned into a surface", "[document][feature]") {
     CHECK(loaded.warnings.empty());
     CHECK(loaded.document->findFeature(made)->reference == "Z");
 }
+
+TEST_CASE("A body is split along a sketch's curves or another body's faces",
+          "[document][feature]") {
+    Document document;
+    // A plate 60 by 40 by 10.
+    const ObjectId outline = document.addSketch("Outline", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {60.0, 40.0});
+    document.setSketchGeometry(outline, s, "Draw");
+    const ObjectId plate = document.addFeature(pullOf(outline, 10.0));
+    const ObjectId body = document.findFeature(plate)->body;
+    const auto volumes = [&document] {
+        std::vector<double> found;
+        for (const Body& b : document.bodies()) {
+            if (!b.shape.isNull()) {
+                found.push_back(lcad::kernel::volume(b.shape));
+            }
+        }
+        std::sort(found.begin(), found.end());
+        return found;
+    };
+
+    // A bent line on a sketch above the plate: the corner from x = 20 and y below 15 comes off.
+    const ObjectId cutLine = document.addSketch("Cut", lcad::kernel::makePlane(
+                                                           {0.0, 0.0, 30.0}, {0.0, 0.0, 1.0},
+                                                           {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch bent;
+    const auto a = bent.addLine({20.0, -10.0}, {20.0, 15.0});
+    const auto b = bent.addLine({20.0, 15.0}, {70.0, 15.0});
+    bent.addConstraint(lcad::sketch::ConstraintKind::Coincident, bent.find(a)->end,
+                       bent.find(b)->start);
+    document.setSketchGeometry(cutLine, bent, "Draw");
+    Feature bySketch;
+    bySketch.kind = FeatureKind::SplitBody;
+    bySketch.body = body;
+    bySketch.sketch = cutLine;
+    const ObjectId split = document.addFeature(bySketch);
+    REQUIRE(document.featureError(split).empty());
+    std::vector<double> found = volumes();
+    REQUIRE(found.size() == 2);
+    CHECK_THAT(found[0], WithinRel(40.0 * 15.0 * 10.0, 1e-6));
+    CHECK_THAT(found[1], WithinRel(60.0 * 40.0 * 10.0 - 40.0 * 15.0 * 10.0, 1e-6));
+    // It follows the sketch.
+    lcad::sketch::Sketch moved = document.findSketch(cutLine)->geometry;
+    moved.dragBy(b, 0.0, 5.0);
+    document.setSketchGeometry(cutLine, moved, "Move");
+    REQUIRE(document.featureError(split).empty());
+    found = volumes();
+    REQUIRE(found.size() == 2);
+    CHECK_THAT(found[0], WithinRel(40.0 * 20.0 * 10.0, 1e-6));
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    saveDocument(document, directory.file("split.lcad"));
+    const LoadedDocument loaded = loadDocument(directory.file("split.lcad"));
+    CHECK(*loaded.document->findFeature(split) == *document.findFeature(split));
+    document.removeFeature(split);
+    CHECK(volumes().size() == 1);
+
+    // A rod standing through the plate cuts out what is inside it, and stays.
+    const ObjectId circle = document.addSketch("Rod", lcad::kernel::planeXY());
+    lcad::sketch::Sketch round;
+    round.addCircle({30.0, 20.0}, 5.0);
+    document.setSketchGeometry(circle, round, "Draw");
+    Feature rodPull = pullOf(circle, 30.0);
+    rodPull.operation = Operation::NewBody;
+    const ObjectId rod = document.findFeature(document.addFeature(rodPull))->body;
+    Feature byBody;
+    byBody.kind = FeatureKind::SplitBody;
+    byBody.body = body;
+    byBody.tools = {rod};
+    const ObjectId punched = document.addFeature(byBody);
+    REQUIRE(document.featureError(punched).empty());
+    found = volumes();
+    REQUIRE(found.size() == 3);
+    CHECK_THAT(found[0], WithinRel(pi * 25.0 * 10.0, 1e-6));
+    CHECK_THAT(found[1], WithinRel(pi * 25.0 * 30.0, 1e-6));
+    // A body is not split along itself.
+    byBody.tools = {body};
+    document.changeFeature(punched, byBody);
+    CHECK_THAT(document.featureError(punched), ContainsSubstring("itself"));
+}

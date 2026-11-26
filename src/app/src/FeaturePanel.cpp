@@ -644,8 +644,9 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_angle->setToolTip(tr("How far the faces tilt. Negative tilts them the other way."));
         break;
     case FeatureKind::SplitBody:
-        m_reference->setToolTip(tr("The plane to cut along: an origin plane or a construction "
-                                   "plane."));
+        m_reference->setToolTip(tr("What to cut along: an origin plane or a construction plane; "
+                                   "the curves of a sketch, pulled through the body; or the faces "
+                                   "of another body, a surface or a solid."));
         m_form->addRow(tr("Along"), m_reference);
         break;
     case FeatureKind::Repair:
@@ -796,6 +797,31 @@ void FeaturePanel::fillReferences() {
             std::find(m_feature.faces.begin(), m_feature.faces.end(), m_feature.reference) !=
                 m_feature.faces.end()) {
             index = m_reference->count() - 1;
+        }
+        m_reference->setCurrentIndex(index >= 0 ? index : 0);
+        return;
+    }
+    if (m_feature.kind == FeatureKind::SplitBody) {
+        // The curves of a sketch, or the faces of another body.
+        for (const document::SketchItem& sketch : m_document->sketches()) {
+            m_reference->addItem(tr("Sketch: %1").arg(QString::fromStdString(sketch.name)),
+                                 QStringLiteral("sketch:%1").arg(sketch.id.value));
+        }
+        for (const document::Body& body : m_document->bodies()) {
+            if (!body.shape.isNull() && body.id != m_feature.body) {
+                m_reference->addItem(tr("Body: %1").arg(QString::fromStdString(body.name)),
+                                     QStringLiteral("body:%1").arg(body.id.value));
+            }
+        }
+        QString chosen = QString::fromStdString(m_feature.reference);
+        if (m_feature.sketch.isValid()) {
+            chosen = QStringLiteral("sketch:%1").arg(m_feature.sketch.value);
+        } else if (!m_feature.tools.empty()) {
+            chosen = QStringLiteral("body:%1").arg(m_feature.tools.front().value);
+        }
+        int index = m_filling ? -1 : m_reference->findData(was);
+        if (index < 0) {
+            index = m_reference->findData(chosen);
         }
         m_reference->setCurrentIndex(index >= 0 ? index : 0);
         return;
@@ -1469,7 +1495,9 @@ bool FeaturePanel::hasInput() const {
         return m_feature.body.isValid() && !m_feature.faces.empty() &&
                !m_feature.reference.empty();
     case FeatureKind::SplitBody:
-        return m_feature.body.isValid() && !m_feature.reference.empty();
+        return m_feature.body.isValid() &&
+               (!m_feature.reference.empty() || m_feature.sketch.isValid() ||
+                !m_feature.tools.empty());
     case FeatureKind::Combine:
     case FeatureKind::Stitch:
         return m_feature.body.isValid() && !m_feature.tools.empty();
@@ -1755,8 +1783,22 @@ void FeaturePanel::readFields() {
         m_feature.turns = m_turns->value();
         m_feature.section = m_section->value();
     }
-    if (m_feature.kind == FeatureKind::Draft || m_feature.kind == FeatureKind::SplitBody) {
+    if (m_feature.kind == FeatureKind::Draft) {
         m_feature.reference = m_reference->currentData().toString().toStdString();
+    }
+    if (m_feature.kind == FeatureKind::SplitBody) {
+        // A plane by name, a sketch, or another body.
+        const QString along = m_reference->currentData().toString();
+        m_feature.reference.clear();
+        m_feature.sketch = {};
+        m_feature.tools.clear();
+        if (along.startsWith(QStringLiteral("sketch:"))) {
+            m_feature.sketch = document::ObjectId{along.mid(7).toULongLong()};
+        } else if (along.startsWith(QStringLiteral("body:"))) {
+            m_feature.tools = {document::ObjectId{along.mid(5).toULongLong()}};
+        } else {
+            m_feature.reference = along.toStdString();
+        }
     }
     if (m_feature.kind == FeatureKind::Axis) {
         m_feature.reference = m_reference->currentData().toString().toStdString();
@@ -2029,8 +2071,9 @@ void FeaturePanel::updatePicked() {
                    : tr("The thread runs all along the face clicked.");
         break;
     case FeatureKind::SplitBody:
-        text = tr("Click the body to cut in two, and choose the plane to cut along. Each piece "
-                  "becomes a body of its own.");
+        text = tr("Click the body to cut in two, and choose what to cut along: a plane, a "
+                  "sketch's curves, or another body's faces. Each piece becomes a body of its "
+                  "own.");
         break;
     case FeatureKind::Repair:
         text = tr("Sews loose faces together, turns faces to face out, and fixes edges and "

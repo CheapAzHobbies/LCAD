@@ -134,6 +134,19 @@ struct Region {
 /// Throws kernel::Error if the plane does not pass through the body.
 [[nodiscard]] NamedShape split(const NamedShape& body, const Plane& plane, const std::string& tag);
 
+/// Cuts a body in two along a face, or along faces that make one wall (a shell). A face whose
+/// surface goes on past its edges, flat or round, is taken on as far as the body reaches; others
+/// are taken as they are. The faces made by the cut are named `tag`/split/front on the side the
+/// first face's normal points to and `tag`/split/back on the other, with numbers where there are
+/// several, and the others keep their names. Throws kernel::Error if it does not cut the body
+/// in two.
+[[nodiscard]] NamedShape splitAlong(const NamedShape& body, const Shape& tool,
+                                    const std::string& tag);
+
+/// A wall for splitting along: each edge of `curves` pulled along `direction` as far as `reach`
+/// each way. Throws kernel::Error if there are no edges, or the direction is nothing.
+[[nodiscard]] Shape wallOf(const Shape& curves, const Vector& direction, double reach);
+
 /// A round pipe along a path: the edges of `path` joined end to end, as for sweep(). Its
 /// outside diameter is `diameter`; with a `wall` thickness short of the radius it is hollow,
 /// and with 0 solid. Its faces are named `tag`/side/outside, `tag`/side/inside, `tag`/start/pipe,

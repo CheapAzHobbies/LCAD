@@ -7,6 +7,11 @@
 #include <lcad/kernel/occt/Stoppable.h>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <gp_Cone.hxx>
+#include <Precision.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_BooleanOperation.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -24,6 +29,7 @@
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
+#include <BRepGProp_Face.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
@@ -83,6 +89,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -895,6 +902,194 @@ NamedShape split(const NamedShape& body, const Plane& plane, const std::string& 
             }
         }
         return named(pieces, namer, tag);
+    });
+}
+
+namespace {
+
+// A face taken on past its edges as far as `reach`, where its surface goes on: flat and round
+// faces. Others come back as they are.
+TopoDS_Face extendedFace(const TopoDS_Face& face, double reach) {
+    BRepAdaptor_Surface surface(face, false);
+    const GeomAbs_SurfaceType type = surface.GetType();
+    double u0 = 0.0;
+    double u1 = 0.0;
+    double v0 = 0.0;
+    double v1 = 0.0;
+    BRepTools::UVBounds(face, u0, u1, v0, v1);
+    const Handle(Geom_Surface) base = BRep_Tool::Surface(face);
+    double bu0 = 0.0;
+    double bu1 = 0.0;
+    double bv0 = 0.0;
+    double bv1 = 0.0;
+    base->Bounds(bu0, bu1, bv0, bv1);
+    const auto clampTo = [](double value, double low, double high) {
+        return std::max(low, std::min(high, value));
+    };
+    switch (type) {
+    case GeomAbs_Plane:
+        u0 -= reach;
+        u1 += reach;
+        v0 -= reach;
+        v1 += reach;
+        break;
+    case GeomAbs_Cylinder:
+    case GeomAbs_Cone:
+        // All the way round, and on along the axis.
+        u0 = 0.0;
+        u1 = 2.0 * std::numbers::pi;
+        v0 -= reach;
+        v1 += reach;
+        break;
+    case GeomAbs_Sphere:
+    case GeomAbs_Torus:
+        u0 = bu0;
+        u1 = bu1;
+        v0 = bv0;
+        v1 = bv1;
+        break;
+    default:
+        return face;
+    }
+    if (type == GeomAbs_Cone) {
+        // Not past the apex.
+        const gp_Cone cone = surface.Cone();
+        const double apex = -cone.RefRadius() / std::sin(cone.SemiAngle());
+        if (apex < 0.0 && v0 < apex) {
+            v0 = apex + 1e-6 * std::max(1.0, std::abs(apex));
+        } else if (apex > 0.0 && v1 > apex) {
+            v1 = apex - 1e-6 * std::max(1.0, std::abs(apex));
+        }
+    }
+    u0 = clampTo(u0, bu0, bu1);
+    u1 = clampTo(u1, bu0, bu1);
+    v0 = clampTo(v0, bv0, bv1);
+    v1 = clampTo(v1, bv0, bv1);
+    BRepBuilderAPI_MakeFace made(base, u0, u1, v0, v1, Precision::Confusion());
+    if (!made.IsDone()) {
+        return face;
+    }
+    TopoDS_Face extended = made.Face();
+    extended.Orientation(face.Orientation());
+    return extended;
+}
+
+} // namespace
+
+NamedShape splitAlong(const NamedShape& body, const Shape& tool, const std::string& tag) {
+    if (body.shape.isNull() || tool.isNull()) {
+        throw std::invalid_argument("splitAlong: there is no body, or nothing to split along");
+    }
+    return occt::guarded("split", [&] {
+        const TopoDS_Shape& shape = occt::unwrap(body.shape);
+        Bnd_Box box;
+        BRepBndLib::Add(shape, box);
+        const double reach = std::sqrt(box.SquareExtent()) * 2.0 + 1.0;
+        // The wall: the faces of the tool, taken on as far as the body reaches.
+        BRep_Builder builder;
+        TopoDS_Shell wall;
+        builder.MakeShell(wall);
+        std::vector<TopoDS_Face> faces;
+        for (TopExp_Explorer it(occt::unwrap(tool), TopAbs_FACE); it.More(); it.Next()) {
+            faces.push_back(TopoDS::Face(it.Current()));
+        }
+        if (faces.empty()) {
+            throw Error("split", "there is no face to split along");
+        }
+        if (faces.size() == 1) {
+            builder.Add(wall, extendedFace(faces.front(), reach));
+        } else {
+            for (const TopoDS_Face& face : faces) {
+                builder.Add(wall, face);
+            }
+        }
+        // A place just off the first face on each side, to say which side a half is.
+        const TopoDS_Face first = TopoDS::Face(TopExp_Explorer(wall, TopAbs_FACE).Current());
+        double u0 = 0.0;
+        double u1 = 0.0;
+        double v0 = 0.0;
+        double v1 = 0.0;
+        BRepTools::UVBounds(first, u0, u1, v0, v1);
+        gp_Pnt middle;
+        gp_Vec normal;
+        BRepGProp_Face(first).Normal((u0 + u1) / 2.0, (v0 + v1) / 2.0, middle, normal);
+        if (normal.Magnitude() < 1e-12) {
+            throw Error("split", "the face to split along has no side to it");
+        }
+        normal.Normalize();
+        const double whole = solidVolume(shape);
+        const double step = 1e-3 * std::max(1.0, std::sqrt(box.SquareExtent()));
+        TopoDS_Compound pieces;
+        builder.MakeCompound(pieces);
+        std::vector<std::unique_ptr<BRepAlgoAPI_Common>> cuts;
+        std::vector<std::unique_ptr<BRepPrimAPI_MakeHalfSpace>> sides;
+        int kept = 0;
+        for (const double sign : {1.0, -1.0}) {
+            sides.push_back(std::make_unique<BRepPrimAPI_MakeHalfSpace>(
+                wall, middle.Translated(normal * (sign * step))));
+            if (!sides.back()->IsDone()) {
+                throw Error("split", "the face to split along does not part space in two");
+            }
+            cuts.push_back(std::make_unique<BRepAlgoAPI_Common>(shape, sides.back()->Solid()));
+            BRepAlgoAPI_Common& cut = *cuts.back();
+            if (!cut.IsDone() || cut.HasErrors()) {
+                throw Error("split", "the body could not be cut along the face");
+            }
+            for (TopExp_Explorer it(cut.Shape(), TopAbs_SOLID); it.More(); it.Next()) {
+                if (solidVolume(it.Current()) > 1e-9 * std::max(whole, 1.0)) {
+                    builder.Add(pieces, it.Current());
+                    ++kept;
+                }
+            }
+        }
+        if (kept < 2) {
+            throw Error("split", "it does not pass through the body, so there is nothing to split");
+        }
+        const double total = solidVolume(pieces);
+        if (std::abs(total - whole) > 1e-6 * std::max(whole, 1.0)) {
+            throw Error("split", "the pieces do not add up to the body: it cannot be cut there");
+        }
+        requireValid(pieces, "split");
+        FaceNamer namer(pieces);
+        const char* names[] = {"/split/front", "/split/back"};
+        for (std::size_t i = 0; i < cuts.size(); ++i) {
+            namer.inherit(body, *cuts[i]);
+            for (TopExp_Explorer it(sides[i]->Solid(), TopAbs_FACE); it.More(); it.Next()) {
+                namer.offerAll(cuts[i]->Modified(it.Current()), tag + names[i]);
+            }
+        }
+        return named(pieces, namer, tag);
+    });
+}
+
+Shape wallOf(const Shape& curves, const Vector& direction, double reach) {
+    const double length = std::sqrt(direction.x * direction.x + direction.y * direction.y +
+                                    direction.z * direction.z);
+    if (length < 1e-12 || !(reach > 0.0)) {
+        throw Error("split", "a wall needs a direction and a reach");
+    }
+    return occt::guarded("make a wall", [&] {
+        const gp_Vec way(direction.x / length * reach, direction.y / length * reach,
+                         direction.z / length * reach);
+        BRep_Builder builder;
+        TopoDS_Shell wall;
+        builder.MakeShell(wall);
+        int count = 0;
+        for (TopExp_Explorer it(occt::unwrap(curves), TopAbs_EDGE); it.More(); it.Next()) {
+            // From `reach` behind to `reach` in front.
+            gp_Trsf back;
+            back.SetTranslation(way.Reversed());
+            const TopoDS_Shape start = BRepBuilderAPI_Transform(it.Current(), back, true).Shape();
+            BRepPrimAPI_MakePrism prism(start, way * 2.0);
+            for (TopExp_Explorer face(prism.Shape(), TopAbs_FACE); face.More(); face.Next()) {
+                builder.Add(wall, face.Current());
+                ++count;
+            }
+        }
+        if (count == 0) {
+            throw Error("split", "there are no curves to make a wall of");
+        }
+        return occt::wrap(wall);
     });
 }
 

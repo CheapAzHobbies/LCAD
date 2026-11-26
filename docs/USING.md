@@ -140,8 +140,12 @@ plane or a construction plane): the body keeps its size where the faces cross th
 narrows along the plane's normal, as a part that comes out of a mold must. A negative angle
 tilts them the other way.
 
-**Split Body** cuts the body you click in two along an origin plane or a construction plane.
-Each piece becomes a body of its own, and the features after it work on them as on any body.
+**Split Body** cuts the body you click in two. Choose what to cut along under **Along**: an
+origin plane or a construction plane; a sketch, whose curves are pulled straight through the body
+both ways, so a bent line cuts a corner off; or another body, whose faces do the cutting: a
+surface, or a solid, which cuts out the part of the body inside it. A flat or round face that
+stops short is taken on as far as the body reaches. Each piece becomes a body of its own, and the
+features after it work on them as on any body.
 
 **Combine** joins other bodies to a body, cuts them out of it, or keeps only what they share:
 choose the body in the panel and click the others in the 3D view. They are used up, unless you
