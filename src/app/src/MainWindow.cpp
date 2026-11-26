@@ -2246,7 +2246,7 @@ void MainWindow::createTopBar() {
                            "view.top", "view.bottom"}) {
         view->addAction(action(id));
     }
-    view->addAction(action("view.save"));
+    view->addActions({action("view.save"), action("view.goTo"), action("view.update")});
     view->addSeparator();
     view->addAction(action("view.perspective"));
     QMenu* style = view->addMenu(tr("&Display Style"));
