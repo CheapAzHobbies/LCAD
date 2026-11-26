@@ -601,6 +601,14 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["planeKind"] = toString(feature.planeKind);
         out["reference2"] = feature.reference2;
     }
+    // An axis placed other than along an edge or a face, and anything through corners.
+    if (feature.kind == FeatureKind::Axis && feature.axisKind != AxisKind::Along) {
+        out["axisKind"] = toString(feature.axisKind);
+        out["reference2"] = feature.reference2;
+    }
+    if (!feature.vertices.empty()) {
+        out["vertices"] = feature.vertices;
+    }
     // A revolve about an origin axis or a construction axis; the direction of a face moved;
     // the plane of a draft or a split.
     if (((feature.kind == FeatureKind::Revolve || feature.kind == FeatureKind::SurfaceRevolve) &&
@@ -769,6 +777,18 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
         }
         feature.planeKind = *known;
         feature.reference2 = stringMember(entry, "reference2", where, path);
+    }
+    if (feature.kind == FeatureKind::Axis && entry.contains("axisKind")) {
+        const std::string axisKind = stringMember(entry, "axisKind", where, path);
+        const auto known = axisKindFromString(axisKind);
+        if (!known.has_value()) {
+            damaged(path, where + " is an axis of the unknown kind \"" + axisKind + "\"");
+        }
+        feature.axisKind = *known;
+        feature.reference2 = stringMember(entry, "reference2", where, path);
+    }
+    if (entry.contains("vertices")) {
+        feature.vertices = stringsMember(entry, "vertices", where, path);
     }
     if (((feature.kind == FeatureKind::Revolve || feature.kind == FeatureKind::SurfaceRevolve) &&
          entry.contains("reference")) ||

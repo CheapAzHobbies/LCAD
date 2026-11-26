@@ -66,9 +66,10 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Plane at angle, about an axis or an edge | Have | Since 2026-11-12. |
 | Midplane, between parallel planes or halving an angle | Have | Since 2026-11-12. |
 | Offset from another construction plane | Have | Since 2026-11-12. |
-| Tangent plane, plane through three points, plane along a path | No | |
+| Tangent plane, plane through three points | Have | Since 2026-11-25: tangent at a corner or at the middle of the face. |
+| Plane along a path | No | |
 | Axis: origin, along an edge, through a cylinder, cone, or torus | Have | |
-| Axis through two points, two planes, perpendicular to a face | No | |
+| Axis through two points, two planes, perpendicular to a face | Have | Since 2026-11-25. |
 | Construction points | No | |
 | Rename, hide, edit planes and axes | Have | |
 | Drag a plane's offset in the 3D view | Have | Since 2026-11-13, with the pull's arrow. |
@@ -190,3 +191,5 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 6. **Inspection:** a section view in the 3D view. Done.
 7. **Surfaces:** surface pull, patch, stitch, and thicken. Done. Surface trimming, lofting,
    and offsetting next; then the rest.
+8. **Construction geometry, second round:** planes through three points and tangent to a face;
+   axes through two points, where two planes meet, and square to a face. Done.

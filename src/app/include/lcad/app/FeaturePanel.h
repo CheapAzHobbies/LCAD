@@ -79,6 +79,12 @@ public:
     /// Plane at an angle: a straight edge of a body, by name, picked to turn about.
     void setPickedEdge(document::ObjectId body, const std::string& name,
                        const QString& description);
+    /// Planes and axes through corners, and those square to a face at one: a corner of a body,
+    /// by name, picked in the 3D view. A corner of another body starts over with that one; once
+    /// there are as many as it takes, the next takes the place of the first.
+    void addPickedCorner(document::ObjectId body, const std::string& name);
+    /// How many corners the feature takes from the 3D view as it is now: 0 for none.
+    [[nodiscard]] std::size_t cornersWanted() const;
 
     /// Whether what the feature needs has been picked.
     [[nodiscard]] bool hasInput() const;
@@ -190,6 +196,14 @@ private:
     // it is halfway to. What was picked in the 3D view for that.
     QComboBox* m_planeKind = nullptr;
     QComboBox* m_planeSecond = nullptr;
+    // Axis: how it is placed.
+    QComboBox* m_axisKind = nullptr;
+    // Planes and axes through corners: how many are picked, and a button to start over.
+    QWidget* m_cornersRow = nullptr;
+    QLabel* m_corners = nullptr;
+    QPushButton* m_clearCorners = nullptr;
+    void addCornersRow();
+    void showCorners();
     std::string m_secondName;
     QString m_secondDescription;
     // Hole

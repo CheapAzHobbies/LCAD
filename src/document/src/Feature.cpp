@@ -131,12 +131,41 @@ const char* toString(PlaneKind kind) {
         return "At Angle";
     case PlaneKind::Midplane:
         return "Midplane";
+    case PlaneKind::ThroughPoints:
+        return "Three Points";
+    case PlaneKind::Tangent:
+        return "Tangent";
     }
     return "Offset";
 }
 
 std::optional<PlaneKind> planeKindFromString(const std::string& name) {
-    for (const PlaneKind kind : {PlaneKind::Offset, PlaneKind::AtAngle, PlaneKind::Midplane}) {
+    for (const PlaneKind kind : {PlaneKind::Offset, PlaneKind::AtAngle, PlaneKind::Midplane,
+                                 PlaneKind::ThroughPoints, PlaneKind::Tangent}) {
+        if (name == toString(kind)) {
+            return kind;
+        }
+    }
+    return std::nullopt;
+}
+
+const char* toString(AxisKind kind) {
+    switch (kind) {
+    case AxisKind::Along:
+        return "Along";
+    case AxisKind::ThroughPoints:
+        return "Two Points";
+    case AxisKind::PlanesMeet:
+        return "Two Planes";
+    case AxisKind::Normal:
+        return "Normal";
+    }
+    return "Along";
+}
+
+std::optional<AxisKind> axisKindFromString(const std::string& name) {
+    for (const AxisKind kind :
+         {AxisKind::Along, AxisKind::ThroughPoints, AxisKind::PlanesMeet, AxisKind::Normal}) {
         if (name == toString(kind)) {
             return kind;
         }

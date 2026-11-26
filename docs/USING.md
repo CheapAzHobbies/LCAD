@@ -357,6 +357,10 @@ sketch on. Choose its **Type** in the panel:
 - **Midplane:** halfway between two planes: click two flat faces, or pick planes in the panel.
   If the two are not parallel, it halves the angle between them, through the line where they
   meet.
+- **Three Points:** through three corners of a body: click them in the 3D view. The panel counts
+  them; **Clear** lets them go to pick others.
+- **Tangent:** touching a face, a round one most often: click the face, and then, if you like,
+  a corner. It touches the face where the face comes nearest the corner, or at its middle.
 
 Planes are listed under **Construction** in the browser (uncheck to hide, double-click to
 change), and drawn in amber. To sketch on one, select it in the browser and click **New
@@ -365,9 +369,17 @@ Sketch**, or click **New Sketch** and then the plane in the 3D view.
 A sketch drawn on a construction plane, or started on a flat face of a body, follows it: move
 the plane or change the body, and the sketch and what was made from it move too.
 
-**Axis** (under **Create**, and the plane button in the toolbar) adds a construction axis: pick
-an origin axis in the panel, or click a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
-listed under **Construction** too and drawn as dashed amber lines. A revolve can turn about one,
+**Axis** (under **Create**, and the plane button in the toolbar) adds a construction axis. Choose
+its **Type**:
+
+- **Along:** pick an origin axis in the panel, or click a straight edge, or a round edge or face
+  (the axis of a hole or a rod), in the 3D view.
+- **Two Points:** through two corners of a body, clicked in the 3D view.
+- **Two Planes:** where two planes meet: pick them in the panel, or click flat faces.
+- **Normal:** square to a face you click, at its middle, or where it comes nearest a corner you
+  click next.
+
+Axes are listed under **Construction** too and drawn as dashed amber lines. A revolve can turn about one,
 and a pattern go along or around one; when the edge or face it runs along moves, the axis and
 what uses it follow.
 

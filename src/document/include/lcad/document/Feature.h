@@ -118,10 +118,31 @@ enum class PlaneKind {
     /// Halfway between `reference` and `reference2`: between them if they are parallel, and
     /// otherwise halving the angle between them, through the line where they meet.
     Midplane,
+    /// Through the three corners `vertices` names.
+    ThroughPoints,
+    /// Touching the face `reference`, a round one most often, at the place on it nearest the
+    /// corner `vertices` names, or at the middle of the face with none.
+    Tangent,
 };
 
 [[nodiscard]] const char* toString(PlaneKind kind);
 [[nodiscard]] std::optional<PlaneKind> planeKindFromString(const std::string& name);
+
+/// How a construction axis is placed.
+enum class AxisKind {
+    /// Along the edge or face `reference`, or an origin axis: see kernel::axisOf.
+    Along,
+    /// Through the two corners `vertices` names.
+    ThroughPoints,
+    /// Where the planes `reference` and `reference2` meet.
+    PlanesMeet,
+    /// Square to the face `reference`, at the place on it nearest the corner `vertices` names,
+    /// or at the middle of the face with none.
+    Normal,
+};
+
+[[nodiscard]] const char* toString(AxisKind kind);
+[[nodiscard]] std::optional<AxisKind> axisKindFromString(const std::string& name);
 
 /// What a hole looks like at the top.
 enum class HoleKind {
@@ -237,6 +258,11 @@ struct Feature {
     bool visible = true;
     /// Plane: how it is placed.
     PlaneKind planeKind = PlaneKind::Offset;
+    /// Axis: how it is placed.
+    AxisKind axisKind = AxisKind::Along;
+    /// Planes and axes through corners: the corners of `body`, by name (see
+    /// kernel::vertexNames), or "O" for the origin.
+    std::vector<std::string> vertices;
     // Loft
     /// The sections after the first, in the order the loft goes through them.
     std::vector<LoftSection> sections;

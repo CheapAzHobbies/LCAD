@@ -5,6 +5,7 @@
 #include <lcad/document/SketchShapes.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/Measure.h>
+#include <lcad/kernel/Modeling.h>
 #include <lcad/kernel/SubShapes.h>
 
 #include <algorithm>
@@ -619,6 +620,122 @@ std::vector<kernel::NamedShape> solidsOf(const kernel::NamedShape& result, const
     return solids;
 }
 
+namespace {
+
+double dot(const kernel::Vector& a, const kernel::Vector& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+kernel::Vector cross(const kernel::Vector& a, const kernel::Vector& b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+kernel::Vector scaled(const kernel::Vector& a, double k) {
+    return {a.x * k, a.y * k, a.z * k};
+}
+kernel::Vector plus(const kernel::Vector& a, const kernel::Vector& b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+kernel::Vector unitOf(const kernel::Vector& a) {
+    const double length = std::sqrt(dot(a, a));
+    return length > 1e-12 ? scaled(a, 1.0 / length) : a;
+}
+kernel::Vector between(const kernel::Point& from, const kernel::Point& to) {
+    return {to.x - from.x, to.y - from.y, to.z - from.z};
+}
+kernel::Point moved(const kernel::Point& p, const kernel::Vector& by) {
+    return {p.x + by.x, p.y + by.y, p.z + by.z};
+}
+
+// A direction in the plane square to the normal, kept as near to `toward` as can be.
+kernel::Vector inPlane(const kernel::Vector& normal, const kernel::Vector& toward) {
+    kernel::Vector x = plus(toward, scaled(normal, -dot(toward, normal)));
+    if (dot(x, x) < 1e-18) {
+        x = std::abs(normal.x) < 0.9 ? kernel::Vector{1.0, 0.0, 0.0}
+                                     : kernel::Vector{0.0, 1.0, 0.0};
+        x = plus(x, scaled(normal, -dot(x, normal)));
+    }
+    return unitOf(x);
+}
+
+} // namespace
+
+PlaneState referencePlane(const std::string& name, const Feature& feature, const Document& document,
+                          const BodyStates& bodies);
+
+namespace {
+
+// A corner a construction plane or axis goes through: one of `feature`'s body, by name, or the
+// origin, "O".
+kernel::Point pointNamed(const std::string& name, const Feature& feature, const Document& document,
+                         const BodyStates& bodies) {
+    if (name == "O") {
+        return {0.0, 0.0, 0.0};
+    }
+    const auto found = bodies.find(feature.body);
+    const Body* body = document.findBody(feature.body);
+    if (found == bodies.end() || found->second.shape.isNull()) {
+        throw FeatureFailure(body != nullptr ? "The body its corners are on, " + body->name +
+                                                   ", does not exist at this point in the timeline."
+                                             : std::string("The body its corners are on is gone."));
+    }
+    const int index = kernel::findVertex(found->second, name);
+    if (index < 0) {
+        throw FeatureFailure(
+            "A corner it goes through no longer exists: " + describeName(document, name) + ".");
+    }
+    const auto box = kernel::boundingBox(
+        kernel::subShape(found->second.shape, kernel::SubShapeKind::Vertex, index));
+    if (!box.has_value()) {
+        throw FeatureFailure("A corner it goes through has no place.");
+    }
+    return box->min;
+}
+
+// A face of `feature`'s body by name, for a plane or an axis placed on it.
+kernel::Shape faceNamed(const std::string& name, const Feature& feature, const Document& document,
+                        const BodyStates& bodies) {
+    const auto found = bodies.find(feature.body);
+    const Body* body = document.findBody(feature.body);
+    if (found == bodies.end() || found->second.shape.isNull()) {
+        throw FeatureFailure(body != nullptr ? "The body it is placed on, " + body->name +
+                                                   ", does not exist at this point in the timeline."
+                                             : std::string("The body it is placed on is gone."));
+    }
+    if (name.empty()) {
+        throw FeatureFailure("It has no face to be placed on.");
+    }
+    const int index = kernel::findFace(found->second, name);
+    if (index < 0) {
+        throw FeatureFailure(
+            "The face it is placed on no longer exists: " + describeName(document, name) + ".");
+    }
+    return kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, index);
+}
+
+kernel::Point middleOf(const kernel::BoundingBox& box) {
+    return {(box.min.x + box.max.x) / 2.0, (box.min.y + box.max.y) / 2.0,
+            (box.min.z + box.max.z) / 2.0};
+}
+
+// Square to a face, at the place on it nearest the feature's corner, or nearest the middle of
+// the face with no corner.
+kernel::Axis normalOn(const Feature& feature, const Document& document, const BodyStates& bodies) {
+    const kernel::Shape face = faceNamed(feature.reference, feature, document, bodies);
+    kernel::Point near{0.0, 0.0, 0.0};
+    if (!feature.vertices.empty()) {
+        near = pointNamed(feature.vertices.front(), feature, document, bodies);
+    } else if (const auto box = kernel::boundingBox(face)) {
+        near = middleOf(*box);
+    }
+    const auto normal = kernel::normalAt(face, near);
+    if (!normal.has_value()) {
+        throw FeatureFailure("The face " + describeName(document, feature.reference) +
+                             " has no direction square to it there.");
+    }
+    return *normal;
+}
+
+} // namespace
+
 AxisState placeAxis(const Feature& feature, const Document& document, const BodyStates& bodies) {
     AxisState state;
     std::optional<kernel::BoundingBox> extent;
@@ -635,7 +752,47 @@ AxisState placeAxis(const Feature& feature, const Document& document, const Body
         extent->max = {std::max(extent->max.x, box->max.x), std::max(extent->max.y, box->max.y),
                        std::max(extent->max.z, box->max.z)};
     };
-    if (feature.reference == "X" || feature.reference == "Y" || feature.reference == "Z") {
+    if (feature.axisKind == AxisKind::ThroughPoints) {
+        if (feature.vertices.size() != 2) {
+            throw FeatureFailure("It goes through two corners, and has " +
+                                 std::to_string(feature.vertices.size()) + ".");
+        }
+        const kernel::Point a = pointNamed(feature.vertices[0], feature, document, bodies);
+        const kernel::Point b = pointNamed(feature.vertices[1], feature, document, bodies);
+        const kernel::Vector d = between(a, b);
+        if (dot(d, d) < 1e-18) {
+            throw FeatureFailure("Its two corners are in the same place.");
+        }
+        state.axis = {a, unitOf(d)};
+        widen(kernel::BoundingBox{{std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z)},
+                                  {std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z)}});
+    } else if (feature.axisKind == AxisKind::PlanesMeet) {
+        const PlaneState first = referencePlane(feature.reference, feature, document, bodies);
+        const PlaneState second = referencePlane(feature.reference2, feature, document, bodies);
+        const kernel::Vector n1 = first.plane.normal;
+        const kernel::Vector n2 = second.plane.normal;
+        const kernel::Vector line = cross(n1, n2);
+        if (dot(line, line) < 1e-12) {
+            throw FeatureFailure("Its two planes are parallel, so they do not meet.");
+        }
+        const double d1 = dot(between({0.0, 0.0, 0.0}, first.plane.origin), n1);
+        const double d2 = dot(between({0.0, 0.0, 0.0}, second.plane.origin), n2);
+        const double c = dot(n1, n2);
+        const double det = 1.0 - c * c;
+        const kernel::Vector p =
+            plus(scaled(n1, (d1 - d2 * c) / det), scaled(n2, (d2 - d1 * c) / det));
+        state.axis = {{p.x, p.y, p.z}, unitOf(line)};
+        // Drawn by where the two are drawn, as long as the larger.
+        const kernel::Point m = {(first.center.x + second.center.x) / 2.0,
+                                 (first.center.y + second.center.y) / 2.0,
+                                 (first.center.z + second.center.z) / 2.0};
+        const double half = std::max(first.size, second.size) / 2.0 / 1.3 / std::sqrt(3.0);
+        widen(kernel::BoundingBox{{m.x - half, m.y - half, m.z - half},
+                                  {m.x + half, m.y + half, m.z + half}});
+    } else if (feature.axisKind == AxisKind::Normal) {
+        state.axis = normalOn(feature, document, bodies);
+        widen(kernel::boundingBox(faceNamed(feature.reference, feature, document, bodies)));
+    } else if (feature.reference == "X" || feature.reference == "Y" || feature.reference == "Z") {
         state.axis = axisNamed(feature.reference, kernel::NamedShape{}, document);
         // Drawn across the model.
         for (const auto& entry : bodies) {
@@ -773,44 +930,49 @@ PlaneState referencePlane(const std::string& name, const Feature& feature,
     return state;
 }
 
-namespace {
-
-double dot(const kernel::Vector& a, const kernel::Vector& b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-kernel::Vector cross(const kernel::Vector& a, const kernel::Vector& b) {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-kernel::Vector scaled(const kernel::Vector& a, double k) {
-    return {a.x * k, a.y * k, a.z * k};
-}
-kernel::Vector plus(const kernel::Vector& a, const kernel::Vector& b) {
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-kernel::Vector unitOf(const kernel::Vector& a) {
-    const double length = std::sqrt(dot(a, a));
-    return length > 1e-12 ? scaled(a, 1.0 / length) : a;
-}
-kernel::Vector between(const kernel::Point& from, const kernel::Point& to) {
-    return {to.x - from.x, to.y - from.y, to.z - from.z};
-}
-kernel::Point moved(const kernel::Point& p, const kernel::Vector& by) {
-    return {p.x + by.x, p.y + by.y, p.z + by.z};
-}
-
-// A direction in the plane square to the normal, kept as near to `toward` as can be.
-kernel::Vector inPlane(const kernel::Vector& normal, const kernel::Vector& toward) {
-    kernel::Vector x = plus(toward, scaled(normal, -dot(toward, normal)));
-    if (dot(x, x) < 1e-18) {
-        x = std::abs(normal.x) < 0.9 ? kernel::Vector{1.0, 0.0, 0.0} : kernel::Vector{0.0, 1.0, 0.0};
-        x = plus(x, scaled(normal, -dot(x, normal)));
-    }
-    return unitOf(x);
-}
-
-} // namespace
-
 PlaneState placePlane(const Feature& feature, const Document& document, const BodyStates& bodies) {
+    if (feature.planeKind == PlaneKind::ThroughPoints) {
+        if (feature.vertices.size() != 3) {
+            throw FeatureFailure("It goes through three corners, and has " +
+                                 std::to_string(feature.vertices.size()) + ".");
+        }
+        std::vector<kernel::Point> at;
+        for (const std::string& name : feature.vertices) {
+            at.push_back(pointNamed(name, feature, document, bodies));
+        }
+        const kernel::Vector first = between(at[0], at[1]);
+        const kernel::Vector second = between(at[0], at[2]);
+        const kernel::Vector normal = cross(first, second);
+        const double reach =
+            std::max({std::sqrt(dot(first, first)), std::sqrt(dot(second, second)),
+                      std::sqrt(dot(between(at[1], at[2]), between(at[1], at[2])))});
+        if (dot(normal, normal) < 1e-12 * std::max(1.0, reach * reach * reach * reach)) {
+            throw FeatureFailure("Its three corners lie on one line, so no one plane goes "
+                                 "through them.");
+        }
+        PlaneState state;
+        state.center = {(at[0].x + at[1].x + at[2].x) / 3.0, (at[0].y + at[1].y + at[2].y) / 3.0,
+                        (at[0].z + at[1].z + at[2].z) / 3.0};
+        const kernel::Vector n = unitOf(normal);
+        state.plane = kernel::makePlane(state.center, n, inPlane(n, first));
+        state.size = std::max(20.0, 1.5 * reach);
+        return state;
+    }
+    if (feature.planeKind == PlaneKind::Tangent) {
+        const kernel::Axis normal = normalOn(feature, document, bodies);
+        PlaneState state;
+        state.center = normal.origin;
+        state.plane = kernel::makePlane(normal.origin, normal.direction,
+                                        inPlane(normal.direction, {0.0, 0.0, 1.0}));
+        const kernel::Shape face = faceNamed(feature.reference, feature, document, bodies);
+        if (const auto box = kernel::boundingBox(face)) {
+            const double dx = box->max.x - box->min.x;
+            const double dy = box->max.y - box->min.y;
+            const double dz = box->max.z - box->min.z;
+            state.size = std::max(20.0, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        return state;
+    }
     PlaneState state = referencePlane(feature.reference, feature, document, bodies);
     kernel::Plane base = state.plane;
     const auto dropCenter = [&state](const kernel::Plane& onto) {
@@ -888,6 +1050,10 @@ PlaneState placePlane(const Feature& feature, const Document& document, const Bo
         state.size = std::max(state.size, other.size);
         break;
     }
+    case PlaneKind::ThroughPoints:
+    case PlaneKind::Tangent:
+        // Placed above, before there was a plane to start from.
+        break;
     }
     dropCenter(base);
     state.plane = base;
@@ -936,9 +1102,28 @@ std::string tagOf(const Body& body) {
 }
 
 std::string describeName(const Document& document, const std::string& name) {
+    if (name == "O") {
+        return "the origin";
+    }
     // An edge is named by the faces it lies between: "a|b#0".
     const std::size_t hash = name.rfind('#');
     const std::string faces = hash == std::string::npos ? name : name.substr(0, hash);
+    // And a corner by the faces that meet at it: "a&b&c#0".
+    if (faces.find('&') != std::string::npos && faces.find('|') == std::string::npos) {
+        std::vector<std::string> around;
+        std::size_t from = 0;
+        for (std::size_t at = faces.find('&'); at != std::string::npos;
+             at = faces.find('&', from)) {
+            around.push_back(describeFace(document, faces.substr(from, at - from)));
+            from = at + 1;
+        }
+        around.push_back(describeFace(document, faces.substr(from)));
+        std::string list;
+        for (std::size_t i = 0; i < around.size(); ++i) {
+            list += (i == 0 ? "" : i + 1 == around.size() ? " and " : ", ") + around[i];
+        }
+        return "the corner where " + list + " meet";
+    }
     const std::size_t bar = faces.find('|');
     if (bar == std::string::npos) {
         return describeFace(document, faces);
