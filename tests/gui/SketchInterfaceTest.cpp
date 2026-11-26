@@ -1211,14 +1211,16 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     for (const char* tool :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline",
-          "sketch.construction", "sketch.trim", "sketch.extend", "sketch.chamfer",
+          "sketch.construction", "sketch.trim", "sketch.chamfer",
           "sketch.offset", "sketch.mirror", "sketch.project", "sketch.dimension",
           "sketch.finish"}) {
         QVERIFY2(shown.contains(QLatin1String(tool)), tool);
     }
     // Rectangles, circles, and arcs drawn other ways are in the list beside each.
     const std::pair<const char*, QStringList> variants[] = {
-        {"rectangleButton", {QStringLiteral("sketch.centerRectangle")}},
+        {"rectangleButton",
+         {QStringLiteral("sketch.centerRectangle"), QStringLiteral("sketch.rectangle3")}},
+        {"cutButton", {QStringLiteral("sketch.extend"), QStringLiteral("sketch.break")}},
         {"circleButton", {QStringLiteral("sketch.circle3")}},
         {"arcButton", {QStringLiteral("sketch.arc3"), QStringLiteral("sketch.tangentArc")}},
         {"mirrorButton",
