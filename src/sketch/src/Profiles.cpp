@@ -9,7 +9,10 @@
 //
 // For profiles(), curves are taken to meet only at their ends: two that cross somewhere in the
 // middle are not split there. regions() does split the outlines that cross, at the crossings, and
-// walks the pieces the same way, for the areas they cut each other into.
+// walks the pieces the same way, for the areas they cut each other into. It does the same with
+// lines and arcs that are in no outline, wherever they cross or touch: sides that run on past a
+// corner close an area all the same, as in other CAD programs, and a line across a circle cuts
+// it in two. What sticks out past the last crossing bounds nothing and is left out.
 
 #include <lcad/sketch/Sketch.h>
 
@@ -84,8 +87,9 @@ struct Walk {
 
 double areaTerm(const Edge& edge, bool forward);
 
-// The walks around the regions that the alive edges divide the plane into.
-std::vector<Walk> walksOf(const std::vector<Edge>& edges, std::size_t nodes) {
+// The walks around the regions that the alive edges divide the plane into, or with `outside`
+// the walks around the outsides of the figures they make, with areas below zero.
+std::vector<Walk> walksOf(const std::vector<Edge>& edges, std::size_t nodes, bool outside) {
     // Around each node, the directions that leave it, counter-clockwise.
     std::vector<std::vector<Outgoing>> around(nodes);
     for (std::size_t i = 0; i < edges.size(); ++i) {
@@ -137,7 +141,7 @@ std::vector<Walk> walksOf(const std::vector<Edge>& edges, std::size_t nodes) {
             }
         }
         // Counter-clockwise walks enclose a region. The clockwise one is the outside.
-        if (closed && walk.area > joinTolerance) {
+        if (closed && (outside ? walk.area < -joinTolerance : walk.area > joinTolerance)) {
             found.push_back(std::move(walk));
         }
     }
@@ -236,7 +240,7 @@ std::vector<Profile> Sketch::profiles() const {
         }
     }
 
-    for (const Walk& walk : walksOf(edges, nodes.size())) {
+    for (const Walk& walk : walksOf(edges, nodes.size(), false)) {
         Profile outline;
         outline.area = walk.area;
         for (const std::size_t half : walk.halves) {
@@ -479,7 +483,49 @@ std::vector<Region> Sketch::regions() const {
         }
         return false;
     };
-    std::vector<std::size_t> parent(count);
+
+    // Lines and arcs in no outline. Where they cross each other or an outline they can close
+    // areas of their own, as the sides of a rectangle that run on past its corners do, or cut an
+    // outline's area in pieces, as a line across a circle does. Elsewhere they make no area.
+    std::vector<EntityId> loose;
+    {
+        std::vector<EntityId> used;
+        for (const Profile& outline : outlines) {
+            used.insert(used.end(), outline.curves.begin(), outline.curves.end());
+        }
+        std::sort(used.begin(), used.end());
+        for (const Entity& item : m_entities) {
+            if (!item.construction &&
+                (item.kind == EntityKind::Line || item.kind == EntityKind::Arc) &&
+                !std::binary_search(used.begin(), used.end(), item.id)) {
+                loose.push_back(item.id);
+            }
+        }
+    }
+    const auto endsMeet = [this](EntityId a, EntityId b) {
+        const Entity* p = find(a);
+        const Entity* q = find(b);
+        if (p->kind == EntityKind::Circle || q->kind == EntityKind::Circle) {
+            return false;
+        }
+        for (const EntityId u : {p->start, p->end}) {
+            for (const EntityId v : {q->start, q->end}) {
+                const Point2 x = position(u);
+                const Point2 y = position(v);
+                if (std::hypot(x.x - y.x, x.y - y.y) <= joinTolerance * 10.0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    const auto touching = [&](EntityId a, EntityId b) {
+        return endsMeet(a, b) || !intersections(*this, a, b).empty();
+    };
+
+    // Outlines first, then the loose curves: what touches what.
+    const std::size_t items = count + loose.size();
+    std::vector<std::size_t> parent(items);
     std::iota(parent.begin(), parent.end(), std::size_t{0});
     const auto root = [&parent](std::size_t i) {
         while (parent[i] != i) {
@@ -487,47 +533,75 @@ std::vector<Region> Sketch::regions() const {
         }
         return i;
     };
-    bool any = false;
+    // The same for outlines that cross each other, apart from any loose curves.
+    std::vector<std::size_t> crossParent(count);
+    std::iota(crossParent.begin(), crossParent.end(), std::size_t{0});
+    const auto crossRoot = [&crossParent](std::size_t i) {
+        while (crossParent[i] != i) {
+            i = crossParent[i] = crossParent[crossParent[i]];
+        }
+        return i;
+    };
+    bool crossed = false;
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) {
             if (crossing(i, j)) {
                 parent[root(i)] = root(j);
-                any = true;
+                crossParent[crossRoot(i)] = crossRoot(j);
+                crossed = true;
             }
         }
     }
-    if (!any) {
-        return whole;
-    }
-
-    std::vector<Region> found;
-    for (std::size_t first = 0; first < count; ++first) {
-        if (root(first) != first) {
-            continue;
-        }
-        std::vector<std::size_t> group;
+    for (std::size_t k = 0; k < loose.size(); ++k) {
         for (std::size_t i = 0; i < count; ++i) {
-            if (root(i) == first) {
-                group.push_back(i);
+            const bool meets = std::any_of(
+                outlines[i].curves.begin(), outlines[i].curves.end(),
+                [&](EntityId curve) { return simple(curve) && touching(loose[k], curve); });
+            if (meets) {
+                parent[root(i)] = root(count + k);
             }
         }
-        std::vector<EntityId> curves;
-        for (const std::size_t i : group) {
-            curves.insert(curves.end(), outlines[i].curves.begin(), outlines[i].curves.end());
-        }
-        std::sort(curves.begin(), curves.end());
-        curves.erase(std::unique(curves.begin(), curves.end()), curves.end());
-        // Crossings can only be worked out for lines, circles, and arcs.
-        if (group.size() < 2 || !std::all_of(curves.begin(), curves.end(), simple)) {
-            for (const std::size_t i : group) {
-                found.push_back(whole[i]);
+        for (std::size_t m = k + 1; m < loose.size(); ++m) {
+            if (touching(loose[k], loose[m])) {
+                parent[root(count + k)] = root(count + m);
             }
-            continue;
         }
+    }
 
-        // The pieces the curves are cut into, as the edges of a graph.
+    // The curves of a group, and the pieces they cut each other into as the edges of a graph.
+    struct Group {
+        std::vector<std::size_t> outlines;
+        std::vector<EntityId> strays;
+        std::vector<EntityId> curves;
         std::vector<Edge> edges;
         std::vector<Point2> nodes;
+    };
+    const auto gather = [&](std::size_t first) {
+        Group group;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (root(i) == first) {
+                group.outlines.push_back(i);
+            }
+        }
+        for (std::size_t k = 0; k < loose.size(); ++k) {
+            if (root(count + k) == first) {
+                group.strays.push_back(loose[k]);
+            }
+        }
+        group.curves = group.strays;
+        for (const std::size_t i : group.outlines) {
+            group.curves.insert(group.curves.end(), outlines[i].curves.begin(),
+                                outlines[i].curves.end());
+        }
+        std::sort(group.curves.begin(), group.curves.end());
+        group.curves.erase(std::unique(group.curves.begin(), group.curves.end()),
+                           group.curves.end());
+        return group;
+    };
+    const auto arrange = [&](Group& group) {
+        std::vector<Edge>& edges = group.edges;
+        std::vector<Point2>& nodes = group.nodes;
+        const std::vector<EntityId>& curves = group.curves;
         const auto nodeAt = [&nodes](Point2 at) {
             for (std::size_t i = 0; i < nodes.size(); ++i) {
                 if (std::hypot(nodes[i].x - at.x, nodes[i].y - at.y) <= joinTolerance * 10.0) {
@@ -590,14 +664,14 @@ std::vector<Region> Sketch::regions() const {
                       [&angleOf](Point2 p, Point2 q) { return angleOf(p) < angleOf(q); });
             const std::size_t pieces = item.kind == EntityKind::Arc ? cuts.size() - 1 : cuts.size();
             for (std::size_t i = 0; i < pieces; ++i) {
-                const Point2 from = cuts[i];
-                const Point2 to = cuts[(i + 1) % cuts.size()];
-                if (std::hypot(from.x - to.x, from.y - to.y) > joinTolerance * 10.0) {
+                const Point2 start = cuts[i];
+                const Point2 end = cuts[(i + 1) % cuts.size()];
+                if (std::hypot(start.x - end.x, start.y - end.y) > joinTolerance * 10.0) {
                     Edge edge;
                     edge.curve = curve;
                     edge.isArc = true;
-                    edge.start = from;
-                    edge.end = to;
+                    edge.start = start;
+                    edge.end = end;
                     edge.center = center;
                     edges.push_back(edge);
                 }
@@ -607,21 +681,192 @@ std::vector<Region> Sketch::regions() const {
             edge.from = nodeAt(edge.start);
             edge.to = nodeAt(edge.end);
         }
+        // Pieces of outlines all go round some area. Pieces of loose curves need not: the bit of
+        // a side that runs on past a corner has a loose end, and a line from one figure to
+        // another goes round nothing, with an area on the same side of it both ways. Neither
+        // bounds anything, and taking one away may leave another so.
+        if (group.strays.empty()) {
+            return;
+        }
+        for (bool again = true; again;) {
+            again = false;
+            for (bool changed = true; changed;) {
+                changed = false;
+                std::vector<int> degree(nodes.size(), 0);
+                for (const Edge& edge : edges) {
+                    if (edge.alive) {
+                        ++degree[static_cast<std::size_t>(edge.from)];
+                        ++degree[static_cast<std::size_t>(edge.to)];
+                    }
+                }
+                for (Edge& edge : edges) {
+                    if (edge.alive && (degree[static_cast<std::size_t>(edge.from)] < 2 ||
+                                       degree[static_cast<std::size_t>(edge.to)] < 2)) {
+                        edge.alive = false;
+                        changed = true;
+                    }
+                }
+            }
+            for (const bool outside : {false, true}) {
+                for (const Walk& walk : walksOf(edges, nodes.size(), outside)) {
+                    std::vector<std::size_t> used;
+                    for (const std::size_t half : walk.halves) {
+                        used.push_back(half / 2);
+                    }
+                    std::sort(used.begin(), used.end());
+                    for (std::size_t i = 1; i < used.size(); ++i) {
+                        if (used[i] == used[i - 1] && edges[used[i]].alive) {
+                            edges[used[i]].alive = false;
+                            again = true;
+                        }
+                    }
+                }
+            }
+        }
+    };
+    // Groups whose loose curves bound some area, by their root. A group with only loose curves
+    // that bound nothing, or with curves whose crossings cannot be worked out, is as it would be
+    // without its loose curves.
+    std::vector<bool> strayGroup(items, false);
+    std::map<std::size_t, Group> arranged;
+    // The outsides of those groups: each a hole in whatever region it lies in.
+    struct Rim {
+        std::vector<CurvePiece> pieces;
+        std::vector<Point2> polygon;
+        double area = 0.0;
+    };
+    std::vector<Rim> rims;
+    for (std::size_t k = 0; k < loose.size(); ++k) {
+        const std::size_t first = root(count + k);
+        if (arranged.count(first) > 0) {
+            continue;
+        }
+        Group group = gather(first);
+        if (!std::all_of(group.curves.begin(), group.curves.end(), simple)) {
+            arranged.emplace(first, Group{});
+            continue;
+        }
+        arrange(group);
+        strayGroup[first] = std::any_of(group.edges.begin(), group.edges.end(), [&](const Edge& e) {
+            return e.alive && std::find(group.strays.begin(), group.strays.end(), e.curve) !=
+                                  group.strays.end();
+        });
+        if (strayGroup[first]) {
+            for (const Walk& walk : walksOf(group.edges, group.nodes.size(), true)) {
+                Rim rim;
+                rim.area = -walk.area;
+                for (const std::size_t half : walk.halves) {
+                    const Edge& edge = group.edges[half / 2];
+                    rim.pieces.push_back({edge.curve, edge.start, edge.end});
+                }
+                rim.polygon = polygonOf(walk, group.edges);
+                rims.push_back(std::move(rim));
+            }
+        }
+        arranged.emplace(first, std::move(group));
+    }
+    if (!crossed && std::none_of(strayGroup.begin(), strayGroup.end(), [](bool b) { return b; })) {
+        return whole;
+    }
 
-        std::vector<std::vector<Point2>> polygonsHere;
+    std::vector<Region> found;
+    // The polygon around each region found.
+    std::vector<std::vector<Point2>> around;
+    const auto keep = [&](Region region, std::vector<Point2> polygon) {
+        found.push_back(std::move(region));
+        around.push_back(std::move(polygon));
+    };
+
+    // What to find areas in, in order: outlines alone or crossing each other, as without loose
+    // curves, then the groups that loose curves make areas in.
+    struct Unit {
+        std::size_t first = 0;
+        bool stray = false;
+    };
+    std::vector<Unit> units;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (crossRoot(i) == i && !strayGroup[root(i)]) {
+            units.push_back({i, false});
+        }
+    }
+    for (std::size_t first = 0; first < items; ++first) {
+        if (root(first) == first && strayGroup[first]) {
+            units.push_back({first, true});
+        }
+    }
+    for (const Unit& unit : units) {
+        Group group;
+        if (unit.stray) {
+            group = std::move(arranged.at(unit.first));
+        } else {
+            for (std::size_t i = 0; i < count; ++i) {
+                if (crossRoot(i) == unit.first) {
+                    group.outlines.push_back(i);
+                    group.curves.insert(group.curves.end(), outlines[i].curves.begin(),
+                                        outlines[i].curves.end());
+                }
+            }
+            std::sort(group.curves.begin(), group.curves.end());
+            group.curves.erase(std::unique(group.curves.begin(), group.curves.end()),
+                               group.curves.end());
+            // Crossings can only be worked out for lines, circles, and arcs.
+            if (group.outlines.size() < 2 ||
+                !std::all_of(group.curves.begin(), group.curves.end(), simple)) {
+                for (const std::size_t i : group.outlines) {
+                    keep(whole[i], polygons[i]);
+                }
+                continue;
+            }
+            arrange(group);
+        }
+        const std::vector<std::size_t>& outlinesHere = group.outlines;
+        const std::vector<EntityId>& strays = group.strays;
+        const std::vector<Edge>& edges = group.edges;
+        const std::vector<Point2>& nodes = group.nodes;
+        const auto isStray = [&strays](EntityId curve) {
+            return std::find(strays.begin(), strays.end(), curve) != strays.end();
+        };
+
         std::vector<Region> areas;
-        for (const Walk& walk : walksOf(edges, nodes.size())) {
+        std::vector<std::vector<Point2>> shapes;
+        for (const Walk& walk : walksOf(edges, nodes.size(), false)) {
             Region area;
             area.area = walk.area;
+            bool stray = false;
+            std::vector<EntityId> sides;
             for (const std::size_t half : walk.halves) {
                 const Edge& edge = edges[half / 2];
                 area.pieces.push_back({edge.curve, edge.start, edge.end});
                 area.outer.push_back(edge.curve);
+                if (isStray(edge.curve)) {
+                    stray = true;
+                    // Which side of a loose curve the area lies on tells apart the areas it cuts
+                    // one area into: the walk goes round with the area on its left.
+                    if (half % 2 == 1) {
+                        sides.push_back(edge.curve);
+                    }
+                }
             }
             std::sort(area.outer.begin(), area.outer.end());
             area.outer.erase(std::unique(area.outer.begin(), area.outer.end()), area.outer.end());
+            std::vector<Point2> polygon = polygonOf(walk, edges);
+            // The whole of an outline that nothing cuts into, with only loose curves touching it:
+            // the region it is without them.
+            if (!stray && !strays.empty()) {
+                const auto same =
+                    std::find_if(outlinesHere.begin(), outlinesHere.end(), [&](std::size_t i) {
+                        std::vector<EntityId> its = outlines[i].curves;
+                        std::sort(its.begin(), its.end());
+                        return its == area.outer && std::abs(outlines[i].area - walk.area) <=
+                                                        1e-9 * std::max(1.0, outlines[i].area);
+                    });
+                if (same != outlinesHere.end()) {
+                    areas.push_back(whole[*same]);
+                    shapes.push_back(polygons[*same]);
+                    continue;
+                }
+            }
             // A point just inside, on the left of the way round, says which outlines it is in.
-            const std::vector<Point2> polygon = polygonOf(walk, edges);
             const Point2 a = polygon[0];
             const Point2 b = polygon[1];
             const double length = std::hypot(b.x - a.x, b.y - a.y);
@@ -630,16 +875,25 @@ std::vector<Region> Sketch::regions() const {
                                 (a.y + b.y) / 2.0 + (b.x - a.x) / length * nudge};
             area.key = area.outer;
             area.key.push_back(0);
-            for (const std::size_t i : group) {
+            for (const std::size_t i : outlinesHere) {
                 if (sideOf(polygons[i], inside) != Side::Outside) {
                     area.key.push_back(
                         *std::min_element(outlines[i].curves.begin(), outlines[i].curves.end()));
                 }
             }
+            area.key.insert(area.key.end(), sides.begin(), sides.end());
             std::sort(area.key.begin(), area.key.end());
-            // Outlines of other groups that lie in it are holes in it, as for any region.
+            area.apart = stray && std::none_of(polygons.begin(), polygons.end(),
+                                               [&inside](const std::vector<Point2>& outline) {
+                                                   return sideOf(outline, inside) != Side::Outside;
+                                               });
+            // Outlines of other groups that lie in it are holes in it, as for any region. Those
+            // of groups with loose curves come in as the outsides of their groups, further on.
+            const auto here = [&](std::size_t i) {
+                return std::find(outlinesHere.begin(), outlinesHere.end(), i) != outlinesHere.end();
+            };
             for (std::size_t other = 0; other < count; ++other) {
-                if (root(other) == first) {
+                if (here(other) || strayGroup[root(other)]) {
                     continue;
                 }
                 const bool inHere =
@@ -651,12 +905,11 @@ std::vector<Region> Sketch::regions() const {
                 // Not if it lies in another outline that is in here too: that one is the hole.
                 bool direct = true;
                 for (std::size_t between = 0; direct && between < count; ++between) {
-                    if (between != other && root(between) != first &&
+                    if (between != other && !here(between) && !strayGroup[root(between)] &&
                         outlines[between].area > outlines[other].area &&
-                        std::all_of(polygons[between].begin(), polygons[between].end(),
-                                    [&polygon](Point2 p) {
-                                        return sideOf(polygon, p) != Side::Outside;
-                                    }) &&
+                        std::all_of(
+                            polygons[between].begin(), polygons[between].end(),
+                            [&polygon](Point2 p) { return sideOf(polygon, p) != Side::Outside; }) &&
                         sideOf(polygons[between], polygons[other][0]) != Side::Outside) {
                         direct = false;
                     }
@@ -667,10 +920,94 @@ std::vector<Region> Sketch::regions() const {
                 }
             }
             areas.push_back(std::move(area));
+            shapes.push_back(std::move(polygon));
         }
-        std::sort(areas.begin(), areas.end(),
-                  [](const Region& a, const Region& b) { return a.key < b.key; });
-        found.insert(found.end(), areas.begin(), areas.end());
+        // Areas that loose curves bound and that nothing else tells apart: the first stays as it
+        // is, the others are numbered.
+        for (std::size_t i = 0; i < areas.size(); ++i) {
+            EntityId number = 0;
+            for (std::size_t j = 0; j < i; ++j) {
+                if (areas[j].key == areas[i].key) {
+                    ++number;
+                }
+            }
+            if (number > 0) {
+                areas[i].key.push_back(number);
+                std::sort(areas[i].key.begin(), areas[i].key.end());
+            }
+        }
+        std::vector<std::size_t> order(areas.size());
+        std::iota(order.begin(), order.end(), std::size_t{0});
+        std::sort(order.begin(), order.end(),
+                  [&areas](std::size_t a, std::size_t b) { return areas[a].key < areas[b].key; });
+        for (const std::size_t i : order) {
+            keep(std::move(areas[i]), std::move(shapes[i]));
+        }
+    }
+    if (rims.empty()) {
+        return found;
+    }
+    // Outlines in groups with loose curves are not holes as they are, and nor are outlines
+    // that lie within one of those groups: the outsides of the groups are, each in the region it
+    // lies in, the smallest around it.
+    const auto properlyWithin = [](const std::vector<Point2>& inner,
+                                   const std::vector<Point2>& outer) {
+        bool properly = false;
+        for (const Point2 point : inner) {
+            const Side side = sideOf(outer, point);
+            if (side == Side::Outside) {
+                return false;
+            }
+            properly = properly || side == Side::Inside;
+        }
+        return properly;
+    };
+    for (std::size_t r = 0; r < found.size(); ++r) {
+        Region& region = found[r];
+        for (std::size_t h = region.holes.size(); h-- > 0;) {
+            const auto i = static_cast<std::size_t>(
+                std::find_if(outlines.begin(), outlines.end(),
+                             [&](const Profile& p) { return p.curves == region.holes[h]; }) -
+                outlines.begin());
+            if (i == count) {
+                continue;
+            }
+            const bool inRim = std::any_of(rims.begin(), rims.end(), [&](const Rim& rim) {
+                return properlyWithin(rim.polygon, around[r]) &&
+                       sideOf(rim.polygon, polygons[i].front()) != Side::Outside;
+            });
+            if (strayGroup[root(i)] || inRim) {
+                region.area += outlines[i].area;
+                region.holes.erase(region.holes.begin() + static_cast<std::ptrdiff_t>(h));
+            }
+        }
+    }
+    const auto spread = [](const std::vector<Point2>& polygon) {
+        double twice = 0.0;
+        for (std::size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+            twice += polygon[j].x * polygon[i].y - polygon[i].x * polygon[j].y;
+        }
+        return std::abs(twice) / 2.0;
+    };
+    for (Rim& rim : rims) {
+        // A place on the rim: on the edge of the areas it goes round, inside the one around it.
+        const Point2 p = rim.polygon.front();
+        std::size_t best = found.size();
+        double smallest = 0.0;
+        for (std::size_t r = 0; r < found.size(); ++r) {
+            if (sideOf(around[r], p) != Side::Inside) {
+                continue;
+            }
+            const double size = spread(around[r]);
+            if (best == found.size() || size < smallest) {
+                best = r;
+                smallest = size;
+            }
+        }
+        if (best < found.size()) {
+            found[best].holePieces.push_back(std::move(rim.pieces));
+            found[best].area -= rim.area;
+        }
     }
     return found;
 }
