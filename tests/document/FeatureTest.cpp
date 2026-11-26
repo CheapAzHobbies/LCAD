@@ -2657,9 +2657,8 @@ TEST_CASE("A body is split along a sketch's curves or another body's faces",
     };
 
     // A bent line on a sketch above the plate: the corner from x = 20 and y below 15 comes off.
-    const ObjectId cutLine = document.addSketch("Cut", lcad::kernel::makePlane(
-                                                           {0.0, 0.0, 30.0}, {0.0, 0.0, 1.0},
-                                                           {1.0, 0.0, 0.0}));
+    const ObjectId cutLine = document.addSketch(
+        "Cut", lcad::kernel::makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
     lcad::sketch::Sketch bent;
     const auto a = bent.addLine({20.0, -10.0}, {20.0, 15.0});
     const auto b = bent.addLine({20.0, 15.0}, {70.0, 15.0});

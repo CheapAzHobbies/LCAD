@@ -1495,9 +1495,8 @@ bool FeaturePanel::hasInput() const {
         return m_feature.body.isValid() && !m_feature.faces.empty() &&
                !m_feature.reference.empty();
     case FeatureKind::SplitBody:
-        return m_feature.body.isValid() &&
-               (!m_feature.reference.empty() || m_feature.sketch.isValid() ||
-                !m_feature.tools.empty());
+        return m_feature.body.isValid() && (!m_feature.reference.empty() ||
+                                            m_feature.sketch.isValid() || !m_feature.tools.empty());
     case FeatureKind::Combine:
     case FeatureKind::Stitch:
         return m_feature.body.isValid() && !m_feature.tools.empty();

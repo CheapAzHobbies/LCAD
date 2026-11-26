@@ -1074,10 +1074,10 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
                 double reach = 100.0;
                 if (box.has_value()) {
                     const kernel::Point& o = sketch->plane.origin;
-                    const double farthest = std::max(
-                        {std::abs(box->min.x - o.x), std::abs(box->max.x - o.x),
-                         std::abs(box->min.y - o.y), std::abs(box->max.y - o.y),
-                         std::abs(box->min.z - o.z), std::abs(box->max.z - o.z)});
+                    const double farthest =
+                        std::max({std::abs(box->min.x - o.x), std::abs(box->max.x - o.x),
+                                  std::abs(box->min.y - o.y), std::abs(box->max.y - o.y),
+                                  std::abs(box->min.z - o.z), std::abs(box->max.z - o.z)});
                     reach = 2.0 * farthest * std::sqrt(3.0) + 1.0;
                 }
                 try {

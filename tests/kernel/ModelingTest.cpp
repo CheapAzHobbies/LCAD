@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <lcad/kernel/Check.h>
 #include <lcad/kernel/Error.h>
 #include <lcad/kernel/Measure.h>
 #include <lcad/kernel/Modeling.h>
-#include <lcad/kernel/Check.h>
 #include <lcad/kernel/Plane.h>
 #include <lcad/kernel/Primitives.h>
 #include <lcad/kernel/SubShapes.h>
@@ -944,8 +944,8 @@ TEST_CASE("A split cuts a body along a face, or a wall pulled from curves", "[ke
     }
 
     SECTION("a wall beside the body splits nothing") {
-        const Shape beside = wallOf(makeSegment({50.0, 50.0, 0.0}, {60.0, 50.0, 0.0}),
-                                    {0.0, 0.0, 1.0}, 5.0);
+        const Shape beside =
+            wallOf(makeSegment({50.0, 50.0, 0.0}, {60.0, 50.0, 0.0}), {0.0, 0.0, 1.0}, 5.0);
         CHECK_THROWS_AS(splitAlong(block, beside, "9"), Error);
     }
 }
