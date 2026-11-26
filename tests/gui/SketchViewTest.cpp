@@ -89,6 +89,7 @@ private slots:
     void breakCutsTheCurveClickedWhereOthersCrossIt();
     void aRectangleByThreePointsLiesAtAnyAngle();
     void theGridStepCanBeChosen();
+    void linesThatRunPastEachOtherTintTheAreaTheyClose();
     void nearlyLevelLinesBecomeHorizontalUnlessInferenceIsOff();
     void endsLandOnExistingGeometryAndStayThere();
     void rectangleToolDrawsAConstrainedRectangle();
@@ -1065,6 +1066,37 @@ void SketchViewTest::theGridStepCanBeChosen() {
     // Nothing, or nonsense, is the step that suits the zoom.
     editor()->setGridStep(-1.0);
     QCOMPARE(editor()->gridStep(), 0.0);
+void SketchViewTest::linesThatRunPastEachOtherTintTheAreaTheyClose() {
+    openSketch();
+    const auto tintAt = [this](Point2 p) {
+        render();
+        const QImage image = overlayImage();
+        return image.pixelColor(at(p.x, p.y) * image.devicePixelRatio()).alpha();
+    };
+    QCOMPARE(tintAt({20.0, 20.0}), 0);
+
+    // Four lines, each running on past the corners of the square between them.
+    Sketch s = sketch();
+    s.addLine({9.0, 10.0}, {41.0, 10.0});
+    s.addLine({40.0, 9.0}, {40.0, 41.0});
+    s.addLine({41.0, 40.0}, {9.0, 40.0});
+    s.addLine({10.0, 41.0}, {10.0, 9.0});
+    m_document->setSketchGeometry(m_sketch, s, "Square");
+    QVERIFY(sketch().profiles().empty());
+    QVERIFY(tintAt({25.0, 25.0}) > 0);
+    // Not past the sides.
+    QCOMPARE(tintAt({25.0, 5.0}), 0);
+
+    // A circle over a corner, and a line across the circle: each area tinted once, the same.
+    s.addCircle({40.0, 40.0}, 6.0);
+    s.addLine({30.0, 42.0}, {50.0, 42.0});
+    m_document->setSketchGeometry(m_sketch, s, "More");
+    QCOMPARE(sketch().regions().size(), std::size_t{4});
+    const int square = tintAt({25.0, 25.0});
+    QCOMPARE(tintAt({38.0, 38.0}), square);
+    QCOMPARE(tintAt({43.0, 41.0}), square);
+    QCOMPARE(tintAt({40.0, 44.0}), square);
+    QCOMPARE(tintAt({20.0, 45.0}), 0);
 }
 
 void SketchViewTest::nearlyLevelLinesBecomeHorizontalUnlessInferenceIsOff() {
