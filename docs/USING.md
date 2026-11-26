@@ -718,6 +718,11 @@ the pointer is on lights up and is named underneath, without moving anything.
 Below it are **Home** and the switch between orthographic and perspective. The small X, Y, and Z
 beside it show how the axes lie.
 
+**View > Save View** keeps the way you are looking at the model by name, with the document. Saved
+views are listed under **Views** in the browser: double-click one to look that way again,
+right-click it to **Update View** to the way you look now, rename it as any entry, and delete it
+with Delete.
+
 ## How the model is drawn
 
 **View > Display Style**, or the last button of the toolbar, offers shaded with edges (the

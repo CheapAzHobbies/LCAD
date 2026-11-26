@@ -175,7 +175,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Standard views, both projections, navigation cube | Have | |
 | Display styles, grid | Have | |
 | Repeat last command | Have | Edit menu, and first in the 3D view's right-click menu. |
-| Saved camera views | No | |
+| Saved camera views | Have | Since 2026-11-25: View > Save View, listed under Views in the browser. |
 | Grid spacing setting | No | |
 
 ## Order of work

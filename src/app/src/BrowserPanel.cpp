@@ -171,6 +171,9 @@ BrowserPanel::BrowserPanel(QWidget* parent)
         case EntryKind::Joint:
             emit jointActivated(idOf(item));
             break;
+        case EntryKind::View:
+            emit viewActivated(idOf(item));
+            break;
         case EntryKind::Other:
             break;
         }
@@ -317,6 +320,42 @@ std::vector<document::ObjectId> BrowserPanel::selectedJoints() const {
         }
     }
     return joints;
+}
+
+std::vector<document::ObjectId> BrowserPanel::selectedViews() const {
+    std::vector<document::ObjectId> views;
+    if (m_views == nullptr) {
+        return views;
+    }
+    for (int i = 0; i < m_views->childCount(); ++i) {
+        if (m_views->child(i)->isSelected()) {
+            views.push_back(idOf(m_views->child(i)));
+        }
+    }
+    return views;
+}
+
+void BrowserPanel::fillViews() {
+    if (m_views == nullptr || m_document == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_tree);
+    const std::vector<document::ObjectId> selected = selectedViews();
+    while (m_views->childCount() > 0) {
+        delete m_views->takeChild(0);
+    }
+    for (const document::SavedView& view : m_document->views()) {
+        auto* item = new QTreeWidgetItem({QString::fromStdString(view.name)});
+        mark(item, EntryKind::View, view.id, {});
+        item->setIcon(0, icon(QStringLiteral("eye")));
+        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+        item->setToolTip(0, tr("A saved view. Double-click to look at the model this way; "
+                               "right-click to keep the view as it is now in it."));
+        m_views->addChild(item);
+        item->setSelected(std::find(selected.begin(), selected.end(), view.id) != selected.end());
+    }
+    m_views->setHidden(m_views->childCount() == 0);
+    m_views->setExpanded(true);
 }
 
 void BrowserPanel::setSelectedBodies(const std::vector<document::ObjectId>& bodies) {
@@ -628,6 +667,11 @@ void BrowserPanel::fillAssembly() {
         }
     }
     m_root->addChild(m_joints);
+    // The saved views stay last.
+    if (m_views != nullptr) {
+        m_root->removeChild(m_views);
+        m_root->addChild(m_views);
+    }
     for (const document::Joint& joint : m_document->joints()) {
         if (!joint.component.isValid()) {
             m_joints->addChild(makeJointItem(joint));
@@ -785,6 +829,7 @@ void BrowserPanel::rebuild() {
     m_sketches = nullptr;
     m_planes = nullptr;
     m_joints = nullptr;
+    m_views = nullptr;
     if (m_document == nullptr) {
         return;
     }
@@ -827,6 +872,9 @@ void BrowserPanel::rebuild() {
     fillPlanes();
     m_joints = new QTreeWidgetItem(m_root, {tr("Joints")});
     m_joints->setFlags(Qt::ItemIsEnabled);
+    m_views = new QTreeWidgetItem(m_root, {tr("Views")});
+    m_views->setFlags(Qt::ItemIsEnabled);
+    fillViews();
     m_root->setExpanded(true);
     m_bodies->setExpanded(true);
     m_sketches->setExpanded(true);
@@ -1023,6 +1071,9 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
         }
         break;
     case Kind::PlacementsChanged:
+    case Kind::ViewsChanged:
+        fillViews();
+        break;
     case Kind::DrawingsChanged:
     case Kind::MachiningChanged:
     case Kind::MaterialsChanged:
@@ -1145,6 +1196,20 @@ void BrowserPanel::onItemChanged(QTreeWidgetItem* item) {
             } else if (checked != occurrence->visible) {
                 m_document->setOccurrenceVisible(id, checked);
             }
+        });
+        return;
+    }
+    case EntryKind::View: {
+        const std::string name = text.trimmed().toStdString();
+        later([this, id, name] {
+            const document::SavedView* view = m_document->findView(id);
+            if (view == nullptr || name.empty() || name == view->name) {
+                fillViews();
+                return;
+            }
+            document::SavedView renamed = *view;
+            renamed.name = name;
+            m_document->changeView(renamed, "Rename View");
         });
         return;
     }

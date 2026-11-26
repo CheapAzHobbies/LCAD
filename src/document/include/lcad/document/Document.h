@@ -12,6 +12,7 @@
 #include <lcad/kernel/Shape.h>
 #include <lcad/sketch/Sketch.h>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -108,6 +109,21 @@ struct Parameter {
     friend bool operator==(const Parameter&, const Parameter&) = default;
 };
 
+/// A way of looking at the model kept by name, to come back to: where the camera is, where it
+/// looks, which way is up, how much it takes in, and whether it shows depth.
+struct SavedView {
+    ObjectId id;
+    std::string name;
+    std::array<double, 3> eye{0.0, 0.0, 1.0};
+    std::array<double, 3> center{0.0, 0.0, 0.0};
+    std::array<double, 3> up{0.0, 1.0, 0.0};
+    /// How tall the view is, in millimeters.
+    double scale = 100.0;
+    bool perspective = false;
+
+    friend bool operator==(const SavedView&, const SavedView&) = default;
+};
+
 /// What a construction plane is now: where it lies, and where on it to draw it.
 struct PlaneState {
     kernel::Plane plane;
@@ -151,6 +167,8 @@ struct Change {
         DrawingsChanged,
         /// A setup or a tool (`body` is its id) was added, removed, or changed.
         MachiningChanged,
+        /// A saved view (`body` is its id) was added, removed, or changed.
+        ViewsChanged,
     };
     Kind kind = Kind::HistoryChanged;
     /// The body or sketch concerned. Not valid for HistoryChanged, TimelineChanged, and the
@@ -182,6 +200,7 @@ struct DocumentState {
     std::vector<Drawing> drawings;
     std::vector<Tool> tools;
     std::vector<Setup> setups;
+    std::vector<SavedView> views;
 };
 
 /// What a feature would give if it were applied now. See Document::tryFeature().
@@ -544,6 +563,21 @@ public:
     void changeSetup(const Setup& setup, const std::string& label = "Change Setup");
     void removeSetup(ObjectId id);
 
+    // Saved views
+
+    [[nodiscard]] const std::vector<SavedView>& views() const { return m_views; }
+    /// The saved view with this id, or nullptr. The pointer is valid until the next edit.
+    [[nodiscard]] const SavedView* findView(ObjectId id) const;
+    /// `base` followed by the lowest number no saved view has yet: "View 1".
+    [[nodiscard]] std::string uniqueViewName(std::string_view base) const;
+    /// Keeps a view, and gives it its id. Throws std::invalid_argument without a name, or for a
+    /// camera that does not look anywhere: no scale above zero, the eye on the center, or up
+    /// along the way it looks.
+    ObjectId addView(SavedView view);
+    /// Replaces the saved view with the same id: a new name, or a new place for the camera.
+    void changeView(const SavedView& view, const std::string& label = "Change View");
+    void removeView(ObjectId id);
+
     // Undo
 
     [[nodiscard]] bool canUndo() const;
@@ -623,6 +657,9 @@ private:
             AddSetup,
             RemoveSetup,
             ChangeSetup,
+            AddView,
+            RemoveView,
+            ChangeView,
         };
         Kind kind;
         ObjectId id;
@@ -688,6 +725,8 @@ private:
         Tool newTool;
         Setup setup;
         Setup newSetup;
+        SavedView view;
+        SavedView newView;
     };
 
     struct Step {
@@ -774,6 +813,7 @@ private:
     std::vector<Drawing> m_drawings;
     std::vector<Tool> m_tools;
     std::vector<Setup> m_setups;
+    std::vector<SavedView> m_views;
     /// Where each occurrence is in its parent, as the joints last placed it, and why a joint
     /// does not hold.
     std::unordered_map<ObjectId, kernel::Placement> m_solved;

@@ -205,3 +205,63 @@ TEST_CASE("Drawings, tools, and setups come back from a file as they were",
     Document& reopened = *loaded.document;
     CHECK(reopened.newId().value > setup.value);
 }
+
+TEST_CASE("Views are kept by name, undone, and saved with the document", "[document][views]") {
+    Document document;
+    lcad::document::SavedView front;
+    front.name = document.uniqueViewName("View");
+    CHECK(front.name == "View 1");
+    front.eye = {10.0, -200.0, 30.0};
+    front.center = {10.0, 0.0, 30.0};
+    front.up = {0.0, 0.0, 1.0};
+    front.scale = 120.0;
+    const ObjectId id = document.addView(front);
+    REQUIRE(document.views().size() == 1);
+    CHECK(document.findView(id)->eye == front.eye);
+    CHECK(document.uniqueViewName("View") == "View 2");
+    CHECK(document.undoLabel() == "Save View");
+
+    // Renamed, and turned to look from the top, in perspective.
+    lcad::document::SavedView changed = *document.findView(id);
+    changed.name = "Top";
+    changed.eye = {10.0, 0.0, 230.0};
+    changed.up = {0.0, 1.0, 0.0};
+    changed.perspective = true;
+    document.changeView(changed, "Rename View");
+    CHECK(document.findView(id)->name == "Top");
+    CHECK(document.undoLabel() == "Rename View");
+    document.undo();
+    CHECK(document.findView(id)->name == "View 1");
+    document.redo();
+    CHECK(document.findView(id)->perspective);
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("views.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    REQUIRE(loaded.document->views().size() == 1);
+    CHECK(loaded.document->views().front() == *document.findView(id));
+
+    // Removed, and back with undo.
+    document.removeView(id);
+    CHECK(document.views().empty());
+    document.undo();
+    CHECK(document.findView(id) != nullptr);
+
+    // Views that a camera cannot take are refused.
+    lcad::document::SavedView nowhere = front;
+    nowhere.eye = nowhere.center;
+    CHECK_THROWS_AS(document.addView(nowhere), std::invalid_argument);
+    lcad::document::SavedView sideways = front;
+    sideways.up = {0.0, 1.0, 0.0};
+    CHECK_THROWS_AS(document.addView(sideways), std::invalid_argument);
+    lcad::document::SavedView unnamed = front;
+    unnamed.name.clear();
+    CHECK_THROWS_AS(document.addView(unnamed), std::invalid_argument);
+    lcad::document::SavedView flat = front;
+    flat.scale = 0.0;
+    CHECK_THROWS_AS(document.addView(flat), std::invalid_argument);
+    CHECK(document.views().size() == 1);
+}

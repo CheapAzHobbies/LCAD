@@ -186,6 +186,13 @@ public:
     /// its values, and what it works on is shown picked. Returns false if there is no such
     /// feature.
     bool editFeature(document::ObjectId feature);
+    /// Keeps the way the model is looked at now as a saved view of the document, by name.
+    /// Returns its id, or an invalid one if it cannot be kept.
+    document::ObjectId saveView(const QString& name);
+    /// Keeps the way the model is looked at now in a saved view, under its own name.
+    void updateView(document::ObjectId view);
+    /// Looks at the model as a saved view does.
+    void goToView(document::ObjectId view);
     /// The panel of the feature being added or edited, or nullptr.
     [[nodiscard]] FeaturePanel* featurePanel() const { return m_featurePanel; }
     /// The feature being edited, or an invalid id when a new one is being added or none.

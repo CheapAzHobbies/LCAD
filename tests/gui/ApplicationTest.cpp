@@ -149,6 +149,7 @@ private slots:
     void deleteRemovesTheSelectedBodiesInOneStep();
     void viewMenuDrivesTheCamera();
     void zoomDirectionIsRemembered();
+    void viewsAreSavedAndGoneBackTo();
     void cubeStepsAreRemembered();
 
     void closingWithUnsavedChangesAsksFirst();
@@ -896,6 +897,73 @@ void ApplicationTest::cubeStepsAreRemembered() {
     // Back as they were, for the tests after this one.
     action(window, "view.turnStep.45")->trigger();
     QVERIFY(action(window, "view.turnStep.45")->isChecked());
+}
+
+void ApplicationTest::viewsAreSavedAndGoneBackTo() {
+    MainWindow window;
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    create(window, PrimitiveKind::Box);
+    lcad::viewport::ViewportWidget* viewport = window.viewport();
+    viewport->setAnimated(false);
+
+    // Looking from the front, a little way off, kept by name.
+    viewport->setStandardView(lcad::viewport::StandardView::Front);
+    lcad::viewport::CameraState front = viewport->cameraState();
+    front.scale *= 1.5;
+    viewport->setCameraState(front);
+    const lcad::document::ObjectId kept = window.saveView(QStringLiteral("Bench"));
+    QVERIFY(kept.isValid());
+    QCOMPARE(window.document()->views().size(), std::size_t{1});
+    QCOMPARE(window.document()->findView(kept)->name, std::string("Bench"));
+
+    // The browser lists it under Views.
+    QTreeWidgetItem* views = nullptr;
+    QTreeWidgetItem* root = window.browser()->tree()->topLevelItem(0);
+    for (int i = 0; i < root->childCount(); ++i) {
+        if (root->child(i)->text(0) == QStringLiteral("Views")) {
+            views = root->child(i);
+        }
+    }
+    QVERIFY(views != nullptr);
+    QVERIFY(!views->isHidden());
+    QCOMPARE(views->childCount(), 1);
+    QCOMPARE(views->child(0)->text(0), QStringLiteral("Bench"));
+
+    // Turned away, and back by a double-click on it.
+    viewport->setStandardView(lcad::viewport::StandardView::Top);
+    QVERIFY(std::abs(viewport->cameraState().scale - front.scale) > 1e-6);
+    emit window.browser()->tree()->itemDoubleClicked(views->child(0), 0);
+    const lcad::viewport::CameraState back = viewport->cameraState();
+    for (int i = 0; i < 3; ++i) {
+        QVERIFY(std::abs(back.eye[i] - front.eye[i]) < 1e-6);
+        QVERIFY(std::abs(back.up[i] - front.up[i]) < 1e-6);
+    }
+    QVERIFY(std::abs(back.scale - front.scale) < 1e-6);
+
+    // Kept again as the view is now, through the menu of the entry.
+    viewport->setStandardView(lcad::viewport::StandardView::Top);
+    views->child(0)->setSelected(true);
+    window.commands()->refresh();
+    QVERIFY(action(window, "view.update")->isEnabled());
+    action(window, "view.update")->trigger();
+    QVERIFY(std::abs(window.document()->findView(kept)->scale - viewport->cameraState().scale) <
+            1e-6);
+    QCOMPARE(QString::fromStdString(window.document()->undoLabel()), QStringLiteral("Update View"));
+
+    // Renamed in the browser.
+    views->child(0)->setText(0, QStringLiteral("Overhead"));
+    QTRY_COMPARE(window.document()->findView(kept)->name, std::string("Overhead"));
+
+    // Deleted, and back with undo.
+    QTRY_VERIFY(views->childCount() == 1);
+    views->child(0)->setSelected(true);
+    window.commands()->refresh();
+    action(window, "edit.delete")->trigger();
+    QVERIFY(window.document()->views().empty());
+    QVERIFY(views->isHidden());
+    window.document()->undo();
+    QCOMPARE(window.document()->views().size(), std::size_t{1});
 }
 
 void ApplicationTest::closingWithUnsavedChangesAsksFirst() {

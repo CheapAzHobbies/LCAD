@@ -368,6 +368,86 @@ void Document::removeSetup(ObjectId id) {
     record(std::move(edit), "Delete Setup");
 }
 
+namespace {
+
+// Whether a saved view is one a camera can take.
+void requireView(const SavedView& view, const char* function) {
+    requireName(view.name, function);
+    const auto finite = [](const std::array<double, 3>& v) {
+        return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+    };
+    if (!finite(view.eye) || !finite(view.center) || !finite(view.up) ||
+        !std::isfinite(view.scale) || view.scale <= 0.0) {
+        throw std::invalid_argument(std::string(function) + ": a view needs a place and a size");
+    }
+    const std::array<double, 3> look{view.center[0] - view.eye[0], view.center[1] - view.eye[1],
+                                     view.center[2] - view.eye[2]};
+    const double length = std::hypot(look[0], look[1], look[2]);
+    const double upLength = std::hypot(view.up[0], view.up[1], view.up[2]);
+    if (length <= 1e-12 || upLength <= 1e-12) {
+        throw std::invalid_argument(std::string(function) + ": a view needs a way to look");
+    }
+    const std::array<double, 3> side{look[1] * view.up[2] - look[2] * view.up[1],
+                                     look[2] * view.up[0] - look[0] * view.up[2],
+                                     look[0] * view.up[1] - look[1] * view.up[0]};
+    if (std::hypot(side[0], side[1], side[2]) <= 1e-9 * length * upLength) {
+        throw std::invalid_argument(std::string(function) +
+                                    ": a view's up cannot be the way it looks");
+    }
+}
+
+} // namespace
+
+const SavedView* Document::findView(ObjectId id) const {
+    return findIn(m_views, id);
+}
+
+std::string Document::uniqueViewName(std::string_view base) const {
+    return uniqueName(m_views, base);
+}
+
+ObjectId Document::addView(SavedView view) {
+    requireView(view, "addView");
+    view.id = newId();
+    Edit edit{};
+    edit.kind = Edit::Kind::AddView;
+    edit.id = view.id;
+    edit.index = m_views.size();
+    edit.view = std::move(view);
+    record(std::move(edit), "Save View");
+    return m_views.back().id;
+}
+
+void Document::changeView(const SavedView& view, const std::string& label) {
+    const std::size_t index = indexIn(m_views, view.id);
+    if (index == notFound) {
+        throw std::invalid_argument("changeView: the document has no such view");
+    }
+    requireView(view, "changeView");
+    if (m_views[index] == view) {
+        return;
+    }
+    Edit edit{};
+    edit.kind = Edit::Kind::ChangeView;
+    edit.id = view.id;
+    edit.view = m_views[index];
+    edit.newView = view;
+    record(std::move(edit), label);
+}
+
+void Document::removeView(ObjectId id) {
+    const std::size_t index = indexIn(m_views, id);
+    if (index == notFound) {
+        throw std::invalid_argument("removeView: the document has no such view");
+    }
+    Edit edit{};
+    edit.kind = Edit::Kind::RemoveView;
+    edit.id = id;
+    edit.index = index;
+    edit.view = m_views[index];
+    record(std::move(edit), "Delete View");
+}
+
 void Document::applyOutput(const Edit& edit, bool forward) {
     switch (edit.kind) {
     case Edit::Kind::AddDrawing:
@@ -398,6 +478,15 @@ void Document::applyOutput(const Edit& edit, bool forward) {
     case Edit::Kind::ChangeSetup:
         change(m_setups, forward ? edit.newSetup : edit.setup);
         notify(Change::Kind::MachiningChanged, edit.id);
+        break;
+    case Edit::Kind::AddView:
+    case Edit::Kind::RemoveView:
+        addOrRemove(m_views, edit.index, edit.view, (edit.kind == Edit::Kind::AddView) == forward);
+        notify(Change::Kind::ViewsChanged, edit.id);
+        break;
+    case Edit::Kind::ChangeView:
+        change(m_views, forward ? edit.newView : edit.view);
+        notify(Change::Kind::ViewsChanged, edit.id);
         break;
     default:
         break;

@@ -408,7 +408,19 @@ MainWindow::MainWindow(QWidget* parent)
                 current().origin[static_cast<std::size_t>(item)] = visible;
                 m_viewport->setOriginItemVisible(item, visible);
             });
+    connect(m_browser, &BrowserPanel::viewActivated, this, &MainWindow::goToView);
     connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& where) {
+        if (!m_browser->selectedViews().empty()) {
+            m_commands->refresh();
+            auto* menu = new QMenu(this);
+            menu->setAttribute(Qt::WA_DeleteOnClose);
+            menu->addAction(m_commands->action(QStringLiteral("view.goTo")));
+            menu->addAction(m_commands->action(QStringLiteral("view.update")));
+            menu->addSeparator();
+            menu->addAction(m_commands->action(QStringLiteral("edit.delete")));
+            menu->popup(where);
+            return;
+        }
         if (!m_browser->selectedOccurrences().empty() || !m_browser->selectedJoints().empty() ||
             (m_browser->selectedBodies().empty() && m_browser->selectedSketches().empty())) {
             showAssemblyMenu(where);
@@ -678,6 +690,16 @@ void MainWindow::defineCommands() {
                 m_machining->removeOperation();
                 return;
             }
+            if (const auto views = m_browser->selectedViews(); !isSketching() && !views.empty()) {
+                document::Transaction transaction(*document(), tr("Delete View").toStdString());
+                for (const document::ObjectId view : views) {
+                    if (document()->findView(view) != nullptr) {
+                        document()->removeView(view);
+                    }
+                }
+                transaction.commit();
+                return;
+            }
             const auto joints = m_browser->selectedJoints();
             const auto occurrences = m_browser->selectedOccurrences();
             if (!isSketching() && (!joints.empty() || !occurrences.empty())) {
@@ -723,7 +745,8 @@ void MainWindow::defineCommands() {
             }
             return !selectedBodies().empty() || !selectedSketches().empty() ||
                    m_timeline->selectedItem().isValid() || !m_browser->selectedJoints().empty() ||
-                   !m_browser->selectedOccurrences().empty();
+                   !m_browser->selectedOccurrences().empty() ||
+                   !m_browser->selectedViews().empty();
         };
         m_commands->add(std::move(c));
 
@@ -1405,6 +1428,43 @@ void MainWindow::defineCommands() {
             c.aliases = {tr("%1 view").arg(QString(text).remove(QLatin1Char('&')).toLower())};
         }
         c.run = [this, standardView](bool) { m_viewport->setStandardView(standardView); };
+        m_commands->add(std::move(c));
+    }
+    {
+        Command c = make("view.save", tr("Sa&ve View…"), view,
+                         tr("Keep the way the model is looked at now, by name, to come back to"));
+        c.iconName = QStringLiteral("eye");
+        c.aliases = {tr("named view"), tr("camera"), tr("bookmark")};
+        c.run = [this](bool) {
+            bool ok = false;
+            const QString name = QInputDialog::getText(
+                this, tr("Save View"), tr("Name:"), QLineEdit::Normal,
+                QString::fromStdString(document()->uniqueViewName("View")), &ok);
+            if (ok && !name.trimmed().isEmpty()) {
+                saveView(name.trimmed());
+            }
+        };
+        c.isEnabled = [this] { return m_workspace != Workspace::Drawing; };
+        m_commands->add(std::move(c));
+
+        c = make("view.update", tr("&Update View"), view,
+                 tr("Keep the way the model is looked at now in the saved view selected"));
+        c.run = [this](bool) {
+            if (const auto views = m_browser->selectedViews(); views.size() == 1) {
+                updateView(views.front());
+            }
+        };
+        c.isEnabled = [this] { return m_browser->selectedViews().size() == 1; };
+        m_commands->add(std::move(c));
+
+        c = make("view.goTo", tr("&Go to View"), view,
+                 tr("Look at the model as the saved view selected does"));
+        c.run = [this](bool) {
+            if (const auto views = m_browser->selectedViews(); views.size() == 1) {
+                goToView(views.front());
+            }
+        };
+        c.isEnabled = [this] { return m_browser->selectedViews().size() == 1; };
         m_commands->add(std::move(c));
     }
     {
@@ -2187,6 +2247,7 @@ void MainWindow::createTopBar() {
                            "view.top", "view.bottom"}) {
         view->addAction(action(id));
     }
+    view->addAction(action("view.save"));
     view->addSeparator();
     view->addAction(action("view.perspective"));
     QMenu* style = view->addMenu(tr("&Display Style"));
@@ -3366,6 +3427,58 @@ std::string MainWindow::nameOf(const SelectedItem& item) const {
         }
     }
     return {};
+}
+
+document::ObjectId MainWindow::saveView(const QString& name) {
+    const viewport::CameraState camera = m_viewport->cameraState();
+    document::SavedView view;
+    view.name = name.toStdString();
+    view.eye = camera.eye;
+    view.center = camera.center;
+    view.up = camera.up;
+    view.scale = camera.scale;
+    view.perspective = camera.projection == viewport::Projection::Perspective;
+    try {
+        return document()->addView(view);
+    } catch (const std::invalid_argument&) {
+        statusBar()->showMessage(tr("This view cannot be kept."), 9000);
+        return {};
+    }
+}
+
+void MainWindow::updateView(document::ObjectId id) {
+    const document::SavedView* found = document()->findView(id);
+    if (found == nullptr) {
+        return;
+    }
+    const viewport::CameraState camera = m_viewport->cameraState();
+    document::SavedView view = *found;
+    view.eye = camera.eye;
+    view.center = camera.center;
+    view.up = camera.up;
+    view.scale = camera.scale;
+    view.perspective = camera.projection == viewport::Projection::Perspective;
+    try {
+        document()->changeView(view, "Update View");
+    } catch (const std::invalid_argument&) {
+        statusBar()->showMessage(tr("This view cannot be kept."), 9000);
+    }
+}
+
+void MainWindow::goToView(document::ObjectId id) {
+    const document::SavedView* view = document()->findView(id);
+    if (view == nullptr) {
+        return;
+    }
+    viewport::CameraState camera;
+    camera.eye = view->eye;
+    camera.center = view->center;
+    camera.up = view->up;
+    camera.scale = view->scale;
+    camera.projection =
+        view->perspective ? viewport::Projection::Perspective : viewport::Projection::Orthographic;
+    m_viewport->setCameraState(camera);
+    m_commands->refresh();
 }
 
 QString MainWindow::describe(const SelectedItem& item) const {
