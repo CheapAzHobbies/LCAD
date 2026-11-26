@@ -376,6 +376,8 @@ private:
     void onSketchEditingChanged();
     void createDocks();
     void restoreSettings();
+    /// Keeps how far the view cube's arrows go for the next start.
+    void saveCubeSteps() const;
     void applyTheme();
 
     int addSession(std::unique_ptr<document::Document> document, const QString& path);

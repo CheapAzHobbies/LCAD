@@ -13,6 +13,8 @@
 #include <GuiHelpers.h>
 
 #include <QApplication>
+#include <QInputDialog>
+#include <QMenu>
 #include <QRegularExpression>
 #include <QElapsedTimer>
 #include <QEnterEvent>
@@ -20,7 +22,9 @@
 #include <QTest>
 #include <QWheelEvent>
 
+#include <cmath>
 #include <memory>
+#include <numbers>
 
 using lcad::document::Document;
 using lcad::document::ObjectId;
@@ -90,6 +94,9 @@ private slots:
     void hoveringTheCubeSaysWhatIsThereAndMovesNothing();
     void theCubeHasAHomeButtonAndAProjectionSwitch();
     void theArrowsTurnTheViewAStepAndComeOnlyWhenWanted();
+    void theCurvedArrowsSpinTheViewAroundWhatItLooksAt();
+    void quickClicksOnAnArrowAreStepsThatAddUp();
+    void aRightClickOnAnArrowChoosesHowFarItGoes();
     void aDoubleClickOnTheCubeFramesTheModel();
     void theCubeShowsItsSidesApart();
     void draggingTheViewCubeOrbits();
@@ -534,6 +541,223 @@ void ViewportTest::theArrowsTurnTheViewAStepAndComeOnlyWhenWanted() {
     QVERIFY(sameDirection(m_viewport->viewDirection(), QVector3D(0.0F, 1.0F, -1.0F).normalized()));
     QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, up.center().toPoint());
     QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 0.0F, -1.0F}));
+}
+
+void ViewportTest::theCurvedArrowsSpinTheViewAroundWhatItLooksAt() {
+    addBox();
+    m_viewport->setAnimated(false);
+    const auto up = [this] {
+        const CameraState state = m_viewport->cameraState();
+        return QVector3D(static_cast<float>(state.up[0]), static_cast<float>(state.up[1]),
+                         static_cast<float>(state.up[2]));
+    };
+    const auto hoverOver = [this](const QRectF& control) {
+        QEnterEvent enter(control.center(), control.center(), cube()->mapToGlobal(control.center()));
+        QApplication::sendEvent(cube(), &enter);
+        lcad::test::movePointer(cube(), control.center().toPoint());
+    };
+    const auto click = [this](const QRectF& control) {
+        QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, control.center().toPoint());
+    };
+    const QRectF left = cube()->spinArrow(0);
+    const QRectF right = cube()->spinArrow(1);
+
+    // Looking at a face: a quarter turn, and what was on the left of the screen comes to the top.
+    m_viewport->setStandardView(StandardView::Top);
+    render();
+    QVERIFY(sameDirection(up(), {0.0F, 1.0F, 0.0F}));
+    // Away from the cube they are not there to click.
+    click(right);
+    QVERIFY(sameDirection(up(), {0.0F, 1.0F, 0.0F}));
+    hoverOver(right);
+    QCOMPARE(cube()->caption(), QStringLiteral("Spin 90°"));
+    keepFrame(cube()->grab().toImage(), "viewport-cube-spin");
+    const CameraState before = m_viewport->cameraState();
+    click(right);
+    QVERIFY(sameDirection(m_viewport->viewDirection(), {0.0F, 0.0F, -1.0F}));
+    QVERIFY(sameDirection(up(), {-1.0F, 0.0F, 0.0F}));
+    click(left);
+    QVERIFY(sameDirection(up(), {0.0F, 1.0F, 0.0F}));
+    // Around the same middle, and at the same scale.
+    QVERIFY(sameCamera(m_viewport->cameraState(), before));
+
+    // Looking at a corner: a third of a turn, and three of them come back to where they began.
+    m_viewport->setStandardView(StandardView::Home);
+    render();
+    const QVector3D look = m_viewport->viewDirection();
+    const QVector3D home = up();
+    hoverOver(right);
+    QCOMPARE(cube()->caption(), QStringLiteral("Spin 120°"));
+    click(right);
+    render();
+    QVERIFY(sameDirection(m_viewport->viewDirection(), look));
+    QVERIFY(!sameDirection(up(), home));
+    // The cube looks the same, with the faces in other places: the top is where the front was.
+    QCOMPARE(cube()->partAt(cube()->cubeCenter()), (NavigationCube::Part{1, -1, 1}));
+    click(right);
+    render();
+    QVERIFY(!sameDirection(up(), home));
+    click(right);
+    render();
+    QVERIFY(sameDirection(up(), home));
+
+    // Looking along an edge: a quarter turn too, not a half that turns the view upside down.
+    clickOnCube(cube()->placeOf({1, -1, 0}));
+    render();
+    const QVector3D upright = up();
+    hoverOver(right);
+    QCOMPARE(cube()->caption(), QStringLiteral("Spin 90°"));
+    click(right);
+    QVERIFY(sameDirection(up(), QVector3D(-1.0F, -1.0F, 0.0F).normalized()));
+    for (int more = 0; more < 3; ++more) {
+        click(right);
+    }
+    QVERIFY(sameDirection(up(), upright));
+
+    // Between the parts of the cube: a quarter turn.
+    m_viewport->setStandardView(StandardView::Home);
+    render();
+    // The arrow on the right: from here the cube itself reaches up to the one on top.
+    const QRectF tilt = cube()->arrow(1);
+    hoverOver(tilt);
+    click(tilt);
+    render();
+    hoverOver(right);
+    QCOMPARE(cube()->caption(), QStringLiteral("Spin 90°"));
+}
+
+void ViewportTest::quickClicksOnAnArrowAreStepsThatAddUp() {
+    addBox();
+    m_viewport->setAnimated(false);
+    m_viewport->setStandardView(StandardView::Top);
+    render();
+    const QPointF at = cube()->spinArrow(1).center();
+    QEnterEvent enter(at, at, cube()->mapToGlobal(at));
+    QApplication::sendEvent(cube(), &enter);
+    const auto up = [this] {
+        const CameraState state = m_viewport->cameraState();
+        return QVector3D(static_cast<float>(state.up[0]), static_cast<float>(state.up[1]),
+                         static_cast<float>(state.up[2]));
+    };
+
+    // The second click of two quick ones comes as a double-click.
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, at.toPoint());
+    QMouseEvent second(QEvent::MouseButtonDblClick, at, cube()->mapToGlobal(at), Qt::LeftButton,
+                       Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(cube(), &second);
+    QTest::mouseRelease(cube(), Qt::LeftButton, Qt::NoModifier, at.toPoint());
+    QVERIFY(sameDirection(up(), {0.0F, -1.0F, 0.0F}));
+
+    // A click while the view is still turning goes on from where it is headed.
+    m_viewport->setAnimated(true);
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, at.toPoint());
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, at.toPoint());
+    QVERIFY(!sameDirection(up(), {0.0F, 1.0F, 0.0F}));
+    QTRY_VERIFY_WITH_TIMEOUT(sameDirection(up(), {0.0F, 1.0F, 0.0F}), 3000);
+}
+
+void ViewportTest::aRightClickOnAnArrowChoosesHowFarItGoes() {
+    addBox();
+    m_viewport->setAnimated(false);
+    m_viewport->setStandardView(StandardView::Top);
+    render();
+    const auto up = [this] {
+        const CameraState state = m_viewport->cameraState();
+        return QVector3D(static_cast<float>(state.up[0]), static_cast<float>(state.up[1]),
+                         static_cast<float>(state.up[2]));
+    };
+    const auto hoverOver = [this](const QRectF& control) {
+        QEnterEvent enter(control.center(), control.center(), cube()->mapToGlobal(control.center()));
+        QApplication::sendEvent(cube(), &enter);
+        lcad::test::movePointer(cube(), control.center().toPoint());
+    };
+    // The menu a right-click on a control opens, if any.
+    const auto menuOf = [this](const QRectF& control) {
+        QTest::mousePress(cube(), Qt::RightButton, Qt::NoModifier, control.center().toPoint());
+        return qobject_cast<QMenu*>(QApplication::activePopupWidget());
+    };
+    const auto choose = [](QMenu* menu, const QString& text) {
+        for (QAction* action : menu->actions()) {
+            if (action->text() == text) {
+                action->trigger();
+                menu->close();
+                return true;
+            }
+        }
+        return false;
+    };
+    QSignalSpy chosen(m_viewport, &ViewportWidget::cubeStepsChanged);
+    const QRectF spin = cube()->spinArrow(1);
+    hoverOver(spin);
+
+    // On the cube itself the right button is the view's, for its own menu.
+    QVERIFY(menuOf(QRectF(cube()->cubeCenter(), QSizeF(1.0, 1.0))) == nullptr);
+
+    // The curved arrows: as far as suits the cube unless a step is chosen.
+    QMenu* menu = menuOf(spin);
+    QVERIFY(menu != nullptr);
+    QCOMPARE(menu->objectName(), QStringLiteral("spinSteps"));
+    keepFrame(menu->grab().toImage(), "viewport-cube-spin-steps");
+    for (QAction* action : menu->actions()) {
+        QCOMPARE(action->isChecked(), action->text() == QStringLiteral("Auto"));
+    }
+    QVERIFY(choose(menu, QStringLiteral("30°")));
+    QCOMPARE(chosen.count(), 1);
+    QVERIFY(std::abs(m_viewport->cubeSpinStep() - std::numbers::pi / 6.0) < 1e-9);
+    hoverOver(spin);
+    QCOMPARE(cube()->caption(), QStringLiteral("Spin 30°"));
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, spin.center().toPoint());
+    QVERIFY(sameDirection(up(), {-0.5F, 0.8660254F, 0.0F}));
+    // At a corner too: the step chosen, not the third of a turn that suits the cube there.
+    m_viewport->setStandardView(StandardView::Home);
+    render();
+    hoverOver(spin);
+    QCOMPARE(cube()->caption(), QStringLiteral("Spin 30°"));
+
+    // Any step can be typed in.
+    menu = menuOf(spin);
+    QVERIFY(menu != nullptr);
+    QVERIFY(choose(menu, QStringLiteral("Other…")));
+    auto* box = cube()->findChild<QInputDialog*>(QStringLiteral("stepBox"));
+    QVERIFY(box != nullptr);
+    QCOMPARE(box->doubleValue(), 30.0);
+    box->setDoubleValue(22.5);
+    box->accept();
+    QCOMPARE(chosen.count(), 2);
+    hoverOver(spin);
+    QCOMPARE(cube()->caption(), QStringLiteral("Spin 22.5°"));
+    menu = menuOf(spin);
+    QVERIFY(menu != nullptr);
+    QVERIFY(choose(menu, QStringLiteral("Other (22.5°)…")));
+    box = cube()->findChild<QInputDialog*>(QStringLiteral("stepBox"));
+    QVERIFY(box != nullptr);
+    // Called off, it leaves the step as it was.
+    box->reject();
+    QCOMPARE(chosen.count(), 2);
+    QVERIFY(std::abs(m_viewport->cubeSpinStep() - 22.5 * std::numbers::pi / 180.0) < 1e-9);
+
+    // The straight arrows have their own step.
+    m_viewport->setStandardView(StandardView::Top);
+    render();
+    const QRectF turn = cube()->arrow(1);
+    hoverOver(turn);
+    QCOMPARE(cube()->caption(), QStringLiteral("Turn 45°"));
+    menu = menuOf(turn);
+    QVERIFY(menu != nullptr);
+    QCOMPARE(menu->objectName(), QStringLiteral("turnSteps"));
+    QVERIFY(choose(menu, QStringLiteral("90°")));
+    hoverOver(turn);
+    QCOMPARE(cube()->caption(), QStringLiteral("Turn 90°"));
+    QTest::mouseClick(cube(), Qt::LeftButton, Qt::NoModifier, turn.center().toPoint());
+    // From the top a quarter turn looks straight at a side.
+    QVERIFY(std::abs(QVector3D::dotProduct(m_viewport->viewDirection(), {0.0F, 0.0F, 1.0F})) <
+            1e-3F);
+
+    // Set from outside, as when the window starts, it says nothing.
+    m_viewport->setCubeSteps(std::numbers::pi / 4.0, 0.0);
+    QCOMPARE(chosen.count(), 3);
+    hoverOver(turn);
+    QCOMPARE(cube()->caption(), QStringLiteral("Turn 45°"));
 }
 
 void ViewportTest::aDoubleClickOnTheCubeFramesTheModel() {

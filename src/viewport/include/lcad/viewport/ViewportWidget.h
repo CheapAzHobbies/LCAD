@@ -271,6 +271,13 @@ public:
     /// Whether the camera turns to a side of the view cube in a short animation or at once.
     void setAnimated(bool animated);
     [[nodiscard]] bool isAnimated() const;
+    /// How far the view cube's straight arrows turn the view and its curved arrows spin it, in
+    /// radians. A spin of 0 goes as far as suits the cube: 120° at a corner, 90° anywhere else.
+    void setCubeSteps(double turn, double spin);
+    [[nodiscard]] double cubeTurnStep() const;
+    [[nodiscard]] double cubeSpinStep() const;
+    /// Opens a box to type the step of the curved arrows if `spin`, else of the straight ones.
+    void askCubeStep(bool spin);
     [[nodiscard]] CameraState cameraState() const;
     /// Puts the camera where cameraState() found it. Cancels a pending fit.
     void setCameraState(const CameraState& state);
@@ -400,6 +407,8 @@ signals:
     void selectionChanged();
     /// Perspective was switched on or off, by whatever means.
     void projectionChanged();
+    /// A step for the cube's arrows was chosen on the cube itself.
+    void cubeStepsChanged();
     /// One of the points of setPickablePoints() was clicked.
     void pointPicked(lcad::document::ObjectId sketch, std::uint32_t point);
     /// A sketch was opened for editing, or closed.
