@@ -435,8 +435,9 @@ void SketchInterfaceTest::sketchToolsAreCommandsWithShortcuts() {
     // Outside a sketch the tools cannot be started, by any means.
     for (const char* id : {"sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
                            "sketch.point", "sketch.polygon", "sketch.slot", "sketch.dimension",
-                           "sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror",
-                           "sketch.construction", "sketch.parallel", "sketch.fix"}) {
+                           "sketch.trim", "sketch.extend", "sketch.break", "sketch.offset",
+                           "sketch.mirror", "sketch.construction", "sketch.parallel",
+                           "sketch.fix"}) {
         QVERIFY2(!action(window, id)->isEnabled(), id);
         QVERIFY2(!trigger(window, id), id);
         QVERIFY2(!action(window, id)->toolTip().isEmpty(), id);
@@ -451,7 +452,8 @@ void SketchInterfaceTest::sketchToolsAreCommandsWithShortcuts() {
         {"sketch.point", SketchTool::Point},         {"sketch.polygon", SketchTool::Polygon},
         {"sketch.slot", SketchTool::Slot},           {"sketch.trim", SketchTool::Trim},
         {"sketch.extend", SketchTool::Extend},       {"sketch.fillet", SketchTool::Fillet},
-        {"sketch.offset", SketchTool::Offset},
+        {"sketch.offset", SketchTool::Offset},       {"sketch.break", SketchTool::Break},
+        {"sketch.rectangle3", SketchTool::ThreePointRectangle},
         {"sketch.dimension", SketchTool::Dimension}, {"sketch.select", SketchTool::Select},
     };
     for (const auto& [id, tool] : tools) {

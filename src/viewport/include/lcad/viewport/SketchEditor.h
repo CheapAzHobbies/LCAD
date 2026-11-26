@@ -49,12 +49,17 @@ enum class SketchTool {
     Constraint,
     Trim,
     Extend,
+    /// Cuts the curve clicked where the curves crossing it are, nearest on either side, and
+    /// keeps every piece.
+    Break,
     /// Click a corner where two lines meet to round it, then type the radius.
     Fillet,
     /// Click a corner where two lines meet to cut it straight across, then type how far back.
     Chamfer,
     /// By its center and a corner.
     CenterRectangle,
+    /// By the two ends of one side, at any angle, and how far across it reaches.
+    ThreePointRectangle,
     /// Through three points.
     ThreePointCircle,
     /// By its start, its end, and a point it passes through.
@@ -126,6 +131,10 @@ public:
     /// 1, 5, 10 mm and so on, the smallest at least 8 pixels apart at the zoom. Off at first.
     void setGridSnap(bool on);
     [[nodiscard]] bool hasGridSnap() const;
+    /// The step of the grid clicks snap to, in millimeters; 0, the default, for one that suits
+    /// the zoom.
+    void setGridStep(double millimeters);
+    [[nodiscard]] double gridStep() const;
     [[nodiscard]] bool hasInference() const;
     /// Whether the drawing tools make construction geometry.
     void setConstructionMode(bool on);

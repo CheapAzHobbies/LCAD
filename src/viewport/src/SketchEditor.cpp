@@ -307,6 +307,8 @@ public:
     ConstraintKind constraintKind = ConstraintKind::Coincident;
     bool inference = true;
     bool gridSnap = false;
+    // 0 for steps that follow the zoom.
+    double gridStep = 0.0;
     bool constructionMode = false;
     int polygonSides = 6;
 
@@ -1205,13 +1207,16 @@ public:
         return snap;
     }
 
-    // Moves a snap that landed on nothing to the nearest round numbers: the smallest step of
-    // 0.1, 0.5, 1, 5, 10 mm and so on that is at least 8 pixels at this zoom.
+    // Moves a snap that landed on nothing to the nearest round numbers: the step chosen, or the
+    // smallest step of 0.1, 0.5, 1, 5, 10 mm and so on that is at least 8 pixels at this zoom.
     void snapToGrid(Snap& snap, const QPointF& position) const {
-        const double mm = millimetersPerPixel(position);
-        double step = 0.1;
-        for (int i = 0; step / mm < 8.0 && i < 20; ++i) {
-            step *= i % 2 == 0 ? 5.0 : 2.0;
+        double step = gridStep;
+        if (step <= 0.0) {
+            const double mm = millimetersPerPixel(position);
+            step = 0.1;
+            for (int i = 0; step / mm < 8.0 && i < 20; ++i) {
+                step *= i % 2 == 0 ? 5.0 : 2.0;
+            }
         }
         snap.position = {std::round(snap.position.x / step) * step,
                          std::round(snap.position.y / step) * step};
@@ -1705,6 +1710,30 @@ public:
         clicks.clear();
     }
 
+    void addThreePointRectangle(const Snap& first, const Snap& second, const Snap& across) {
+        sketch::Sketch g = geometry();
+        sketch::RectangleParts parts;
+        try {
+            parts = sketch::addThreePointRectangle(g, first.position, second.position,
+                                                   across.position);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("A rectangle needs a width and a height."));
+            return;
+        }
+        const std::vector<EntityId> sides{parts.bottom, parts.right, parts.top, parts.left};
+        for (const EntityId side : sides) {
+            finishCurve(g, side);
+        }
+        const auto corner = [&g](EntityId side) { return g.find(side)->start; };
+        const std::initializer_list<EntityId> corners{corner(parts.bottom), corner(parts.right),
+                                                      corner(parts.top), corner(parts.left)};
+        // The first two clicks landed on corners.
+        attach(g, nearestOf(g, corners, first.position), first);
+        attach(g, nearestOf(g, corners, second.position), second);
+        commit(std::move(g), tr("Rectangle"));
+        clicks.clear();
+    }
+
     void addCircleThrough(const Snap& a, const Snap& b, const Snap& c) {
         const auto round = sketch::circleThrough(a.position, b.position, c.position);
         if (!round.has_value()) {
@@ -1901,6 +1930,29 @@ public:
             }
             break;
         }
+        case SketchTool::ThreePointRectangle: {
+            if (clicks.size() == 1) {
+                strokes.push_back(segment(first, at));
+                break;
+            }
+            const Point2 second = clicks[1].position;
+            const double length = apart(first, second);
+            if (length <= 0.0) {
+                break;
+            }
+            const double height = ((second.x - first.x) * (at.y - first.y) -
+                                   (second.y - first.y) * (at.x - first.x)) /
+                                  length;
+            const Point2 n{-(second.y - first.y) / length * height,
+                           (second.x - first.x) / length * height};
+            const Point2 c{second.x + n.x, second.y + n.y};
+            const Point2 d{first.x + n.x, first.y + n.y};
+            strokes.push_back(segment(first, second));
+            strokes.push_back(segment(second, c));
+            strokes.push_back(segment(c, d));
+            strokes.push_back(segment(d, first));
+            break;
+        }
         case SketchTool::CenterRectangle: {
             const Point2 o{2.0 * first.x - at.x, 2.0 * first.y - at.y};
             strokes.push_back(segment(o, {at.x, o.y}));
@@ -2038,6 +2090,18 @@ public:
             return tr("%1 × %2 mm")
                 .arg(formatValue(2.0 * std::abs(at.x - first.x)),
                      formatValue(2.0 * std::abs(at.y - first.y)));
+        case SketchTool::ThreePointRectangle: {
+            if (clicks.size() == 1) {
+                return tr("%1 mm").arg(formatValue(apart(first, at)));
+            }
+            const Point2 second = clicks[1].position;
+            const double length = apart(first, second);
+            const double height = length > 0.0 ? std::abs((second.x - first.x) * (at.y - first.y) -
+                                                          (second.y - first.y) * (at.x - first.x)) /
+                                                     length
+                                               : 0.0;
+            return tr("%1 × %2 mm").arg(formatValue(length), formatValue(height));
+        }
         case SketchTool::ThreePointCircle: {
             if (clicks.size() == 1) {
                 return tr("%1 mm").arg(formatValue(apart(first, at)));
@@ -2099,6 +2163,7 @@ public:
         const bool draws = tool == SketchTool::Line || tool == SketchTool::Rectangle ||
                            tool == SketchTool::Circle || tool == SketchTool::Arc ||
                            tool == SketchTool::CenterRectangle ||
+                           tool == SketchTool::ThreePointRectangle ||
                            tool == SketchTool::ThreePointCircle ||
                            tool == SketchTool::ThreePointArc || tool == SketchTool::TangentArc ||
                            tool == SketchTool::CircularPattern ||
@@ -2213,6 +2278,13 @@ public:
                 clicks.push_back(cursor);
             } else {
                 addCenterRectangle(clicks.front(), cursor);
+            }
+            break;
+        case SketchTool::ThreePointRectangle:
+            if (clicks.size() < 2) {
+                clicks.push_back(cursor);
+            } else {
+                addThreePointRectangle(clicks[0], clicks[1], cursor);
             }
             break;
         case SketchTool::ThreePointCircle:
@@ -2361,6 +2433,20 @@ public:
             } else if (pending.size() >= (constraintKind == ConstraintKind::Symmetric ? 3U : 2U)) {
                 emit q->message(needsOf(constraintKind));
                 pending.clear();
+            }
+            break;
+        }
+        case SketchTool::Break: {
+            if (hover == 0 || g.find(hover)->kind == EntityKind::Point) {
+                emit q->message(tr("Click the part of a curve to make a curve of its own."));
+                break;
+            }
+            sketch::Sketch next = g;
+            if (!sketch::breakAt(next, hover, cursor.position).empty()) {
+                hover = 0;
+                commit(std::move(next), tr("Break"));
+            } else {
+                emit q->message(tr("Nothing crosses that curve, so there is nowhere to break it."));
             }
             break;
         }
@@ -3527,7 +3613,8 @@ public:
         }
         const bool draws = tool != SketchTool::Select && tool != SketchTool::Dimension &&
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
-                           tool != SketchTool::Extend && tool != SketchTool::Fillet &&
+                           tool != SketchTool::Extend && tool != SketchTool::Break &&
+                           tool != SketchTool::Fillet &&
                            tool != SketchTool::Chamfer &&
                            tool != SketchTool::Offset &&
                            tool != SketchTool::Mirror && tool != SketchTool::Project;
@@ -3719,6 +3806,14 @@ void SketchEditor::setGridSnap(bool on) {
 
 bool SketchEditor::hasGridSnap() const {
     return m_impl->gridSnap;
+}
+
+void SketchEditor::setGridStep(double millimeters) {
+    m_impl->gridStep = std::isfinite(millimeters) && millimeters > 0.0 ? millimeters : 0.0;
+}
+
+double SketchEditor::gridStep() const {
+    return m_impl->gridStep;
 }
 
 void SketchEditor::setInference(bool on) {
@@ -4161,6 +4256,8 @@ QString SketchEditor::hint() const {
         return tr("Cut: click the part of a curve to remove");
     case SketchTool::Extend:
         return tr("Extend: click a line or an arc near the end to lengthen");
+    case SketchTool::Break:
+        return tr("Break: click the part of a curve between the curves that cross it");
     case SketchTool::Fillet:
         return tr("Fillet: click a corner where two lines meet, then type the radius");
     case SketchTool::Chamfer:
@@ -4168,6 +4265,10 @@ QString SketchEditor::hint() const {
     case SketchTool::CenterRectangle:
         return placed == 0 ? tr("Center Rectangle: click the center")
                            : tr("Center Rectangle: click a corner");
+    case SketchTool::ThreePointRectangle:
+        return placed == 0   ? tr("3-Point Rectangle: click a corner")
+               : placed == 1 ? tr("3-Point Rectangle: click the other end of that side")
+                             : tr("3-Point Rectangle: click how far across it reaches");
     case SketchTool::ThreePointCircle:
         return placed == 0   ? tr("3-Point Circle: click a point on the circle")
                : placed == 1 ? tr("3-Point Circle: click a second point on it")

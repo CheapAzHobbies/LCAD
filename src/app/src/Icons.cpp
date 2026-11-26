@@ -690,6 +690,13 @@ const QHash<QString, Drawing>& drawings() {
              node(i, 12, 12);
              node(i, 19.5, 7);
          }},
+        {QStringLiteral("rectangle-3point"),
+         [](const Ink& i) {
+             i.poly({{4, 14}, {14, 4}, {20, 10}, {10, 20}});
+             node(i, 4, 14);
+             node(i, 14, 4);
+             node(i, 20, 10);
+         }},
         {QStringLiteral("circle-3point"),
          [](const Ink& i) {
              i.ellipse(12, 12, 7.5, 7.5);
@@ -776,6 +783,15 @@ const QHash<QString, Drawing>& drawings() {
              i.p.setPen(QPen(i.accent, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
              i.line(12, 12, 17.5, 12);
              i.poly({{14.8, 9.3}, {17.5, 12}, {14.8, 14.7}}, false);
+         }},
+        {QStringLiteral("break"),
+         [](const Ink& i) {
+             i.line(12, 4.5, 12, 19.5);
+             i.line(3.5, 12, 10, 12);
+             i.line(14, 12, 20.5, 12);
+             i.p.setPen(QPen(i.accent, 1.6, Qt::SolidLine, Qt::RoundCap));
+             node(i, 10, 12);
+             node(i, 14, 12);
          }},
         {QStringLiteral("offset"),
          [](const Ink& i) {

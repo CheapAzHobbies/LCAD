@@ -496,6 +496,49 @@ RectangleParts addRectangle(Sketch& sketch, Point2 corner, Point2 opposite) {
     return parts;
 }
 
+RectangleParts addThreePointRectangle(Sketch& sketch, Point2 first, Point2 second, Point2 across) {
+    requireUsable(first, "addThreePointRectangle");
+    requireUsable(second, "addThreePointRectangle");
+    requireUsable(across, "addThreePointRectangle");
+    Point2 a = first;
+    Point2 b = second;
+    const double length = apart(a, b);
+    if (length <= minimumLength) {
+        throw std::invalid_argument("addThreePointRectangle: its first side has no length");
+    }
+    // The far side lies along the normal on the left of a to b; the other way round, the first
+    // side is run the other way, so that the outline still goes counter-clockwise.
+    double height = ((b.x - a.x) * (across.y - a.y) - (b.y - a.y) * (across.x - a.x)) / length;
+    if (std::abs(height) <= minimumLength) {
+        throw std::invalid_argument("addThreePointRectangle: the rectangle has no width");
+    }
+    if (height < 0.0) {
+        std::swap(a, b);
+        height = -height;
+    }
+    const Point2 normal{-(b.y - a.y) / length, (b.x - a.x) / length};
+    const Point2 c{b.x + normal.x * height, b.y + normal.y * height};
+    const Point2 d{a.x + normal.x * height, a.y + normal.y * height};
+    Sketch work = sketch;
+    RectangleParts parts;
+    parts.bottom = work.addLine(a, b);
+    parts.right = work.addLine(b, c);
+    parts.top = work.addLine(c, d);
+    parts.left = work.addLine(d, a);
+    const auto join = [&work](EntityId from, EntityId to) {
+        work.addConstraint(ConstraintKind::Coincident, work.find(from)->end, work.find(to)->start);
+    };
+    join(parts.bottom, parts.right);
+    join(parts.right, parts.top);
+    join(parts.top, parts.left);
+    join(parts.left, parts.bottom);
+    work.addConstraint(ConstraintKind::Perpendicular, parts.bottom, parts.right);
+    work.addConstraint(ConstraintKind::Parallel, parts.bottom, parts.top);
+    work.addConstraint(ConstraintKind::Parallel, parts.right, parts.left);
+    sketch = std::move(work);
+    return parts;
+}
+
 PolygonParts addPolygon(Sketch& sketch, Point2 center, Point2 corner, int sides) {
     requireUsable(center, "addPolygon");
     requireUsable(corner, "addPolygon");
@@ -1543,6 +1586,142 @@ bool trim(Sketch& sketch, EntityId id, Point2 nearPoint) {
     work.solve();
     sketch = std::move(work);
     return true;
+}
+
+std::vector<EntityId> breakAt(Sketch& sketch, EntityId id, Point2 nearPoint) {
+    const Entity* found = sketch.find(id);
+    if (!isCurve(found) || found->fixed || isFreeform(found)) {
+        return {};
+    }
+    const Entity entity = *found;
+    const Curve curve = describe(sketch, entity);
+    const double speed = std::max(curve.speed(), minimumLength);
+    const double margin = 10.0 * joinTolerance / speed;
+    const std::vector<Cut> cuts = cutsOf(sketch, curve);
+    const auto cutter = [&sketch](const Cut& cut) { return *sketch.find(cut.by); };
+    Parts parts(sketch);
+    const auto hold = [&](EntityId point, const Cut& cut) {
+        const Entity by = cutter(cut);
+        attach(parts, point, describe(sketch, by), by, curve.at(cut.parameter));
+    };
+    // Two pieces of one curve, joined end to end: in line, or on one circle. Joined, that
+    // takes no more than parallel lines or arcs about one center; collinear lines or equal
+    // radii would say some of it twice.
+    const auto together = [&](EntityId a, EntityId b) {
+        parts.constrain(curve.isLine() ? ConstraintKind::Parallel : ConstraintKind::Concentric, a,
+                        b);
+    };
+    std::vector<EntityId> pieces;
+
+    if (curve.kind == EntityKind::Circle) {
+        std::vector<Cut> around;
+        for (const Cut& cut : cuts) {
+            if (around.empty() || cut.parameter - around.back().parameter > margin) {
+                around.push_back(cut);
+            }
+        }
+        if (around.size() > 1 &&
+            around.front().parameter + 2.0 * pi - around.back().parameter <= margin) {
+            around.pop_back();
+        }
+        if (around.size() < 2) {
+            return {};
+        }
+        const double where = curve.parameterOf(nearPoint);
+        std::size_t after = 0;
+        while (after < around.size() && around[after].parameter <= where) {
+            ++after;
+        }
+        const Cut& upper = around[after % around.size()];
+        const Cut& lower = around[(after + around.size() - 1) % around.size()];
+        // The circle becomes the arc from the upper crossing round to the lower one; the part
+        // clicked, from the lower to the upper, is a new arc.
+        const Point2 upperAt = curve.at(upper.parameter);
+        const Point2 lowerAt = curve.at(lower.parameter);
+        Entity& round = parts.at(id);
+        round.kind = EntityKind::Arc;
+        round.radius = 0.0;
+        const EntityId start = parts.addPoint(upperAt, id);
+        const EntityId end = parts.addPoint(lowerAt, id);
+        parts.at(id).start = start;
+        parts.at(id).end = end;
+        const EntityId piece = parts.addArc(curve.center, lowerAt, upperAt, entity.construction);
+        parts.constrain(ConstraintKind::Coincident, parts.at(piece).start, end);
+        parts.constrain(ConstraintKind::Coincident, parts.at(piece).end, start);
+        together(id, piece);
+        hold(start, upper);
+        hold(end, lower);
+        pieces = {piece, id};
+    } else {
+        const double span = curve.span();
+        std::vector<Cut> inside;
+        for (const Cut& cut : cuts) {
+            if (cut.parameter > margin && cut.parameter < span - margin &&
+                (inside.empty() || cut.parameter - inside.back().parameter > margin)) {
+                inside.push_back(cut);
+            }
+        }
+        if (inside.empty()) {
+            return {};
+        }
+        double where = curve.parameterOf(nearPoint);
+        if (!curve.isLine() && where > span) {
+            where = (where - span) < (2.0 * pi - where) ? span : 0.0;
+        }
+        where = std::clamp(where, 0.0, span);
+        const Cut* lower = nullptr;
+        const Cut* upper = nullptr;
+        for (const Cut& cut : inside) {
+            if (cut.parameter <= where) {
+                lower = &cut;
+            } else if (upper == nullptr) {
+                upper = &cut;
+            }
+        }
+        const auto add = [&](Point2 from, Point2 to) {
+            return curve.isLine() ? parts.addLine(from, to, entity.construction)
+                                  : parts.addArc(curve.center, from, to, entity.construction);
+        };
+        // The curve keeps its start and runs to the first break; the pieces after it are new,
+        // the last taking over whatever was held to the old end.
+        std::vector<const Cut*> breaks;
+        if (lower != nullptr) {
+            breaks.push_back(lower);
+        }
+        if (upper != nullptr) {
+            breaks.push_back(upper);
+        }
+        const Point2 oldEnd = curve.b;
+        parts.releaseLength(id);
+        std::vector<EntityId> all{id};
+        for (std::size_t i = 0; i < breaks.size(); ++i) {
+            const Point2 from = curve.at(breaks[i]->parameter);
+            const Point2 to = i + 1 < breaks.size() ? curve.at(breaks[i + 1]->parameter) : oldEnd;
+            all.push_back(add(from, to));
+        }
+        parts.hand(entity.end, parts.at(all.back()).end);
+        parts.place(entity.end, curve.at(breaks.front()->parameter));
+        for (std::size_t i = 0; i < breaks.size(); ++i) {
+            const EntityId before = all[i];
+            const EntityId after = all[i + 1];
+            const EntityId joint = i == 0 ? entity.end : parts.at(before).end;
+            parts.constrain(ConstraintKind::Coincident, joint, parts.at(after).start);
+            hold(joint, *breaks[i]);
+            together(before, after);
+        }
+        // The one clicked first: after the lower break, or the first piece with none before it.
+        const std::size_t clicked = lower != nullptr ? 1 : 0;
+        pieces.push_back(all[clicked]);
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            if (i != clicked) {
+                pieces.push_back(all[i]);
+            }
+        }
+    }
+    Sketch work = parts.build();
+    work.solve();
+    sketch = std::move(work);
+    return pieces;
 }
 
 bool extend(Sketch& sketch, EntityId id, Point2 nearPoint) {

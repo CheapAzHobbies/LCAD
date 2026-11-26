@@ -48,6 +48,11 @@ struct RectangleParts {
 /// Four lines joined at the corners, two held horizontal and two vertical. The lines run
 /// counter-clockwise, starting with the bottom one from left to right.
 RectangleParts addRectangle(Sketch& sketch, Point2 corner, Point2 opposite);
+/// A rectangle at any angle: its first side from `first` to `second`, and as far across as
+/// `across` is from that side. Its corners are square and its opposite sides parallel, so it
+/// can still turn as a whole. The lines run counter-clockwise, "bottom" being the side from the
+/// first two points.
+RectangleParts addThreePointRectangle(Sketch& sketch, Point2 first, Point2 second, Point2 across);
 
 struct PolygonParts {
     std::vector<EntityId> sides;
@@ -209,6 +214,13 @@ bool trim(Sketch& sketch, EntityId curve, Point2 nearPoint);
 /// Lengthens a line or an arc at the end nearer to `nearPoint` until it meets another curve, and
 /// holds that end on the curve. Returns false, changing nothing, if it meets none.
 bool extend(Sketch& sketch, EntityId curve, Point2 nearPoint);
+
+/// Cuts a line, an arc, or a circle into pieces where other curves cross it, on either side of
+/// `nearPoint`, so that the part it is on becomes a curve of its own. Nothing is taken away: the
+/// pieces stay in line (or on one circle), joined end to end, and their new ends are held on
+/// the curves that cross there. Returns the pieces, the one `nearPoint` is on first; or nothing,
+/// changing nothing, if no other curve crosses it (or a circle only once).
+std::vector<EntityId> breakAt(Sketch& sketch, EntityId curve, Point2 nearPoint);
 
 /// What fillet() made: the arc that rounds the corner, and the point where the corner was.
 struct FilletParts {
