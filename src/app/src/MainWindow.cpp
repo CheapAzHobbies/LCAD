@@ -3365,6 +3365,12 @@ std::string MainWindow::nameOf(const SelectedItem& item) const {
             return edges[index];
         }
     }
+    if (item.kind == SelectedItem::Kind::Vertex && !named.shape.isNull()) {
+        const std::vector<std::string> vertices = kernel::vertexNames(named);
+        if (index < vertices.size()) {
+            return vertices[index];
+        }
+    }
     return {};
 }
 
@@ -4266,10 +4272,27 @@ void MainWindow::takeFeaturePicks() {
         // A plane at an angle turns about an edge clicked.
         const bool turns = kind == document::FeatureKind::Plane &&
                            m_featurePanel->feature().planeKind == document::PlaneKind::AtAngle;
+        // Corners, for a plane or an axis through them; and for one touching or square to a
+        // face, the corner to do it at.
+        const std::size_t corners = m_featurePanel->cornersWanted();
         for (const SelectedItem& item : m_viewport->selection()) {
+            if (item.kind == SelectedItem::Kind::Vertex) {
+                if (const std::string name = nameOf(item); corners > 0 && !name.empty()) {
+                    m_featurePanel->addPickedCorner(item.body, name);
+                }
+                continue;
+            }
+            // Through corners only: a face or an edge is no help.
+            if (corners > 1) {
+                continue;
+            }
+            // An axis takes an edge only to run along it.
+            const bool alongEdge = kind == document::FeatureKind::Axis &&
+                                   m_featurePanel->feature().axisKind == document::AxisKind::Along;
             if (item.kind != SelectedItem::Kind::Face &&
                 (item.kind != SelectedItem::Kind::Edge ||
-                 (kind == document::FeatureKind::Plane && !turns))) {
+                 (kind == document::FeatureKind::Plane && !turns) ||
+                 (kind == document::FeatureKind::Axis && !alongEdge))) {
                 continue;
             }
             if (const std::string name = nameOf(item); !name.empty()) {

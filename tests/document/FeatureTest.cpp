@@ -2634,3 +2634,225 @@ TEST_CASE("Open curves turned into a surface", "[document][feature]") {
     CHECK(loaded.warnings.empty());
     CHECK(loaded.document->findFeature(made)->reference == "Z");
 }
+
+TEST_CASE("Planes and axes through corners, where planes meet, and square to faces",
+          "[document][feature]") {
+    Document document;
+    // A plate 60 by 40 by 10.
+    const ObjectId outline = document.addSketch("Outline", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {60.0, 40.0});
+    document.setSketchGeometry(outline, s, "Draw");
+    const ObjectId plate = document.addFeature(pullOf(outline, 10.0));
+    const ObjectId body = document.findFeature(plate)->body;
+    // The name of the corner at a place, and of the face whose name has a part in it.
+    const auto corner = [&document, body](double x, double y, double z) {
+        const lcad::kernel::NamedShape named = document.namedBody(body);
+        const std::vector<std::string> names = lcad::kernel::vertexNames(named);
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            const auto box = lcad::kernel::boundingBox(lcad::kernel::subShape(
+                named.shape, lcad::kernel::SubShapeKind::Vertex, static_cast<int>(i)));
+            if (box && std::abs(box->min.x - x) < 1e-6 && std::abs(box->min.y - y) < 1e-6 &&
+                std::abs(box->min.z - z) < 1e-6) {
+                return names[i];
+            }
+        }
+        return std::string();
+    };
+    const auto faceWith = [&document, body](const std::string& part) {
+        for (const std::string& name : document.findBody(body)->faceNames) {
+            if (name.find(part) != std::string::npos) {
+                return name;
+            }
+        }
+        return std::string();
+    };
+    const std::string top = faceWith("/end/");
+    REQUIRE(!top.empty());
+    // Every corner has a name of its own, which says which faces meet there.
+    {
+        std::vector<std::string> names = lcad::kernel::vertexNames(document.namedBody(body));
+        CHECK(names.size() == 8);
+        std::sort(names.begin(), names.end());
+        CHECK(std::adjacent_find(names.begin(), names.end()) == names.end());
+        const std::string one = corner(0.0, 0.0, 10.0);
+        CHECK(std::count(one.begin(), one.end(), '&') == 2);
+    }
+    const auto onPlane = [](const lcad::kernel::Plane& plane, const lcad::kernel::Point& p) {
+        return (p.x - plane.origin.x) * plane.normal.x + (p.y - plane.origin.y) * plane.normal.y +
+               (p.z - plane.origin.z) * plane.normal.z;
+    };
+
+    // A plane through three corners: two of the top, one of the bottom.
+    Feature slant;
+    slant.kind = FeatureKind::Plane;
+    slant.planeKind = PlaneKind::ThroughPoints;
+    slant.body = body;
+    slant.vertices = {corner(0.0, 0.0, 10.0), corner(60.0, 0.0, 10.0), corner(0.0, 40.0, 0.0)};
+    const ObjectId slanted = document.addFeature(slant);
+    CHECK(document.featureError(slanted).empty());
+    auto plane = document.planeState(slanted);
+    REQUIRE(plane.has_value());
+    const double n = std::sqrt(600.0 * 600.0 + 2400.0 * 2400.0);
+    CHECK_THAT(plane->plane.normal.x, WithinAbs(0.0, 1e-9));
+    CHECK_THAT(std::abs(plane->plane.normal.y), WithinAbs(600.0 / n, 1e-9));
+    CHECK_THAT(std::abs(plane->plane.normal.z), WithinAbs(2400.0 / n, 1e-9));
+    CHECK_THAT(onPlane(plane->plane, {0.0, 40.0, 0.0}), WithinAbs(0.0, 1e-9));
+    CHECK_THAT(onPlane(plane->plane, {60.0, 0.0, 10.0}), WithinAbs(0.0, 1e-9));
+    // It follows the corners: the plate twice as thick.
+    Feature thicker = *document.findFeature(plate);
+    thicker.distance = 20.0;
+    document.changeFeature(plate, thicker);
+    CHECK(document.featureError(slanted).empty());
+    CHECK_THAT(onPlane(document.planeState(slanted)->plane, {60.0, 0.0, 20.0}),
+               WithinAbs(0.0, 1e-9));
+    document.undo();
+    // Three corners on one line make no plane.
+    slant.vertices = {corner(0.0, 0.0, 0.0), corner(60.0, 0.0, 0.0), "O"};
+    document.changeFeature(slanted, slant);
+    CHECK_THAT(document.featureError(slanted), ContainsSubstring("one line"));
+    document.undo();
+    // Two are not enough.
+    slant.vertices.pop_back();
+    document.changeFeature(slanted, slant);
+    CHECK_THAT(document.featureError(slanted), ContainsSubstring("three corners"));
+    document.undo();
+
+    // An axis through two corners, across the plate.
+    Feature diagonal;
+    diagonal.kind = FeatureKind::Axis;
+    diagonal.axisKind = AxisKind::ThroughPoints;
+    diagonal.body = body;
+    diagonal.vertices = {corner(0.0, 0.0, 0.0), corner(60.0, 40.0, 10.0)};
+    const ObjectId across = document.addFeature(diagonal);
+    CHECK(document.featureError(across).empty());
+    auto axis = document.axisState(across);
+    REQUIRE(axis.has_value());
+    const double length = std::sqrt(60.0 * 60.0 + 40.0 * 40.0 + 10.0 * 10.0);
+    CHECK_THAT(axis->axis.direction.x, WithinAbs(60.0 / length, 1e-9));
+    CHECK_THAT(axis->axis.direction.y, WithinAbs(40.0 / length, 1e-9));
+    CHECK_THAT(axis->axis.direction.z, WithinAbs(10.0 / length, 1e-9));
+    CHECK_THAT(axis->center.x, WithinAbs(30.0, 1e-6));
+    // The same corner twice is no line.
+    diagonal.vertices[1] = diagonal.vertices[0];
+    document.changeFeature(across, diagonal);
+    CHECK_THAT(document.featureError(across), ContainsSubstring("same place"));
+    document.undo();
+
+    // Where the top meets the YZ plane: along Y, at the height of the top.
+    Feature meet;
+    meet.kind = FeatureKind::Axis;
+    meet.axisKind = AxisKind::PlanesMeet;
+    meet.body = body;
+    meet.reference = top;
+    meet.reference2 = "YZ";
+    const ObjectId edge = document.addFeature(meet);
+    CHECK(document.featureError(edge).empty());
+    axis = document.axisState(edge);
+    REQUIRE(axis.has_value());
+    CHECK_THAT(std::abs(axis->axis.direction.y), WithinAbs(1.0, 1e-9));
+    CHECK_THAT(axis->axis.origin.x, WithinAbs(0.0, 1e-9));
+    CHECK_THAT(axis->axis.origin.z, WithinAbs(10.0, 1e-9));
+    // And where it meets the slanted plane, a construction plane.
+    meet.reference2 = "plane:" + std::to_string(slanted.value);
+    document.changeFeature(edge, meet);
+    CHECK(document.featureError(edge).empty());
+    axis = document.axisState(edge);
+    CHECK_THAT(std::abs(axis->axis.direction.x), WithinAbs(1.0, 1e-9));
+    CHECK_THAT(axis->axis.origin.z, WithinAbs(10.0, 1e-9));
+    CHECK_THAT(axis->axis.origin.y, WithinAbs(0.0, 1e-9));
+    // Parallel planes do not meet.
+    meet.reference2 = "XY";
+    document.changeFeature(edge, meet);
+    CHECK_THAT(document.featureError(edge), ContainsSubstring("parallel"));
+    document.undo();
+
+    // Square to the top, at a corner, and at its middle with none.
+    Feature up;
+    up.kind = FeatureKind::Axis;
+    up.axisKind = AxisKind::Normal;
+    up.body = body;
+    up.reference = top;
+    up.vertices = {corner(60.0, 40.0, 10.0)};
+    const ObjectId normal = document.addFeature(up);
+    CHECK(document.featureError(normal).empty());
+    axis = document.axisState(normal);
+    REQUIRE(axis.has_value());
+    CHECK_THAT(axis->axis.direction.z, WithinAbs(1.0, 1e-9));
+    CHECK_THAT(axis->axis.origin.x, WithinAbs(60.0, 1e-9));
+    CHECK_THAT(axis->axis.origin.y, WithinAbs(40.0, 1e-9));
+    up.vertices.clear();
+    document.changeFeature(normal, up);
+    axis = document.axisState(normal);
+    CHECK_THAT(axis->axis.origin.x, WithinAbs(30.0, 1e-9));
+    CHECK_THAT(axis->axis.origin.y, WithinAbs(20.0, 1e-9));
+    CHECK_THAT(axis->axis.origin.z, WithinAbs(10.0, 1e-9));
+
+    // Saved and opened again, they are as they were.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("corners.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    for (const ObjectId id : {slanted, across, edge, normal}) {
+        const Feature* reread = loaded.document->findFeature(id);
+        REQUIRE(reread != nullptr);
+        CHECK(*reread == *document.findFeature(id));
+        CHECK(loaded.document->featureError(id).empty());
+    }
+}
+
+TEST_CASE("A plane touches a round face where a corner is nearest", "[document][feature]") {
+    Document document;
+    // A cylinder 10 in radius and 20 tall, standing on the origin.
+    const ObjectId circle = document.addSketch("Circle", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    s.addCircle({0.0, 0.0}, 10.0);
+    document.setSketchGeometry(circle, s, "Draw");
+    const ObjectId rod = document.addFeature(pullOf(circle, 20.0));
+    const ObjectId body = document.findFeature(rod)->body;
+    std::string side;
+    for (const std::string& name : document.findBody(body)->faceNames) {
+        if (name.find("/side/") != std::string::npos) {
+            side = name;
+        }
+    }
+    REQUIRE(!side.empty());
+    // The corner where the seam of the side meets the bottom.
+    const lcad::kernel::NamedShape named = document.namedBody(body);
+    const std::vector<std::string> corners = lcad::kernel::vertexNames(named);
+    std::string low;
+    lcad::kernel::Point at;
+    for (std::size_t i = 0; i < corners.size(); ++i) {
+        const auto box = lcad::kernel::boundingBox(lcad::kernel::subShape(
+            named.shape, lcad::kernel::SubShapeKind::Vertex, static_cast<int>(i)));
+        if (box && std::abs(box->min.z) < 1e-6) {
+            low = corners[i];
+            at = box->min;
+        }
+    }
+    REQUIRE(!low.empty());
+
+    Feature touching;
+    touching.kind = FeatureKind::Plane;
+    touching.planeKind = PlaneKind::Tangent;
+    touching.body = body;
+    touching.reference = side;
+    touching.vertices = {low};
+    const ObjectId tangent = document.addFeature(touching);
+    CHECK(document.featureError(tangent).empty());
+    const auto plane = document.planeState(tangent);
+    REQUIRE(plane.has_value());
+    // Square to the radius through the corner, and 10 from the axis.
+    const double r = std::hypot(at.x, at.y);
+    CHECK_THAT(r, WithinAbs(10.0, 1e-6));
+    CHECK_THAT(plane->plane.normal.x * at.x / r + plane->plane.normal.y * at.y / r,
+               WithinAbs(1.0, 1e-9));
+    CHECK_THAT(plane->plane.normal.z, WithinAbs(0.0, 1e-9));
+    CHECK_THAT(plane->plane.origin.x * plane->plane.normal.x +
+                   plane->plane.origin.y * plane->plane.normal.y,
+               WithinAbs(10.0, 1e-6));
+    // A sketch can be drawn on it.
+    const ObjectId on = document.addSketch("On it", plane->plane);
+    CHECK(document.findSketch(on) != nullptr);
+}

@@ -51,9 +51,15 @@ struct NamedShape {
 /// How far from the faces of a shape the farthest of some points is.
 [[nodiscard]] double farthestFromFaces(const Shape& shape, const std::vector<Point>& points);
 
-/// The number of the face or edge with that name, or -1 if the shape has none.
+/// A name for every vertex, in the order subShape() numbers the vertices, made of the names of
+/// the faces that meet at it, joined by "&". Where several vertices lie on the same faces they
+/// are told apart by a number, in the order of where they are.
+[[nodiscard]] std::vector<std::string> vertexNames(const NamedShape& shape);
+
+/// The number of the face, edge, or vertex with that name, or -1 if the shape has none.
 [[nodiscard]] int findFace(const NamedShape& shape, const std::string& name);
 [[nodiscard]] int findEdge(const NamedShape& shape, const std::string& name);
+[[nodiscard]] int findVertex(const NamedShape& shape, const std::string& name);
 
 /// One curve of a closed outline: an edge, and the name that goes into the name of whatever
 /// face is made from it.
@@ -296,6 +302,10 @@ struct HoleShape {
 /// edge, or of a cylindrical, conical, spherical, or toroidal face; the normal of a flat face,
 /// through its middle. Nothing for anything else, and for a null shape.
 [[nodiscard]] std::optional<Axis> axisOf(const Shape& part);
+
+/// The line square to a face at the place on it nearest `toward`, pointing out of the solid the
+/// face bounds. Nothing for a null shape, or one that is not a face.
+[[nodiscard]] std::optional<Axis> normalAt(const Shape& face, const Point& toward);
 
 // Copies, for mirroring and patterns. Each face of a copy keeps the name of the face it was
 // copied from, with `prefix` and a slash put in front, so that copies are told apart from the

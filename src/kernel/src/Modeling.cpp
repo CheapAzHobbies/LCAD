@@ -6,6 +6,7 @@
 #include <lcad/kernel/occt/ShapeAccess.h>
 #include <lcad/kernel/occt/Stoppable.h>
 
+#include <BRepAdaptor_CompCurve.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_BooleanOperation.hxx>
@@ -13,10 +14,13 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Defeaturing.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeShape.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -24,20 +28,12 @@
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
+#include <BRepGProp_Face.hxx>
+#include <BRepLib.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
-#include <BRepAdaptor_CompCurve.hxx>
-#include <BRepBuilderAPI_MakeEdge.hxx>
-#include <BRepBuilderAPI_MakeWire.hxx>
-#include <BRepBuilderAPI_MakePolygon.hxx>
-#include <BRepLib.hxx>
-#include <BRepTools.hxx>
-#include <Geom_CylindricalSurface.hxx>
-#include <Geom2d_Line.hxx>
-#include <gp_Circ.hxx>
-#include <gp_Ax3.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepOffset_MakeOffset.hxx>
@@ -45,10 +41,13 @@
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
+#include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
-#include <BRep_Builder.hxx>
 #include <GProp_GProps.hxx>
+#include <Geom2d_Line.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <Geom_CylindricalSurface.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <ShapeBuild_ReShape.hxx>
 #include <ShapeFix_Face.hxx>
@@ -71,6 +70,8 @@
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Circ.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Trsf.hxx>
 
@@ -544,6 +545,58 @@ std::vector<std::string> edgeNames(const NamedShape& shape) {
         }
     }
     return names;
+}
+
+std::vector<std::string> vertexNames(const NamedShape& shape) {
+    const TopoDS_Shape& whole = occt::unwrap(shape.shape);
+    std::vector<std::string> names;
+    if (whole.IsNull()) {
+        return names;
+    }
+    const TopTools_IndexedMapOfShape faces = mapOf(whole, TopAbs_FACE);
+    TopTools_IndexedDataMapOfShapeListOfShape facesOfVertex;
+    TopExp::MapShapesAndAncestors(whole, TopAbs_VERTEX, TopAbs_FACE, facesOfVertex);
+    const TopTools_IndexedMapOfShape vertices = mapOf(whole, TopAbs_VERTEX);
+
+    std::vector<std::string> around(static_cast<std::size_t>(vertices.Extent()));
+    std::map<std::string, std::vector<int>> groups;
+    for (int i = 1; i <= vertices.Extent(); ++i) {
+        std::vector<std::string> onFaces;
+        const int at = facesOfVertex.FindIndex(vertices(i));
+        if (at > 0) {
+            for (TopTools_ListOfShape::Iterator it(facesOfVertex(at)); it.More(); it.Next()) {
+                const int face = faces.FindIndex(it.Value());
+                if (face > 0 && static_cast<std::size_t>(face) <= shape.faceNames.size()) {
+                    onFaces.push_back(shape.faceNames[static_cast<std::size_t>(face - 1)]);
+                }
+            }
+        }
+        std::sort(onFaces.begin(), onFaces.end());
+        onFaces.erase(std::unique(onFaces.begin(), onFaces.end()), onFaces.end());
+        std::string key;
+        for (const std::string& name : onFaces) {
+            key += key.empty() ? name : "&" + name;
+        }
+        around[static_cast<std::size_t>(i - 1)] = key;
+        groups[key].push_back(i);
+    }
+    names.resize(around.size());
+    for (auto& [key, members] : groups) {
+        std::sort(members.begin(), members.end(), [&vertices](int a, int b) {
+            return placeKey(BRep_Tool::Pnt(TopoDS::Vertex(vertices(a)))) <
+                   placeKey(BRep_Tool::Pnt(TopoDS::Vertex(vertices(b))));
+        });
+        for (std::size_t n = 0; n < members.size(); ++n) {
+            names[static_cast<std::size_t>(members[n] - 1)] = key + "#" + std::to_string(n);
+        }
+    }
+    return names;
+}
+
+int findVertex(const NamedShape& shape, const std::string& name) {
+    const std::vector<std::string> names = vertexNames(shape);
+    const auto found = std::find(names.begin(), names.end(), name);
+    return found == names.end() ? -1 : static_cast<int>(found - names.begin());
 }
 
 int findFace(const NamedShape& shape, const std::string& name) {
@@ -1632,6 +1685,43 @@ NamedShape holeTool(const Point& start, const Vector& direction, const HoleShape
                                 part + "@" + name});
     }
     return revolve(section, {region}, 0.0, 0.0, 0.0, 1.0, 2.0 * M_PI, tag);
+}
+
+std::optional<Axis> normalAt(const Shape& face, const Point& toward) {
+    const TopoDS_Shape& shape = occt::unwrap(face);
+    if (shape.IsNull() || shape.ShapeType() != TopAbs_FACE) {
+        return std::nullopt;
+    }
+    return occt::guarded("find the normal of a face", [&]() -> std::optional<Axis> {
+        const TopoDS_Face& f = TopoDS::Face(shape);
+        const TopoDS_Vertex point = BRepBuilderAPI_MakeVertex(gp_Pnt(toward.x, toward.y, toward.z));
+        BRepExtrema_DistShapeShape distance(point, f);
+        if (!distance.IsDone() || distance.NbSolution() < 1) {
+            return std::nullopt;
+        }
+        const gp_Pnt on = distance.PointOnShape2(1);
+        double u = 0.0;
+        double v = 0.0;
+        if (distance.SupportTypeShape2(1) == BRepExtrema_IsInFace) {
+            distance.ParOnFaceS2(1, u, v);
+        } else {
+            // On an edge or a corner of the face: its parameters on the surface there.
+            const Handle(Geom_Surface) surface = BRep_Tool::Surface(f);
+            GeomAPI_ProjectPointOnSurf project(on, surface);
+            if (project.NbPoints() < 1) {
+                return std::nullopt;
+            }
+            project.LowerDistanceParameters(u, v);
+        }
+        gp_Pnt at;
+        gp_Vec normal;
+        BRepGProp_Face(f).Normal(u, v, at, normal);
+        if (normal.Magnitude() < 1e-12) {
+            return std::nullopt;
+        }
+        normal.Normalize();
+        return Axis{{on.X(), on.Y(), on.Z()}, {normal.X(), normal.Y(), normal.Z()}};
+    });
 }
 
 std::optional<Axis> axisOf(const Shape& part) {

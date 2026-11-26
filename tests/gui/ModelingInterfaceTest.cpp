@@ -106,6 +106,7 @@ private slots:
     void shellAndRevolveWork();
     void loftAndSweepWork();
     void planesAtAnAngleAndMidplanes();
+    void planesAndAxesThroughCornersAndFaces();
     void throughAllDraftAndSplit();
     void combineMovePipeCoilAndThread();
     void aSectionCutsTheView();
@@ -933,6 +934,138 @@ void ModelingInterfaceTest::planesAtAnAngleAndMidplanes() {
     QVERIFY(edited != nullptr);
     QCOMPARE(edited->findChild<QComboBox*>(QStringLiteral("planeKind"))->currentIndex(), 2);
     QCOMPARE(edited->feature().reference2, std::string("XY"));
+    QTest::keyClick(edited, Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+}
+
+void ModelingInterfaceTest::planesAndAxesThroughCornersAndFaces() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+    const ObjectId body = bodyOf(window, plate).id;
+    // The corner of the plate at a place, as it is picked in the 3D view.
+    const auto corner = [&window, body](double x, double y, double z) {
+        const lcad::kernel::Shape& shape = window.document()->findBody(body)->shape;
+        const int count = lcad::kernel::subShapeCount(shape, lcad::kernel::SubShapeKind::Vertex);
+        for (int i = 0; i < count; ++i) {
+            const auto box = lcad::kernel::boundingBox(
+                lcad::kernel::subShape(shape, lcad::kernel::SubShapeKind::Vertex, i));
+            if (box && nearly(box->min.x, x) && nearly(box->min.y, y) && nearly(box->min.z, z)) {
+                return SelectedItem{body, SelectedItem::Kind::Vertex, i};
+            }
+        }
+        return SelectedItem{};
+    };
+
+    // A plane through three corners, clicked one after another.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* three = panel(window);
+    QVERIFY(three != nullptr);
+    three->setChoice(QStringLiteral("planeKind"), 3);
+    auto* corners = three->findChild<QLabel*>(QStringLiteral("corners"));
+    QVERIFY(corners != nullptr);
+    QVERIFY(corners->isVisible());
+    QVERIFY(!three->findChild<QComboBox*>(QStringLiteral("reference"))->isVisible());
+    QVERIFY(!three->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))->isVisible());
+    QCOMPARE(corners->text(), QStringLiteral("Click 3 corners in the 3D view"));
+    window.viewport()->setSelection({corner(0.0, 0.0, 8.0)});
+    window.viewport()->setSelection({corner(60.0, 0.0, 8.0)});
+    QCOMPARE(corners->text(), QStringLiteral("2 of 3 picked"));
+    QVERIFY(!three->hasInput());
+    window.viewport()->setSelection({corner(0.0, 40.0, 0.0)});
+    QCOMPARE(three->feature().vertices.size(), std::size_t{3});
+    QCOMPARE(three->feature().body, body);
+    QTRY_VERIFY2(three->errorText().isEmpty(), qPrintable(three->errorText()));
+    // Clear lets them go.
+    QTest::mouseClick(three->findChild<QPushButton*>(QStringLiteral("clearCorners")),
+                      Qt::LeftButton);
+    QVERIFY(three->feature().vertices.empty());
+    for (const SelectedItem& item :
+         {corner(0.0, 0.0, 8.0), corner(60.0, 0.0, 8.0), corner(0.0, 40.0, 0.0)}) {
+        window.viewport()->setSelection({item});
+    }
+    QTRY_VERIFY2(three->errorText().isEmpty(), qPrintable(three->errorText()));
+    QTest::mouseClick(okButton(three), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId slanted = window.document()->features().back().id;
+    const auto plane = window.document()->planeState(slanted);
+    QVERIFY(plane.has_value());
+    // Through (0, 40, 0) and the top edge along X, 8 above the bottom: square to (0, 480, 2400).
+    QVERIFY(nearly(std::abs(plane->plane.normal.z), 2400.0 / std::hypot(480.0, 2400.0)));
+    QVERIFY(nearly(plane->plane.normal.x, 0.0));
+
+    // An axis through two corners.
+    QVERIFY(trigger(window, "construct.axis"));
+    FeaturePanel* two = panel(window);
+    QVERIFY(two != nullptr);
+    two->setChoice(QStringLiteral("axisKind"), 1);
+    QVERIFY(two->findChild<QLabel*>(QStringLiteral("corners"))->isVisible());
+    QVERIFY(!two->findChild<QComboBox*>(QStringLiteral("reference"))->isVisible());
+    window.viewport()->setSelection({corner(0.0, 0.0, 0.0)});
+    window.viewport()->setSelection({corner(60.0, 40.0, 8.0)});
+    QCOMPARE(two->feature().vertices.size(), std::size_t{2});
+    QTRY_VERIFY2(two->errorText().isEmpty(), qPrintable(two->errorText()));
+    QTest::mouseClick(okButton(two), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const auto diagonal = window.document()->axisState(window.document()->features().back().id);
+    QVERIFY(diagonal.has_value());
+    QVERIFY(nearly(diagonal->axis.direction.x, 60.0 / std::sqrt(60.0 * 60.0 + 40.0 * 40.0 + 64.0)));
+
+    // Where two planes meet, chosen in the panel: XY and XZ meet in the X axis.
+    QVERIFY(trigger(window, "construct.axis"));
+    FeaturePanel* meet = panel(window);
+    QVERIFY(meet != nullptr);
+    meet->setChoice(QStringLiteral("axisKind"), 2);
+    auto* second = meet->findChild<QComboBox*>(QStringLiteral("planeSecond"));
+    QVERIFY(second->isVisible());
+    meet->setChoice(QStringLiteral("reference"), 0);
+    meet->setChoice(QStringLiteral("planeSecond"), 1);
+    QCOMPARE(meet->feature().reference, std::string("XY"));
+    QCOMPARE(meet->feature().reference2, std::string("XZ"));
+    QVERIFY(!meet->feature().body.isValid());
+    QTRY_VERIFY2(meet->errorText().isEmpty(), qPrintable(meet->errorText()));
+    QTest::mouseClick(okButton(meet), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const auto xAxis = window.document()->axisState(window.document()->features().back().id);
+    QVERIFY(xAxis.has_value());
+    QVERIFY(nearly(std::abs(xAxis->axis.direction.x), 1.0));
+
+    // Square to the top, clicked, at a corner clicked after it.
+    QVERIFY(trigger(window, "construct.axis"));
+    FeaturePanel* normal = panel(window);
+    QVERIFY(normal != nullptr);
+    normal->setChoice(QStringLiteral("axisKind"), 3);
+    QCOMPARE(normal->findChild<QLabel*>(QStringLiteral("corners"))->text(),
+             QStringLiteral("At the middle of the face"));
+    click(window, at(window, 30.0, 20.0, 8.0));
+    QVERIFY(normal->feature().reference.find("/end/") != std::string::npos);
+    QTRY_VERIFY2(normal->errorText().isEmpty(), qPrintable(normal->errorText()));
+    window.viewport()->setSelection({corner(60.0, 40.0, 8.0)});
+    QCOMPARE(normal->feature().vertices.size(), std::size_t{1});
+    QVERIFY(normal->feature().reference.find("/end/") != std::string::npos);
+    QTRY_VERIFY2(normal->errorText().isEmpty(), qPrintable(normal->errorText()));
+    QTest::mouseClick(okButton(normal), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId up = window.document()->features().back().id;
+    const auto upright = window.document()->axisState(up);
+    QVERIFY(upright.has_value());
+    QVERIFY(nearly(upright->axis.direction.z, 1.0));
+    QVERIFY(nearly(upright->axis.origin.x, 60.0));
+    QVERIFY(nearly(upright->axis.origin.y, 40.0));
+
+    // Editing it shows what it is.
+    QVERIFY(window.editFeature(up));
+    FeaturePanel* edited = panel(window);
+    QVERIFY(edited != nullptr);
+    QCOMPARE(edited->findChild<QComboBox*>(QStringLiteral("axisKind"))->currentIndex(), 3);
+    QCOMPARE(edited->feature().vertices.size(), std::size_t{1});
+    QCOMPARE(edited->findChild<QLabel*>(QStringLiteral("corners"))->text(),
+             QStringLiteral("At the corner picked"));
     QTest::keyClick(edited, Qt::Key_Escape);
     QTRY_VERIFY(panel(window) == nullptr);
 }
