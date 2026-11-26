@@ -599,9 +599,12 @@ void ApplicationTest::browserListsBodiesAndEditsThem() {
     QCOMPARE(tree->topLevelItemCount(), 1);
     QTreeWidgetItem* root = tree->topLevelItem(0);
     QCOMPARE(root->text(0), QStringLiteral("Untitled"));
-    QCOMPARE(root->childCount(), 5);
+    QCOMPARE(root->childCount(), 6);
     QCOMPARE(root->child(0)->text(0), QStringLiteral("Origin"));
-    // Joints come last, hidden while there are none; components would come before them.
+    // Saved views come last, and joints before them, each hidden while there are none;
+    // components would come before those.
+    QCOMPARE(root->child(5)->text(0), QStringLiteral("Views"));
+    QVERIFY(root->child(5)->isHidden());
     QCOMPARE(root->child(4)->text(0), QStringLiteral("Joints"));
     QVERIFY(root->child(4)->isHidden());
     // Construction planes have a group of their own, hidden while there are none.
@@ -930,9 +933,12 @@ void ApplicationTest::viewsAreSavedAndGoneBackTo() {
     QCOMPARE(views->childCount(), 1);
     QCOMPARE(views->child(0)->text(0), QStringLiteral("Bench"));
 
-    // Turned away, and back by a double-click on it.
+    // Turned away and zoomed in, and back by a double-click on it.
     viewport->setStandardView(lcad::viewport::StandardView::Top);
-    QVERIFY(std::abs(viewport->cameraState().scale - front.scale) > 1e-6);
+    lcad::viewport::CameraState away = viewport->cameraState();
+    away.scale = front.scale / 3.0;
+    viewport->setCameraState(away);
+    QVERIFY(std::abs(viewport->cameraState().up[2] - front.up[2]) > 0.5);
     emit window.browser()->tree()->itemDoubleClicked(views->child(0), 0);
     const lcad::viewport::CameraState back = viewport->cameraState();
     for (int i = 0; i < 3; ++i) {
@@ -942,7 +948,7 @@ void ApplicationTest::viewsAreSavedAndGoneBackTo() {
     QVERIFY(std::abs(back.scale - front.scale) < 1e-6);
 
     // Kept again as the view is now, through the menu of the entry.
-    viewport->setStandardView(lcad::viewport::StandardView::Top);
+    viewport->setCameraState(away);
     views->child(0)->setSelected(true);
     window.commands()->refresh();
     QVERIFY(action(window, "view.update")->isEnabled());

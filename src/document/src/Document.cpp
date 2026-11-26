@@ -145,8 +145,7 @@ Document::Document(DocumentState state)
       m_joints(std::move(state.joints)), m_materials(std::move(state.materials)),
       m_drawings(std::move(state.drawings)), m_tools(std::move(state.tools)),
       m_setups(std::move(state.setups)), m_views(std::move(state.views)),
-      m_timeline(std::move(state.timeline)),
-      m_marker(state.marker), m_nextId(state.nextId) {
+      m_timeline(std::move(state.timeline)), m_marker(state.marker), m_nextId(state.nextId) {
     std::unordered_set<ObjectId> seen;
     const auto claim = [this, &seen](ObjectId id, const char* what) {
         if (!id.isValid() || id.value >= m_nextId) {

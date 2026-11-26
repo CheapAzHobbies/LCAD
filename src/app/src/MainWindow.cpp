@@ -692,9 +692,9 @@ void MainWindow::defineCommands() {
             }
             if (const auto views = m_browser->selectedViews(); !isSketching() && !views.empty()) {
                 document::Transaction transaction(*document(), tr("Delete View").toStdString());
-                for (const document::ObjectId view : views) {
-                    if (document()->findView(view) != nullptr) {
-                        document()->removeView(view);
+                for (const document::ObjectId saved : views) {
+                    if (document()->findView(saved) != nullptr) {
+                        document()->removeView(saved);
                     }
                 }
                 transaction.commit();
@@ -745,8 +745,7 @@ void MainWindow::defineCommands() {
             }
             return !selectedBodies().empty() || !selectedSketches().empty() ||
                    m_timeline->selectedItem().isValid() || !m_browser->selectedJoints().empty() ||
-                   !m_browser->selectedOccurrences().empty() ||
-                   !m_browser->selectedViews().empty();
+                   !m_browser->selectedOccurrences().empty() || !m_browser->selectedViews().empty();
         };
         m_commands->add(std::move(c));
 
@@ -1450,8 +1449,8 @@ void MainWindow::defineCommands() {
         c = make("view.update", tr("&Update View"), view,
                  tr("Keep the way the model is looked at now in the saved view selected"));
         c.run = [this](bool) {
-            if (const auto views = m_browser->selectedViews(); views.size() == 1) {
-                updateView(views.front());
+            if (const auto picked = m_browser->selectedViews(); picked.size() == 1) {
+                updateView(picked.front());
             }
         };
         c.isEnabled = [this] { return m_browser->selectedViews().size() == 1; };
@@ -1460,8 +1459,8 @@ void MainWindow::defineCommands() {
         c = make("view.goTo", tr("&Go to View"), view,
                  tr("Look at the model as the saved view selected does"));
         c.run = [this](bool) {
-            if (const auto views = m_browser->selectedViews(); views.size() == 1) {
-                goToView(views.front());
+            if (const auto picked = m_browser->selectedViews(); picked.size() == 1) {
+                goToView(picked.front());
             }
         };
         c.isEnabled = [this] { return m_browser->selectedViews().size() == 1; };
