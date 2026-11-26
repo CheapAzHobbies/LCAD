@@ -171,7 +171,7 @@ void PropertiesPanel::refresh(document::Document* document,
         addRow(tr("State"), describeSketchState(geometry, geometry.state()));
         addRow(tr("Curves"), QString::number(curves));
         addRow(tr("Constraints"), QString::number(geometry.constraints().size()));
-        addRow(tr("Closed outlines"), QString::number(geometry.profiles().size()));
+        addRow(tr("Closed areas"), QString::number(geometry.regions().size()));
         addRow(tr("Shown"), sketch->visible ? tr("Yes") : tr("No"));
         return;
     }

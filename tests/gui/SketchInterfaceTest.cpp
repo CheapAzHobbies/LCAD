@@ -588,7 +588,7 @@ void SketchInterfaceTest::aRectangleIsDrawnConstrainedDimensionedSavedAndReopene
                  (std::vector<SelectedItem>{{id, SelectedItem::Kind::Sketch, -1}}));
         QCOMPARE(window.selectionSummary(), QStringLiteral("Sketch 1 · Fully constrained"));
         QCOMPARE(window.properties()->heading(), QStringLiteral("Sketch 1"));
-        QVERIFY(window.properties()->rows().contains(QStringLiteral("Closed outlines: 1")));
+        QVERIFY(window.properties()->rows().contains(QStringLiteral("Closed areas: 1")));
 
         QString error;
         QVERIFY2(window.saveTo(path, &error), qPrintable(error));

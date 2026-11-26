@@ -9,6 +9,7 @@
 #include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QLineF>
 #include <QLocale>
 #include <QPainter>
 #include <QPainterPath>
@@ -19,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <numbers>
 #include <stdexcept>
 
 namespace lcad::viewport {
@@ -294,6 +296,10 @@ public:
 
     document::Document* document = nullptr;
     document::ObjectId sketchId;
+    // The areas of the sketch as last worked out, and what it was like then: finding them takes
+    // longer than a frame should, and most frames only move the pointer.
+    mutable std::vector<double> areasPrint;
+    mutable std::vector<sketch::Region> areas;
     sketch::SolveResult state;
 
     SketchTool tool = SketchTool::Select;
@@ -373,6 +379,102 @@ public:
     }
 
     void update() const { overlay->update(); }
+
+    // The sketch's areas, worked out again only when something in it has changed.
+    [[nodiscard]] const std::vector<sketch::Region>& areasOf(const sketch::Sketch& g) const {
+        std::vector<double> print;
+        print.reserve(g.entities().size() * 9);
+        for (const Entity& entity : g.entities()) {
+            print.insert(print.end(),
+                         {static_cast<double>(entity.id), static_cast<double>(entity.kind),
+                          entity.construction ? 1.0 : 0.0, entity.x, entity.y, entity.radius,
+                          static_cast<double>(entity.start), static_cast<double>(entity.end),
+                          static_cast<double>(entity.center)});
+            for (const EntityId point : entity.points) {
+                print.push_back(static_cast<double>(point));
+            }
+        }
+        if (print != areasPrint) {
+            areas = g.regions();
+            areasPrint = std::move(print);
+        }
+        return areas;
+    }
+
+    // Lines along the way round, put end to end: each turned so that it goes on from the one
+    // before.
+    [[nodiscard]] static QPolygonF chained(std::vector<QPolygonF> parts) {
+        QPolygonF loop;
+        if (parts.empty()) {
+            return loop;
+        }
+        if (parts.size() > 1) {
+            // Start the first at the end the second does not reach.
+            const QPolygonF& next = parts[1];
+            const auto nearly = [&next](const QPointF& p) {
+                return std::min(QLineF(p, next.first()).length(), QLineF(p, next.last()).length());
+            };
+            if (!parts[0].isEmpty() && nearly(parts[0].first()) < nearly(parts[0].last())) {
+                std::reverse(parts[0].begin(), parts[0].end());
+            }
+        }
+        for (QPolygonF& part : parts) {
+            if (part.isEmpty()) {
+                continue;
+            }
+            if (!loop.isEmpty() && QLineF(loop.last(), part.last()).length() <
+                                       QLineF(loop.last(), part.first()).length()) {
+                std::reverse(part.begin(), part.end());
+            }
+            loop << part;
+        }
+        return loop;
+    }
+
+    [[nodiscard]] QPolygonF loopOfCurves(const sketch::Sketch& g,
+                                         const std::vector<EntityId>& curves) const {
+        std::vector<QPolygonF> parts;
+        for (const EntityId id : curves) {
+            const Entity* entity = g.find(id);
+            if (entity != nullptr) {
+                parts.push_back(pathOf(strokeOf(g, *entity)).toSubpathPolygons().value(0));
+            }
+        }
+        return chained(std::move(parts));
+    }
+
+    [[nodiscard]] QPolygonF loopOfPieces(const sketch::Sketch& g,
+                                         const std::vector<sketch::CurvePiece>& pieces) const {
+        std::vector<QPolygonF> parts;
+        for (const sketch::CurvePiece& piece : pieces) {
+            const Entity* entity = g.find(piece.curve);
+            if (entity == nullptr) {
+                continue;
+            }
+            QPolygonF part;
+            if (entity->kind == EntityKind::Line) {
+                part << toWidget(piece.start) << toWidget(piece.end);
+            } else {
+                // Counter-clockwise round the center, from its start to its end.
+                const Point2 c = g.position(entity->center);
+                const double radius = std::hypot(piece.start.x - c.x, piece.start.y - c.y);
+                const double from = std::atan2(piece.start.y - c.y, piece.start.x - c.x);
+                double sweep = std::atan2(piece.end.y - c.y, piece.end.x - c.x) - from;
+                while (sweep <= 0.0) {
+                    sweep += 2.0 * std::numbers::pi;
+                }
+                const int steps =
+                    std::max(2, static_cast<int>(std::ceil(sweep / (std::numbers::pi / 60.0))));
+                for (int i = 0; i <= steps; ++i) {
+                    const double angle = from + sweep * i / steps;
+                    part << toWidget(
+                        {c.x + radius * std::cos(angle), c.y + radius * std::sin(angle)});
+                }
+            }
+            parts.push_back(std::move(part));
+        }
+        return chained(std::move(parts));
+    }
 
     void commit(sketch::Sketch next, const QString& label) const {
         document->setSketchGeometry(sketchId, std::move(next), label.toStdString());
@@ -2399,50 +2501,23 @@ public:
                                                          : colors.sketchConstrained;
         };
 
-        // Closed outlines are tinted, which is how a profile that will make a solid is told
-        // from an outline that only looks closed.
+        // The areas that will make a solid are tinted, which is how one is told from an outline
+        // that only looks closed. They are the areas a pull picks from: those of outlines, and
+        // those that lines which run on past each other close.
         QColor tint = colors.sketchFree;
         tint.setAlpha(34);
-        for (const sketch::Profile& profile : g.profiles()) {
-            QPainterPath outline;
-            std::optional<QPointF> last;
-            for (std::size_t i = 0; i < profile.curves.size(); ++i) {
-                const Entity* entity = g.find(profile.curves[i]);
-                if (entity == nullptr) {
-                    continue;
-                }
-                QPolygonF points = pathOf(strokeOf(g, *entity)).toSubpathPolygons().value(0);
-                if (points.isEmpty()) {
-                    continue;
-                }
-                if (!last.has_value() && profile.curves.size() > 1) {
-                    // Start the first curve at the end the second does not share.
-                    const Entity* next = g.find(profile.curves[1]);
-                    const QPolygonF following =
-                        next != nullptr ? pathOf(strokeOf(g, *next)).toSubpathPolygons().value(0)
-                                        : QPolygonF();
-                    const auto nearly = [&following](const QPointF& p) {
-                        return !following.isEmpty() &&
-                               (QLineF(p, following.first()).length() < 0.5 ||
-                                QLineF(p, following.last()).length() < 0.5);
-                    };
-                    if (nearly(points.first()) && !nearly(points.last())) {
-                        std::reverse(points.begin(), points.end());
-                    }
-                } else if (last.has_value() && QLineF(*last, points.last()).length() <
-                                                   QLineF(*last, points.first()).length()) {
-                    std::reverse(points.begin(), points.end());
-                }
-                if (!last.has_value()) {
-                    outline.moveTo(points.first());
-                }
-                for (const QPointF& point : points) {
-                    outline.lineTo(point);
-                }
-                last = points.last();
+        for (const sketch::Region& area : areasOf(g)) {
+            QPainterPath path;
+            path.setFillRule(Qt::OddEvenFill);
+            path.addPolygon(area.pieces.empty() ? loopOfCurves(g, area.outer)
+                                                : loopOfPieces(g, area.pieces));
+            for (const std::vector<EntityId>& hole : area.holes) {
+                path.addPolygon(loopOfCurves(g, hole));
             }
-            outline.closeSubpath();
-            painter.fillPath(outline, tint);
+            for (const std::vector<sketch::CurvePiece>& hole : area.holePieces) {
+                path.addPolygon(loopOfPieces(g, hole));
+            }
+            painter.fillPath(path, tint);
         }
 
         // Curves.
