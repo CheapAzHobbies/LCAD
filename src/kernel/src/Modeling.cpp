@@ -1687,14 +1687,14 @@ NamedShape holeTool(const Point& start, const Vector& direction, const HoleShape
     return revolve(section, {region}, 0.0, 0.0, 0.0, 1.0, 2.0 * M_PI, tag);
 }
 
-std::optional<Axis> normalAt(const Shape& face, const Point& near) {
+std::optional<Axis> normalAt(const Shape& face, const Point& toward) {
     const TopoDS_Shape& shape = occt::unwrap(face);
     if (shape.IsNull() || shape.ShapeType() != TopAbs_FACE) {
         return std::nullopt;
     }
     return occt::guarded("find the normal of a face", [&]() -> std::optional<Axis> {
         const TopoDS_Face& f = TopoDS::Face(shape);
-        const TopoDS_Vertex point = BRepBuilderAPI_MakeVertex(gp_Pnt(near.x, near.y, near.z));
+        const TopoDS_Vertex point = BRepBuilderAPI_MakeVertex(gp_Pnt(toward.x, toward.y, toward.z));
         BRepExtrema_DistShapeShape distance(point, f);
         if (!distance.IsDone() || distance.NbSolution() < 1) {
             return std::nullopt;

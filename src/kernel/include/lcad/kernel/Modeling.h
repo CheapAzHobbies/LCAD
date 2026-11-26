@@ -303,9 +303,9 @@ struct HoleShape {
 /// through its middle. Nothing for anything else, and for a null shape.
 [[nodiscard]] std::optional<Axis> axisOf(const Shape& part);
 
-/// The line square to a face at the place on it nearest `near`, pointing out of the solid the
+/// The line square to a face at the place on it nearest `toward`, pointing out of the solid the
 /// face bounds. Nothing for a null shape, or one that is not a face.
-[[nodiscard]] std::optional<Axis> normalAt(const Shape& face, const Point& near);
+[[nodiscard]] std::optional<Axis> normalAt(const Shape& face, const Point& toward);
 
 // Copies, for mirroring and patterns. Each face of a copy keeps the name of the face it was
 // copied from, with `prefix` and a slash put in front, so that copies are told apart from the

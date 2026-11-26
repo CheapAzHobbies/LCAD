@@ -726,13 +726,13 @@ kernel::Point middleOf(const kernel::BoundingBox& box) {
 // the face with no corner.
 kernel::Axis normalOn(const Feature& feature, const Document& document, const BodyStates& bodies) {
     const kernel::Shape face = faceNamed(feature.reference, feature, document, bodies);
-    kernel::Point near{0.0, 0.0, 0.0};
+    kernel::Point toward{0.0, 0.0, 0.0};
     if (!feature.vertices.empty()) {
-        near = pointNamed(feature.vertices.front(), feature, document, bodies);
+        toward = pointNamed(feature.vertices.front(), feature, document, bodies);
     } else if (const auto box = kernel::boundingBox(face)) {
-        near = middleOf(*box);
+        toward = middleOf(*box);
     }
-    const auto normal = kernel::normalAt(face, near);
+    const auto normal = kernel::normalAt(face, toward);
     if (!normal.has_value()) {
         throw FeatureFailure("The face " + describeName(document, feature.reference) +
                              " has no direction square to it there.");
