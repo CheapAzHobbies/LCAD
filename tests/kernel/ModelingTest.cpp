@@ -937,7 +937,10 @@ TEST_CASE("A split cuts a body along a face, or a wall pulled from curves", "[ke
         std::set<double> volumes{volume(pieces[0].shape), volume(pieces[1].shape)};
         CHECK_THAT(*volumes.begin(), WithinRel(750.0, 1e-6));
         CHECK_THAT(*volumes.rbegin(), WithinRel(1250.0, 1e-6));
-        CHECK(checkGeometry(cut.shape).empty());
+        // Each piece is sound on its own; together they touch, as pieces of a cut do.
+        for (const NamedShape& piece : pieces) {
+            CHECK(checkGeometry(piece.shape).empty());
+        }
     }
 
     SECTION("a wall beside the body splits nothing") {

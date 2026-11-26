@@ -1071,9 +1071,9 @@ Shape wallOf(const Shape& curves, const Vector& direction, double reach) {
     return occt::guarded("make a wall", [&] {
         const gp_Vec way(direction.x / length * reach, direction.y / length * reach,
                          direction.z / length * reach);
-        BRep_Builder builder;
-        TopoDS_Shell wall;
-        builder.MakeShell(wall);
+        // The faces pulled from curves that meet are sewn together where they meet, so that
+        // the wall is one piece, as a cut needs it to be.
+        BRepBuilderAPI_Sewing sewing(1e-6);
         int count = 0;
         for (TopExp_Explorer it(occt::unwrap(curves), TopAbs_EDGE); it.More(); it.Next()) {
             // From `reach` behind to `reach` in front.
@@ -1082,12 +1082,20 @@ Shape wallOf(const Shape& curves, const Vector& direction, double reach) {
             const TopoDS_Shape start = BRepBuilderAPI_Transform(it.Current(), back, true).Shape();
             BRepPrimAPI_MakePrism prism(start, way * 2.0);
             for (TopExp_Explorer face(prism.Shape(), TopAbs_FACE); face.More(); face.Next()) {
-                builder.Add(wall, face.Current());
+                sewing.Add(face.Current());
                 ++count;
             }
         }
         if (count == 0) {
             throw Error("split", "there are no curves to make a wall of");
+        }
+        sewing.Perform();
+        const TopoDS_Shape sewn = sewing.SewedShape();
+        BRep_Builder builder;
+        TopoDS_Shell wall;
+        builder.MakeShell(wall);
+        for (TopExp_Explorer face(sewn, TopAbs_FACE); face.More(); face.Next()) {
+            builder.Add(wall, face.Current());
         }
         return occt::wrap(wall);
     });
