@@ -355,7 +355,7 @@ From trying the app. Branch `sketch-feedback`.
 
 ## Modeling and sketching, from use (2026-11-12)
 
-From trying the app. Branch `claude/ecstatic-franklin-iq9r7o`.
+From trying the app. Branch `modeling-from-use`.
 
 - [x] Loft through closed outlines of two or more sketches, in the order they are clicked.
 - [x] Sweep closed outlines along the curves of another sketch.
