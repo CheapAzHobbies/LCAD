@@ -1139,6 +1139,65 @@ TEST_CASE("One area of outlines that overlap can be pulled", "[document][feature
     CHECK_THAT(total, WithinRel(1000.0 * 5.0, 1e-9));
 }
 
+TEST_CASE("Areas that lines in no outline close can be pulled", "[document][feature]") {
+    Document document;
+    const ObjectId id = document.addSketch("Loose", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    // A plate, and in it a 10 by 10 square whose sides run on past its corners, with a circle
+    // over one of them and a line across the circle.
+    lcad::sketch::addRectangle(s, {-20.0, -20.0}, {30.0, 30.0});
+    s.addLine({-1.0, 0.0}, {11.0, 0.0});
+    s.addLine({10.0, -1.0}, {10.0, 11.0});
+    s.addLine({11.0, 10.0}, {-1.0, 10.0});
+    s.addLine({0.0, 11.0}, {0.0, -1.0});
+    document.setSketchGeometry(id, s, "Loose");
+    const std::vector<lcad::sketch::Region> areas = s.regions();
+    REQUIRE(areas.size() == 2);
+
+    // Each alone: the square, and the plate with a square hole through it.
+    for (const lcad::sketch::Region& area : areas) {
+        Feature pull = pullOf(id, 5.0);
+        pull.regions = {area.key};
+        const ObjectId one = document.addFeature(pull);
+        REQUIRE(document.featureError(one).empty());
+        const ObjectId made = document.findFeature(one)->body;
+        CHECK_THAT(lcad::kernel::volume(document.findBody(made)->shape),
+                   WithinRel(area.area * 5.0, 1e-9));
+        CHECK(lcad::kernel::checkGeometry(document.findBody(made)->shape).empty());
+        document.removeFeature(one);
+    }
+    const auto plate = std::find_if(areas.begin(), areas.end(),
+                                    [](const lcad::sketch::Region& r) { return r.area > 200.0; });
+    CHECK_THAT(plate->area, WithinAbs(2400.0, 1e-6));
+
+    // On their own, with nothing else: picked, or the whole sketch with nothing picked.
+    lcad::sketch::Sketch alone;
+    alone.addLine({-1.0, 0.0}, {11.0, 0.0});
+    alone.addLine({10.0, -1.0}, {10.0, 11.0});
+    alone.addLine({11.0, 10.0}, {-1.0, 10.0});
+    alone.addLine({0.0, 11.0}, {0.0, -1.0});
+    alone.addCircle({10.0, 10.0}, 3.0);
+    const ObjectId other = document.addSketch("Alone", lcad::kernel::planeXY());
+    document.setSketchGeometry(other, alone, "Alone");
+    const ObjectId all = document.addFeature(pullOf(other, 2.0));
+    REQUIRE(document.featureError(all).empty());
+    const double square = 100.0;
+    const double disc = pi * 9.0;
+    const double shared = disc / 4.0;
+    CHECK_THAT(lcad::kernel::volume(document.findBody(document.findFeature(all)->body)->shape),
+               WithinRel((square + disc - shared) * 2.0, 1e-9));
+    document.removeFeature(all);
+    for (const lcad::sketch::Region& area : alone.regions()) {
+        Feature pull = pullOf(other, 2.0);
+        pull.regions = {area.key};
+        const ObjectId one = document.addFeature(pull);
+        REQUIRE(document.featureError(one).empty());
+        CHECK_THAT(lcad::kernel::volume(document.findBody(document.findFeature(one)->body)->shape),
+                   WithinRel(area.area * 2.0, 1e-9));
+        document.removeFeature(one);
+    }
+}
+
 TEST_CASE("Holes are drilled at the points of a sketch", "[document][feature]") {
     Bracket made;
     drawOutline(made, 60.0, 40.0);
