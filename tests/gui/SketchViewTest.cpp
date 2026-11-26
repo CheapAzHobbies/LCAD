@@ -1066,6 +1066,8 @@ void SketchViewTest::theGridStepCanBeChosen() {
     // Nothing, or nonsense, is the step that suits the zoom.
     editor()->setGridStep(-1.0);
     QCOMPARE(editor()->gridStep(), 0.0);
+}
+
 void SketchViewTest::linesThatRunPastEachOtherTintTheAreaTheyClose() {
     openSketch();
     const auto tintAt = [this](Point2 p) {
