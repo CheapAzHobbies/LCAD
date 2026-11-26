@@ -1056,7 +1056,8 @@ void SketchViewTest::theGridStepCanBeChosen() {
     click(at(31.0, 12.0));
     std::vector<Entity> points;
     for (const Entity& entity : sketch().entities()) {
-        if (entity.kind == EntityKind::Point && entity.owner == 0 && entity.id != sketch().origin()) {
+        if (entity.kind == EntityKind::Point && entity.owner == 0 &&
+            entity.id != sketch().origin()) {
             points.push_back(entity);
         }
     }

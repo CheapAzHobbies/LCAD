@@ -433,11 +433,11 @@ void SketchInterfaceTest::sketchToolsAreCommandsWithShortcuts() {
     MainWindow window;
     show(window);
     // Outside a sketch the tools cannot be started, by any means.
-    for (const char* id : {"sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
-                           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.dimension",
-                           "sketch.trim", "sketch.extend", "sketch.break", "sketch.offset",
-                           "sketch.mirror", "sketch.construction", "sketch.parallel",
-                           "sketch.fix"}) {
+    for (const char* id :
+         {"sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc", "sketch.point",
+          "sketch.polygon", "sketch.slot", "sketch.dimension", "sketch.trim", "sketch.extend",
+          "sketch.break", "sketch.offset", "sketch.mirror", "sketch.construction",
+          "sketch.parallel", "sketch.fix"}) {
         QVERIFY2(!action(window, id)->isEnabled(), id);
         QVERIFY2(!trigger(window, id), id);
         QVERIFY2(!action(window, id)->toolTip().isEmpty(), id);
@@ -447,14 +447,21 @@ void SketchInterfaceTest::sketchToolsAreCommandsWithShortcuts() {
 
     // Each tool is a command; exactly one of them is on.
     const std::pair<const char*, SketchTool> tools[] = {
-        {"sketch.line", SketchTool::Line},           {"sketch.rectangle", SketchTool::Rectangle},
-        {"sketch.circle", SketchTool::Circle},       {"sketch.arc", SketchTool::Arc},
-        {"sketch.point", SketchTool::Point},         {"sketch.polygon", SketchTool::Polygon},
-        {"sketch.slot", SketchTool::Slot},           {"sketch.trim", SketchTool::Trim},
-        {"sketch.extend", SketchTool::Extend},       {"sketch.fillet", SketchTool::Fillet},
-        {"sketch.offset", SketchTool::Offset},       {"sketch.break", SketchTool::Break},
+        {"sketch.line", SketchTool::Line},
+        {"sketch.rectangle", SketchTool::Rectangle},
+        {"sketch.circle", SketchTool::Circle},
+        {"sketch.arc", SketchTool::Arc},
+        {"sketch.point", SketchTool::Point},
+        {"sketch.polygon", SketchTool::Polygon},
+        {"sketch.slot", SketchTool::Slot},
+        {"sketch.trim", SketchTool::Trim},
+        {"sketch.extend", SketchTool::Extend},
+        {"sketch.fillet", SketchTool::Fillet},
+        {"sketch.offset", SketchTool::Offset},
+        {"sketch.break", SketchTool::Break},
         {"sketch.rectangle3", SketchTool::ThreePointRectangle},
-        {"sketch.dimension", SketchTool::Dimension}, {"sketch.select", SketchTool::Select},
+        {"sketch.dimension", SketchTool::Dimension},
+        {"sketch.select", SketchTool::Select},
     };
     for (const auto& [id, tool] : tools) {
         QVERIFY2(trigger(window, id), id);
@@ -1211,9 +1218,8 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     for (const char* tool :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline",
-          "sketch.construction", "sketch.trim", "sketch.chamfer",
-          "sketch.offset", "sketch.mirror", "sketch.project", "sketch.dimension",
-          "sketch.finish"}) {
+          "sketch.construction", "sketch.trim", "sketch.chamfer", "sketch.offset", "sketch.mirror",
+          "sketch.project", "sketch.dimension", "sketch.finish"}) {
         QVERIFY2(shown.contains(QLatin1String(tool)), tool);
     }
     // Rectangles, circles, and arcs drawn other ways are in the list beside each.

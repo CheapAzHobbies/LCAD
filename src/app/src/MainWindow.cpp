@@ -2027,9 +2027,9 @@ void MainWindow::defineSketchCommands() {
                              step == 0.0 ? tr("Snap to steps that suit the zoom")
                                          : tr("Snap to steps of %1 mm").arg(size),
                              "");
-            s.id = step == 0.0 ? QStringLiteral("sketch.gridStep.auto")
-                               : QStringLiteral("sketch.gridStep.") +
-                                     QLocale::c().toString(step, 'g', 3);
+            s.id = step == 0.0
+                       ? QStringLiteral("sketch.gridStep.auto")
+                       : QStringLiteral("sketch.gridStep.") + QLocale::c().toString(step, 'g', 3);
             s.checkable = true;
             s.exclusiveGroup = QStringLiteral("gridStep");
             s.aliases = {tr("grid spacing"), tr("grid size"), tr("snap increment")};
@@ -2194,16 +2194,16 @@ void MainWindow::createTopBar() {
     sketchMenu->addSeparator();
     for (const char* id :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.centerRectangle",
-          "sketch.rectangle3", "sketch.circle", "sketch.circle3", "sketch.arc", "sketch.arc3", "sketch.tangentArc",
-          "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
+          "sketch.rectangle3", "sketch.circle", "sketch.circle3", "sketch.arc", "sketch.arc3",
+          "sketch.tangentArc", "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse",
+          "sketch.spline"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();
     for (const char* id :
          {"sketch.trim", "sketch.extend", "sketch.break", "sketch.fillet", "sketch.chamfer",
-          "sketch.offset", "sketch.mirror", "sketch.circularPattern",
-          "sketch.rectangularPattern", "sketch.move",
-          "sketch.rotate", "sketch.scale", "sketch.project"}) {
+          "sketch.offset", "sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern",
+          "sketch.move", "sketch.rotate", "sketch.scale", "sketch.project"}) {
         sketchMenu->addAction(action(id));
     }
     sketchMenu->addSeparator();

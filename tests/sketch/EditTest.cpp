@@ -1197,7 +1197,8 @@ TEST_CASE("Break cuts a curve where others cross it, and takes nothing away", "[
 TEST_CASE("A rectangle by three points lies at any angle", "[sketch][edit]") {
     Sketch sketch;
     // Its first side from (0, 0) to (30, 40), and 10 across, on the left of that.
-    const RectangleParts parts = addThreePointRectangle(sketch, {0.0, 0.0}, {30.0, 40.0}, {-8.0, 6.0});
+    const RectangleParts parts =
+        addThreePointRectangle(sketch, {0.0, 0.0}, {30.0, 40.0}, {-8.0, 6.0});
     CHECK(curveCount(sketch) == 4);
     CHECK_THAT(lengthOf(sketch, parts.bottom), WithinAbs(50.0, lengthTolerance));
     CHECK_THAT(lengthOf(sketch, parts.right), WithinAbs(10.0, lengthTolerance));

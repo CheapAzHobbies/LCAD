@@ -1816,8 +1816,8 @@ public:
         sketch::Sketch g = geometry();
         sketch::RectangleParts parts;
         try {
-            parts = sketch::addThreePointRectangle(g, first.position, second.position,
-                                                   across.position);
+            parts =
+                sketch::addThreePointRectangle(g, first.position, second.position, across.position);
         } catch (const std::invalid_argument&) {
             emit q->message(tr("A rectangle needs a width and a height."));
             return;
@@ -2262,19 +2262,16 @@ public:
             return;
         }
         const EntityId hoveredBefore = hoveredNow();
-        const bool draws = tool == SketchTool::Line || tool == SketchTool::Rectangle ||
-                           tool == SketchTool::Circle || tool == SketchTool::Arc ||
-                           tool == SketchTool::CenterRectangle ||
-                           tool == SketchTool::ThreePointRectangle ||
-                           tool == SketchTool::ThreePointCircle ||
-                           tool == SketchTool::ThreePointArc || tool == SketchTool::TangentArc ||
-                           tool == SketchTool::CircularPattern ||
-                           tool == SketchTool::RectangularPattern ||
-                           tool == SketchTool::MoveSketch || tool == SketchTool::RotateSketch ||
-                           tool == SketchTool::ScaleSketch ||
-                           tool == SketchTool::Point || tool == SketchTool::Polygon ||
-                           tool == SketchTool::Slot || tool == SketchTool::Ellipse ||
-                           tool == SketchTool::Spline;
+        const bool draws =
+            tool == SketchTool::Line || tool == SketchTool::Rectangle ||
+            tool == SketchTool::Circle || tool == SketchTool::Arc ||
+            tool == SketchTool::CenterRectangle || tool == SketchTool::ThreePointRectangle ||
+            tool == SketchTool::ThreePointCircle || tool == SketchTool::ThreePointArc ||
+            tool == SketchTool::TangentArc || tool == SketchTool::CircularPattern ||
+            tool == SketchTool::RectangularPattern || tool == SketchTool::MoveSketch ||
+            tool == SketchTool::RotateSketch || tool == SketchTool::ScaleSketch ||
+            tool == SketchTool::Point || tool == SketchTool::Polygon || tool == SketchTool::Slot ||
+            tool == SketchTool::Ellipse || tool == SketchTool::Spline;
         if (draws) {
             const std::optional<Point2> anchor =
                 clicks.empty() ? std::nullopt : std::optional<Point2>(clicks.back().position);
@@ -3689,10 +3686,9 @@ public:
         const bool draws = tool != SketchTool::Select && tool != SketchTool::Dimension &&
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
                            tool != SketchTool::Extend && tool != SketchTool::Break &&
-                           tool != SketchTool::Fillet &&
-                           tool != SketchTool::Chamfer &&
-                           tool != SketchTool::Offset &&
-                           tool != SketchTool::Mirror && tool != SketchTool::Project;
+                           tool != SketchTool::Fillet && tool != SketchTool::Chamfer &&
+                           tool != SketchTool::Offset && tool != SketchTool::Mirror &&
+                           tool != SketchTool::Project;
         // What a tool's click, or a dragged point, would land on.
         const auto drawSnap = [&](const Snap& snap) {
             const QPointF at = toWidget(snap.position);
