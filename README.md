@@ -24,7 +24,8 @@ What works today:
 - **Solids from sketches.** Pull (extrude) closed areas of a sketch into a new body, or join,
   cut, or intersect with one, to one side, both sides, symmetrically, or up to a face, with a
   taper if wanted; revolve them about a
-  line or an axis; holes (simple, counterbored, countersunk); fillet, chamfer, and shell; mirror and
+  line or an axis; loft through outlines of several sketches, and sweep along a path; holes
+  (simple, counterbored, countersunk); fillet, chamfer, and shell; mirror and
   rectangular and circular patterns of features.
   Each with a live preview, and editable later; a pull's distance can be dragged with an arrow
   in the 3D view.
@@ -38,7 +39,7 @@ What works today:
 - **Parameters**: named values, with units and expressions, that feature values and sketch
   dimensions can be worked out from.
 - **Measuring** distances and angles between faces, edges, and bodies.
-- **Other programs' files.** Import STEP and IGES; export STEP, STL, 3MF, and OBJ. Change
+- **Other programs' files.** Import STEP and IGES; export STEP, IGES, STL, 3MF, and OBJ. Change
   imported solids directly with Offset Face, Move Face, and Delete Face, each a timeline step;
   check geometry and repair it.
 - **Assemblies.** Components, placed by hand or held together by joints (rigid, revolute,

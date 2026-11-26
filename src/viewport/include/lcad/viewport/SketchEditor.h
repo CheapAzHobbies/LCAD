@@ -49,6 +49,29 @@ enum class SketchTool {
     Constraint,
     Trim,
     Extend,
+    /// Click a corner where two lines meet to round it, then type the radius.
+    Fillet,
+    /// Click a corner where two lines meet to cut it straight across, then type how far back.
+    Chamfer,
+    /// By its center and a corner.
+    CenterRectangle,
+    /// Through three points.
+    ThreePointCircle,
+    /// By its start, its end, and a point it passes through.
+    ThreePointArc,
+    /// On from the end of a line or an arc, tangent to it, to the point clicked.
+    TangentArc,
+    /// Copies of what is selected around the point clicked; the count is typed.
+    CircularPattern,
+    /// Copies of what is selected, each moved by the step between two points clicked; the
+    /// count is typed.
+    RectangularPattern,
+    /// Moves what is selected from the first point clicked to the second; Ctrl makes a copy.
+    MoveSketch,
+    /// Turns what is selected about the point clicked, by the angle typed.
+    RotateSketch,
+    /// Scales what is selected about the point clicked, by the factor typed.
+    ScaleSketch,
     Offset,
     Mirror,
     /// Click an edge or a corner of a body to bring it into the sketch as reference geometry.
@@ -99,6 +122,10 @@ public:
     /// existing points or curves stay there, and nearly level or upright lines become exactly
     /// so. On until switched off.
     void setInference(bool on);
+    /// Clicks that land on nothing else go to round numbers in the sketch: steps of 0.1, 0.5,
+    /// 1, 5, 10 mm and so on, the smallest at least 8 pixels apart at the zoom. Off at first.
+    void setGridSnap(bool on);
+    [[nodiscard]] bool hasGridSnap() const;
     [[nodiscard]] bool hasInference() const;
     /// Whether the drawing tools make construction geometry.
     void setConstructionMode(bool on);
@@ -127,6 +154,8 @@ public:
     bool setDimensionValue(sketch::ConstraintId dimension, double value);
     /// A dimension's value as it is shown and typed: millimeters, or degrees for an angle.
     [[nodiscard]] double dimensionValue(sketch::ConstraintId dimension) const;
+    /// A dimension's value as it is drawn: "40", "R5", "(50)" for a reference dimension.
+    [[nodiscard]] QString dimensionText(sketch::ConstraintId dimension) const;
     /// Deletes the selected curves, free-standing points, and constraints.
     bool deleteSelection();
     /// Turns the selected curves into construction geometry, or back if they all are already.

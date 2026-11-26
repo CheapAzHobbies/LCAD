@@ -140,6 +140,48 @@ kernel::NamedShape madeBy(const Feature& feature, const Document& document,
         throw FeatureFailure("The sketch it was made from is gone.");
     }
     const std::vector<kernel::Region> regions = regionsOf(feature, *sketch);
+    if (feature.kind == FeatureKind::Loft) {
+        if (regions.size() != 1) {
+            throw FeatureFailure("Each section of a loft is one closed outline, and " +
+                                 sketch->name + " gives it " + std::to_string(regions.size()) +
+                                 ".");
+        }
+        if (feature.sections.empty()) {
+            throw FeatureFailure("A loft needs a second outline, on another sketch.");
+        }
+        const auto solidOnly = [](const kernel::Region& region, const std::string& name) {
+            if (!region.holes.empty()) {
+                throw FeatureFailure("The outline it goes through in " + name +
+                                     " has a hole in it. A loft takes outlines without holes; "
+                                     "cut the hole after it.");
+            }
+        };
+        solidOnly(regions.front(), sketch->name);
+        std::vector<std::vector<kernel::OutlineCurve>> outlines{regions.front().outer};
+        for (const LoftSection& section : feature.sections) {
+            const SketchItem* item = document.findSketch(section.sketch);
+            if (item == nullptr) {
+                throw FeatureFailure("A sketch it goes through is gone.");
+            }
+            Feature one;
+            one.regions = {section.region};
+            const std::vector<kernel::Region> found = regionsOf(one, *item);
+            solidOnly(found.front(), item->name);
+            outlines.push_back(found.front().outer);
+        }
+        return kernel::loft(outlines, tag);
+    }
+    if (feature.kind == FeatureKind::Sweep) {
+        const SketchItem* path = document.findSketch(feature.pathSketch);
+        if (path == nullptr) {
+            throw FeatureFailure("The sketch of its path is gone.");
+        }
+        const kernel::Shape curves = sketchShape(*path, SketchPart::Ordinary);
+        if (curves.isNull()) {
+            throw FeatureFailure("Its path, " + path->name + ", has no curves.");
+        }
+        return kernel::sweep(sketch->plane, regions, curves, tag);
+    }
     if (feature.kind == FeatureKind::Pull && !feature.extentFace.empty()) {
         const Body* target = document.findBody(feature.extentBody);
         const bool exists = target != nullptr && bodies != nullptr &&
@@ -165,6 +207,39 @@ kernel::NamedShape madeBy(const Feature& feature, const Document& document,
                                  ", is not flat. Only flat faces can end a pull for now.");
         }
         return kernel::pullTo(sketch->plane, regions, *limit, tag);
+    }
+    if (feature.kind == FeatureKind::Pull && feature.throughAll) {
+        // Through every body there is at this point: as far along the normal, each way it
+        // goes, as the farthest corner of any of them, and a little more.
+        const kernel::Plane& plane = sketch->plane;
+        double ahead = 0.0;
+        double behind = 0.0;
+        if (bodies != nullptr) {
+            for (const auto& [id, shape] : *bodies) {
+                const auto box = kernel::boundingBox(shape.shape);
+                if (!box.has_value()) {
+                    continue;
+                }
+                for (const double x : {box->min.x, box->max.x}) {
+                    for (const double y : {box->min.y, box->max.y}) {
+                        for (const double z : {box->min.z, box->max.z}) {
+                            const double h = (x - plane.origin.x) * plane.normal.x +
+                                             (y - plane.origin.y) * plane.normal.y +
+                                             (z - plane.origin.z) * plane.normal.z;
+                            ahead = std::max(ahead, h);
+                            behind = std::min(behind, h);
+                        }
+                    }
+                }
+            }
+        }
+        const bool forward = !std::signbit(feature.distance);
+        const double to = feature.symmetric || forward ? ahead + 1.0 : 0.0;
+        const double from = feature.symmetric || !forward ? behind - 1.0 : 0.0;
+        if ((feature.symmetric ? ahead - behind : (forward ? ahead : -behind)) < 1e-7) {
+            throw FeatureFailure("There is nothing that way for it to go through.");
+        }
+        return kernel::pull(sketch->plane, regions, from, to, tag);
     }
     if (feature.kind == FeatureKind::Pull) {
         double from = 0.0;
@@ -218,7 +293,7 @@ kernel::Plane planeNamed(const std::string& name, const kernel::NamedShape& body
         return kernel::planeYZ();
     }
     if (name.empty()) {
-        throw FeatureFailure("It has no plane to mirror in.");
+        throw FeatureFailure("It has no plane.");
     }
     if (name.rfind("plane:", 0) == 0) {
         const ObjectId id{std::stoull(name.substr(6))};
@@ -616,18 +691,17 @@ AxisState placeAxis(const Feature& feature, const Document& document, const Body
     return state;
 }
 
-PlaneState placePlane(const Feature& feature, const Document& document, const BodyStates& bodies) {
-    if (!std::isfinite(feature.distance)) {
-        throw FeatureFailure("Its distance is not a number.");
-    }
+// A plane a construction plane is placed against: an origin plane, another construction plane
+// ("plane:12"), or a flat face of the feature's body. With where to draw it and how large.
+PlaneState referencePlane(const std::string& name, const Feature& feature,
+                          const Document& document, const BodyStates& bodies) {
     PlaneState state;
-    kernel::Plane base;
-    if (feature.reference == "XY" || feature.reference == "XZ" || feature.reference == "YZ") {
-        base = feature.reference == "XY"   ? kernel::planeXY()
-               : feature.reference == "XZ" ? kernel::planeXZ()
-                                           : kernel::planeYZ();
+    if (name == "XY" || name == "XZ" || name == "YZ") {
+        state.plane = name == "XY"   ? kernel::planeXY()
+                      : name == "XZ" ? kernel::planeXZ()
+                                     : kernel::planeYZ();
         // Drawn over the model, as large as the model, where there is one.
-        state.center = base.origin;
+        state.center = state.plane.origin;
         std::optional<kernel::BoundingBox> all;
         for (const auto& entry : bodies) {
             const auto box = kernel::boundingBox(entry.second.shape);
@@ -651,46 +725,177 @@ PlaneState placePlane(const Feature& feature, const Document& document, const Bo
             const double dz = all->max.z - all->min.z;
             state.size = std::max(state.size, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
         }
-    } else {
-        const auto found = bodies.find(feature.body);
-        const Body* body = document.findBody(feature.body);
-        if (found == bodies.end() || found->second.shape.isNull()) {
-            throw FeatureFailure(body != nullptr
-                                     ? "The body it is placed on, " + body->name +
-                                           ", does not exist at this point in the timeline."
-                                     : std::string("The body it is placed on is gone."));
-        }
-        const int index = kernel::findFace(found->second, feature.reference);
-        if (index < 0) {
-            throw FeatureFailure("The face it is placed on no longer exists: " +
-                                 describeName(document, feature.reference) + ".");
-        }
-        const kernel::Shape face =
-            kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, index);
-        const auto plane = kernel::planeOfFace(face);
-        if (!plane.has_value()) {
-            throw FeatureFailure("The face it is placed on, " +
-                                 describeName(document, feature.reference) + ", is not flat.");
-        }
-        base = *plane;
-        const auto box = kernel::boundingBox(face);
-        if (box.has_value()) {
-            state.center = {(box->min.x + box->max.x) / 2.0, (box->min.y + box->max.y) / 2.0,
-                            (box->min.z + box->max.z) / 2.0};
-            const double dx = box->max.x - box->min.x;
-            const double dy = box->max.y - box->min.y;
-            const double dz = box->max.z - box->min.z;
-            state.size = std::max(20.0, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
-        }
+        return state;
     }
-    const kernel::Vector& n = base.normal;
-    const double d = feature.distance;
-    base.origin = {base.origin.x + n.x * d, base.origin.y + n.y * d, base.origin.z + n.z * d};
-    // The middle, dropped onto the plane where it now is.
-    const kernel::Point& c = state.center;
-    const double above =
-        (c.x - base.origin.x) * n.x + (c.y - base.origin.y) * n.y + (c.z - base.origin.z) * n.z;
-    state.center = {c.x - above * n.x, c.y - above * n.y, c.z - above * n.z};
+    if (name.rfind("plane:", 0) == 0) {
+        ObjectId id;
+        try {
+            id = ObjectId{std::stoull(name.substr(6))};
+        } catch (const std::exception&) {
+            throw FeatureFailure("The plane it is placed against is not a plane.");
+        }
+        const Feature* other = document.findFeature(id);
+        const auto found = document.planeState(id);
+        if (other == nullptr || !found.has_value() || id == feature.id) {
+            throw FeatureFailure(other != nullptr && id != feature.id
+                                     ? "The plane " + other->name +
+                                           " does not exist at this point in the timeline."
+                                     : std::string("The plane it is placed against is gone."));
+        }
+        return *found;
+    }
+    if (name.empty()) {
+        throw FeatureFailure("It has nothing to be placed against.");
+    }
+    const auto found = bodies.find(feature.body);
+    const Body* body = document.findBody(feature.body);
+    if (found == bodies.end() || found->second.shape.isNull()) {
+        throw FeatureFailure(body != nullptr
+                                 ? "The body it is placed on, " + body->name +
+                                       ", does not exist at this point in the timeline."
+                                 : std::string("The body it is placed on is gone."));
+    }
+    const int index = kernel::findFace(found->second, name);
+    if (index < 0) {
+        throw FeatureFailure("The face it is placed on no longer exists: " +
+                             describeName(document, name) + ".");
+    }
+    const kernel::Shape face = kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, index);
+    const auto plane = kernel::planeOfFace(face);
+    if (!plane.has_value()) {
+        throw FeatureFailure("The face it is placed on, " + describeName(document, name) +
+                             ", is not flat.");
+    }
+    state.plane = *plane;
+    state.center = plane->origin;
+    if (const auto box = kernel::boundingBox(face)) {
+        state.center = {(box->min.x + box->max.x) / 2.0, (box->min.y + box->max.y) / 2.0,
+                        (box->min.z + box->max.z) / 2.0};
+        const double dx = box->max.x - box->min.x;
+        const double dy = box->max.y - box->min.y;
+        const double dz = box->max.z - box->min.z;
+        state.size = std::max(20.0, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    return state;
+}
+
+namespace {
+
+double dot(const kernel::Vector& a, const kernel::Vector& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+kernel::Vector cross(const kernel::Vector& a, const kernel::Vector& b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+kernel::Vector scaled(const kernel::Vector& a, double k) {
+    return {a.x * k, a.y * k, a.z * k};
+}
+kernel::Vector plus(const kernel::Vector& a, const kernel::Vector& b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+kernel::Vector unitOf(const kernel::Vector& a) {
+    const double length = std::sqrt(dot(a, a));
+    return length > 1e-12 ? scaled(a, 1.0 / length) : a;
+}
+kernel::Vector between(const kernel::Point& from, const kernel::Point& to) {
+    return {to.x - from.x, to.y - from.y, to.z - from.z};
+}
+kernel::Point moved(const kernel::Point& p, const kernel::Vector& by) {
+    return {p.x + by.x, p.y + by.y, p.z + by.z};
+}
+
+// A direction in the plane square to the normal, kept as near to `toward` as can be.
+kernel::Vector inPlane(const kernel::Vector& normal, const kernel::Vector& toward) {
+    kernel::Vector x = plus(toward, scaled(normal, -dot(toward, normal)));
+    if (dot(x, x) < 1e-18) {
+        x = std::abs(normal.x) < 0.9 ? kernel::Vector{1.0, 0.0, 0.0} : kernel::Vector{0.0, 1.0, 0.0};
+        x = plus(x, scaled(normal, -dot(x, normal)));
+    }
+    return unitOf(x);
+}
+
+} // namespace
+
+PlaneState placePlane(const Feature& feature, const Document& document, const BodyStates& bodies) {
+    PlaneState state = referencePlane(feature.reference, feature, document, bodies);
+    kernel::Plane base = state.plane;
+    const auto dropCenter = [&state](const kernel::Plane& onto) {
+        const kernel::Vector& n = onto.normal;
+        const double above = dot(between(onto.origin, state.center), n);
+        state.center = moved(state.center, scaled(n, -above));
+    };
+    switch (feature.planeKind) {
+    case PlaneKind::Offset: {
+        if (!std::isfinite(feature.distance)) {
+            throw FeatureFailure("Its distance is not a number.");
+        }
+        base.origin = moved(base.origin, scaled(base.normal, feature.distance));
+        break;
+    }
+    case PlaneKind::AtAngle: {
+        if (!std::isfinite(feature.angle)) {
+            throw FeatureFailure("Its angle is not a number.");
+        }
+        kernel::NamedShape body;
+        if (const auto found = bodies.find(feature.body); found != bodies.end()) {
+            body = found->second;
+        }
+        const kernel::Axis axis = axisNamed(feature.reference2, body, document);
+        const kernel::Vector u = unitOf(axis.direction);
+        const kernel::Vector& n = base.normal;
+        // The axis has to lie across the plane's normal for a turn about it to mean anything.
+        const kernel::Vector across = plus(n, scaled(u, -dot(n, u)));
+        if (dot(across, across) < 1e-12) {
+            throw FeatureFailure("Its axis is square to the plane it turns from, so there is no "
+                                 "angle to turn by.");
+        }
+        // The plane through the axis that is square to the reference, turned by the angle:
+        // at 0 degrees it is the reference moved onto the axis.
+        const double a = feature.angle * pi / 180.0;
+        const kernel::Vector n0 = unitOf(across);
+        const kernel::Vector side = cross(u, n0);
+        const kernel::Vector normal = plus(scaled(n0, std::cos(a)), scaled(side, std::sin(a)));
+        base = kernel::makePlane(axis.origin, normal, inPlane(normal, u));
+        // Drawn by the axis, near where the reference was drawn.
+        const double along = dot(between(axis.origin, state.center), u);
+        state.center = moved(axis.origin, scaled(u, along));
+        break;
+    }
+    case PlaneKind::Midplane: {
+        const PlaneState other = referencePlane(feature.reference2, feature, document, bodies);
+        const kernel::Vector n1 = base.normal;
+        kernel::Vector n2 = other.plane.normal;
+        // Facing the same way, so that "halfway" means between them.
+        if (dot(n1, n2) < 0.0) {
+            n2 = scaled(n2, -1.0);
+        }
+        const double gap = dot(between(base.origin, other.plane.origin), n1);
+        const kernel::Vector line = cross(n1, n2);
+        if (dot(line, line) < 1e-12) {
+            if (std::abs(gap) < 1e-9) {
+                throw FeatureFailure("Its two planes are the same plane, so there is nothing to "
+                                     "be halfway between.");
+            }
+            base.origin = moved(base.origin, scaled(n1, gap / 2.0));
+        } else {
+            // Through the line where they meet, halving the angle between them.
+            const double d1 = dot(between({0.0, 0.0, 0.0}, base.origin), n1);
+            const double d2 = dot(between({0.0, 0.0, 0.0}, other.plane.origin), n2);
+            const double c = dot(n1, n2);
+            const double det = 1.0 - c * c;
+            const kernel::Vector p =
+                plus(scaled(n1, (d1 - d2 * c) / det), scaled(n2, (d2 - d1 * c) / det));
+            const kernel::Vector normal = unitOf(plus(n1, n2));
+            base = kernel::makePlane({p.x, p.y, p.z}, normal, inPlane(normal, unitOf(line)));
+        }
+        state.center = {(state.center.x + other.center.x) / 2.0,
+                        (state.center.y + other.center.y) / 2.0,
+                        (state.center.z + other.center.z) / 2.0};
+        state.size = std::max(state.size, other.size);
+        break;
+    }
+    }
+    dropCenter(base);
     state.plane = base;
     return state;
 }
@@ -761,6 +966,8 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
         switch (feature.kind) {
         case FeatureKind::Pull:
         case FeatureKind::Revolve:
+        case FeatureKind::Loft:
+        case FeatureKind::Sweep:
             return placed(feature, document, bodies, keep(madeBy(feature, document, &bodies)));
         case FeatureKind::Mirror:
         case FeatureKind::RectangularPattern:
@@ -793,7 +1000,7 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             }
             return feature.kind == FeatureKind::Fillet
                        ? kernel::fillet(body, edges, feature.size, tag)
-                       : kernel::chamfer(body, edges, feature.size, tag);
+                       : kernel::chamfer(body, edges, feature.size, tag, feature.size2);
         }
         case FeatureKind::OffsetFace:
         case FeatureKind::MoveFace:
@@ -827,6 +1034,241 @@ kernel::NamedShape evaluate(const Feature& feature, const Document& document,
             }
             const double scale = feature.distance / length;
             return kernel::moveFaces(body, faces, {d.x * scale, d.y * scale, d.z * scale}, tag);
+        }
+        case FeatureKind::Draft: {
+            const kernel::NamedShape& body = targetOf(feature, document, bodies);
+            if (feature.faces.empty()) {
+                throw FeatureFailure("It has no faces to tilt.");
+            }
+            if (!std::isfinite(feature.angle) || std::abs(feature.angle) < 1e-7 ||
+                std::abs(feature.angle) >= 89.0) {
+                throw FeatureFailure("Its angle has to be more than zero and less than 89 "
+                                     "degrees either way.");
+            }
+            std::vector<int> faces;
+            for (const std::string& name : feature.faces) {
+                const int face = kernel::findFace(body, name);
+                if (face < 0) {
+                    throw FeatureFailure("A face it tilts no longer exists: " +
+                                         describeName(document, name) + ".");
+                }
+                faces.push_back(face);
+            }
+            const kernel::Plane neutral = planeNamed(feature.reference, body, document);
+            return kernel::draft(body, faces, neutral, feature.angle * pi / 180.0, tag);
+        }
+        case FeatureKind::SplitBody: {
+            const kernel::NamedShape& body = targetOf(feature, document, bodies);
+            return kernel::split(body, planeNamed(feature.reference, body, document), tag);
+        }
+        case FeatureKind::Combine: {
+            kernel::NamedShape body = targetOf(feature, document, bodies);
+            if (feature.tools.empty()) {
+                throw FeatureFailure("It has no bodies to combine with.");
+            }
+            const kernel::Combination how =
+                feature.operation == Operation::Cut         ? kernel::Combination::Cut
+                : feature.operation == Operation::Intersect ? kernel::Combination::Intersect
+                                                            : kernel::Combination::Join;
+            for (const ObjectId id : feature.tools) {
+                const auto found = bodies.find(id);
+                const Body* other = document.findBody(id);
+                if (id == feature.body) {
+                    throw FeatureFailure("A body cannot be combined with itself.");
+                }
+                if (found == bodies.end() || found->second.shape.isNull()) {
+                    throw FeatureFailure(other != nullptr
+                                             ? "The body " + other->name +
+                                                   " does not exist at this point in the timeline."
+                                             : std::string("A body it combines is gone."));
+                }
+                body = kernel::combine(body, found->second, how);
+            }
+            if (kernel::volume(body.shape) <= 1e-12) {
+                throw FeatureFailure("Nothing is left of the body.");
+            }
+            return body;
+        }
+        case FeatureKind::MoveBody: {
+            const kernel::NamedShape* source = nullptr;
+            if (feature.copy) {
+                const auto found = feature.tools.empty() ? bodies.end()
+                                                         : bodies.find(feature.tools.front());
+                if (found == bodies.end() || found->second.shape.isNull()) {
+                    throw FeatureFailure("The body it copies does not exist at this point in the "
+                                         "timeline.");
+                }
+                source = &found->second;
+            } else {
+                source = &targetOf(feature, document, bodies);
+            }
+            if (!std::isfinite(feature.moveX) || !std::isfinite(feature.moveY) ||
+                !std::isfinite(feature.moveZ) || !std::isfinite(feature.angle)) {
+                throw FeatureFailure("How far it moves is not a number.");
+            }
+            if (!std::isfinite(feature.scale) || feature.scale <= 1e-6) {
+                throw FeatureFailure("Its scale has to be more than zero.");
+            }
+            kernel::NamedShape sized = *source;
+            if (std::abs(feature.scale - 1.0) > 1e-12) {
+                const auto box = kernel::boundingBox(source->shape);
+                const kernel::Point middle =
+                    box.has_value() ? kernel::Point{(box->min.x + box->max.x) / 2.0,
+                                                    (box->min.y + box->max.y) / 2.0,
+                                                    (box->min.z + box->max.z) / 2.0}
+                                    : kernel::Point{};
+                sized.shape = kernel::scaled(source->shape, middle, feature.scale);
+            }
+            source = &sized;
+            kernel::Placement where = kernel::translation({feature.moveX, feature.moveY,
+                                                           feature.moveZ});
+            if (!feature.reference.empty() && std::abs(feature.angle) > 1e-12) {
+                const kernel::Axis about = axisNamed(feature.reference, *source, document);
+                // Moved first, then turned about the axis where it stands.
+                where = kernel::rotation(about, feature.angle * pi / 180.0) * where;
+            }
+            return kernel::NamedShape{kernel::placed(source->shape, where), source->faceNames};
+        }
+        case FeatureKind::Pipe:
+        case FeatureKind::Coil:
+        case FeatureKind::Text: {
+            kernel::NamedShape made;
+            if (feature.kind == FeatureKind::Text) {
+                const SketchItem* sketch = document.findSketch(feature.sketch);
+                if (sketch == nullptr) {
+                    throw FeatureFailure("The sketch it is written on is gone.");
+                }
+                if (feature.text.find_first_not_of(" \t\n") == std::string::npos) {
+                    throw FeatureFailure("It has no text.");
+                }
+                if (!std::isfinite(feature.size) || feature.size <= 1e-6) {
+                    throw FeatureFailure("Its height has to be more than zero.");
+                }
+                if (!std::isfinite(feature.distance) || std::abs(feature.distance) < 1e-7) {
+                    throw FeatureFailure("Its depth is zero.");
+                }
+                made = kernel::textSolid(sketch->plane, feature.textU, feature.textV, feature.text,
+                                         feature.size, 0.0, feature.distance, feature.font, tag);
+            } else if (feature.kind == FeatureKind::Pipe) {
+                const SketchItem* path = document.findSketch(feature.pathSketch);
+                if (path == nullptr) {
+                    throw FeatureFailure("The sketch of its path is gone.");
+                }
+                const kernel::Shape curves = sketchShape(*path, SketchPart::Ordinary);
+                if (curves.isNull()) {
+                    throw FeatureFailure("Its path, " + path->name + ", has no curves.");
+                }
+                made = kernel::pipe(curves, feature.size, feature.wall, tag);
+            } else {
+                const kernel::Axis about =
+                    axisNamed(feature.reference, kernel::NamedShape{}, document);
+                made = kernel::coil(about, feature.size, feature.pitch, feature.turns,
+                                    feature.section, tag);
+            }
+            return placed(feature, document, bodies, keep(made));
+        }
+        case FeatureKind::SurfacePull: {
+            const SketchItem* sketch = document.findSketch(feature.sketch);
+            if (sketch == nullptr) {
+                throw FeatureFailure("The sketch it was made from is gone.");
+            }
+            const std::vector<kernel::OutlineCurve> curves = sketchCurves(*sketch);
+            if (curves.empty()) {
+                throw FeatureFailure("Its sketch, " + sketch->name + ", has no curves.");
+            }
+            const double from = feature.symmetric ? -feature.distance / 2.0 : 0.0;
+            const double to = feature.symmetric ? feature.distance / 2.0 : feature.distance;
+            if (!std::isfinite(feature.distance) || std::abs(feature.distance) < 1e-7) {
+                throw FeatureFailure("Its distance is zero.");
+            }
+            return kernel::pullSurface(sketch->plane, curves, from, to, tag);
+        }
+        case FeatureKind::SurfaceRevolve: {
+            const SketchItem* sketch = document.findSketch(feature.sketch);
+            if (sketch == nullptr) {
+                throw FeatureFailure("The sketch it was made from is gone.");
+            }
+            kernel::Axis about;
+            std::vector<kernel::OutlineCurve> curves = sketchCurves(*sketch);
+            if (!feature.reference.empty()) {
+                about = axisNamed(feature.reference, kernel::NamedShape{}, document);
+            } else {
+                const sketch::Entity* axis = sketch->geometry.find(feature.axis);
+                if (axis == nullptr || axis->kind != sketch::EntityKind::Line) {
+                    throw FeatureFailure("The line it turns about is no longer in " +
+                                         sketch->name + ".");
+                }
+                const sketch::Point2 a = sketch->geometry.position(axis->start);
+                const sketch::Point2 b = sketch->geometry.position(axis->end);
+                const kernel::Point from = kernel::toWorld(sketch->plane, a.x, a.y);
+                const kernel::Point to = kernel::toWorld(sketch->plane, b.x, b.y);
+                about = {from, {to.x - from.x, to.y - from.y, to.z - from.z}};
+                // Not the axis itself, if it is drawn as an ordinary line.
+                std::erase_if(curves, [&](const kernel::OutlineCurve& curve) {
+                    return curve.name == std::to_string(feature.axis);
+                });
+            }
+            if (curves.empty()) {
+                throw FeatureFailure("Its sketch, " + sketch->name + ", has no curves to turn.");
+            }
+            if (!std::isfinite(feature.angle) || std::abs(feature.angle) < 1e-9 ||
+                std::abs(feature.angle) > 360.0 + 1e-9) {
+                throw FeatureFailure("Its angle has to be more than zero and at most 360 degrees.");
+            }
+            return kernel::revolveSurface(curves, about, feature.angle * pi / 180.0, tag);
+        }
+        case FeatureKind::Patch: {
+            const SketchItem* sketch = document.findSketch(feature.sketch);
+            if (sketch == nullptr) {
+                throw FeatureFailure("The sketch it was made from is gone.");
+            }
+            const std::vector<kernel::Region> regions = regionsOf(feature, *sketch);
+            std::vector<kernel::NamedShape> faces;
+            for (const kernel::Region& region : regions) {
+                faces.push_back(kernel::patch(sketch->plane, region, tag));
+            }
+            return faces.size() == 1 ? faces.front() : kernel::stitch(faces, 1e-6, tag);
+        }
+        case FeatureKind::Stitch: {
+            std::vector<kernel::NamedShape> pieces{targetOf(feature, document, bodies)};
+            if (feature.tools.empty()) {
+                throw FeatureFailure("It has no bodies to sew on.");
+            }
+            for (const ObjectId id : feature.tools) {
+                const auto found = bodies.find(id);
+                if (id == feature.body || found == bodies.end() || found->second.shape.isNull()) {
+                    throw FeatureFailure("A body it sews on does not exist at this point in the "
+                                         "timeline.");
+                }
+                pieces.push_back(found->second);
+            }
+            if (!std::isfinite(feature.size) || feature.size <= 0.0) {
+                throw FeatureFailure("The widest gap it closes has to be more than zero.");
+            }
+            return kernel::stitch(pieces, feature.size, tag);
+        }
+        case FeatureKind::Thicken:
+            return kernel::thicken(targetOf(feature, document, bodies), feature.size, tag);
+        case FeatureKind::OffsetSurface: {
+            const auto found =
+                feature.tools.empty() ? bodies.end() : bodies.find(feature.tools.front());
+            if (found == bodies.end() || found->second.shape.isNull()) {
+                throw FeatureFailure("The surface it is offset from does not exist at this point "
+                                     "in the timeline.");
+            }
+            return kernel::offsetSurface(found->second, feature.size, tag);
+        }
+        case FeatureKind::Thread: {
+            const kernel::NamedShape& body = targetOf(feature, document, bodies);
+            if (feature.faces.empty()) {
+                throw FeatureFailure("It has no face to go on.");
+            }
+            const int face = kernel::findFace(body, feature.faces.front());
+            if (face < 0) {
+                throw FeatureFailure("The face it goes on no longer exists: " +
+                                     describeName(document, feature.faces.front()) + ".");
+            }
+            return kernel::thread(body, face, feature.pitch, tag);
         }
         case FeatureKind::Repair:
             if (!std::isfinite(feature.size) || feature.size <= 0.0) {

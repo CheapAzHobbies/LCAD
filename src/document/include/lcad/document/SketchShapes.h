@@ -29,6 +29,10 @@ enum class SketchPart {
 /// has shrunk to nothing.
 [[nodiscard]] kernel::Region kernelRegion(const SketchItem& sketch, const sketch::Region& region);
 
+/// Every curve of a sketch proper, as an edge in model space named by the number of its sketch
+/// entity: not construction geometry, and not what was projected into it.
+[[nodiscard]] std::vector<kernel::OutlineCurve> sketchCurves(const SketchItem& sketch);
+
 /// Every region of a sketch as a flat face in model space, in the order of
 /// sketch::Sketch::regions(). A region that cannot be made into a face is a null shape.
 [[nodiscard]] std::vector<kernel::Shape> sketchRegionFaces(const SketchItem& sketch);

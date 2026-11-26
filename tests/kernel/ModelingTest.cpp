@@ -669,3 +669,211 @@ TEST_CASE("A pull can taper, and can go up to a face", "[kernel][modeling]") {
     through.xDirection = {1.0 / len, 0.0, 1.0 / len};
     CHECK_THROWS_AS(pullTo(planeXY(), square, through, "8"), Error);
 }
+
+TEST_CASE("A loft goes through outlines on planes of their own", "[kernel][modeling]") {
+    // A 20 by 20 square at the bottom, a 10 by 10 square 30 above it, centered over each other:
+    // a frustum of a pyramid.
+    const Plane top = makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0});
+    const std::vector<OutlineCurve> bottom = rectangle(planeXY(), -10.0, -10.0, 20.0, 20.0);
+    const std::vector<OutlineCurve> upper = rectangle(top, -5.0, -5.0, 10.0, 10.0, 5);
+    const NamedShape frustum = loft({bottom, upper}, "7");
+    CHECK(countTopology(frustum.shape).solids == 1);
+    // h/3 (A1 + A2 + sqrt(A1 A2)).
+    CHECK_THAT(volume(frustum.shape), WithinRel(30.0 / 3.0 * (400.0 + 100.0 + 200.0), 1e-6));
+    // Four sides, named after the first outline, and the two ends.
+    CHECK(asSet(frustum.faceNames) == std::set<std::string>{"7/side/1", "7/side/2", "7/side/3",
+                                                            "7/side/4", "7/start/1", "7/end/5"});
+
+    // A circle to a square, through a smaller circle.
+    const Plane middle = makePlane({0.0, 0.0, 15.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0});
+    const NamedShape blend =
+        loft({circle(planeXY(), 0.0, 0.0, 8.0, "a"), circle(middle, 0.0, 0.0, 4.0, "b"), upper},
+             "8");
+    CHECK(countTopology(blend.shape).solids == 1);
+    CHECK(volume(blend.shape) > 0.0);
+
+    CHECK_THROWS_AS(loft({bottom}, "7"), std::invalid_argument);
+    // Two outlines in the same place make nothing.
+    CHECK_THROWS(loft({bottom, bottom}, "7"));
+}
+
+TEST_CASE("A sweep moves an outline along a path", "[kernel][modeling]") {
+    // A 4 by 4 square in the XZ plane, moved along a straight line up Y and then a quarter turn.
+    const Region square{rectangle(planeXZ(), -2.0, -2.0, 4.0, 4.0), {}};
+    const Shape line = makeSegment({0.0, 0.0, 0.0}, {0.0, -25.0, 0.0});
+    const NamedShape bar = sweep(planeXZ(), {square}, line, "7");
+    CHECK(countTopology(bar.shape).solids == 1);
+    CHECK_THAT(volume(bar.shape), WithinRel(16.0 * 25.0, 1e-6));
+    CHECK(findFace(bar, "7/start/1") >= 0);
+    CHECK(findFace(bar, "7/end/1") >= 0);
+    CHECK(findFace(bar, "7/side/1") >= 0);
+
+    // Along a line and an arc joined at their ends, given in any order: Pappus again for the
+    // bend, of radius 20 about the Z axis through (20, -25).
+    const Shape bend = makeArcEdge(planeXY(), 20.0, -25.0, 0.0, -25.0, 20.0, -45.0);
+    const NamedShape elbow = sweep(planeXZ(), {square}, makeCompound({bend, line}), "8");
+    CHECK(countTopology(elbow.shape).solids == 1);
+    CHECK_THAT(volume(elbow.shape), WithinRel(16.0 * 25.0 + 16.0 * 20.0 * pi / 2.0, 1e-4));
+
+    // Curves that do not join make no path.
+    const Shape apart = makeSegment({50.0, 0.0, 0.0}, {60.0, 0.0, 0.0});
+    CHECK_THROWS_AS(sweep(planeXZ(), {square}, makeCompound({line, apart}), "7"), Error);
+    CHECK_THROWS_AS(sweep(planeXZ(), {}, line, "7"), std::invalid_argument);
+}
+
+TEST_CASE("A draft tilts faces about a plane", "[kernel][modeling]") {
+    // A 20 by 20 by 10 block; its four sides tilted 5 degrees about its bottom, narrowing up.
+    const NamedShape block = plate(20.0, 20.0, 10.0);
+    std::vector<int> sides;
+    for (std::size_t i = 0; i < block.faceNames.size(); ++i) {
+        if (block.faceNames[i].find("/side/") != std::string::npos) {
+            sides.push_back(static_cast<int>(i));
+        }
+    }
+    REQUIRE(sides.size() == 4);
+    const double angle = 5.0 * pi / 180.0;
+    const NamedShape drafted = draft(block, sides, planeXY(), angle, "8");
+    CHECK(countTopology(drafted.shape).solids == 1);
+    // A frustum: 20 square at the bottom, 20 - 2 * 10 tan(5) square at the top.
+    const double top = 20.0 - 2.0 * 10.0 * std::tan(angle);
+    CHECK_THAT(volume(drafted.shape),
+               WithinRel(10.0 / 3.0 * (400.0 + top * top + 20.0 * top), 1e-6));
+    // The faces keep their names.
+    CHECK(asSet(drafted.faceNames) == asSet(block.faceNames));
+    // Negative widens it.
+    CHECK(volume(draft(block, sides, planeXY(), -angle, "8").shape) > volume(block.shape));
+
+    CHECK_THROWS_AS(draft(block, {}, planeXY(), angle, "8"), std::invalid_argument);
+    CHECK_THROWS_AS(draft(block, sides, planeXY(), 0.0, "8"), std::invalid_argument);
+}
+
+TEST_CASE("A split cuts a body in two along a plane", "[kernel][modeling]") {
+    const NamedShape block = plate(20.0, 10.0, 10.0);
+    const Plane across = makePlane({5.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+    const NamedShape halves = split(block, across, "8");
+    CHECK(countTopology(halves.shape).solids == 2);
+    CHECK_THAT(volume(halves.shape), WithinRel(2000.0, 1e-9));
+    // Each piece is a body of its own, with its cut face named after its side.
+    const std::vector<NamedShape> pieces = separated(halves);
+    REQUIRE(pieces.size() == 2);
+    std::set<double> volumes{volume(pieces[0].shape), volume(pieces[1].shape)};
+    CHECK_THAT(*volumes.begin(), WithinRel(500.0, 1e-9));
+    CHECK_THAT(*volumes.rbegin(), WithinRel(1500.0, 1e-9));
+    CHECK(findFace(halves, "8/split/front") >= 0);
+    CHECK(findFace(halves, "8/split/back") >= 0);
+    // The faces it did not cut keep their names; the top is cut in two, so has two.
+    CHECK(findFace(halves, "7/end/1") >= 0);
+    CHECK(findFace(halves, "7/end/1;2") >= 0);
+
+    // A plane that misses the body splits nothing.
+    const Plane beside = makePlane({50.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+    CHECK_THROWS_AS(split(block, beside, "8"), Error);
+}
+
+TEST_CASE("Pipes, coils, and threads", "[kernel][modeling]") {
+    // A pipe along a line of 50: solid, then with walls 1 thick.
+    const Shape line = makeSegment({0.0, 0.0, 0.0}, {0.0, 0.0, 50.0});
+    const NamedShape rod = pipe(line, 10.0, 0.0, "7");
+    CHECK(countTopology(rod.shape).solids == 1);
+    CHECK_THAT(volume(rod.shape), WithinRel(pi * 25.0 * 50.0, 1e-6));
+    CHECK(findFace(rod, "7/side/outside") >= 0);
+    CHECK(findFace(rod, "7/start/pipe") >= 0);
+    const NamedShape tube = pipe(line, 10.0, 1.0, "7");
+    CHECK_THAT(volume(tube.shape), WithinRel(pi * (25.0 - 16.0) * 50.0, 1e-6));
+    CHECK(findFace(tube, "7/side/inside") >= 0);
+    // Round a bend too.
+    const Shape bend = makeArcEdge(planeXZ(), 20.0, 50.0, 0.0, 50.0, 20.0, 70.0);
+    CHECK(countTopology(pipe(makeCompound({line, bend}), 4.0, 0.0, "7").shape).solids == 1);
+    CHECK_THROWS_AS(pipe(line, 10.0, 5.0, "7"), std::invalid_argument);
+
+    // A coil of 3 turns, 20 across, rising 5 a turn, with a section 2 across: a tube of the
+    // helix's length.
+    const NamedShape spring = coil({{0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}}, 20.0, 5.0, 3.0, 2.0, "8");
+    CHECK(countTopology(spring.shape).solids == 1);
+    const double helix = 3.0 * std::hypot(2.0 * pi * 10.0, 5.0);
+    CHECK_THAT(volume(spring.shape), WithinRel(pi * 1.0 * helix, 1e-2));
+    const auto box = boundingBox(spring.shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->max.x, WithinAbs(11.0, 0.05));
+    CHECK_THROWS_AS(coil({{0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}}, 20.0, 2.0, 3.0, 2.0, "8"),
+                    std::invalid_argument);
+
+    // A thread of pitch 1.5 on the outside of a rod 10 across and 20 long.
+    const NamedShape bolt = nameFaces(makeCylinder(5.0, 20.0), "9");
+    int side = -1;
+    for (int i = 0; i < subShapeCount(bolt.shape, SubShapeKind::Face); ++i) {
+        if (!planeOfFace(subShape(bolt.shape, SubShapeKind::Face, i)).has_value()) {
+            side = i;
+        }
+    }
+    REQUIRE(side >= 0);
+    const NamedShape threaded = thread(bolt, side, 1.5, "10");
+    CHECK(countTopology(threaded.shape).solids == 1);
+    const double before = volume(bolt.shape);
+    const double after = volume(threaded.shape);
+    CHECK(after < before);
+    // A groove 0.92 deep takes off less than a ring that deep would.
+    CHECK(after > pi * (5.0 - 0.92) * (5.0 - 0.92) * 20.0);
+    CHECK_THROWS_AS(thread(bolt, side == 0 ? 1 : 0, 1.5, "10"), Error);
+}
+
+TEST_CASE("Surfaces are pulled, patched, stitched, and thickened", "[kernel][modeling]") {
+    // An L of two lines pulled 10 up: two faces sewn at the corner, not a solid.
+    const auto at = [](double x, double y) { return toWorld(planeXY(), x, y); };
+    const std::vector<OutlineCurve> l{{makeSegment(at(0, 0), at(20, 0)), "1"},
+                                      {makeSegment(at(20, 0), at(20, 10)), "2"}};
+    const NamedShape wall = pullSurface(planeXY(), l, 0.0, 10.0, "7");
+    CHECK(countTopology(wall.shape).solids == 0);
+    CHECK(countTopology(wall.shape).faces == 2);
+    CHECK(findFace(wall, "7/side/1") >= 0);
+    CHECK_THAT(surfaceArea(wall.shape), WithinRel(300.0, 1e-9));
+
+    // A box from surfaces alone: four sides pulled, a patch at the bottom and the top.
+    const std::vector<OutlineCurve> outline = rectangle(planeXY(), 0.0, 0.0, 20.0, 10.0);
+    const NamedShape sides = pullSurface(planeXY(), outline, 0.0, 5.0, "8");
+    const NamedShape bottom = patch(planeXY(), Region{outline, {}}, "9");
+    const Plane up = makePlane({0.0, 0.0, 5.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0});
+    const NamedShape top = patch(up, Region{rectangle(up, 0.0, 0.0, 20.0, 10.0), {}}, "10");
+    CHECK(countTopology(bottom.shape).faces == 1);
+    const NamedShape box = stitch({sides, bottom, top}, 1e-3, "11");
+    CHECK(countTopology(box.shape).solids == 1);
+    CHECK_THAT(volume(box.shape), WithinRel(1000.0, 1e-6));
+    // Without its top it stays a surface, open.
+    CHECK(countTopology(stitch({sides, bottom}, 1e-3, "11").shape).solids == 0);
+
+    // The L thickened 2: a solid.
+    const NamedShape thick = thicken(wall, 2.0, "12");
+    CHECK(countTopology(thick.shape).solids == 1);
+    // About 300 of area by 2, give or take what the corner shares.
+    CHECK(volume(thick.shape) > 400.0);
+    CHECK(volume(thick.shape) < 700.0);
+    CHECK(findFace(thick, "7/side/1") >= 0);
+}
+
+TEST_CASE("A chamfer of two distances", "[kernel][modeling]") {
+    const NamedShape block = plate(20.0, 10.0, 10.0);
+    const std::vector<int> upright = uprightEdges(block);
+    REQUIRE(!upright.empty());
+    // One upright edge, 10 long, cut 2 back on one face and 4 on the other: a triangle of 4.
+    const NamedShape cut = chamfer(block, {upright.front()}, 2.0, "8", 4.0);
+    CHECK_THAT(volume(cut.shape), WithinRel(2000.0 - 0.5 * 2.0 * 4.0 * 10.0, 1e-9));
+    CHECK_THAT(volume(chamfer(block, {upright.front()}, 2.0, "8").shape),
+               WithinRel(2000.0 - 0.5 * 2.0 * 2.0 * 10.0, 1e-9));
+    CHECK_THROWS_AS(chamfer(block, {upright.front()}, 2.0, "8", -1.0), std::invalid_argument);
+}
+
+TEST_CASE("Text is made into solid letters", "[kernel][modeling]") {
+    const NamedShape word = textSolid(planeXY(), 5.0, 5.0, "LCAD", 10.0, 0.0, 2.0, "Sans", "7");
+    CHECK(countTopology(word.shape).solids >= 4);
+    CHECK(volume(word.shape) > 20.0);
+    const auto box = boundingBox(word.shape);
+    REQUIRE(box.has_value());
+    // Starting where it was put, 2 deep, about as tall as asked, and wider than it is tall.
+    CHECK(box->min.x >= 5.0 - 1.0);
+    CHECK_THAT(box->max.z - box->min.z, WithinAbs(2.0, 1e-6));
+    CHECK(box->max.y - box->min.y > 5.0);
+    CHECK(box->max.y - box->min.y < 15.0);
+    CHECK(box->max.x - box->min.x > 15.0);
+    CHECK_THROWS_AS(textSolid(planeXY(), 0.0, 0.0, "  ", 10.0, 0.0, 2.0, "Sans", "7"),
+                    std::invalid_argument);
+}

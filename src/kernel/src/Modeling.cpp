@@ -26,13 +26,28 @@
 #include <BRepGProp.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepAdaptor_CompCurve.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepLib.hxx>
+#include <BRepTools.hxx>
+#include <Geom_CylindricalSurface.hxx>
+#include <Geom2d_Line.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Ax3.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepOffset_MakeOffset.hxx>
 #include <BRepOffset_Mode.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <BRep_Builder.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <ShapeBuild_ReShape.hxx>
@@ -327,6 +342,18 @@ double solidVolume(const TopoDS_Shape& shape) {
     GProp_GProps properties;
     BRepGProp::VolumeProperties(shape, properties);
     return properties.Mass();
+}
+
+// Whether a shape has a spline face of many control points, as a helix swept makes.
+bool hasHeavyFaces(const TopoDS_Shape& shape) {
+    for (TopExp_Explorer it(shape, TopAbs_FACE); it.More(); it.Next()) {
+        const BRepAdaptor_Surface surface(TopoDS::Face(it.Current()), Standard_False);
+        if (surface.GetType() == GeomAbs_BSplineSurface &&
+            surface.NbUPoles() * surface.NbVPoles() > 400) {
+            return true;
+        }
+    }
+    return false;
 }
 
 NamedShape named(const TopoDS_Shape& shape, const FaceNamer& namer, const std::string& tag) {
@@ -782,6 +809,593 @@ NamedShape revolve(const Plane& plane, const std::vector<Region>& regions, doubl
     });
 }
 
+NamedShape draft(const NamedShape& body, const std::vector<int>& faces, const Plane& neutral,
+                 double angle, const std::string& tag) {
+    if (body.shape.isNull()) {
+        throw std::invalid_argument("draft: there is no body");
+    }
+    if (faces.empty()) {
+        throw std::invalid_argument("draft: it needs faces to tilt");
+    }
+    if (!std::isfinite(angle) || std::abs(angle) < 1e-9 || std::abs(angle) >= M_PI / 2.0) {
+        throw std::invalid_argument("draft: the angle must be more than zero and less than 90 "
+                                    "degrees either way");
+    }
+    return occt::guarded("draft", [&] {
+        const TopoDS_Shape& shape = occt::unwrap(body.shape);
+        const TopTools_IndexedMapOfShape all = mapOf(shape, TopAbs_FACE);
+        const gp_Dir direction(neutral.normal.x, neutral.normal.y, neutral.normal.z);
+        const gp_Pln plane(toOcct(neutral.origin), direction);
+        BRepOffsetAPI_DraftAngle maker(shape);
+        for (const int index : faces) {
+            if (index < 0 || index >= all.Extent()) {
+                throw std::out_of_range("draft: there is no face " + std::to_string(index));
+            }
+            maker.Add(TopoDS::Face(all(index + 1)), direction, angle, plane);
+            if (!maker.AddDone()) {
+                throw Error("draft", "a face cannot be tilted that way: it may lie along the "
+                                     "plane, or be too curved");
+            }
+        }
+        maker.Build();
+        if (!maker.IsDone() || !hasSolid(maker.Shape())) {
+            throw Error("draft", "the faces could not be tilted that far");
+        }
+        requireValid(maker.Shape(), "draft");
+        FaceNamer namer(maker.Shape());
+        for (int i = 1; i <= all.Extent(); ++i) {
+            namer.offer(maker.ModifiedShape(all(i)), body.faceNames.at(static_cast<std::size_t>(i - 1)));
+        }
+        return named(maker.Shape(), namer, tag);
+    });
+}
+
+NamedShape split(const NamedShape& body, const Plane& plane, const std::string& tag) {
+    if (body.shape.isNull()) {
+        throw std::invalid_argument("split: there is no body");
+    }
+    return occt::guarded("split", [&] {
+        const TopoDS_Shape& shape = occt::unwrap(body.shape);
+        const gp_Pnt on = toOcct(plane.origin);
+        const gp_Vec n(plane.normal.x, plane.normal.y, plane.normal.z);
+        const TopoDS_Face boundary = BRepBuilderAPI_MakeFace(gp_Pln(on, gp_Dir(n))).Face();
+        const double whole = solidVolume(shape);
+        BRep_Builder builder;
+        TopoDS_Compound pieces;
+        builder.MakeCompound(pieces);
+        std::vector<std::unique_ptr<BRepAlgoAPI_Common>> cuts;
+        std::vector<std::unique_ptr<BRepPrimAPI_MakeHalfSpace>> sides;
+        int kept = 0;
+        for (const double sign : {1.0, -1.0}) {
+            sides.push_back(std::make_unique<BRepPrimAPI_MakeHalfSpace>(
+                boundary, on.Translated(n * sign)));
+            cuts.push_back(std::make_unique<BRepAlgoAPI_Common>(shape, sides.back()->Solid()));
+            BRepAlgoAPI_Common& cut = *cuts.back();
+            if (!cut.IsDone() || cut.HasErrors()) {
+                throw Error("split", "the body could not be cut along the plane");
+            }
+            for (TopExp_Explorer it(cut.Shape(), TopAbs_SOLID); it.More(); it.Next()) {
+                if (solidVolume(it.Current()) > 1e-9 * std::max(whole, 1.0)) {
+                    builder.Add(pieces, it.Current());
+                    ++kept;
+                }
+            }
+        }
+        if (kept < 2) {
+            throw Error("split", "the plane does not pass through the body, so there is "
+                                 "nothing to split");
+        }
+        requireValid(pieces, "split");
+        FaceNamer namer(pieces);
+        const char* names[] = {"/split/front", "/split/back"};
+        for (std::size_t i = 0; i < cuts.size(); ++i) {
+            namer.inherit(body, *cuts[i]);
+            for (TopExp_Explorer it(sides[i]->Solid(), TopAbs_FACE); it.More(); it.Next()) {
+                namer.offerAll(cuts[i]->Modified(it.Current()), tag + names[i]);
+            }
+        }
+        return named(pieces, namer, tag);
+    });
+}
+
+NamedShape loft(const std::vector<std::vector<OutlineCurve>>& sections, const std::string& tag) {
+    if (sections.size() < 2) {
+        throw std::invalid_argument("loft: it needs two outlines or more");
+    }
+    return occt::guarded("loft", [&] {
+        BRepOffsetAPI_ThruSections maker(Standard_True, Standard_False, 1e-6);
+        maker.CheckCompatibility(Standard_True);
+        std::vector<TopoDS_Wire> wires;
+        for (const std::vector<OutlineCurve>& section : sections) {
+            wires.push_back(wireOf(section));
+            maker.AddWire(wires.back());
+        }
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        maker.Build(stoppable->Start());
+        if (!maker.IsDone() || !hasSolid(maker.Shape())) {
+            throw Error("loft", "the outlines could not be joined into a solid");
+        }
+        const TopoDS_Shape solid = maker.Shape();
+        requireValid(solid, "loft");
+        FaceNamer namer(solid);
+        Region first;
+        first.outer = sections.front();
+        Region last;
+        last.outer = sections.back();
+        const TopTools_IndexedMapOfShape edges = mapOf(wires.front(), TopAbs_EDGE);
+        for (int i = 1; i <= edges.Extent(); ++i) {
+            namer.offerAll(maker.Generated(edges(i)),
+                           tag + "/side/" + curveNameOf(first, TopoDS::Edge(edges(i))));
+        }
+        namer.offer(maker.FirstShape(), tag + "/start/" + keyOf(first));
+        namer.offer(maker.LastShape(), tag + "/end/" + keyOf(last));
+        return named(solid, namer, tag);
+    });
+}
+
+NamedShape sweep(const Plane& plane, const std::vector<Region>& regions, const Shape& path,
+                 const std::string& tag) {
+    if (regions.empty()) {
+        throw std::invalid_argument("sweep: there is nothing to sweep");
+    }
+    if (path.isNull()) {
+        throw std::invalid_argument("sweep: it needs a path");
+    }
+    return occt::guarded("sweep", [&] {
+        Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape();
+        for (TopExp_Explorer it(occt::unwrap(path), TopAbs_EDGE); it.More(); it.Next()) {
+            edges->Append(it.Current());
+        }
+        if (edges->IsEmpty()) {
+            throw Error("sweep", "the path has no curves");
+        }
+        Handle(TopTools_HSequenceOfShape) wires;
+        ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, outlineTolerance, Standard_False,
+                                                      wires);
+        if (wires.IsNull() || wires->Length() != 1) {
+            throw Error("sweep", "the curves of the path do not join end to end into one chain");
+        }
+        const TopoDS_Wire spine = TopoDS::Wire(wires->Value(1));
+        std::vector<NamedShape> solids;
+        for (const Region& region : regions) {
+            solids.push_back(sweepRegion(plane, region, nullptr, tag, "sweep",
+                                         [&spine](const TopoDS_Face& face) {
+                                             return std::make_unique<BRepOffsetAPI_MakePipe>(spine,
+                                                                                             face);
+                                         }));
+        }
+        return joinAll(std::move(solids));
+    });
+}
+
+namespace {
+
+// The edges of a shape joined end to end into one wire.
+TopoDS_Wire chainOf(const Shape& path, const char* operation) {
+    Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape();
+    for (TopExp_Explorer it(occt::unwrap(path), TopAbs_EDGE); it.More(); it.Next()) {
+        edges->Append(it.Current());
+    }
+    if (edges->IsEmpty()) {
+        throw Error(operation, "the path has no curves");
+    }
+    Handle(TopTools_HSequenceOfShape) wires;
+    ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, outlineTolerance, Standard_False, wires);
+    if (wires.IsNull() || wires->Length() != 1) {
+        throw Error(operation, "the curves of the path do not join end to end into one chain");
+    }
+    return TopoDS::Wire(wires->Value(1));
+}
+
+// A helix about an axis: `radius` out, rising `pitch` a turn, for `turns` turns, starting on the
+// axis's x direction.
+TopoDS_Wire helixOf(const gp_Ax3& frame, double radius, double pitch, double turns) {
+    const Handle(Geom_CylindricalSurface) surface = new Geom_CylindricalSurface(frame, radius);
+    const gp_Dir2d way(2.0 * M_PI, pitch);
+    const Handle(Geom2d_Line) line = new Geom2d_Line(gp_Pnt2d(0.0, 0.0), way);
+    const double length = turns * std::hypot(2.0 * M_PI, pitch);
+    TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(line, surface, 0.0, length).Edge();
+    BRepLib::BuildCurves3d(edge);
+    return BRepBuilderAPI_MakeWire(edge).Wire();
+}
+
+// Sweeps a closed wire along a helix, keeping it square to the axis as it goes round, into a
+// solid named `tag`/side/<side>, `tag`/start/<side>, `tag`/end/<side>.
+NamedShape helicalSweep(const TopoDS_Wire& spine, const TopoDS_Wire& profile,
+                        const gp_Dir& axis, const std::string& tag, const std::string& side,
+                        const char* operation) {
+    BRepOffsetAPI_MakePipeShell maker(spine);
+    maker.SetMode(axis);
+    maker.Add(profile);
+    maker.Build();
+    if (!maker.IsDone() || !maker.MakeSolid()) {
+        throw Error(operation, "the section could not be wound round into a solid");
+    }
+    const TopoDS_Shape solid = maker.Shape();
+    if (!hasSolid(solid)) {
+        throw Error(operation, "the section could not be wound round into a solid");
+    }
+    requireValid(solid, operation);
+    FaceNamer namer(solid);
+    for (TopExp_Explorer it(profile, TopAbs_EDGE); it.More(); it.Next()) {
+        namer.offerAll(maker.Generated(it.Current()), tag + "/side/" + side);
+    }
+    namer.offer(maker.FirstShape(), tag + "/start/" + side);
+    namer.offer(maker.LastShape(), tag + "/end/" + side);
+    namer.offerUnnamed([&](const TopoDS_Face&) { return tag + "/side/" + side; });
+    return named(solid, namer, tag);
+}
+
+} // namespace
+
+NamedShape pipe(const Shape& path, double diameter, double wall, const std::string& tag) {
+    if (!std::isfinite(diameter) || diameter <= 1e-7) {
+        throw std::invalid_argument("pipe: its diameter has to be more than zero");
+    }
+    if (!std::isfinite(wall) || wall < 0.0 || wall >= diameter / 2.0 - 1e-7) {
+        throw std::invalid_argument("pipe: its wall has to be thinner than its radius, or 0 for "
+                                    "a solid rod");
+    }
+    if (path.isNull()) {
+        throw std::invalid_argument("pipe: it needs a path");
+    }
+    return occt::guarded("pipe", [&] {
+        const TopoDS_Wire spine = chainOf(path, "pipe");
+        // A circle square to the path where it starts.
+        BRepAdaptor_CompCurve along(spine);
+        gp_Pnt start;
+        gp_Vec tangent;
+        along.D1(along.FirstParameter(), start, tangent);
+        if (tangent.Magnitude() < 1e-12) {
+            throw Error("pipe", "the path has no direction where it starts");
+        }
+        const gp_Ax2 frame(start, gp_Dir(tangent));
+        const TopoDS_Edge outer =
+            BRepBuilderAPI_MakeEdge(gp_Circ(frame, diameter / 2.0)).Edge();
+        BRepBuilderAPI_MakeFace section(BRepBuilderAPI_MakeWire(outer).Wire(), Standard_True);
+        TopoDS_Edge inner;
+        if (wall > 0.0) {
+            inner = BRepBuilderAPI_MakeEdge(gp_Circ(frame, diameter / 2.0 - wall)).Edge();
+            TopoDS_Wire hole = BRepBuilderAPI_MakeWire(inner).Wire();
+            hole.Reverse();
+            section.Add(hole);
+        }
+        ShapeFix_Face fix(section.Face());
+        fix.FixOrientation();
+        fix.Perform();
+        const TopoDS_Face face = fix.Face();
+        BRepOffsetAPI_MakePipe maker(spine, face);
+        maker.Build();
+        if (!maker.IsDone() || !hasSolid(maker.Shape())) {
+            throw Error("pipe", "the circle could not be moved along the path");
+        }
+        const TopoDS_Shape solid = maker.Shape();
+        requireValid(solid, "pipe");
+        FaceNamer namer(solid);
+        for (TopExp_Explorer it(face, TopAbs_EDGE); it.More(); it.Next()) {
+            const double radius =
+                BRepAdaptor_Curve(TopoDS::Edge(it.Current())).Circle().Radius();
+            namer.offerAll(maker.Generated(it.Current()),
+                           tag + (radius > diameter / 2.0 - 1e-9 ? "/side/outside"
+                                                                 : "/side/inside"));
+        }
+        namer.offer(maker.FirstShape(), tag + "/start/pipe");
+        namer.offer(maker.LastShape(), tag + "/end/pipe");
+        return named(solid, namer, tag);
+    });
+}
+
+NamedShape coil(const Axis& axis, double diameter, double pitch, double turns, double section,
+                const std::string& tag) {
+    const double length = std::sqrt(axis.direction.x * axis.direction.x +
+                                    axis.direction.y * axis.direction.y +
+                                    axis.direction.z * axis.direction.z);
+    if (!(length > 1e-12)) {
+        throw std::invalid_argument("coil: the axis needs a direction");
+    }
+    if (!std::isfinite(diameter) || !std::isfinite(pitch) || !std::isfinite(turns) ||
+        !std::isfinite(section) || diameter <= 1e-7 || std::abs(pitch) <= 1e-7 || turns <= 1e-7 ||
+        section <= 1e-7) {
+        throw std::invalid_argument("coil: its diameter, pitch, turns, and section have to be "
+                                    "more than zero");
+    }
+    if (section >= std::abs(pitch)) {
+        throw std::invalid_argument("coil: the section is as thick as the pitch, so the turns "
+                                    "would run into each other");
+    }
+    if (section >= diameter) {
+        throw std::invalid_argument("coil: the section is as thick as the coil is wide");
+    }
+    return occt::guarded("coil", [&] {
+        const gp_Dir up(axis.direction.x, axis.direction.y, axis.direction.z);
+        const gp_Ax3 frame(gp_Pnt(axis.origin.x, axis.origin.y, axis.origin.z), up);
+        const double radius = diameter / 2.0;
+        const TopoDS_Wire spine = helixOf(frame, radius, pitch, turns);
+        BRepAdaptor_CompCurve along(spine);
+        gp_Pnt start;
+        gp_Vec tangent;
+        along.D1(along.FirstParameter(), start, tangent);
+        const TopoDS_Edge round =
+            BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(start, gp_Dir(tangent)), section / 2.0)).Edge();
+        return helicalSweep(spine, BRepBuilderAPI_MakeWire(round).Wire(), up, tag, "coil",
+                            "coil");
+    });
+}
+
+NamedShape thread(const NamedShape& body, int face, double pitch, const std::string& tag) {
+    if (body.shape.isNull()) {
+        throw std::invalid_argument("thread: there is no body");
+    }
+    if (!std::isfinite(pitch) || pitch <= 1e-6) {
+        throw std::invalid_argument("thread: its pitch has to be more than zero");
+    }
+    return occt::guarded("thread", [&] {
+        const TopTools_IndexedMapOfShape faces = mapOf(occt::unwrap(body.shape), TopAbs_FACE);
+        if (face < 0 || face >= faces.Extent()) {
+            throw std::out_of_range("thread: there is no face " + std::to_string(face));
+        }
+        const TopoDS_Face round = TopoDS::Face(faces(face + 1));
+        BRepAdaptor_Surface surface(round);
+        if (surface.GetType() != GeomAbs_Cylinder) {
+            throw Error("thread", "a thread goes on a cylindrical face");
+        }
+        const gp_Cylinder cylinder = surface.Cylinder();
+        const double radius = cylinder.Radius();
+        double uMin = 0.0;
+        double uMax = 0.0;
+        double vMin = 0.0;
+        double vMax = 0.0;
+        BRepTools::UVBounds(round, uMin, uMax, vMin, vMax);
+        const double length = vMax - vMin;
+        if (length < pitch) {
+            throw Error("thread", "the face is shorter than one turn of the thread");
+        }
+        if (pitch > radius) {
+            throw Error("thread", "the pitch is too coarse for so small a diameter");
+        }
+        // Outside a rod, the face looks away from the axis; inside a hole, toward it.
+        gp_Pnt on;
+        gp_Vec du;
+        gp_Vec dv;
+        surface.D1((uMin + uMax) / 2.0, (vMin + vMax) / 2.0, on, du, dv);
+        gp_Vec normal = du.Crossed(dv);
+        if (round.Orientation() == TopAbs_REVERSED) {
+            normal.Reverse();
+        }
+        const gp_Ax1 line = cylinder.Axis();
+        const gp_Vec out(gp_Pnt(line.Location().XYZ() +
+                                gp_Vec(line.Direction()).Multiplied(
+                                    gp_Vec(line.Location(), on).Dot(gp_Vec(line.Direction())))
+                                    .XYZ()),
+                         on);
+        const bool outside = normal.Dot(out) > 0.0;
+        // The thread starts where the face does along the axis.
+        const gp_Ax3 frame(line.Location().Translated(gp_Vec(line.Direction()) * vMin),
+                           line.Direction(), cylinder.Position().XDirection());
+        const TopoDS_Wire spine = helixOf(frame, radius, pitch, length / pitch);
+        // A 60-degree groove, 0.6134 of the pitch deep (the external depth of ISO metric
+        // threads), reaching a little past the surface so that it cuts cleanly.
+        const double depth = 0.6134 * pitch;
+        const double past = 0.1 * pitch;
+        const double half = (depth + past) * std::tan(M_PI / 6.0);
+        const gp_Pnt start = frame.Location().Translated(gp_Vec(frame.XDirection()) * radius);
+        const gp_Vec radial(frame.XDirection());
+        const gp_Vec axial(frame.Direction());
+        const double sign = outside ? 1.0 : -1.0;
+        const gp_Pnt mouthA = start.Translated(radial * (sign * past) + axial * half);
+        const gp_Pnt mouthB = start.Translated(radial * (sign * past) - axial * half);
+        const gp_Pnt tip = start.Translated(radial * (-sign * depth));
+        const TopoDS_Wire groove = BRepBuilderAPI_MakePolygon(mouthA, tip, mouthB, Standard_True).Wire();
+        const NamedShape cutter =
+            helicalSweep(spine, groove, frame.Direction(), tag + "/thread", "groove", "thread");
+        // Not combine(): a thread leaves no faces to merge, and looking for them along a long
+        // helix takes minutes.
+        const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
+        BRepAlgoAPI_Cut cut(occt::unwrap(body.shape), occt::unwrap(cutter.shape),
+                            stoppable->Start());
+        if (!cut.IsDone() || cut.HasErrors() || !hasSolid(cut.Shape())) {
+            throw Error("thread", "the thread could not be cut into the face");
+        }
+        requireValid(cut.Shape(), "thread");
+        FaceNamer namer(cut.Shape());
+        namer.inherit(body, cut);
+        namer.inherit(cutter, cut);
+        return named(cut.Shape(), namer, tag);
+    });
+}
+
+NamedShape pullSurface(const Plane& plane, const std::vector<OutlineCurve>& curves, double from,
+                       double to, const std::string& tag) {
+    if (curves.empty()) {
+        throw Error("pull a surface", "there are no curves to pull");
+    }
+    if (!std::isfinite(from) || !std::isfinite(to) || std::abs(to - from) < 1e-7) {
+        throw std::invalid_argument("pullSurface: the distance has to be more than zero");
+    }
+    return occt::guarded("pull a surface", [&] {
+        const gp_Vec n(plane.normal.x, plane.normal.y, plane.normal.z);
+        gp_Trsf start;
+        start.SetTranslation(n * from);
+        BRepBuilderAPI_Sewing sewing(outlineTolerance);
+        std::vector<std::pair<TopoDS_Shape, std::string>> made;
+        for (const OutlineCurve& curve : curves) {
+            const TopoDS_Shape edge =
+                BRepBuilderAPI_Transform(occt::unwrap(curve.edge), start, Standard_True).Shape();
+            BRepPrimAPI_MakePrism prism(edge, n * (to - from));
+            if (!prism.IsDone()) {
+                throw Error("pull a surface", "a curve could not be pulled into a face");
+            }
+            for (TopExp_Explorer it(prism.Shape(), TopAbs_FACE); it.More(); it.Next()) {
+                sewing.Add(it.Current());
+                made.emplace_back(it.Current(), tag + "/side/" + curve.name);
+            }
+        }
+        sewing.Perform();
+        const TopoDS_Shape sewn = sewing.SewedShape();
+        FaceNamer namer(sewn);
+        for (const auto& [face, name] : made) {
+            namer.offer(sewing.IsModified(face) ? sewing.Modified(face) : face, name);
+        }
+        return named(sewn, namer, tag);
+    });
+}
+
+NamedShape revolveSurface(const std::vector<OutlineCurve>& curves, const Axis& axis, double angle,
+                          const std::string& tag) {
+    if (curves.empty()) {
+        throw Error("revolve a surface", "there are no curves to turn");
+    }
+    const double fullTurn = 2.0 * M_PI;
+    if (!std::isfinite(angle) || std::abs(angle) < 1e-9 || std::abs(angle) > fullTurn + 1e-9) {
+        throw std::invalid_argument("revolveSurface: the angle must be between zero and a turn");
+    }
+    return occt::guarded("revolve a surface", [&] {
+        const gp_Ax1 line(toOcct(axis.origin),
+                          gp_Dir(axis.direction.x, axis.direction.y, axis.direction.z));
+        const bool whole = std::abs(std::abs(angle) - fullTurn) < 1e-9;
+        BRepBuilderAPI_Sewing sewing(outlineTolerance);
+        std::vector<std::pair<TopoDS_Shape, std::string>> faces;
+        for (const OutlineCurve& curve : curves) {
+            const TopoDS_Shape& edge = occt::unwrap(curve.edge);
+            std::unique_ptr<BRepPrimAPI_MakeRevol> made =
+                whole ? std::make_unique<BRepPrimAPI_MakeRevol>(edge, line)
+                      : std::make_unique<BRepPrimAPI_MakeRevol>(edge, line, angle);
+            BRepPrimAPI_MakeRevol& turn = *made;
+            if (!turn.IsDone()) {
+                throw Error("revolve a surface", "a curve could not be turned into a face");
+            }
+            for (TopExp_Explorer it(turn.Shape(), TopAbs_FACE); it.More(); it.Next()) {
+                sewing.Add(it.Current());
+                faces.emplace_back(it.Current(), tag + "/side/" + curve.name);
+            }
+        }
+        if (faces.empty()) {
+            throw Error("revolve a surface", "the curves lie on the axis, so they make nothing");
+        }
+        sewing.Perform();
+        const TopoDS_Shape sewn = sewing.SewedShape();
+        FaceNamer namer(sewn);
+        for (const auto& [face, name] : faces) {
+            namer.offer(sewing.IsModified(face) ? sewing.Modified(face) : face, name);
+        }
+        return named(sewn, namer, tag);
+    });
+}
+
+NamedShape patch(const Plane& plane, const Region& region, const std::string& tag) {
+    return occt::guarded("patch", [&] {
+        const TopoDS_Face face = faceOf(plane, region);
+        FaceNamer namer(face);
+        namer.offer(face, tag + "/patch/" + keyOf(region));
+        return named(face, namer, tag);
+    });
+}
+
+NamedShape stitch(const std::vector<NamedShape>& pieces, double tolerance, const std::string& tag) {
+    if (pieces.empty()) {
+        throw std::invalid_argument("stitch: there is nothing to sew");
+    }
+    if (!std::isfinite(tolerance) || tolerance <= 0.0) {
+        throw std::invalid_argument("stitch: the widest gap has to be more than zero");
+    }
+    return occt::guarded("stitch", [&] {
+        BRepBuilderAPI_Sewing sewing(tolerance);
+        std::vector<std::pair<TopoDS_Shape, std::string>> faces;
+        for (const NamedShape& piece : pieces) {
+            const TopTools_IndexedMapOfShape map = mapOf(occt::unwrap(piece.shape), TopAbs_FACE);
+            for (int i = 1; i <= map.Extent(); ++i) {
+                sewing.Add(map(i));
+                faces.emplace_back(map(i), piece.faceNames.at(static_cast<std::size_t>(i - 1)));
+            }
+        }
+        sewing.Perform();
+        const TopoDS_Shape result = sewing.SewedShape();
+        // One shell, closed all round: a solid.
+        std::vector<TopoDS_Shell> shells;
+        for (TopExp_Explorer it(result, TopAbs_SHELL); it.More(); it.Next()) {
+            shells.push_back(TopoDS::Shell(it.Current()));
+        }
+        if (shells.size() == 1 && BRep_Tool::IsClosed(shells.front())) {
+            BRepBuilderAPI_MakeSolid solid(shells.front());
+            if (solid.IsDone()) {
+                ShapeFix_Solid fix(solid.Solid());
+                fix.Perform();
+                const TopoDS_Shape closed = fix.Solid();
+                if (hasSolid(closed) && solidVolume(closed) > 0.0) {
+                    // The same faces, in a solid: their names carry over by where they are.
+                    FaceNamer namer(closed);
+                    for (const auto& [face, name] : faces) {
+                        const TopoDS_Shape sewn =
+                            sewing.IsModified(face) ? sewing.Modified(face) : face;
+                        namer.offerUnnamedAt(centerOf(sewn), name);
+                    }
+                    return named(closed, namer, tag);
+                }
+            }
+        }
+        FaceNamer namer(result);
+        for (const auto& [face, name] : faces) {
+            namer.offer(sewing.IsModified(face) ? sewing.Modified(face) : face, name);
+        }
+        return named(result, namer, tag);
+    });
+}
+
+NamedShape thicken(const NamedShape& surface, double thickness, const std::string& tag) {
+    if (surface.shape.isNull()) {
+        throw std::invalid_argument("thicken: there is no surface");
+    }
+    if (!std::isfinite(thickness) || std::abs(thickness) < 1e-7) {
+        throw std::invalid_argument("thicken: the thickness has to be other than zero");
+    }
+    return occt::guarded("thicken", [&] {
+        // Offset in its thickening mode, joined at the corners, so that a surface of several
+        // faces thickens as one. The simple way, face by face, leaves the corners out.
+        BRepOffset_MakeOffset maker;
+        maker.Initialize(occt::unwrap(surface.shape), thickness, 1e-6, BRepOffset_Skin,
+                         Standard_False, Standard_False, GeomAbs_Intersection, Standard_True);
+        maker.MakeOffsetShape();
+        if (!maker.IsDone() || !hasSolid(maker.Shape())) {
+            throw Error("thicken", "the surface could not be thickened that much");
+        }
+        TopoDS_Shape solid = maker.Shape();
+        // Inside out, as it comes for some surfaces: turned the right way.
+        if (solidVolume(solid) < 0.0) {
+            solid.Reverse();
+        }
+        requireValid(solid, "thicken");
+        // The faces it starts from keep their names; the others are named after where they
+        // are, in the order of where they are.
+        FaceNamer namer(solid);
+        const TopTools_IndexedMapOfShape faces = mapOf(occt::unwrap(surface.shape), TopAbs_FACE);
+        for (int i = 1; i <= faces.Extent(); ++i) {
+            namer.offerUnnamedAt(centerOf(faces(i)),
+                                 surface.faceNames.at(static_cast<std::size_t>(i - 1)));
+        }
+        return named(solid, namer, tag);
+    });
+}
+
+NamedShape offsetSurface(const NamedShape& surface, double distance, const std::string& tag) {
+    if (surface.shape.isNull()) {
+        throw std::invalid_argument("offsetSurface: there is no surface");
+    }
+    if (!std::isfinite(distance) || std::abs(distance) < 1e-7) {
+        throw std::invalid_argument("offsetSurface: the distance has to be other than zero");
+    }
+    return occt::guarded("offset a surface", [&] {
+        BRepOffsetAPI_MakeOffsetShape maker;
+        maker.PerformByJoin(occt::unwrap(surface.shape), distance, 1e-6, BRepOffset_Skin,
+                            Standard_False, Standard_False, GeomAbs_Intersection);
+        if (!maker.IsDone() || maker.Shape().IsNull()) {
+            throw Error("offset a surface", "the surface could not be offset that far");
+        }
+        FaceNamer namer(maker.Shape());
+        namer.inherit(surface, maker);
+        return named(maker.Shape(), namer, tag);
+    });
+}
+
 NamedShape combine(const NamedShape& body, const NamedShape& tool, Combination how) {
     if (body.shape.isNull() || tool.shape.isNull()) {
         throw std::invalid_argument("combine: both shapes are needed");
@@ -805,8 +1419,12 @@ NamedShape combine(const NamedShape& body, const NamedShape& tool, Combination h
         if (!operation->IsDone() || operation->HasErrors()) {
             throw Error("combine", "the two shapes could not be combined");
         }
-        // Faces left lying in one plane, and edges left in one line, become one.
-        operation->SimplifyResult();
+        // Faces left lying in one plane, and edges left in one line, become one. Not where
+        // there are large spline faces, such as a thread's or a coil's: looking for faces to
+        // merge along them takes minutes, and they have none.
+        if (!hasHeavyFaces(first) && !hasHeavyFaces(second)) {
+            operation->SimplifyResult();
+        }
         const TopoDS_Shape result = operation->Shape();
         if (!hasSolid(result)) {
             throw Error("combine", how == Combination::Cut ? "the cut leaves nothing of the body"
@@ -847,7 +1465,7 @@ NamedShape fillet(const NamedShape& body, const std::vector<int>& edges, double 
 }
 
 NamedShape chamfer(const NamedShape& body, const std::vector<int>& edges, double distance,
-                   const std::string& tag) {
+                   const std::string& tag, double distance2) {
     if (edges.empty()) {
         throw std::invalid_argument("chamfer: there are no edges to bevel");
     }
@@ -856,9 +1474,21 @@ NamedShape chamfer(const NamedShape& body, const std::vector<int>& edges, double
     }
     return occt::guarded("chamfer", [&] {
         const TopTools_IndexedMapOfShape all = mapOf(occt::unwrap(body.shape), TopAbs_EDGE);
+        if (!std::isfinite(distance2) || distance2 < 0.0) {
+            throw std::invalid_argument("chamfer: the second distance must not be negative");
+        }
         BRepFilletAPI_MakeChamfer maker(occt::unwrap(body.shape));
+        TopTools_IndexedDataMapOfShapeListOfShape faces;
+        TopExp::MapShapesAndAncestors(occt::unwrap(body.shape), TopAbs_EDGE, TopAbs_FACE, faces);
         for (const int edge : edges) {
-            maker.Add(distance, edgeAt(all, edge, "chamfer"));
+            const TopoDS_Edge chosen = edgeAt(all, edge, "chamfer");
+            if (distance2 > 1e-7 && faces.Contains(chosen) && !faces.FindFromKey(chosen).IsEmpty()) {
+                // Measured from the first face at the edge, and the other on the other face.
+                maker.Add(distance, distance2, chosen,
+                          TopoDS::Face(faces.FindFromKey(chosen).First()));
+            } else {
+                maker.Add(distance, chosen);
+            }
         }
         const Handle(occt::Stoppable) stoppable = new occt::Stoppable();
         maker.Build(stoppable->Start());

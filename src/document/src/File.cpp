@@ -334,6 +334,13 @@ nlohmann::ordered_json writeSketch(const SketchItem& item) {
             c["markers"] = {constraint.markerShift[0], constraint.markerSide[0],
                             constraint.markerShift[1], constraint.markerSide[1]};
         }
+        // Only for a value that was moved.
+        if (constraint.label.has_value()) {
+            c["label"] = {constraint.label->x, constraint.label->y};
+        }
+        if (constraint.reference) {
+            c["reference"] = true;
+        }
         out["constraints"].push_back(std::move(c));
     }
     return out;
@@ -472,6 +479,18 @@ SketchItem readSketch(const json& entry, const std::filesystem::path& path) {
             constraint.markerShift = {markers[0].get<double>(), markers[2].get<double>()};
             constraint.markerSide = {markers[1].get<int>(), markers[3].get<int>()};
         }
+        if (c.contains("label")) {
+            const json& label = c["label"];
+            if (!label.is_array() || label.size() != 2 || !label[0].is_number() ||
+                !label[1].is_number() || !std::isfinite(label[0].get<double>()) ||
+                !std::isfinite(label[1].get<double>())) {
+                damaged(path, "\"label\" of " + in + " is not two numbers");
+            }
+            constraint.label = sketch::Point2{label[0].get<double>(), label[1].get<double>()};
+        }
+        if (c.contains("reference")) {
+            constraint.reference = boolMember(c, "reference", in, path);
+        }
         constraints.push_back(constraint);
     }
 
@@ -576,10 +595,23 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["reference"] = feature.reference;
         out["visible"] = feature.visible;
     }
-    // A revolve about an origin axis or a construction axis; the direction of a face moved.
-    if ((feature.kind == FeatureKind::Revolve && !feature.reference.empty()) ||
-        feature.kind == FeatureKind::MoveFace) {
+    // A plane at an angle or a midplane: written only for those, so that offset planes read
+    // as they did.
+    if (feature.kind == FeatureKind::Plane && feature.planeKind != PlaneKind::Offset) {
+        out["planeKind"] = toString(feature.planeKind);
+        out["reference2"] = feature.reference2;
+    }
+    // A revolve about an origin axis or a construction axis; the direction of a face moved;
+    // the plane of a draft or a split.
+    if (((feature.kind == FeatureKind::Revolve || feature.kind == FeatureKind::SurfaceRevolve) &&
+         !feature.reference.empty()) ||
+        feature.kind == FeatureKind::MoveFace || feature.kind == FeatureKind::Draft ||
+        feature.kind == FeatureKind::SplitBody) {
         out["reference"] = feature.reference;
+    }
+    // A pull through all.
+    if (feature.kind == FeatureKind::Pull && feature.throughAll) {
+        out["throughAll"] = true;
     }
     if (!feature.expressions.empty()) {
         out["expressions"] = feature.expressions;
@@ -603,6 +635,56 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["headDepth"] = feature.headDepth;
         out["countersinkAngle"] = feature.countersinkAngle;
         out["flipped"] = feature.flipped;
+    }
+    if (feature.kind == FeatureKind::Loft) {
+        out["sections"] = ordered_json::array();
+        for (const LoftSection& section : feature.sections) {
+            ordered_json s;
+            s["sketch"] = section.sketch.value;
+            s["region"] = section.region;
+            out["sections"].push_back(std::move(s));
+        }
+    }
+    if (feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::Pipe) {
+        out["pathSketch"] = feature.pathSketch.value;
+    }
+    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::MoveBody ||
+        feature.kind == FeatureKind::Stitch || feature.kind == FeatureKind::OffsetSurface) {
+        out["tools"] = ordered_json::array();
+        for (const ObjectId tool : feature.tools) {
+            out["tools"].push_back(tool.value);
+        }
+    }
+    if (feature.kind == FeatureKind::Combine) {
+        out["keepTools"] = feature.keepTools;
+    }
+    if (feature.kind == FeatureKind::MoveBody) {
+        out["move"] = {feature.moveX, feature.moveY, feature.moveZ};
+        out["copy"] = feature.copy;
+        out["reference"] = feature.reference;
+        if (feature.scale != 1.0) {
+            out["scale"] = feature.scale;
+        }
+    }
+    if (feature.kind == FeatureKind::Pipe) {
+        out["wall"] = feature.wall;
+    }
+    if (feature.kind == FeatureKind::Text) {
+        out["text"] = feature.text;
+        out["font"] = feature.font;
+        out["at"] = {feature.textU, feature.textV};
+    }
+    // A chamfer of two distances.
+    if (feature.kind == FeatureKind::Chamfer && feature.size2 != 0.0) {
+        out["size2"] = feature.size2;
+    }
+    if (feature.kind == FeatureKind::Coil || feature.kind == FeatureKind::Thread) {
+        out["pitch"] = feature.pitch;
+    }
+    if (feature.kind == FeatureKind::Coil) {
+        out["reference"] = feature.reference;
+        out["turns"] = feature.turns;
+        out["section"] = feature.section;
     }
     if (feature.kind == FeatureKind::Mirror || feature.kind == FeatureKind::RectangularPattern ||
         feature.kind == FeatureKind::CircularPattern) {
@@ -679,9 +761,23 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
         feature.reference = stringMember(entry, "reference", where, path);
         feature.visible = boolMember(entry, "visible", where, path);
     }
-    if ((feature.kind == FeatureKind::Revolve && entry.contains("reference")) ||
-        feature.kind == FeatureKind::MoveFace) {
+    if (feature.kind == FeatureKind::Plane && entry.contains("planeKind")) {
+        const std::string planeKind = stringMember(entry, "planeKind", where, path);
+        const auto known = planeKindFromString(planeKind);
+        if (!known.has_value()) {
+            damaged(path, where + " is a plane of the unknown kind \"" + planeKind + "\"");
+        }
+        feature.planeKind = *known;
+        feature.reference2 = stringMember(entry, "reference2", where, path);
+    }
+    if (((feature.kind == FeatureKind::Revolve || feature.kind == FeatureKind::SurfaceRevolve) &&
+         entry.contains("reference")) ||
+        feature.kind == FeatureKind::MoveFace || feature.kind == FeatureKind::Draft ||
+        feature.kind == FeatureKind::SplitBody) {
         feature.reference = stringMember(entry, "reference", where, path);
+    }
+    if (feature.kind == FeatureKind::Pull && entry.contains("throughAll")) {
+        feature.throughAll = boolMember(entry, "throughAll", where, path);
     }
     if (entry.contains("expressions")) {
         const json& expressions = entry.at("expressions");
@@ -703,6 +799,89 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
     if (entry.contains("extentFace")) {
         feature.extentBody = ObjectId{idMember(entry, "extentBody", where, path)};
         feature.extentFace = stringMember(entry, "extentFace", where, path);
+    }
+    if (feature.kind == FeatureKind::Loft) {
+        const json& sections = member(entry, "sections", where, path);
+        if (!sections.is_array()) {
+            damaged(path, "\"sections\" in " + where + " is not a list");
+        }
+        for (const json& s : sections) {
+            if (!s.is_object()) {
+                damaged(path, "\"sections\" in " + where + " holds something that is not a section");
+            }
+            LoftSection section;
+            section.sketch = ObjectId{idMember(s, "sketch", where, path)};
+            const json& region = member(s, "region", where, path);
+            if (!region.is_array()) {
+                damaged(path, "a section in " + where + " has no list of curves");
+            }
+            for (const json& curve : region) {
+                if (!curve.is_number_unsigned()) {
+                    damaged(path, "a section in " + where + " holds something that is not a curve");
+                }
+                section.region.push_back(curve.get<sketch::EntityId>());
+            }
+            std::sort(section.region.begin(), section.region.end());
+            feature.sections.push_back(std::move(section));
+        }
+    }
+    if (feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::Pipe) {
+        feature.pathSketch = ObjectId{idMember(entry, "pathSketch", where, path)};
+    }
+    if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::MoveBody ||
+        feature.kind == FeatureKind::Stitch || feature.kind == FeatureKind::OffsetSurface) {
+        const json& tools = member(entry, "tools", where, path);
+        if (!tools.is_array()) {
+            damaged(path, "\"tools\" in " + where + " is not a list");
+        }
+        for (const json& tool : tools) {
+            if (!tool.is_number_unsigned()) {
+                damaged(path, "\"tools\" in " + where + " holds something that is not a body");
+            }
+            feature.tools.push_back(ObjectId{tool.get<std::uint64_t>()});
+        }
+    }
+    if (feature.kind == FeatureKind::Combine) {
+        feature.keepTools = boolMember(entry, "keepTools", where, path);
+    }
+    if (feature.kind == FeatureKind::MoveBody) {
+        const json& move = member(entry, "move", where, path);
+        if (!move.is_array() || move.size() != 3 ||
+            !std::all_of(move.begin(), move.end(), [](const json& v) { return v.is_number(); })) {
+            damaged(path, "\"move\" in " + where + " is not three numbers");
+        }
+        feature.moveX = move[0].get<double>();
+        feature.moveY = move[1].get<double>();
+        feature.moveZ = move[2].get<double>();
+        feature.copy = boolMember(entry, "copy", where, path);
+        if (entry.contains("scale")) {
+            feature.scale = numberMember(entry, "scale", where, path);
+        }
+        feature.reference = stringMember(entry, "reference", where, path);
+    }
+    if (feature.kind == FeatureKind::Pipe) {
+        feature.wall = numberMember(entry, "wall", where, path);
+    }
+    if (feature.kind == FeatureKind::Text) {
+        feature.text = stringMember(entry, "text", where, path);
+        feature.font = stringMember(entry, "font", where, path);
+        const json& at = member(entry, "at", where, path);
+        if (!at.is_array() || at.size() != 2 || !at[0].is_number() || !at[1].is_number()) {
+            damaged(path, "\"at\" in " + where + " is not two numbers");
+        }
+        feature.textU = at[0].get<double>();
+        feature.textV = at[1].get<double>();
+    }
+    if (feature.kind == FeatureKind::Chamfer && entry.contains("size2")) {
+        feature.size2 = numberMember(entry, "size2", where, path);
+    }
+    if (feature.kind == FeatureKind::Coil || feature.kind == FeatureKind::Thread) {
+        feature.pitch = numberMember(entry, "pitch", where, path);
+    }
+    if (feature.kind == FeatureKind::Coil) {
+        feature.reference = stringMember(entry, "reference", where, path);
+        feature.turns = numberMember(entry, "turns", where, path);
+        feature.section = numberMember(entry, "section", where, path);
     }
     if (feature.kind == FeatureKind::Hole) {
         const std::string holeKind = stringMember(entry, "holeKind", where, path);

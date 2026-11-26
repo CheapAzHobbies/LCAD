@@ -842,3 +842,257 @@ TEST_CASE("Extend lengthens a curve to the next one it meets", "[sketch][edit]")
         CHECK_FALSE(extend(sketch, sketch.origin(), {0.0, 0.0}));
     }
 }
+
+TEST_CASE("A corner between two lines is rounded with a tangent arc", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts r = addRectangle(sketch, {0.0, 0.0}, {40.0, 20.0});
+    // The width as a dimension on the corner that is rounded.
+    const ConstraintId width = sketch.addConstraint(
+        ConstraintKind::Distance, sketch.find(r.bottom)->start, sketch.find(r.bottom)->end, 0, 40.0);
+    // Held at the origin, and as tall as it is, so that only what is changed moves.
+    sketch.addConstraint(ConstraintKind::Coincident, sketch.find(r.bottom)->start, sketch.origin());
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.left)->start,
+                         sketch.find(r.left)->end, 0, 20.0);
+    sketch.solve();
+    const double before = sketch.profiles()[0].area;
+
+    const EntityId corner = sketch.find(r.right)->end;
+    const FilletParts f = fillet(sketch, corner, 5.0);
+    const Entity* arc = sketch.find(f.arc);
+    REQUIRE(arc != nullptr);
+    CHECK(arc->kind == EntityKind::Arc);
+    CHECK_THAT(sketch.radiusOf(f.arc), WithinAbs(5.0, lengthTolerance));
+    // Its center is in from both sides of the corner, and the lines stop where it starts.
+    CHECK_THAT(centerOf(sketch, f.arc).x, WithinAbs(35.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, f.arc).y, WithinAbs(15.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, r.right).y, WithinAbs(15.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.top).x, WithinAbs(35.0, lengthTolerance));
+    // Still one closed outline, short of the bit of corner cut off.
+    REQUIRE(sketch.profiles().size() == 1);
+    CHECK_THAT(sketch.profiles()[0].area, WithinAbs(before - (25.0 - 25.0 * pi / 4.0), 1e-3));
+    // The construction point is where the corner was.
+    CHECK(sketch.find(f.corner)->construction);
+    CHECK_THAT(sketch.position(f.corner).x, WithinAbs(40.0, lengthTolerance));
+    CHECK_THAT(sketch.position(f.corner).y, WithinAbs(20.0, lengthTolerance));
+
+    // The radius is a dimension like any other, and the arc stays tangent as it changes.
+    REQUIRE(tryDimensionValue(sketch, f.radius, 8.0).ok());
+    CHECK_THAT(endOf(sketch, r.right).y, WithinAbs(12.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.top).x, WithinAbs(32.0, lengthTolerance));
+    // A dimension that was on the corner holds through the virtual corner.
+    REQUIRE(tryDimensionValue(sketch, width, 50.0).ok());
+    CHECK_THAT(sketch.position(f.corner).x, WithinAbs(50.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, f.arc).x, WithinAbs(42.0, lengthTolerance));
+
+    // What cannot be rounded leaves the sketch as it was.
+    const Sketch kept = sketch;
+    CHECK_THROWS_AS(fillet(sketch, sketch.find(r.bottom)->start, 30.0), std::invalid_argument);
+    CHECK_THROWS_AS(fillet(sketch, sketch.find(f.arc)->start, 1.0), std::invalid_argument);
+    CHECK_THROWS_AS(fillet(sketch, sketch.find(r.left)->start, 0.0), std::invalid_argument);
+    CHECK(same(sketch, kept));
+}
+
+TEST_CASE("A corner between two lines is cut with a chamfer", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts r = addRectangle(sketch, {0.0, 0.0}, {40.0, 20.0});
+    sketch.addConstraint(ConstraintKind::Coincident, sketch.find(r.bottom)->start, sketch.origin());
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.bottom)->start,
+                         sketch.find(r.bottom)->end, 0, 40.0);
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.left)->start,
+                         sketch.find(r.left)->end, 0, 20.0);
+    sketch.solve();
+    const double before = sketch.profiles()[0].area;
+
+    const ChamferParts c = chamfer(sketch, sketch.find(r.right)->end, 4.0);
+    CHECK(sketch.find(c.line)->kind == EntityKind::Line);
+    CHECK_THAT(endOf(sketch, r.right).y, WithinAbs(16.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.top).x, WithinAbs(36.0, lengthTolerance));
+    REQUIRE(sketch.profiles().size() == 1);
+    CHECK_THAT(sketch.profiles()[0].area, WithinAbs(before - 8.0, 1e-6));
+    // One value moves both sides.
+    REQUIRE(tryDimensionValue(sketch, c.distance, 6.0).ok());
+    CHECK_THAT(endOf(sketch, r.right).y, WithinAbs(14.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.top).x, WithinAbs(34.0, lengthTolerance));
+    CHECK(sketch.solve().isFullyConstrained());
+
+    const Sketch kept = sketch;
+    CHECK_THROWS_AS(chamfer(sketch, sketch.find(r.bottom)->start, 50.0), std::invalid_argument);
+    CHECK_THROWS_AS(chamfer(sketch, sketch.find(r.left)->start, 0.0), std::invalid_argument);
+    CHECK(same(sketch, kept));
+}
+
+TEST_CASE("Rectangles by their center, and arcs and circles through three points",
+          "[sketch][edit]") {
+    Sketch sketch;
+    const CenterRectangleParts r = addCenterRectangle(sketch, {10.0, 5.0}, {25.0, 15.0});
+    CHECK_THAT(startOf(sketch, r.sides.bottom).x, WithinAbs(-5.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, r.sides.bottom).y, WithinAbs(-5.0, lengthTolerance));
+    CHECK_THAT(lengthOf(sketch, r.sides.bottom), WithinAbs(30.0, lengthTolerance));
+    // It stays centered on its point as it is pulled.
+    sketch.dragBy(sketch.find(r.sides.top)->start, 5.0, 5.0);
+    const Point2 middle = sketch.position(r.center);
+    CHECK_THAT((startOf(sketch, r.sides.bottom).x + endOf(sketch, r.sides.bottom).x) / 2.0,
+               WithinAbs(middle.x, 1e-6));
+    CHECK_THAT((startOf(sketch, r.sides.left).y + endOf(sketch, r.sides.left).y) / 2.0,
+               WithinAbs(middle.y, 1e-6));
+
+    const auto circle = circleThrough({0.0, 0.0}, {10.0, 0.0}, {5.0, 5.0});
+    REQUIRE(circle.has_value());
+    CHECK_THAT(circle->first.x, WithinAbs(5.0, 1e-9));
+    CHECK_THAT(circle->first.y, WithinAbs(0.0, 1e-9));
+    CHECK_THAT(circle->second, WithinAbs(5.0, 1e-9));
+    CHECK(!circleThrough({0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}).has_value());
+
+    // The upper half and the lower half, by the point between.
+    Sketch arcs;
+    const EntityId upper = addArcThrough(arcs, {10.0, 0.0}, {0.0, 10.0}, {-10.0, 0.0});
+    const EntityId lower = addArcThrough(arcs, {10.0, 0.0}, {0.0, -10.0}, {-10.0, 0.0});
+    CHECK(arcs.pointAt(upper, 0.5).y > 9.9);
+    CHECK(arcs.pointAt(lower, 0.5).y < -9.9);
+    CHECK_THROWS_AS(addArcThrough(arcs, {0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}), std::invalid_argument);
+}
+
+TEST_CASE("A tangent arc goes on from the end of a line or an arc", "[sketch][edit]") {
+    Sketch sketch;
+    const EntityId line = sketch.addLine({0.0, 0.0}, {20.0, 0.0});
+    // On from the line's end, curving up to the left: a quarter of a circle of radius 10.
+    const EntityId arc = addTangentArc(sketch, sketch.find(line)->end, {30.0, 10.0});
+    CHECK_THAT(sketch.radiusOf(arc), WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, arc).x, WithinAbs(20.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, arc).y, WithinAbs(10.0, lengthTolerance));
+    // And on again from that arc, the other way: an S.
+    const Entity first = *sketch.find(arc);
+    const EntityId next = addTangentArc(sketch, first.end, {40.0, 20.0});
+    CHECK_THAT(sketch.radiusOf(next), WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, next).x, WithinAbs(40.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, next).y, WithinAbs(10.0, lengthTolerance));
+    // They stay tangent when the line is turned.
+    sketch.dragBy(sketch.find(line)->start, 0.0, -5.0);
+    CHECK(sketch.state().status == SolveStatus::Solved);
+
+    const Sketch kept = sketch;
+    CHECK_THROWS_AS(addTangentArc(sketch, sketch.origin(), {5.0, 5.0}), std::invalid_argument);
+    // Straight on from a line is no arc.
+    const EntityId straight = sketch.addLine({0.0, 50.0}, {10.0, 50.0});
+    const Sketch withLine = sketch;
+    CHECK_THROWS_AS(addTangentArc(sketch, sketch.find(straight)->end, {30.0, 50.0}),
+                    std::invalid_argument);
+    CHECK(same(sketch, withLine));
+    sketch = kept;
+    CHECK(same(sketch, kept));
+}
+
+TEST_CASE("A corner with construction geometry at it can still be cut", "[sketch][edit]") {
+    Sketch sketch;
+    const CenterRectangleParts r = addCenterRectangle(sketch, {0.0, 0.0}, {20.0, 10.0});
+    // The diagonal ends at the top right corner too.
+    const FilletParts f = fillet(sketch, sketch.find(r.sides.top)->start, 3.0);
+    CHECK_THAT(sketch.radiusOf(f.arc), WithinAbs(3.0, lengthTolerance));
+    // The diagonal now ends at the point where the corner was, and the rectangle is centered.
+    CHECK_THAT(sketch.position(f.corner).x, WithinAbs(20.0, lengthTolerance));
+    CHECK_THAT(sketch.position(f.corner).y, WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, r.diagonal).x, WithinAbs(20.0, lengthTolerance));
+    CHECK(sketch.solve().status != SolveStatus::Conflicting);
+}
+
+TEST_CASE("Sketch patterns copy geometry around a point and along a step", "[sketch][edit]") {
+    Sketch sketch;
+    // A circle of radius 2 at (20, 0), and a dimensioned rectangle.
+    const EntityId hole = sketch.addCircle({20.0, 0.0}, 2.0);
+    sketch.addConstraint(ConstraintKind::Diameter, hole, 0, 0, 4.0);
+    const std::vector<EntityId> round = patternCircular(sketch, {hole}, {0.0, 0.0}, 6);
+    REQUIRE(round.size() == 5);
+    // Evenly round: the second at 60 degrees, each with its diameter.
+    CHECK_THAT(centerOf(sketch, round[0]).x, WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(centerOf(sketch, round[0]).y, WithinAbs(20.0 * std::sin(pi / 3.0), lengthTolerance));
+    std::size_t diameters = 0;
+    for (const Constraint& c : sketch.constraints()) {
+        diameters += c.kind == ConstraintKind::Diameter ? 1 : 0;
+    }
+    CHECK(diameters == 6);
+    // Over half a turn, the last lands at the end of it.
+    Sketch half;
+    const EntityId dot = half.addPoint({10.0, 0.0});
+    const std::vector<EntityId> fan = patternCircular(half, {dot}, {0.0, 0.0}, 3, pi);
+    CHECK_THAT(half.position(fan.back()).x, WithinAbs(-10.0, lengthTolerance));
+
+    Sketch rows;
+    const RectangleParts r = addRectangle(rows, {0.0, 0.0}, {5.0, 3.0});
+    const std::vector<EntityId> sides{r.bottom, r.right, r.top, r.left};
+    const std::vector<EntityId> copies = patternRectangular(rows, sides, {10.0, 0.0}, 3);
+    REQUIRE(copies.size() == 8);
+    CHECK_THAT(startOf(rows, copies[4]).x, WithinAbs(20.0, lengthTolerance));
+    // Each copy is a closed rectangle that stays one.
+    CHECK(rows.profiles().size() == 3);
+    rows.dragBy(rows.find(copies[1])->end, 2.0, 2.0);
+    CHECK_THAT(startOf(rows, copies[2]).y, WithinAbs(endOf(rows, copies[2]).y, 1e-6));
+
+    const Sketch kept = rows;
+    CHECK_THROWS_AS(patternRectangular(rows, sides, {0.0, 0.0}, 3), std::invalid_argument);
+    CHECK_THROWS_AS(patternCircular(rows, sides, {0.0, 0.0}, 1), std::invalid_argument);
+    CHECK_THROWS_AS(patternCircular(rows, {rows.find(r.bottom)->start}, {0.0, 0.0}, 3),
+                    std::invalid_argument);
+    CHECK(same(rows, kept));
+}
+
+TEST_CASE("Sketch geometry is moved, turned, scaled, and copied", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts r = addRectangle(sketch, {0.0, 0.0}, {20.0, 10.0});
+    const std::vector<EntityId> sides{r.bottom, r.right, r.top, r.left};
+    // Moved 5 along X: still a rectangle.
+    place(sketch, sides, Placing{{0.0, 0.0}, 0.0, 1.0, {5.0, 0.0}}, false);
+    CHECK_THAT(startOf(sketch, r.bottom).x, WithinAbs(5.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, r.right).x, WithinAbs(25.0, lengthTolerance));
+    // Turned a quarter about its corner: horizontal and vertical forbid it.
+    const Sketch kept = sketch;
+    CHECK_THROWS_AS(place(sketch, sides, Placing{{5.0, 0.0}, pi / 2.0, 1.0, {}}, false),
+                    std::invalid_argument);
+    CHECK(same(sketch, kept));
+    // A free line turns.
+    const EntityId line = sketch.addLine({0.0, 30.0}, {10.0, 30.0});
+    place(sketch, {line}, Placing{{0.0, 30.0}, pi / 2.0, 1.0, {}}, false);
+    CHECK_THAT(endOf(sketch, line).x, WithinAbs(0.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, line).y, WithinAbs(40.0, lengthTolerance));
+    // A copy twice as large, 50 along: the original stays.
+    const std::vector<EntityId> copies =
+        place(sketch, sides, Placing{{5.0, 0.0}, 0.0, 2.0, {50.0, 0.0}}, true);
+    REQUIRE(copies.size() == 4);
+    CHECK_THAT(startOf(sketch, r.bottom).x, WithinAbs(5.0, lengthTolerance));
+    CHECK_THAT(lengthOf(sketch, copies[0]), WithinAbs(40.0, lengthTolerance));
+    CHECK_THAT(startOf(sketch, copies[0]).x, WithinAbs(55.0, lengthTolerance));
+    // Scaled where a dimension holds the size: refused.
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.bottom)->start,
+                         sketch.find(r.bottom)->end, 0, 20.0);
+    sketch.solve();
+    const Sketch dimensioned = sketch;
+    CHECK_THROWS_AS(place(sketch, sides, Placing{{5.0, 0.0}, 0.0, 2.0, {}}, false),
+                    std::invalid_argument);
+    CHECK(same(sketch, dimensioned));
+}
+
+TEST_CASE("A reference dimension shows a size without setting it", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts r = addRectangle(sketch, {0.0, 0.0}, {30.0, 40.0});
+    sketch.addConstraint(ConstraintKind::Coincident, sketch.find(r.bottom)->start, sketch.origin());
+    const ConstraintId width = sketch.addConstraint(
+        ConstraintKind::Distance, sketch.find(r.bottom)->start, sketch.find(r.bottom)->end, 0, 30.0);
+    sketch.addConstraint(ConstraintKind::Distance, sketch.find(r.left)->start,
+                         sketch.find(r.left)->end, 0, 40.0);
+    REQUIRE(sketch.solve().isFullyConstrained());
+    // The diagonal would over-constrain it: as a reference it measures 50.
+    const ConstraintId diagonal = sketch.addConstraint(
+        ConstraintKind::Distance, sketch.find(r.bottom)->start, sketch.find(r.top)->start, 0, 1.0);
+    sketch.setConstraintReference(diagonal, true);
+    const SolveResult state = sketch.solve();
+    CHECK(state.status == SolveStatus::Solved);
+    CHECK(state.isFullyConstrained());
+    CHECK_THAT(sketch.findConstraint(diagonal)->value, WithinAbs(50.0, 1e-9));
+    // It follows: a width of 30 to 9 makes it 41.
+    REQUIRE(tryDimensionValue(sketch, width, 9.0).ok());
+    CHECK_THAT(sketch.findConstraint(diagonal)->value, WithinAbs(std::hypot(9.0, 40.0), 1e-9));
+    // It cannot be set.
+    CHECK(tryDimensionValue(sketch, diagonal, 60.0).refusal == Refusal::Reference);
+    CHECK_THROWS_AS(sketch.setConstraintReference(
+                        sketch.addConstraint(ConstraintKind::Horizontal, r.bottom), true),
+                    std::invalid_argument);
+}

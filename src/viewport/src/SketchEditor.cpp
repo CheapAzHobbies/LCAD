@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <numbers>
 #include <stdexcept>
@@ -219,10 +220,16 @@ Stroke strokeOf(const sketch::Sketch& geometry, const Entity& entity) {
 
 // What a tool's click landed on.
 struct Snap {
-    enum class Kind { None, Point, Curve, Midpoint };
+    enum class Kind { None, Point, Curve, Midpoint, Intersection };
     Point2 position;
     Kind kind = Kind::None;
     EntityId entity = 0;
+    // For an intersection: the second curve.
+    EntityId entity2 = 0;
+    // For the end of a line: parallel or perpendicular to another line, or tangent to the arc
+    // or circle it starts on. 0 for none.
+    EntityId alignedTo = 0;
+    ConstraintKind alignKind = ConstraintKind::Parallel;
     // For the end of a line: level with, or straight above or below, where the line starts.
     bool horizontal = false;
     bool vertical = false;
@@ -305,6 +312,7 @@ public:
     SketchTool tool = SketchTool::Select;
     ConstraintKind constraintKind = ConstraintKind::Coincident;
     bool inference = true;
+    bool gridSnap = false;
     bool constructionMode = false;
     int polygonSides = 6;
 
@@ -350,7 +358,23 @@ public:
     int markerDragIndex = 0;
     double markerDragShift = 0.0;
     int markerDragSide = 0;
+    // How many there were in the last patterns made, to start the next from.
+    int circularCount = 6;
+    int rectangularCount = 3;
+    // Rotate and Scale: what was last typed, to start the next from. Move: Ctrl held, to copy.
+    double rotateAngle = 90.0;
+    double scaleFactor = 2.0;
+    bool copying = false;
+    // A dimension's value being dragged: where it is now, from what it hangs on, and how far
+    // from the value's middle it was picked up.
+    ConstraintId labelDrag = 0;
+    std::optional<Point2> labelDragAt;
+    Point2 labelGrab;
     EntityId dragEntity = 0;
+    // A point being dragged: what it would join if let go now, and what it cannot join because
+    // it is already one with it or is its own curve.
+    Snap dragSnap;
+    std::vector<EntityId> dragIgnored;
     Point2 dragLast;
     std::optional<sketch::Sketch> dragBefore;
     std::unique_ptr<document::Transaction> dragTransaction;
@@ -623,38 +647,64 @@ public:
     }
 
     // Adds the lines and arrows of a distance between the points at `p1` and `p2` to `a`, and
-    // returns where its value goes.
-    QPointF drawDistance(Annotation& a, ConstraintKind kind, Point2 p1, Point2 p2) const {
+    // returns where its value goes: `placed` from the middle of the two points, if it was put
+    // somewhere, and otherwise a little way out.
+    QPointF drawDistance(Annotation& a, ConstraintKind kind, Point2 p1, Point2 p2,
+                         std::optional<Point2> placed = std::nullopt) const {
         const double mm = millimetersPerPixel();
         const double off = dimensionOffset * mm;
+        const Point2 mid = (p1 + p2) * 0.5;
         Point2 q1;
         Point2 q2;
+        Point2 label;
         if (kind == ConstraintKind::Distance) {
             // To the right of the way from the first point to the second, which is the outside
             // of an outline drawn counter-clockwise.
             const Point2 d = unit(p2 - p1);
             const Point2 n{d.y, -d.x};
-            q1 = p1 + n * off;
-            q2 = p2 + n * off;
+            const double across = placed ? placed->x * n.x + placed->y * n.y : off;
+            const double alongBy = placed ? placed->x * d.x + placed->y * d.y : 0.0;
+            q1 = p1 + n * across;
+            q2 = p2 + n * across;
+            label = mid + n * across + d * alongBy;
         } else if (kind == ConstraintKind::DistanceX) {
-            const double level = std::min(p1.y, p2.y) - off;
+            const double level = placed ? mid.y + placed->y : std::min(p1.y, p2.y) - off;
             q1 = {p1.x, level};
             q2 = {p2.x, level};
+            label = {placed ? mid.x + placed->x : mid.x, level};
         } else {
-            const double level = std::max(p1.x, p2.x) + off;
+            const double level = placed ? mid.x + placed->x : std::max(p1.x, p2.x) + off;
             q1 = {level, p1.y};
             q2 = {level, p2.y};
+            label = {level, placed ? mid.y + placed->y : mid.y};
         }
         const auto line = [this, &a](Point2 from, Point2 to) {
             a.lines.moveTo(toWidget(from));
             a.lines.lineTo(toWidget(to));
         };
-        line(p1, q1 + unit(q1 - p1) * (5.0 * mm));
-        line(p2, q2 + unit(q2 - p2) * (5.0 * mm));
+        // The extension lines, unless the dimension lies on what it measures.
+        if (apart(p1, q1) > 1e-9) {
+            line(p1, q1 + unit(q1 - p1) * (5.0 * mm));
+        }
+        if (apart(p2, q2) > 1e-9) {
+            line(p2, q2 + unit(q2 - p2) * (5.0 * mm));
+        }
         line(q1, q2);
+        // A value put beyond an end: the dimension line goes on to it.
+        const Point2 span = q2 - q1;
+        const double length2 = span.x * span.x + span.y * span.y;
+        if (length2 > 1e-18) {
+            const double t =
+                ((label.x - q1.x) * span.x + (label.y - q1.y) * span.y) / length2;
+            if (t < 0.0) {
+                line(q1, label);
+            } else if (t > 1.0) {
+                line(q2, label);
+            }
+        }
         a.arrows.push_back(arrowAt(toWidget(q1), toWidget(q2)));
         a.arrows.push_back(arrowAt(toWidget(q2), toWidget(q1)));
-        return (toWidget(q1) + toWidget(q2)) / 2.0;
+        return toWidget(label);
     }
 
     // Which distance a value put at `placedAt` asks for between the points at `a` and `b`:
@@ -865,6 +915,8 @@ public:
                 continue;
             }
 
+            // Where its value was put, if it was: being dragged, or as kept.
+            const std::optional<Point2> placed = c.id == labelDrag ? labelDragAt : c.label;
             QPointF labelAt;
             switch (c.kind) {
             case ConstraintKind::Distance:
@@ -873,7 +925,8 @@ public:
                 if (second == nullptr) {
                     continue;
                 }
-                labelAt = drawDistance(a, c.kind, g.position(c.first), g.position(c.second));
+                labelAt = drawDistance(a, c.kind, g.position(c.first), g.position(c.second),
+                                       placed);
                 a.text = formatValue(c.value);
                 break;
             }
@@ -894,6 +947,11 @@ public:
                 a.arrows.push_back(arrowAt(toWidget(p), toWidget(onLine)));
                 a.arrows.push_back(arrowAt(toWidget(onLine), toWidget(p)));
                 labelAt = (toWidget(p) + toWidget(onLine)) / 2.0;
+                if (placed) {
+                    const Point2 middle = (p + onLine) * 0.5;
+                    line(a.lines, middle, middle + *placed);
+                    labelAt = toWidget(middle + *placed);
+                }
                 a.text = formatValue(c.value);
                 break;
             }
@@ -908,7 +966,9 @@ public:
                                          ? stroke.from + stroke.sweep / 2.0
                                      : first->kind == EntityKind::Ellipse ? stroke.from
                                                                           : 0.25 * pi;
-                const Point2 out = direction(angle);
+                // Toward its value, if that was put somewhere.
+                const Point2 out =
+                    placed && norm(*placed) > 1e-9 ? unit(*placed) : direction(angle);
                 const Point2 rim = stroke.center + out * stroke.radius;
                 const Point2 from = c.kind == ConstraintKind::Radius
                                         ? stroke.center
@@ -926,6 +986,13 @@ public:
                 const QPointF away = beyond - rimAt;
                 const double length = std::max(std::hypot(away.x(), away.y()), 1e-6);
                 labelAt = beyond + away / length * (metrics.horizontalAdvance(a.text) / 2.0 + 8.0);
+                if (placed) {
+                    const Point2 at = stroke.center + *placed;
+                    if (norm(*placed) > stroke.radius) {
+                        line(a.lines, rim, at);
+                    }
+                    labelAt = toWidget(at);
+                }
                 break;
             }
             case ConstraintKind::Angle: {
@@ -944,7 +1011,9 @@ public:
                     corner = a1 + d1 * ((between.x * d2.y - between.y * d2.x) / denominator);
                 }
                 const double start = std::atan2(d1.y, d1.x);
-                const double radius = 34.0 * mm;
+                // Through its value, if that was put somewhere.
+                const double radius =
+                    placed ? std::max(norm(*placed) - 6.0 * mm, 6.0 * mm) : 34.0 * mm;
                 const int pieces = 24;
                 for (int i = 0; i <= pieces; ++i) {
                     const QPointF at =
@@ -955,13 +1024,18 @@ public:
                         a.lines.lineTo(at);
                     }
                 }
-                labelAt =
-                    toWidget(corner + direction(start + c.value / 2.0) * (radius + 18.0 * mm));
+                labelAt = placed ? toWidget(corner + *placed)
+                                 : toWidget(corner + direction(start + c.value / 2.0) *
+                                                         (radius + 18.0 * mm));
                 a.text = formatValue(std::abs(c.value) * 180.0 / pi) + QStringLiteral("°");
                 break;
             }
             default:
                 continue;
+            }
+            // A reference dimension is shown in brackets.
+            if (c.reference) {
+                a.text = QStringLiteral("(") + a.text + QStringLiteral(")");
             }
             // A value worked out from parameters is marked so.
             if (const document::SketchItem* sketch = item();
@@ -1049,6 +1123,9 @@ public:
         Snap snap;
         snap.position = at;
         if (!inference) {
+            if (gridSnap) {
+                snapToGrid(snap, position);
+            }
             return snap;
         }
         const sketch::Sketch& g = geometry();
@@ -1057,6 +1134,63 @@ public:
             snap.entity = point;
             snap.position = g.position(point);
             return snap;
+        }
+        // Where two curves cross.
+        {
+            const double near = 2.0 * curveReach * millimetersPerPixel(position);
+            std::vector<EntityId> close;
+            for (const Entity& entity : g.entities()) {
+                if ((entity.kind == EntityKind::Line || entity.kind == EntityKind::Circle ||
+                     entity.kind == EntityKind::Arc) &&
+                    sketch::distanceTo(g, entity.id, at) <= near) {
+                    close.push_back(entity.id);
+                }
+            }
+            double nearest = pointReach;
+            for (std::size_t i = 0; i < close.size(); ++i) {
+                for (std::size_t j = i + 1; j < close.size(); ++j) {
+                    for (const Point2 cross : sketch::intersections(g, close[i], close[j])) {
+                        const QPointF there = toWidget(cross);
+                        const double away =
+                            std::hypot(there.x() - position.x(), there.y() - position.y());
+                        if (away <= nearest) {
+                            nearest = away;
+                            snap.kind = Snap::Kind::Intersection;
+                            snap.entity = close[i];
+                            snap.entity2 = close[j];
+                            snap.position = cross;
+                        }
+                    }
+                }
+            }
+            if (snap.kind == Snap::Kind::Intersection) {
+                return snap;
+            }
+        }
+        // The quadrants of circles and arcs: the right, top, left, and bottom of them, held on
+        // the curve.
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind != EntityKind::Circle && entity.kind != EntityKind::Arc) {
+                continue;
+            }
+            const Point2 c = g.position(entity.center);
+            const double r = g.radiusOf(entity.id);
+            for (const Point2 way : {Point2{1.0, 0.0}, Point2{0.0, 1.0}, Point2{-1.0, 0.0},
+                                     Point2{0.0, -1.0}}) {
+                const Point2 quadrant = c + way * r;
+                // On an arc, only where the arc is.
+                if (entity.kind == EntityKind::Arc &&
+                    sketch::distanceTo(g, entity.id, quadrant) > 1e-6 * std::max(r, 1.0)) {
+                    continue;
+                }
+                const QPointF there = toWidget(quadrant);
+                if (std::hypot(there.x() - position.x(), there.y() - position.y()) <= pointReach) {
+                    snap.kind = Snap::Kind::Curve;
+                    snap.entity = entity.id;
+                    snap.position = quadrant;
+                    return snap;
+                }
+            }
         }
         for (const Entity& entity : g.entities()) {
             if (entity.kind != EntityKind::Line && entity.kind != EntityKind::Arc) {
@@ -1099,9 +1233,149 @@ public:
             } else if (dx < reach && dy > reach) {
                 snap.position.x = anchor->x;
                 snap.vertical = true;
+            } else {
+                alignLine(snap, *anchor, at);
+            }
+        }
+        if (gridSnap && !snap.horizontal && !snap.vertical && !snap.locked &&
+            snap.alignedTo == 0) {
+            snapToGrid(snap, position);
+        }
+        return snap;
+    }
+
+    // What a dragged point would join under the pointer: another point, the origin among them,
+    // the middle of a line or an arc, or a curve. Never itself, what it is already one with, or
+    // its own curves.
+    [[nodiscard]] Snap dragSnapAt(const QPointF& position, Point2 at) const {
+        Snap snap;
+        snap.position = at;
+        if (!inference) {
+            return snap;
+        }
+        const sketch::Sketch& g = geometry();
+        const auto ignored = [&](EntityId id) {
+            return id == dragEntity ||
+                   std::find(dragIgnored.begin(), dragIgnored.end(), id) != dragIgnored.end();
+        };
+        const auto pixelsTo = [&](Point2 p) {
+            const QPointF there = toWidget(p);
+            return std::hypot(there.x() - position.x(), there.y() - position.y());
+        };
+        double nearest = pointReach;
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind != EntityKind::Point || ignored(entity.id)) {
+                continue;
+            }
+            if (const double away = pixelsTo({entity.x, entity.y}); away <= nearest) {
+                nearest = away;
+                snap.kind = Snap::Kind::Point;
+                snap.entity = entity.id;
+                snap.position = {entity.x, entity.y};
+            }
+        }
+        if (snap.kind != Snap::Kind::None) {
+            return snap;
+        }
+        for (const Entity& entity : g.entities()) {
+            if ((entity.kind != EntityKind::Line && entity.kind != EntityKind::Arc) ||
+                ignored(entity.id)) {
+                continue;
+            }
+            const Point2 middle = g.pointAt(entity.id, 0.5);
+            if (pixelsTo(middle) <= pointReach) {
+                snap.kind = Snap::Kind::Midpoint;
+                snap.entity = entity.id;
+                snap.position = middle;
+                return snap;
+            }
+        }
+        double closest = curveReach * millimetersPerPixel(position);
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind == EntityKind::Point || ignored(entity.id) ||
+                (entity.kind != EntityKind::Line && entity.kind != EntityKind::Circle &&
+                 entity.kind != EntityKind::Arc)) {
+                continue;
+            }
+            if (const double away = sketch::distanceTo(g, entity.id, at); away <= closest) {
+                closest = away;
+                snap.kind = Snap::Kind::Curve;
+                snap.entity = entity.id;
+                snap.position = sketch::nearestOn(g, entity.id, at);
             }
         }
         return snap;
+    }
+
+    // Moves a snap that landed on nothing to the nearest round numbers: the smallest step of
+    // 0.1, 0.5, 1, 5, 10 mm and so on that is at least 8 pixels at this zoom.
+    void snapToGrid(Snap& snap, const QPointF& position) const {
+        const double mm = millimetersPerPixel(position);
+        double step = 0.1;
+        for (int i = 0; step / mm < 8.0 && i < 20; ++i) {
+            step *= i % 2 == 0 ? 5.0 : 2.0;
+        }
+        snap.position = {std::round(snap.position.x / step) * step,
+                         std::round(snap.position.y / step) * step};
+    }
+
+    // Holds the end of a line being drawn from `anchor` parallel or perpendicular to another
+    // line, or tangent to the arc or circle it starts on, when it points nearly that way.
+    void alignLine(Snap& snap, Point2 anchor, Point2 at) const {
+        const Point2 d = at - anchor;
+        const double length = norm(d);
+        if (length < 1e-9) {
+            return;
+        }
+        const sketch::Sketch& g = geometry();
+        // Within 2.5 degrees.
+        double best = std::sin(2.5 * pi / 180.0);
+        Point2 way;
+        // The point the line starts at, if it is one.
+        EntityId start = chainEnd;
+        if (start == 0 && !clicks.empty() && clicks.back().kind == Snap::Kind::Point) {
+            start = clicks.back().entity;
+        }
+        const auto consider = [&](Point2 direction, EntityId to, ConstraintKind kind) {
+            const double off = std::abs(direction.x * d.y - direction.y * d.x) / length;
+            if (off < best) {
+                best = off;
+                way = direction;
+                snap.alignedTo = to;
+                snap.alignKind = kind;
+            }
+        };
+        // The points at the start: the ends of the curves it goes on from.
+        const std::vector<EntityId> together =
+            start != 0 ? sketch::pointsTogether(g, start) : std::vector<EntityId>{};
+        for (const Entity& entity : g.entities()) {
+            if (entity.kind != EntityKind::Line) {
+                continue;
+            }
+            const Point2 u = unit(g.position(entity.end) - g.position(entity.start));
+            // Parallel to the line it goes on from would only be in line with it.
+            const bool goesOn = contains(together, entity.start) || contains(together, entity.end);
+            if (!goesOn) {
+                consider(u, entity.id, ConstraintKind::Parallel);
+            }
+            consider({-u.y, u.x}, entity.id, ConstraintKind::Perpendicular);
+        }
+        // Tangent on from an arc or a circle it starts on.
+        if (start != 0) {
+            for (const EntityId p : together) {
+                const Entity* owner = g.find(g.find(p)->owner);
+                if (owner != nullptr && owner->kind == EntityKind::Arc &&
+                    (owner->start == p || owner->end == p)) {
+                    const Point2 r = g.position(p) - g.position(owner->center);
+                    consider(unit(Point2{-r.y, r.x}), owner->id, ConstraintKind::Tangent);
+                }
+            }
+        }
+        if (snap.alignedTo == 0) {
+            return;
+        }
+        const double along = way.x * d.x + way.y * d.y;
+        snap.position = anchor + way * along;
     }
 
     // Keeps a new point where the click that made it landed.
@@ -1115,6 +1389,17 @@ public:
             break;
         case Snap::Kind::Midpoint:
             sketch::tryConstraint(g, ConstraintKind::Midpoint, point, snap.entity);
+            break;
+        case Snap::Kind::Intersection:
+            for (const EntityId curve : {snap.entity, snap.entity2}) {
+                if (g.find(curve) != nullptr) {
+                    sketch::tryConstraint(g,
+                                          g.find(curve)->kind == EntityKind::Line
+                                              ? ConstraintKind::PointOnLine
+                                              : ConstraintKind::PointOnCircle,
+                                          point, curve);
+                }
+            }
             break;
         case Snap::Kind::Curve:
             sketch::tryConstraint(g,
@@ -1170,6 +1455,9 @@ public:
         }
         if (inference && to.vertical) {
             sketch::tryConstraint(g, ConstraintKind::Vertical, lineId);
+        }
+        if (inference && to.alignedTo != 0 && g.find(to.alignedTo) != nullptr) {
+            sketch::tryConstraint(g, to.alignKind, lineId, to.alignedTo);
         }
         attach(g, made.end, to);
         if (length.has_value()) {
@@ -1346,6 +1634,235 @@ public:
         clicks.clear();
     }
 
+    // What a pattern copies: the curves and free-standing points selected.
+    [[nodiscard]] std::vector<EntityId> patterned() const {
+        const sketch::Sketch& g = geometry();
+        std::vector<EntityId> found;
+        for (const EntityId id : selected) {
+            const Entity* entity = g.find(id);
+            if (entity != nullptr && entity->owner == 0 && id != g.origin() && !entity->fixed) {
+                found.push_back(id);
+            }
+        }
+        return found;
+    }
+
+    // How many there are to be in a pattern: what is typed, or else what was last used.
+    [[nodiscard]] int patternCountNow() const {
+        if (field != nullptr) {
+            bool ok = false;
+            const int typed = field->text().trimmed().toInt(&ok);
+            if (ok && typed >= 2 && typed <= 1000) {
+                return typed;
+            }
+        }
+        return tool == SketchTool::CircularPattern ? circularCount : rectangularCount;
+    }
+
+    // A pattern of what is selected, with `count` in all, made in `g`. Nothing if it cannot be.
+    std::optional<std::vector<EntityId>> makePattern(sketch::Sketch& g, int count,
+                                                     Point2 at) const {
+        try {
+            if (tool == SketchTool::CircularPattern && !clicks.empty()) {
+                return sketch::patternCircular(g, patterned(), clicks.front().position, count);
+            }
+            if (tool == SketchTool::RectangularPattern && !clicks.empty()) {
+                const Point2 to = clicks.size() > 1 ? clicks[1].position : at;
+                return sketch::patternRectangular(g, patterned(), to - clicks.front().position,
+                                                  count);
+            }
+        } catch (const std::invalid_argument&) {
+        }
+        return std::nullopt;
+    }
+
+    void commitPattern() {
+        const int count = patternCountNow();
+        sketch::Sketch g = geometry();
+        const auto made = makePattern(g, count, cursor.position);
+        if (!made.has_value()) {
+            markField(tr("Type how many there are to be in all, from 2 to 1000."));
+            return;
+        }
+        (tool == SketchTool::CircularPattern ? circularCount : rectangularCount) = count;
+        closeField();
+        commit(std::move(g), tool == SketchTool::CircularPattern ? tr("Circular Pattern")
+                                                                 : tr("Rectangular Pattern"));
+        clicks.clear();
+        selected = *made;
+        tool = SketchTool::Select;
+        emit q->changed();
+    }
+
+    // How Move, Rotate, or Scale would place what is selected, with the pointer at `at`.
+    [[nodiscard]] std::optional<sketch::Placing> placingNow(Point2 at) const {
+        if (clicks.empty()) {
+            return std::nullopt;
+        }
+        sketch::Placing placing;
+        placing.center = clicks.front().position;
+        double typed = 0.0;
+        bool ok = false;
+        if (field != nullptr) {
+            typed = field->text().trimmed().toDouble(&ok);
+        }
+        switch (tool) {
+        case SketchTool::MoveSketch:
+            placing.move = at - clicks.front().position;
+            break;
+        case SketchTool::RotateSketch:
+            placing.angle = (ok ? typed : rotateAngle) * pi / 180.0;
+            break;
+        case SketchTool::ScaleSketch:
+            placing.scale = ok && typed > 0.0 ? typed : scaleFactor;
+            break;
+        default:
+            return std::nullopt;
+        }
+        return placing;
+    }
+
+    void commitPlace(Point2 at, bool copy) {
+        const auto placing = placingNow(at);
+        if (!placing.has_value()) {
+            return;
+        }
+        if (tool == SketchTool::RotateSketch) {
+            rotateAngle = placing->angle * 180.0 / pi;
+        } else if (tool == SketchTool::ScaleSketch) {
+            scaleFactor = placing->scale;
+        }
+        sketch::Sketch g = geometry();
+        std::vector<EntityId> placed;
+        try {
+            placed = sketch::place(g, patterned(), *placing, copy);
+        } catch (const std::invalid_argument&) {
+            const QString why = tr("The constraints on it, or a dimension, do not let it go "
+                                   "there. A copy (hold Ctrl) can.");
+            if (field != nullptr) {
+                markField(why);
+            } else {
+                emit q->message(why);
+            }
+            return;
+        }
+        closeField();
+        commit(std::move(g), copy                                   ? tr("Copy")
+                             : tool == SketchTool::RotateSketch ? tr("Rotate")
+                             : tool == SketchTool::ScaleSketch  ? tr("Scale")
+                                                                : tr("Move"));
+        clicks.clear();
+        selected = placed;
+        tool = SketchTool::Select;
+        emit q->changed();
+    }
+
+    void askPatternCount() {
+        const QPointF at = toWidget(cursor.position);
+        const QString start =
+            tool == SketchTool::RotateSketch  ? QString::number(rotateAngle)
+            : tool == SketchTool::ScaleSketch ? QString::number(scaleFactor)
+            : QString::number(tool == SketchTool::CircularPattern ? circularCount
+                                                                  : rectangularCount);
+        openField(QRectF(at + QPointF(0.0, 28.0), QSizeF(40.0, 20.0)), start, true);
+        QObject::connect(field, &QLineEdit::textEdited, q, [this] { update(); });
+    }
+
+    // The point of `ids` nearest to a place.
+    [[nodiscard]] static EntityId nearestOf(const sketch::Sketch& g,
+                                            std::initializer_list<EntityId> ids, Point2 where) {
+        EntityId best = 0;
+        double nearest = 0.0;
+        for (const EntityId id : ids) {
+            const double away = apart(g.position(id), where);
+            if (best == 0 || away < nearest) {
+                best = id;
+                nearest = away;
+            }
+        }
+        return best;
+    }
+
+    void addCenterRectangle(const Snap& center, const Snap& corner) {
+        sketch::Sketch g = geometry();
+        sketch::CenterRectangleParts parts;
+        try {
+            parts = sketch::addCenterRectangle(g, center.position, corner.position);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("A rectangle needs a width and a height."));
+            return;
+        }
+        for (const EntityId side :
+             {parts.sides.bottom, parts.sides.right, parts.sides.top, parts.sides.left}) {
+            finishCurve(g, side);
+        }
+        attach(g, parts.center, center);
+        attach(g,
+               nearestOf(g,
+                         {g.find(parts.sides.bottom)->start, g.find(parts.sides.right)->start,
+                          g.find(parts.sides.top)->start, g.find(parts.sides.left)->start},
+                         corner.position),
+               corner);
+        commit(std::move(g), tr("Rectangle"));
+        clicks.clear();
+    }
+
+    void addCircleThrough(const Snap& a, const Snap& b, const Snap& c) {
+        const auto round = sketch::circleThrough(a.position, b.position, c.position);
+        if (!round.has_value()) {
+            emit q->message(tr("Three points in a line have no circle through them."));
+            return;
+        }
+        sketch::Sketch g = geometry();
+        const EntityId made = g.addCircle(round->first, round->second);
+        finishCurve(g, made);
+        // On the points it was drawn through.
+        for (const Snap* click : {&a, &b, &c}) {
+            if (inference && click->kind == Snap::Kind::Point && g.find(click->entity) != nullptr) {
+                sketch::tryConstraint(g, ConstraintKind::PointOnCircle, click->entity, made);
+            }
+        }
+        commit(std::move(g), tr("Circle"));
+        clicks.clear();
+    }
+
+    void addArcThrough(const Snap& start, const Snap& through, const Snap& end) {
+        sketch::Sketch g = geometry();
+        EntityId made = 0;
+        try {
+            made = sketch::addArcThrough(g, start.position, through.position, end.position);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("Three points in a line have no arc through them."));
+            return;
+        }
+        finishCurve(g, made);
+        const Entity arc = *g.find(made);
+        const EntityId first = nearestOf(g, {arc.start, arc.end}, start.position);
+        attach(g, first, start);
+        attach(g, first == arc.start ? arc.end : arc.start, end);
+        if (inference && through.kind == Snap::Kind::Point && g.find(through.entity) != nullptr) {
+            sketch::tryConstraint(g, ConstraintKind::PointOnCircle, through.entity, made);
+        }
+        commit(std::move(g), tr("Arc"));
+        clicks.clear();
+    }
+
+    void addTangentArc(const Snap& from, const Snap& end) {
+        sketch::Sketch g = geometry();
+        EntityId made = 0;
+        try {
+            made = sketch::addTangentArc(g, from.entity, end.position);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("Straight on from the end there is no arc. Click to one side."));
+            return;
+        }
+        finishCurve(g, made);
+        const Entity arc = *g.find(made);
+        attach(g, nearestOf(g, {arc.start, arc.end}, end.position), end);
+        commit(std::move(g), tr("Arc"));
+        clicks.clear();
+    }
+
     void addPoint(const Snap& at) {
         sketch::Sketch g = geometry();
         const EntityId made = g.addPoint(at.position);
@@ -1451,6 +1968,80 @@ public:
                 strokes.push_back(circle(first, apart(first, at)));
             }
             break;
+        case SketchTool::MoveSketch:
+        case SketchTool::RotateSketch:
+        case SketchTool::ScaleSketch: {
+            // Where it would go, drawn as a copy.
+            sketch::Sketch scratch = geometry();
+            if (const auto placing = placingNow(at)) {
+                try {
+                    for (const EntityId id : sketch::place(scratch, patterned(), *placing, true)) {
+                        if (scratch.find(id)->kind != EntityKind::Point) {
+                            strokes.push_back(strokeOf(scratch, *scratch.find(id)));
+                        }
+                    }
+                } catch (const std::invalid_argument&) {
+                }
+            }
+            if (tool == SketchTool::MoveSketch) {
+                strokes.push_back(segment(first, at));
+            }
+            break;
+        }
+        case SketchTool::CircularPattern:
+        case SketchTool::RectangularPattern: {
+            sketch::Sketch scratch = geometry();
+            if (const auto made = makePattern(scratch, patternCountNow(), at)) {
+                for (const EntityId id : *made) {
+                    if (scratch.find(id)->kind != EntityKind::Point) {
+                        strokes.push_back(strokeOf(scratch, *scratch.find(id)));
+                    }
+                }
+            }
+            if (tool == SketchTool::RectangularPattern) {
+                strokes.push_back(segment(first, clicks.size() > 1 ? clicks[1].position : at));
+            }
+            break;
+        }
+        case SketchTool::CenterRectangle: {
+            const Point2 o{2.0 * first.x - at.x, 2.0 * first.y - at.y};
+            strokes.push_back(segment(o, {at.x, o.y}));
+            strokes.push_back(segment({at.x, o.y}, at));
+            strokes.push_back(segment(at, {o.x, at.y}));
+            strokes.push_back(segment({o.x, at.y}, o));
+            break;
+        }
+        case SketchTool::ThreePointCircle:
+            if (clicks.size() == 1) {
+                strokes.push_back(segment(first, at));
+            } else if (const auto round = sketch::circleThrough(first, clicks[1].position, at)) {
+                strokes.push_back(circle(round->first, round->second));
+            }
+            break;
+        case SketchTool::ThreePointArc:
+            if (clicks.size() == 1) {
+                strokes.push_back(segment(first, at));
+            } else {
+                sketch::Sketch scratch;
+                try {
+                    const EntityId made =
+                        sketch::addArcThrough(scratch, first, at, clicks[1].position);
+                    strokes.push_back(strokeOf(scratch, *scratch.find(made)));
+                } catch (const std::invalid_argument&) {
+                    strokes.push_back(segment(first, clicks[1].position));
+                }
+            }
+            break;
+        case SketchTool::TangentArc: {
+            sketch::Sketch scratch = geometry();
+            try {
+                const EntityId made = sketch::addTangentArc(scratch, clicks[0].entity, at);
+                strokes.push_back(strokeOf(scratch, *scratch.find(made)));
+            } catch (const std::invalid_argument&) {
+                strokes.push_back(segment(first, at));
+            }
+            break;
+        }
         case SketchTool::Arc:
             if (clicks.size() == 1) {
                 strokes.push_back(segment(first, at));
@@ -1545,6 +2136,34 @@ public:
                 .arg(formatValue(std::abs(at.x - first.x)), formatValue(std::abs(at.y - first.y)));
         case SketchTool::Circle:
             return tr("Ø%1 mm").arg(formatValue(2.0 * apart(first, at)));
+        case SketchTool::CenterRectangle:
+            return tr("%1 × %2 mm")
+                .arg(formatValue(2.0 * std::abs(at.x - first.x)),
+                     formatValue(2.0 * std::abs(at.y - first.y)));
+        case SketchTool::ThreePointCircle: {
+            if (clicks.size() == 1) {
+                return tr("%1 mm").arg(formatValue(apart(first, at)));
+            }
+            const auto round = sketch::circleThrough(first, clicks[1].position, at);
+            return round.has_value() ? tr("Ø%1 mm").arg(formatValue(2.0 * round->second))
+                                     : QString();
+        }
+        case SketchTool::ThreePointArc: {
+            if (clicks.size() == 1) {
+                return tr("%1 mm").arg(formatValue(apart(first, at)));
+            }
+            const auto round = sketch::circleThrough(first, at, clicks[1].position);
+            return round.has_value() ? tr("R%1 mm").arg(formatValue(round->second)) : QString();
+        }
+        case SketchTool::TangentArc: {
+            sketch::Sketch scratch = geometry();
+            try {
+                const EntityId made = sketch::addTangentArc(scratch, clicks[0].entity, at);
+                return tr("R%1 mm").arg(formatValue(scratch.radiusOf(made)));
+            } catch (const std::invalid_argument&) {
+                return {};
+            }
+        }
         case SketchTool::Arc:
             return clicks.size() == 1 ? tr("R%1 mm").arg(formatValue(apart(first, at)))
                                       : tr("%1°").arg(formatValue(std::abs(arcSweep) * 180.0 / pi));
@@ -1581,6 +2200,13 @@ public:
         const EntityId hoveredBefore = hoveredNow();
         const bool draws = tool == SketchTool::Line || tool == SketchTool::Rectangle ||
                            tool == SketchTool::Circle || tool == SketchTool::Arc ||
+                           tool == SketchTool::CenterRectangle ||
+                           tool == SketchTool::ThreePointCircle ||
+                           tool == SketchTool::ThreePointArc || tool == SketchTool::TangentArc ||
+                           tool == SketchTool::CircularPattern ||
+                           tool == SketchTool::RectangularPattern ||
+                           tool == SketchTool::MoveSketch || tool == SketchTool::RotateSketch ||
+                           tool == SketchTool::ScaleSketch ||
                            tool == SketchTool::Point || tool == SketchTool::Polygon ||
                            tool == SketchTool::Slot || tool == SketchTool::Ellipse ||
                            tool == SketchTool::Spline;
@@ -1604,7 +2230,11 @@ public:
             // change curves are not.
             const bool takesPoints =
                 tool == SketchTool::Dimension || tool == SketchTool::Constraint;
-            hover = takesPoints ? hitAt(position, true).entity : curveAt(position, curveReach);
+            // Fillet rounds corners, which are points and nothing else.
+            hover = tool == SketchTool::Fillet || tool == SketchTool::Chamfer
+                        ? pointAt(position, pointReach)
+                    : takesPoints              ? hitAt(position, true).entity
+                                               : curveAt(position, curveReach);
         }
         cursorValid = true;
         if (hoveredNow() != hoveredBefore) {
@@ -1680,6 +2310,83 @@ public:
                 addArc(clicks[0], clicks[1], cursor);
             }
             break;
+        case SketchTool::CenterRectangle:
+            if (clicks.empty()) {
+                clicks.push_back(cursor);
+            } else {
+                addCenterRectangle(clicks.front(), cursor);
+            }
+            break;
+        case SketchTool::ThreePointCircle:
+            if (clicks.size() < 2) {
+                clicks.push_back(cursor);
+            } else {
+                addCircleThrough(clicks[0], clicks[1], cursor);
+            }
+            break;
+        case SketchTool::ThreePointArc:
+            if (clicks.size() < 2) {
+                clicks.push_back(cursor);
+            } else {
+                addArcThrough(clicks[0], cursor, clicks[1]);
+            }
+            break;
+        case SketchTool::TangentArc:
+            if (clicks.empty()) {
+                // It starts at the end of a line or an arc.
+                bool atEnd = false;
+                if (cursor.kind == Snap::Kind::Point) {
+                    for (const EntityId id : sketch::pointsTogether(g, cursor.entity)) {
+                        const Entity* owner = g.find(g.find(id)->owner);
+                        atEnd = atEnd ||
+                                (owner != nullptr &&
+                                 (owner->kind == EntityKind::Line ||
+                                  owner->kind == EntityKind::Arc) &&
+                                 (owner->start == id || owner->end == id));
+                    }
+                }
+                if (!atEnd) {
+                    emit q->message(tr("Click the end of a line or an arc to go on from."));
+                    break;
+                }
+                clicks.push_back(cursor);
+            } else {
+                addTangentArc(clicks.front(), cursor);
+            }
+            break;
+        case SketchTool::MoveSketch:
+            if (clicks.empty()) {
+                clicks.push_back(cursor);
+            } else {
+                commitPlace(cursor.position, copying);
+            }
+            break;
+        case SketchTool::RotateSketch:
+        case SketchTool::ScaleSketch:
+            if (clicks.empty() && field == nullptr) {
+                clicks.push_back(cursor);
+                askPatternCount();
+            }
+            break;
+        case SketchTool::CircularPattern:
+            if (clicks.empty() && field == nullptr) {
+                clicks.push_back(cursor);
+                askPatternCount();
+            }
+            break;
+        case SketchTool::RectangularPattern:
+            if (clicks.empty()) {
+                clicks.push_back(cursor);
+            } else if (clicks.size() == 1 && field == nullptr) {
+                if (apart(clicks.front().position, cursor.position) < 1e-9) {
+                    emit q->message(tr("Click a second point, as far from the first as the copies "
+                                       "are to be apart."));
+                    break;
+                }
+                clicks.push_back(cursor);
+                askPatternCount();
+            }
+            break;
         case SketchTool::Point:
             addPoint(cursor);
             break;
@@ -1737,9 +2444,11 @@ public:
                 pending.clear();
                 break;
             }
-            // The same line or arc clicked again: a new point goes on its middle.
-            if (constraintKind == ConstraintKind::Midpoint && pending.size() == 1 &&
-                pending.front() == hover && g.find(hover)->kind != EntityKind::Point) {
+            // A line or an arc clicked first: a new point goes on its middle at once. A point
+            // clicked first goes to the middle of the curve clicked next.
+            const EntityKind hoverKind = g.find(hover)->kind;
+            if (constraintKind == ConstraintKind::Midpoint && pending.empty() &&
+                (hoverKind == EntityKind::Line || hoverKind == EntityKind::Arc)) {
                 const EntityId curve = hover;
                 pending.clear();
                 addMiddlePoint(curve);
@@ -1777,6 +2486,47 @@ public:
                                     ? tr("Nothing crosses that curve, so there is nothing to cut.")
                                     : tr("That end meets no other curve if it is lengthened."));
             }
+            break;
+        }
+        case SketchTool::Fillet:
+        case SketchTool::Chamfer: {
+            const bool rounds = tool == SketchTool::Fillet;
+            const Entity* picked = hover != 0 ? g.find(hover) : nullptr;
+            if (picked == nullptr || picked->kind != EntityKind::Point) {
+                emit q->message(tr("Click a corner where two lines meet."));
+                break;
+            }
+            // A size to start from that fits: a fifth of the shorter line, rounded, and no more
+            // than 5 mm. The value is typed over straight away.
+            double shortest = std::numeric_limits<double>::infinity();
+            for (const EntityId id : sketch::pointsTogether(g, hover)) {
+                const Entity* line = g.find(g.find(id)->owner);
+                if (line != nullptr && line->kind == EntityKind::Line) {
+                    shortest = std::min(shortest, apart(g.position(line->start),
+                                                        g.position(line->end)));
+                }
+            }
+            double radius = std::isfinite(shortest) ? std::min(5.0, shortest / 5.0) : 5.0;
+            if (radius >= 1.0) {
+                radius = std::floor(radius);
+            }
+            sketch::Sketch next = g;
+            sketch::ConstraintId size = 0;
+            try {
+                size = rounds ? sketch::fillet(next, hover, radius).radius
+                              : sketch::chamfer(next, hover, radius).distance;
+            } catch (const std::invalid_argument&) {
+                emit q->message(rounds ? tr("Only a corner where two lines meet at an angle can "
+                                            "be rounded, with room on both lines for the arc.")
+                                       : tr("Only a corner where two lines meet at an angle can "
+                                            "be cut, with room on both lines for the cut."));
+                break;
+            }
+            hover = 0;
+            commit(std::move(next), rounds ? tr("Fillet") : tr("Chamfer"));
+            selected.clear();
+            selectedConstraints = {size};
+            q->editDimension(size);
             break;
         }
         case SketchTool::Offset: {
@@ -1917,8 +2667,8 @@ public:
         case ConstraintKind::Concentric:
             return tr("Concentric takes two circles or arcs.");
         case ConstraintKind::Midpoint:
-            return tr("Midpoint takes a point and a line or an arc. Or click a line or an arc "
-                      "twice for a new point at its middle.");
+            return tr("Click a line or an arc for a new point at its middle, or a point and "
+                      "then a line or an arc to put the point there.");
         case ConstraintKind::Symmetric:
             return tr("Symmetric takes two points and the line between them.");
         case ConstraintKind::Fix:
@@ -1940,6 +2690,9 @@ public:
                 .arg(name);
         case sketch::Refusal::Invalid:
             return tr("%1 does not apply to that.").arg(name);
+        case sketch::Refusal::Reference:
+            return tr("%1 is a reference dimension: it shows the size, and does not set it.")
+                .arg(name);
         case sketch::Refusal::None:
             break;
         }
@@ -2054,12 +2807,33 @@ public:
         }
         const sketch::Outcome outcome = sketch::tryConstraint(
             g, choice->kind, choice->first, choice->second, choice->third, choice->value);
+        // The same dimension on the same things again adds nothing, not even as a reference.
+        const bool repeated = std::any_of(
+            g.constraints().begin(), g.constraints().end(), [&](const Constraint& c) {
+                return c.kind == choice->kind &&
+                       ((c.first == choice->first && c.second == choice->second) ||
+                        (c.first == choice->second && c.second == choice->first));
+            });
+        if (!outcome.ok() && outcome.refusal == sketch::Refusal::Redundant && !repeated) {
+            // Already fixed by the rest: what fixes it flashes, and it goes in as a reference
+            // dimension, which shows the size without setting it.
+            flashWhatRefused(g, *choice, outcome.refusal);
+            const ConstraintId made = g.addConstraint(choice->kind, choice->first, choice->second,
+                                                      choice->third, choice->value);
+            g.setConstraintReference(made, true);
+            g.solve();
+            commit(std::move(g), tr("Reference Dimension"));
+            selected.clear();
+            selectedConstraints = {made};
+            emit q->message(tr("That size is already fixed by the other dimensions and "
+                               "constraints, so it was added as a reference dimension, in "
+                               "brackets: it shows the size, and does not set it."));
+            return true;
+        }
         if (!outcome.ok()) {
             flashWhatRefused(g, *choice, outcome.refusal);
             emit q->message(outcome.refusal == sketch::Refusal::Redundant
-                                ? tr("That is already fixed by the other dimensions and "
-                                     "constraints. A dimension there would over-constrain the "
-                                     "sketch.")
+                                ? tr("That dimension is there already.")
                                 : refusalText(outcome.refusal, tr("The dimension")));
             return false;
         }
@@ -2177,6 +2951,14 @@ public:
             return;
         }
         const Snap first = clicks.front();
+        if (tool == SketchTool::CircularPattern || tool == SketchTool::RectangularPattern) {
+            commitPattern();
+            return;
+        }
+        if (tool == SketchTool::RotateSketch || tool == SketchTool::ScaleSketch) {
+            commitPlace(cursor.position, copying);
+            return;
+        }
         if (tool == SketchTool::Rectangle) {
             const QStringList parts =
                 text.split(QRegularExpression(QStringLiteral("[\\sx×;]+")), Qt::SkipEmptyParts);
@@ -2232,6 +3014,36 @@ public:
         dragEntity = pressHit.entity;
         dragLast = *at;
         dragBefore = geometry();
+        dragSnap = Snap();
+        dragIgnored.clear();
+        const sketch::Sketch& g = geometry();
+        if (const Entity* dragged = g.find(dragEntity);
+            dragged != nullptr && dragged->kind == EntityKind::Point) {
+            // The points already at the same place (a rectangle's corner is the ends of two
+            // lines), the curves they belong to, and those curves' other points.
+            const Point2 here{dragged->x, dragged->y};
+            for (const Entity& entity : g.entities()) {
+                if (entity.kind == EntityKind::Point && apart(here, {entity.x, entity.y}) < 1e-9) {
+                    dragIgnored.push_back(entity.id);
+                    if (entity.owner != 0) {
+                        dragIgnored.push_back(entity.owner);
+                    }
+                }
+            }
+            const std::vector<EntityId> owners = dragIgnored;
+            for (const EntityId id : owners) {
+                const Entity* curve = g.find(id);
+                if (curve == nullptr || curve->kind == EntityKind::Point) {
+                    continue;
+                }
+                for (const EntityId point : {curve->center, curve->start, curve->end}) {
+                    if (point != 0) {
+                        dragIgnored.push_back(point);
+                    }
+                }
+                dragIgnored.insert(dragIgnored.end(), curve->points.begin(), curve->points.end());
+            }
+        }
         dragTransaction =
             std::make_unique<document::Transaction>(*document, tr("Drag").toStdString());
         dragging = true;
@@ -2251,8 +3063,11 @@ public:
             g.dragRadius(dragEntity, *at);
         } else if (entity->kind == EntityKind::Point) {
             // Toward the pointer from wherever the point has got to, so that a point held back
-            // by a constraint catches up when the pointer comes back.
-            g.dragBy(dragEntity, at->x - entity->x, at->y - entity->y);
+            // by a constraint catches up when the pointer comes back. Onto a point or a curve
+            // under the pointer, which it joins when it is let go.
+            dragSnap = dragSnapAt(position, *at);
+            const Point2 to = dragSnap.kind != Snap::Kind::None ? dragSnap.position : *at;
+            g.dragBy(dragEntity, to.x - entity->x, to.y - entity->y);
         } else {
             g.dragBy(dragEntity, at->x - dragLast.x, at->y - dragLast.y);
         }
@@ -2264,6 +3079,17 @@ public:
         dragging = false;
         if (dragTransaction == nullptr) {
             return;
+        }
+        const Snap snapped = dragSnap;
+        dragSnap = Snap();
+        dragIgnored.clear();
+        if (keep && snapped.kind != Snap::Kind::None) {
+            // In the same step as the drag, so that one undo takes back both.
+            sketch::Sketch g = geometry();
+            if (g.find(dragEntity) != nullptr) {
+                attach(g, dragEntity, snapped);
+                document->setSketchGeometry(sketchId, std::move(g), tr("Drag").toStdString());
+            }
         }
         bool moved = false;
         if (keep && dragBefore.has_value()) {
@@ -2324,6 +3150,108 @@ public:
         }
         shift = std::clamp(shift, -0.5, 0.5);
         markerDragShift = std::abs(shift) * length < markerCenterReach * mm ? 0.0 : shift;
+        update();
+    }
+
+    // What a dimension's value is placed from: the middle of a distance, the center of a circle
+    // or an arc, the corner of an angle. See Constraint::label.
+    [[nodiscard]] std::optional<Point2> labelAnchor(const Constraint& c) const {
+        const sketch::Sketch& g = geometry();
+        const Entity* first = g.find(c.first);
+        const Entity* second = g.find(c.second);
+        if (first == nullptr) {
+            return std::nullopt;
+        }
+        switch (c.kind) {
+        case ConstraintKind::Distance:
+        case ConstraintKind::DistanceX:
+        case ConstraintKind::DistanceY:
+            if (second == nullptr) {
+                return std::nullopt;
+            }
+            return (g.position(c.first) + g.position(c.second)) * 0.5;
+        case ConstraintKind::PointLineDistance: {
+            if (second == nullptr || second->kind != EntityKind::Line) {
+                return std::nullopt;
+            }
+            const Point2 p = g.position(c.first);
+            const Point2 s = g.position(second->start);
+            const Point2 d = unit(g.position(second->end) - s);
+            const Point2 onLine = s + d * ((p.x - s.x) * d.x + (p.y - s.y) * d.y);
+            return (p + onLine) * 0.5;
+        }
+        case ConstraintKind::Radius:
+        case ConstraintKind::Diameter:
+            if (first->kind == EntityKind::Point || first->kind == EntityKind::Line) {
+                return std::nullopt;
+            }
+            return strokeOf(g, *first).center;
+        case ConstraintKind::Angle: {
+            if (second == nullptr || first->kind != EntityKind::Line ||
+                second->kind != EntityKind::Line) {
+                return std::nullopt;
+            }
+            const Point2 a1 = g.position(first->start);
+            const Point2 d1 = g.position(first->end) - a1;
+            const Point2 a2 = g.position(second->start);
+            const Point2 d2 = g.position(second->end) - a2;
+            const double denominator = d1.x * d2.y - d1.y * d2.x;
+            if (std::abs(denominator) <= 1e-12) {
+                return (a1 + a2) * 0.5;
+            }
+            const Point2 between = a2 - a1;
+            return a1 + d1 * ((between.x * d2.y - between.y * d2.x) / denominator);
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    // Picks up a dimension's value where the pointer was pressed on it.
+    bool startLabelDrag() {
+        const Constraint* c = geometry().findConstraint(pressHit.constraint);
+        if (c == nullptr || !sketch::isDimension(c->kind) || !labelAnchor(*c).has_value()) {
+            return false;
+        }
+        const auto at = toSketch(pressPosition);
+        if (!at.has_value()) {
+            return false;
+        }
+        for (const Annotation& a : layout()) {
+            if (a.id == c->id) {
+                if (const auto middle = toSketch(a.rect.center())) {
+                    labelGrab = *at - *middle;
+                }
+                break;
+            }
+        }
+        labelDrag = c->id;
+        labelDragAt = c->label;
+        return true;
+    }
+
+    void dragLabelTo(const QPointF& position) {
+        const Constraint* c = geometry().findConstraint(labelDrag);
+        const auto at = toSketch(position);
+        if (c == nullptr || !at.has_value()) {
+            return;
+        }
+        if (const auto anchor = labelAnchor(*c)) {
+            labelDragAt = *at - labelGrab - *anchor;
+        }
+        update();
+    }
+
+    void finishLabelDrag(bool keep) {
+        const ConstraintId id = labelDrag;
+        const std::optional<Point2> at = labelDragAt;
+        labelDrag = 0;
+        labelDragAt.reset();
+        if (keep && at.has_value() && geometry().findConstraint(id) != nullptr) {
+            sketch::Sketch next = geometry();
+            next.setConstraintLabel(id, at);
+            commit(std::move(next), tr("Move Dimension"));
+        }
         update();
     }
 
@@ -2674,13 +3602,16 @@ public:
         }
         const bool draws = tool != SketchTool::Select && tool != SketchTool::Dimension &&
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
-                           tool != SketchTool::Extend && tool != SketchTool::Offset &&
+                           tool != SketchTool::Extend && tool != SketchTool::Fillet &&
+                           tool != SketchTool::Chamfer &&
+                           tool != SketchTool::Offset &&
                            tool != SketchTool::Mirror && tool != SketchTool::Project;
-        if (cursorValid && draws) {
-            const QPointF at = toWidget(cursor.position);
+        // What a tool's click, or a dragged point, would land on.
+        const auto drawSnap = [&](const Snap& snap) {
+            const QPointF at = toWidget(snap.position);
             painter.setPen(QPen(colors.preview, 1.4));
             painter.setBrush(Qt::NoBrush);
-            switch (cursor.kind) {
+            switch (snap.kind) {
             case Snap::Kind::Point:
                 painter.drawRect(QRectF(at.x() - 5.5, at.y() - 5.5, 11.0, 11.0));
                 break;
@@ -2692,10 +3623,36 @@ public:
                 painter.drawLine(QLineF(at + QPointF(-5, -5), at + QPointF(5, 5)));
                 painter.drawLine(QLineF(at + QPointF(-5, 5), at + QPointF(5, -5)));
                 break;
+            case Snap::Kind::Intersection:
+                painter.drawEllipse(at, 6.0, 6.0);
+                painter.drawLine(QLineF(at + QPointF(-4, -4), at + QPointF(4, 4)));
+                painter.drawLine(QLineF(at + QPointF(-4, 4), at + QPointF(4, -4)));
+                break;
             case Snap::Kind::None:
                 break;
             }
-            if ((cursor.horizontal || cursor.vertical || cursor.locked) && !clicks.empty()) {
+        };
+        if (dragging && dragSnap.kind != Snap::Kind::None) {
+            drawSnap(dragSnap);
+        }
+        if (cursorValid && draws) {
+            const QPointF at = toWidget(cursor.position);
+            drawSnap(cursor);
+            if (cursor.alignedTo != 0 && !clicks.empty()) {
+                // What the line lines up with: a symbol by the pointer, and that line lit.
+                const QString symbol = cursor.alignKind == ConstraintKind::Parallel ? QStringLiteral("∥")
+                                       : cursor.alignKind == ConstraintKind::Perpendicular
+                                           ? QStringLiteral("⊥")
+                                           : QStringLiteral("◠");
+                painter.setPen(colors.preview);
+                painter.drawText(at + QPointF(10.0, -10.0), symbol);
+                if (const Entity* other = geometry().find(cursor.alignedTo)) {
+                    painter.setPen(QPen(colors.preview, 2.4));
+                    painter.drawPath(pathOf(strokeOf(geometry(), *other)));
+                }
+            }
+            if ((cursor.horizontal || cursor.vertical || cursor.locked || cursor.alignedTo != 0) &&
+                !clicks.empty()) {
                 // A guide through the start of the line, to say what it lined up with.
                 QPen guide(colors.preview, 1.0, Qt::DotLine);
                 painter.setPen(guide);
@@ -2754,6 +3711,9 @@ void SketchEditor::setTool(SketchTool tool) {
     if (m_impl->dragging) {
         m_impl->finishDrag(false);
     }
+    if (m_impl->labelDrag != 0) {
+        m_impl->finishLabelDrag(false);
+    }
     m_impl->pressed = false;
     m_impl->boxing = false;
     m_impl->resetTool();
@@ -2761,6 +3721,17 @@ void SketchEditor::setTool(SketchTool tool) {
     if (tool == SketchTool::Mirror && m_impl->selected.empty()) {
         emit message(tr("Select what to mirror first, then choose Mirror and click the line to "
                         "mirror in."));
+        m_impl->tool = SketchTool::Select;
+    }
+    if ((tool == SketchTool::CircularPattern || tool == SketchTool::RectangularPattern) &&
+        m_impl->patterned().empty()) {
+        emit message(tr("Select what to copy first, then choose the pattern."));
+        m_impl->tool = SketchTool::Select;
+    }
+    if ((tool == SketchTool::MoveSketch || tool == SketchTool::RotateSketch ||
+         tool == SketchTool::ScaleSketch) &&
+        m_impl->patterned().empty()) {
+        emit message(tr("Select what to move first, then choose the tool."));
         m_impl->tool = SketchTool::Select;
     }
     m_impl->update();
@@ -2787,7 +3758,8 @@ sketch::ConstraintKind SketchEditor::constraintTool() const {
 }
 
 bool SketchEditor::canCancel() const {
-    return isActive() && (m_impl->field != nullptr || m_impl->dragging || !m_impl->clicks.empty() ||
+    return isActive() && (m_impl->field != nullptr || m_impl->dragging ||
+                          m_impl->labelDrag != 0 || !m_impl->clicks.empty() ||
                           !m_impl->pending.empty() || m_impl->tool != SketchTool::Select);
 }
 
@@ -2800,6 +3772,9 @@ void SketchEditor::cancel() {
     } else if (m_impl->dragging) {
         m_impl->finishDrag(false);
         m_impl->pressed = false;
+    } else if (m_impl->labelDrag != 0) {
+        m_impl->finishLabelDrag(false);
+        m_impl->pressed = false;
     } else if (m_impl->tool == SketchTool::Spline && m_impl->clicks.size() >= 3) {
         // As Esc ends a line, it ends a spline, keeping what was drawn.
         m_impl->finishSpline();
@@ -2811,6 +3786,14 @@ void SketchEditor::cancel() {
     }
     m_impl->update();
     emit changed();
+}
+
+void SketchEditor::setGridSnap(bool on) {
+    m_impl->gridSnap = on;
+}
+
+bool SketchEditor::hasGridSnap() const {
+    return m_impl->gridSnap;
 }
 
 void SketchEditor::setInference(bool on) {
@@ -2978,7 +3961,10 @@ bool SketchEditor::setDimensionValue(sketch::ConstraintId dimension, double valu
     const sketch::Outcome outcome = sketch::tryDimensionValue(g, dimension, stored);
     if (!outcome.ok()) {
         m_impl->lastProblem =
-            outcome.refusal == sketch::Refusal::Invalid
+            outcome.refusal == sketch::Refusal::Reference
+                ? tr("This is a reference dimension: it shows the size the other dimensions and "
+                     "constraints give, and does not set it.")
+            : outcome.refusal == sketch::Refusal::Invalid
                 ? tr("%1 is not a value this dimension can have.").arg(formatValue(value))
                 : tr("The sketch cannot take %1 there: it contradicts the other dimensions and "
                      "constraints. The value was left as it was.")
@@ -3178,6 +4164,15 @@ QRectF SketchEditor::dimensionRect(sketch::ConstraintId dimension) const {
     return {};
 }
 
+QString SketchEditor::dimensionText(sketch::ConstraintId dimension) const {
+    for (const Annotation& annotation : m_impl->layout()) {
+        if (annotation.id == dimension && annotation.dimension) {
+            return annotation.text;
+        }
+    }
+    return {};
+}
+
 QRectF SketchEditor::markerRect(sketch::ConstraintId constraint) const {
     for (const Annotation& annotation : m_impl->layout()) {
         if (annotation.id == constraint && !annotation.dimension) {
@@ -3241,6 +4236,41 @@ QString SketchEditor::hint() const {
         return tr("Cut: click the part of a curve to remove");
     case SketchTool::Extend:
         return tr("Extend: click a line or an arc near the end to lengthen");
+    case SketchTool::Fillet:
+        return tr("Fillet: click a corner where two lines meet, then type the radius");
+    case SketchTool::Chamfer:
+        return tr("Chamfer: click a corner where two lines meet, then type how far back to cut");
+    case SketchTool::CenterRectangle:
+        return placed == 0 ? tr("Center Rectangle: click the center")
+                           : tr("Center Rectangle: click a corner");
+    case SketchTool::ThreePointCircle:
+        return placed == 0   ? tr("3-Point Circle: click a point on the circle")
+               : placed == 1 ? tr("3-Point Circle: click a second point on it")
+                             : tr("3-Point Circle: click a third point on it");
+    case SketchTool::ThreePointArc:
+        return placed == 0   ? tr("3-Point Arc: click where it starts")
+               : placed == 1 ? tr("3-Point Arc: click where it ends")
+                             : tr("3-Point Arc: click a point it passes through");
+    case SketchTool::TangentArc:
+        return placed == 0 ? tr("Tangent Arc: click the end of a line or an arc")
+                           : tr("Tangent Arc: click where it ends");
+    case SketchTool::MoveSketch:
+        return placed == 0 ? tr("Move: click a point to move from")
+                           : tr("Move: click where that point goes. Hold Ctrl to make a copy");
+    case SketchTool::RotateSketch:
+        return placed == 0 ? tr("Rotate: click the point to turn about")
+                           : tr("Rotate: type the angle in degrees, and press Enter");
+    case SketchTool::ScaleSketch:
+        return placed == 0 ? tr("Scale: click the point to scale about")
+                           : tr("Scale: type how many times as large, and press Enter");
+    case SketchTool::CircularPattern:
+        return placed == 0 ? tr("Circular Pattern: click the point to copy around")
+                           : tr("Circular Pattern: type how many in all, and press Enter");
+    case SketchTool::RectangularPattern:
+        return placed == 0   ? tr("Rectangular Pattern: click a point to measure the step from")
+               : placed == 1 ? tr("Rectangular Pattern: click where that point goes in the "
+                                  "next copy")
+                             : tr("Rectangular Pattern: type how many in all, and press Enter");
     case SketchTool::Offset:
         return m_impl->selected.empty() ? tr("Offset: click the curve to offset")
                                         : tr("Offset: click where the copy should go");
@@ -3426,6 +4456,8 @@ void SketchEditor::end() {
     m_impl->pressed = false;
     m_impl->boxing = false;
     m_impl->markerDrag = 0;
+    m_impl->labelDrag = 0;
+    m_impl->labelDragAt.reset();
     m_impl->shown = 0;
     m_impl->pinned = 0;
     m_impl->refused.clear();
@@ -3457,6 +4489,7 @@ void SketchEditor::mousePress(const QPointF& position, Qt::KeyboardModifiers mod
     }
     m_impl->lastPosition = position;
     m_impl->freeAngle = modifiers.testFlag(Qt::ShiftModifier);
+    m_impl->copying = modifiers.testFlag(Qt::ControlModifier);
     if (m_impl->field != nullptr && m_impl->editing != 0) {
         m_impl->closeField();
     }
@@ -3485,11 +4518,14 @@ void SketchEditor::mouseMove(const QPointF& position, Qt::MouseButtons buttons,
         return;
     }
     if (m_impl->pressed && buttons.testFlag(Qt::LeftButton)) {
-        if (!m_impl->dragging && !m_impl->boxing &&
+        if (!m_impl->dragging && !m_impl->boxing && m_impl->labelDrag == 0 &&
             (position - m_impl->pressPosition).manhattanLength() >=
                 QApplication::startDragDistance()) {
             if (m_impl->pressHit.entity != 0) {
                 m_impl->startDrag();
+            } else if (m_impl->pressHit.constraint != 0 && m_impl->pressHit.marker < 0 &&
+                       m_impl->startLabelDrag()) {
+                // A dimension's value, picked up to be put elsewhere.
             } else if (m_impl->pressHit.constraint == 0) {
                 m_impl->boxing = true;
             } else if (m_impl->pressHit.marker >= 0) {
@@ -3506,6 +4542,9 @@ void SketchEditor::mouseMove(const QPointF& position, Qt::MouseButtons buttons,
         }
         if (m_impl->markerDrag != 0) {
             m_impl->dragSymbolTo(position);
+        }
+        if (m_impl->labelDrag != 0) {
+            m_impl->dragLabelTo(position);
         }
         if (m_impl->boxing) {
             m_impl->boxEnd = position;
@@ -3531,6 +4570,11 @@ void SketchEditor::mouseRelease(const QPointF& position, Qt::KeyboardModifiers m
         modifiers.testFlag(Qt::ShiftModifier) || modifiers.testFlag(Qt::ControlModifier);
     if (m_impl->markerDrag != 0) {
         m_impl->finishSymbolDrag();
+        return;
+    }
+    if (m_impl->labelDrag != 0) {
+        m_impl->finishLabelDrag(true);
+        emit changed();
         return;
     }
     if (m_impl->dragging) {

@@ -54,6 +54,29 @@ struct PolygonParts {
     /// The construction circle through the corners.
     EntityId circle = 0;
 };
+/// A center rectangle: also a construction diagonal, and a point at its middle, which is where
+/// the rectangle is centered.
+struct CenterRectangleParts {
+    RectangleParts sides;
+    EntityId diagonal = 0;
+    EntityId center = 0;
+};
+/// A rectangle around `center` with one corner at `corner`, held centered on the point.
+CenterRectangleParts addCenterRectangle(Sketch& sketch, Point2 center, Point2 corner);
+
+/// The circle through three points: its center and radius. Nothing if they lie in a line.
+[[nodiscard]] std::optional<std::pair<Point2, double>> circleThrough(Point2 a, Point2 b,
+                                                                     Point2 c);
+
+/// An arc from `start` to `end` that passes through `through`. Throws std::invalid_argument
+/// if the three lie in a line.
+EntityId addArcThrough(Sketch& sketch, Point2 start, Point2 through, Point2 end);
+
+/// An arc that goes on from the end of a line or an arc at `from` (that end, or a point joined
+/// to it) to `end`, joined to that end and tangent to the curve. Throws std::invalid_argument
+/// if `from` is not an end of a line or an arc, or `end` lies straight on from it.
+EntityId addTangentArc(Sketch& sketch, EntityId from, Point2 end);
+
 /// A regular polygon with `sides` sides (3 to 64) around `center`, with one corner at `corner`:
 /// lines of equal length whose ends are held on a construction circle.
 PolygonParts addPolygon(Sketch& sketch, Point2 center, Point2 corner, int sides);
@@ -101,6 +124,8 @@ enum class Refusal {
     Redundant,
     /// It contradicts the other constraints.
     Conflicting,
+    /// It is a reference dimension, which shows a size and does not set it.
+    Reference,
 };
 
 struct Outcome {
@@ -137,6 +162,36 @@ Outcome tryDimensionValue(Sketch& sketch, ConstraintId dimension, double value);
 /// Throws std::invalid_argument if `axis` is not a line or is among `entities`.
 std::vector<EntityId> mirror(Sketch& sketch, const std::vector<EntityId>& entities, EntityId axis);
 
+/// Copies of curves and free-standing points turned about `center`: `count` in all, the
+/// originals among them, spread evenly over `angle` radians (a full turn by default, which
+/// leaves no copy on top of the originals). The constraints among the originals, such as a
+/// rectangle's or its dimensions, are copied too. Returns the copies. Throws
+/// std::invalid_argument for a count below 2 or an entity that cannot be copied.
+std::vector<EntityId> patternCircular(Sketch& sketch, const std::vector<EntityId>& entities,
+                                      Point2 center, int count,
+                                      double angle = 2.0 * 3.14159265358979323846);
+
+/// Copies moved by `step` each time: `count` in all, the originals among them. Otherwise as
+/// patternCircular().
+std::vector<EntityId> patternRectangular(Sketch& sketch, const std::vector<EntityId>& entities,
+                                         Point2 step, int count);
+
+/// How selected geometry is moved: turned by `angle` radians about `center`, made `scale`
+/// times as large about it, then moved by `move`.
+struct Placing {
+    Point2 center;
+    double angle = 0.0;
+    double scale = 1.0;
+    Point2 move;
+};
+
+/// Moves curves and free-standing points as `placing` says, keeping the constraints among them,
+/// and solves; or, with `copy`, adds moved copies and leaves them where they are. Returns what
+/// was moved or made. Throws std::invalid_argument, leaving the sketch as it was, if the other
+/// constraints do not let them go there, such as a dimension when they are scaled.
+std::vector<EntityId> place(Sketch& sketch, const std::vector<EntityId>& entities,
+                            const Placing& placing, bool copy);
+
 /// Adds copies of lines, arcs, and circles at `distance` from the originals, on the side
 /// `side` is on. Curves that are joined end to end are offset as one outline, and the copy is
 /// joined at its corners too. Each new line is held parallel to its original and each new arc or
@@ -154,5 +209,37 @@ bool trim(Sketch& sketch, EntityId curve, Point2 nearPoint);
 /// Lengthens a line or an arc at the end nearer to `nearPoint` until it meets another curve, and
 /// holds that end on the curve. Returns false, changing nothing, if it meets none.
 bool extend(Sketch& sketch, EntityId curve, Point2 nearPoint);
+
+/// What fillet() made: the arc that rounds the corner, and the point where the corner was.
+struct FilletParts {
+    EntityId arc = 0;
+    /// A construction point held on both lines where they would meet, which the constraints
+    /// and dimensions that were on the corner are now on.
+    EntityId corner = 0;
+    /// The arc's radius.
+    ConstraintId radius = 0;
+};
+
+/// Rounds the corner where two lines meet at `corner` (an end of either) with an arc of
+/// `radius`: shortens both lines, joins the arc to them and holds it tangent to both, and gives
+/// it its radius as a dimension. What was on the corner moves to a construction point where
+/// the lines would meet, so a dimension to the corner still holds. Throws std::invalid_argument,
+/// leaving the sketch as it was, if two lines do not meet there, they are in line, or the arc
+/// does not fit on them.
+FilletParts fillet(Sketch& sketch, EntityId corner, double radius);
+
+/// What chamfer() made: the line across the corner, and the point where the corner was.
+struct ChamferParts {
+    EntityId line = 0;
+    /// As FilletParts::corner.
+    EntityId corner = 0;
+    /// How far back along each line the corner is cut: a dimension on one of two construction
+    /// lines from the corner, which are held equal.
+    ConstraintId distance = 0;
+};
+
+/// Cuts the corner where two lines meet at `corner` with a straight line, `distance` back along
+/// each. Otherwise as fillet().
+ChamferParts chamfer(Sketch& sketch, EntityId corner, double distance);
 
 } // namespace lcad::sketch

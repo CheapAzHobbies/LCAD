@@ -105,6 +105,99 @@ struct Region {
 [[nodiscard]] NamedShape revolve(const Plane& plane, const std::vector<Region>& regions,
                                  const Axis& axis, double angle, const std::string& tag);
 
+/// A solid through closed outlines, in order: from the first to the last, smoothly through
+/// those between. Each outline is a closed chain of curves in model space, usually in a plane of
+/// its own. The sides are named `tag`/side/<curve name> after the curves of the first outline,
+/// and the ends `tag`/start/<name> and `tag`/end/<name> as by pull(). Throws
+/// std::invalid_argument for fewer than two outlines, and kernel::Error if they cannot be
+/// joined into a solid.
+[[nodiscard]] NamedShape loft(const std::vector<std::vector<OutlineCurve>>& sections,
+                              const std::string& tag);
+
+/// Moves regions of a plane along a path: the edges of `path`, in model space, joined end to
+/// end into one chain, open or closed. The regions keep their place, so the path usually
+/// starts on them. Faces are named as by pull(). Throws kernel::Error if the edges do not join
+/// into one chain, or what is swept is not a valid solid.
+[[nodiscard]] NamedShape sweep(const Plane& plane, const std::vector<Region>& regions,
+                               const Shape& path, const std::string& tag);
+
+/// Tilts faces of a body by `angle` radians about where they cross the plane `neutral`, as a
+/// mold needs: a positive angle narrows the body along the plane's normal. The faces keep their
+/// names. Throws kernel::Error if the faces cannot be tilted that far, or are not ones a draft
+/// can tilt.
+[[nodiscard]] NamedShape draft(const NamedShape& body, const std::vector<int>& faces,
+                               const Plane& neutral, double angle, const std::string& tag);
+
+/// Cuts a body in two along a plane. The result holds a solid for each piece, which do not
+/// share faces: the faces made by the cut are named `tag`/split/front on the side the plane's
+/// normal points to and `tag`/split/back on the other, and the others keep their names.
+/// Throws kernel::Error if the plane does not pass through the body.
+[[nodiscard]] NamedShape split(const NamedShape& body, const Plane& plane, const std::string& tag);
+
+/// A round pipe along a path: the edges of `path` joined end to end, as for sweep(). Its
+/// outside diameter is `diameter`; with a `wall` thickness short of the radius it is hollow,
+/// and with 0 solid. Its faces are named `tag`/side/outside, `tag`/side/inside, `tag`/start/pipe,
+/// and `tag`/end/pipe. Throws kernel::Error if the path does not join into one chain or the
+/// pipe runs into itself, and std::invalid_argument for sizes that make no pipe.
+[[nodiscard]] NamedShape pipe(const Shape& path, double diameter, double wall,
+                              const std::string& tag);
+
+/// A coil: a round section of `section` diameter wound about `axis` at `diameter`, rising
+/// `pitch` each turn, for `turns` turns, starting where the axis's origin is. Faces are named
+/// `tag`/side/coil, `tag`/start/coil, and `tag`/end/coil. Throws std::invalid_argument if the
+/// section is too thick for the pitch or the diameter.
+[[nodiscard]] NamedShape coil(const Axis& axis, double diameter, double pitch, double turns,
+                              double section, const std::string& tag);
+
+/// Cuts a 60-degree screw thread of `pitch` into a cylindrical face of a body, all along it: on
+/// the outside of a rod, or the inside of a hole. The faces it makes are named `tag`/thread/....
+/// Throws kernel::Error if the face is not cylindrical or the thread cannot be cut.
+[[nodiscard]] NamedShape thread(const NamedShape& body, int face, double pitch,
+                                const std::string& tag);
+
+// Surfaces: bodies of faces that need not enclose anything.
+
+/// Pulls curves of a plane, open or closed, into a surface: a face from each, reaching from
+/// `from` to `to` along the plane's normal, sewn together where they meet. Each face is named
+/// `tag`/side/<curve name>. Throws kernel::Error if there is nothing to pull.
+[[nodiscard]] NamedShape pullSurface(const Plane& plane, const std::vector<OutlineCurve>& curves,
+                                     double from, double to, const std::string& tag);
+
+/// Turns curves, open or closed, about `axis` by `angle` radians into a surface: a face from
+/// each, sewn together where they meet, named `tag`/side/<curve name>. Throws kernel::Error if
+/// there is nothing to turn.
+[[nodiscard]] NamedShape revolveSurface(const std::vector<OutlineCurve>& curves, const Axis& axis,
+                                        double angle, const std::string& tag);
+
+/// A flat face filling a region of a plane, named `tag`/patch/<name of the region>.
+[[nodiscard]] NamedShape patch(const Plane& plane, const Region& region, const std::string& tag);
+
+/// Sews bodies' faces together where their edges meet to within `tolerance`. Where they close
+/// all round, the result is a solid; otherwise a surface. Faces keep their names. Throws
+/// kernel::Error if nothing could be sewn.
+[[nodiscard]] NamedShape stitch(const std::vector<NamedShape>& pieces, double tolerance,
+                                const std::string& tag);
+
+/// A solid from a surface, `thickness` thick, out from it along its faces' normals, or the
+/// other way for a negative thickness. The faces it starts from keep their names. Throws
+/// kernel::Error if the surface cannot be thickened that much.
+[[nodiscard]] NamedShape thicken(const NamedShape& surface, double thickness,
+                                 const std::string& tag);
+
+/// A surface `distance` away from another, along its faces' normals, or the other way for a
+/// negative distance, joined where its faces meet. The faces keep their names. Throws
+/// kernel::Error if it cannot be offset that far.
+[[nodiscard]] NamedShape offsetSurface(const NamedShape& surface, double distance,
+                                       const std::string& tag);
+
+/// Text as a solid: the letters of `text`, `height` tall, in the font named (or another if the
+/// system has none by that name), starting at (u, v) of the plane along its X direction, pulled
+/// from `from` to `to` along the plane's normal. Faces are named `tag`/text/... in the order of
+/// where they are. Throws kernel::Error if no font can be found or the text makes nothing.
+[[nodiscard]] NamedShape textSolid(const Plane& plane, double u, double v, const std::string& text,
+                                   double height, double from, double to,
+                                   const std::string& font, const std::string& tag);
+
 /// How two solids are combined.
 enum class Combination {
     Join,      ///< everything that is in either
@@ -122,10 +215,11 @@ enum class Combination {
 [[nodiscard]] NamedShape fillet(const NamedShape& body, const std::vector<int>& edges,
                                 double radius, const std::string& tag);
 
-/// Bevels the edges with the given numbers by `distance` on each side. The new faces are named
-/// as by fillet().
+/// Bevels the edges with the given numbers by `distance` on each side, or, with `distance2`
+/// more than 0, by `distance` on the first face at each edge and `distance2` on the other. The
+/// new faces are named as by fillet().
 [[nodiscard]] NamedShape chamfer(const NamedShape& body, const std::vector<int>& edges,
-                                 double distance, const std::string& tag);
+                                 double distance, const std::string& tag, double distance2 = 0.0);
 
 /// Hollows a solid out, leaving walls of `thickness`, open at the faces with the given numbers.
 /// The inside of a face is named `tag`/inner/<a number made from the face's name>.

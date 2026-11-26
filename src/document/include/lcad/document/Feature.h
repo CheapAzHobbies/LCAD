@@ -48,9 +48,54 @@ enum class FeatureKind {
     DeleteFace,
     /// Puts right what is wrong with a body's geometry, where that can be done.
     Repair,
+    /// A solid through outlines of two or more sketches, in order, each usually on a plane of
+    /// its own.
+    Loft,
+    /// Moves outlines of a sketch along a path: the curves of another sketch.
+    Sweep,
+    /// Tilts faces of a body by `angle` degrees about the plane `reference`, as a mold needs.
+    Draft,
+    /// Cuts a body in two along the plane `reference`.
+    SplitBody,
+    /// Joins `tools` to `body`, cuts them out of it, or keeps only what they share, as
+    /// `operation` says. The tools are used up unless `keepTools`.
+    Combine,
+    /// Moves `body` by `move`, and turns it `angle` degrees about the axis `reference`. With
+    /// `copy`, makes a moved copy of `tools`' one body instead, as `body`.
+    MoveBody,
+    /// A round pipe, or rod, along the curves of `pathSketch`: `size` across, with walls
+    /// `wall` thick or solid.
+    Pipe,
+    /// A coil about the axis `reference`: `size` across, `pitch` a turn, `turns` turns, a round
+    /// section `section` across.
+    Coil,
+    /// A screw thread of `pitch` cut into the cylindrical face `faces` names.
+    Thread,
+    // Surfaces: bodies of faces that need not enclose anything.
+    /// Pulls every curve of `sketch`, open or closed, into a surface, `distance` along the
+    /// sketch's normal, or half each way if `symmetric`.
+    SurfacePull,
+    /// Fills closed areas of `sketch` with flat faces, as a surface.
+    Patch,
+    /// Sews `tools` to `body` where their edges meet to within `size`; a solid where they close
+    /// all round. The tools are used up.
+    Stitch,
+    /// Makes `body`, a surface, into a solid `size` thick.
+    Thicken,
+    /// A new surface, `body`, `size` away from the surface of `tools`' one body.
+    OffsetSurface,
+    /// Turns every curve of `sketch`, open or closed, about the line `axis` of it, or the axis
+    /// `reference`, by `angle` degrees, into a surface.
+    SurfaceRevolve,
+    /// `text` in letters `size` tall, starting at (`textU`, `textV`) of `sketch`'s plane, pulled
+    /// `distance` along its normal: a body of its own, or embossed or engraved by `operation`.
+    Text,
 };
 
 [[nodiscard]] const char* toString(FeatureKind kind);
+struct Feature;
+/// Every sketch a feature is made from: its own, a loft's other sections', and a sweep's path.
+[[nodiscard]] std::vector<ObjectId> sketchesOf(const Feature& feature);
 [[nodiscard]] std::optional<FeatureKind> featureKindFromString(const std::string& name);
 
 /// What a pull or a revolve does with the solid it makes.
@@ -64,6 +109,20 @@ enum class Operation {
 [[nodiscard]] const char* toString(Operation operation);
 [[nodiscard]] std::optional<Operation> operationFromString(const std::string& name);
 
+/// How a construction plane is placed.
+enum class PlaneKind {
+    /// Parallel to `reference`, `distance` along its normal.
+    Offset,
+    /// Through the axis `reference2`, turned `angle` degrees about it from `reference`.
+    AtAngle,
+    /// Halfway between `reference` and `reference2`: between them if they are parallel, and
+    /// otherwise halving the angle between them, through the line where they meet.
+    Midplane,
+};
+
+[[nodiscard]] const char* toString(PlaneKind kind);
+[[nodiscard]] std::optional<PlaneKind> planeKindFromString(const std::string& name);
+
 /// What a hole looks like at the top.
 enum class HoleKind {
     Simple,
@@ -75,6 +134,15 @@ enum class HoleKind {
 
 [[nodiscard]] const char* toString(HoleKind kind);
 [[nodiscard]] std::optional<HoleKind> holeKindFromString(const std::string& name);
+
+/// A section of a loft after its first: one outline of a sketch, by the curves of its outline,
+/// sorted.
+struct LoftSection {
+    ObjectId sketch;
+    std::vector<sketch::EntityId> region;
+
+    friend bool operator==(const LoftSection&, const LoftSection&) = default;
+};
 
 /// One step in the making of the model: what to do, to what, and by how much. The document
 /// keeps features in the order they are applied, and builds the bodies from them.
@@ -99,9 +167,10 @@ struct Feature {
     /// The body the feature changes. For Operation::NewBody: the body it makes.
     ObjectId body;
 
-    // Pull and Revolve
+    // Pull, Revolve, Loft, and Sweep
 
-    /// The sketch the outlines are taken from.
+    /// The sketch the outlines are taken from. For a loft, its first section, which is the one
+    /// region in `regions`.
     ObjectId sketch;
     /// The regions used, each given by the curves of its outer outline, sorted. Empty means
     /// every region of the sketch.
@@ -166,10 +235,50 @@ struct Feature {
     double spacing2 = 10.0;
     /// Plane: whether it is shown.
     bool visible = true;
+    /// Plane: how it is placed.
+    PlaneKind planeKind = PlaneKind::Offset;
+    // Loft
+    /// The sections after the first, in the order the loft goes through them.
+    std::vector<LoftSection> sections;
+    // Sweep and Pipe
+    /// The sketch whose curves, joined end to end, the outlines are moved along.
+    ObjectId pathSketch;
+    // Combine and Move Body
+    /// Combine: the bodies combined with `body`. Move Body with `copy`: the body copied.
+    std::vector<ObjectId> tools;
+    /// Combine: the tools stay bodies of their own.
+    bool keepTools = false;
+    /// Move Body: how far along X, Y, and Z, in millimeters.
+    double moveX = 0.0;
+    double moveY = 0.0;
+    double moveZ = 0.0;
+    /// Move Body: a moved copy, as a new body, rather than the body moved.
+    bool copy = false;
+    /// Move Body: how many times as large, about the middle of the body, before it is moved.
+    double scale = 1.0;
+    // Pipe, Coil, Thread
+    /// Chamfer: the distance on the other face at each edge; 0 is the same as `size`.
+    double size2 = 0.0;
+    /// Pipe: wall thickness; 0 is a solid rod.
+    double wall = 0.0;
+    /// Coil and Thread: the rise of one turn, in millimeters.
+    double pitch = 2.0;
+    /// Coil: how many turns.
+    double turns = 5.0;
+    /// Coil: how thick the wire is.
+    double section = 1.0;
+    // Text
+    std::string text;
+    /// The font's family; another is used where the system has none by that name.
+    std::string font = "Sans";
+    /// Where the text starts, in the sketch's coordinates: the left of its baseline.
+    double textU = 0.0;
+    double textV = 0.0;
     // Hole. Its sketch's free-standing points are where the holes go, its `size` is their
     // diameter and its `distance` their depth.
     HoleKind holeKind = HoleKind::Simple;
-    /// Through the whole body, whatever its size, with a flat bottom.
+    /// Hole: through the whole body, whatever its size, with a flat bottom. Pull: through
+    /// every body there is, the way `distance` points, or both ways if `symmetric`.
     bool throughAll = false;
     /// The angle of the point a drill leaves at the bottom, in degrees; 180 for a flat bottom.
     double tipAngle = 118.0;
@@ -187,7 +296,8 @@ struct Feature {
 
     /// Values worked out from parameters: the name of the value ("distance", "distanceBack",
     /// "taper", "angle", "size", "count", "count2", "spacing", "spacing2", "tipAngle",
-    /// "headDiameter", "headDepth", "countersinkAngle") and the expression. The value itself is
+    /// "headDiameter", "headDepth", "countersinkAngle", "moveX", "moveY", "moveZ", "wall",
+    /// "pitch", "turns", "section") and the expression. The value itself is
     /// what the expression last came to.
     std::map<std::string, std::string> expressions;
 

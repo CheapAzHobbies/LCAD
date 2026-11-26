@@ -46,13 +46,56 @@ Document::WorkRunner& workRunner() {
 
 // Whether a feature makes a body of its own, as against changing one that is there.
 bool makesBody(const Feature& feature) {
-    return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve) &&
+    if (feature.kind == FeatureKind::MoveBody) {
+        return feature.copy;
+    }
+    // A surface is always a body of its own.
+    if (feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
+        feature.kind == FeatureKind::OffsetSurface ||
+        feature.kind == FeatureKind::SurfaceRevolve) {
+        return true;
+    }
+    return (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
+            feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
+            feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil ||
+            feature.kind == FeatureKind::Text) &&
            feature.operation == Operation::NewBody;
 }
 
 bool usesSketch(const Feature& feature) {
     return feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
-           feature.kind == FeatureKind::Hole;
+           feature.kind == FeatureKind::Hole || feature.kind == FeatureKind::Loft ||
+           feature.kind == FeatureKind::Sweep || feature.kind == FeatureKind::SurfacePull ||
+           feature.kind == FeatureKind::Patch || feature.kind == FeatureKind::SurfaceRevolve ||
+           feature.kind == FeatureKind::Text;
+}
+
+// Whether every sketch a feature is made from is in the document. `missing` is set to the
+// first that is not.
+template <typename Find>
+bool hasSketches(const Feature& feature, Find&& find, ObjectId& missing) {
+    if (feature.kind == FeatureKind::Pipe) {
+        missing = feature.pathSketch;
+        return find(feature.pathSketch) != nullptr;
+    }
+    if (!usesSketch(feature)) {
+        return true;
+    }
+    missing = feature.sketch;
+    if (find(feature.sketch) == nullptr) {
+        return false;
+    }
+    if (feature.kind == FeatureKind::Sweep && find(feature.pathSketch) == nullptr) {
+        missing = feature.pathSketch;
+        return false;
+    }
+    for (const ObjectId id : sketchesOf(feature)) {
+        if (find(id) == nullptr) {
+            missing = id;
+            return false;
+        }
+    }
+    return true;
 }
 
 // Whether a body has a place of its own in the timeline. One that holds a solid of a feature's is
@@ -604,9 +647,10 @@ std::string Document::uniqueFeatureName(std::string_view base) const {
 }
 
 ObjectId Document::addFeature(Feature feature) {
-    if (usesSketch(feature) && findSketch(feature.sketch) == nullptr) {
+    if (ObjectId missing;
+        !hasSketches(feature, [this](ObjectId sketch) { return findSketch(sketch); }, missing)) {
         throw std::invalid_argument("addFeature: there is no sketch with id " +
-                                    std::to_string(feature.sketch.value));
+                                    std::to_string(missing.value));
     }
     const bool makes = makesBody(feature);
     if (!makes && needsBody(feature) && findBody(feature.body) == nullptr) {
@@ -656,9 +700,10 @@ void Document::changeFeature(ObjectId id, Feature definition) {
     if (isBlank(definition.name)) {
         definition.name = old.name;
     }
-    if (usesSketch(definition) && findSketch(definition.sketch) == nullptr) {
+    if (ObjectId missing;
+        !hasSketches(definition, [this](ObjectId sketch) { return findSketch(sketch); }, missing)) {
         throw std::invalid_argument("changeFeature: there is no sketch with id " +
-                                    std::to_string(definition.sketch.value));
+                                    std::to_string(missing.value));
     }
     for (std::vector<sketch::EntityId>& outline : definition.regions) {
         std::sort(outline.begin(), outline.end());
@@ -1148,6 +1193,17 @@ Feature Document::resolved(const Feature& feature) const {
         {"headDiameter", "head diameter"},
         {"headDepth", "head depth"},
         {"countersinkAngle", "countersink angle"},
+        {"moveX", "move along X"},
+        {"moveY", "move along Y"},
+        {"moveZ", "move along Z"},
+        {"wall", "wall"},
+        {"pitch", "pitch"},
+        {"turns", "turns"},
+        {"section", "section"},
+        {"size2", "second distance"},
+        {"scale", "scale"},
+        {"textU", "place across"},
+        {"textV", "place up"},
     };
     Feature result = feature;
     for (const auto& [field, expression] : feature.expressions) {
@@ -1196,6 +1252,28 @@ Feature Document::resolved(const Feature& feature) const {
             result.headDepth = value;
         } else if (field == "countersinkAngle") {
             result.countersinkAngle = value;
+        } else if (field == "moveX") {
+            result.moveX = value;
+        } else if (field == "moveY") {
+            result.moveY = value;
+        } else if (field == "moveZ") {
+            result.moveZ = value;
+        } else if (field == "wall") {
+            result.wall = value;
+        } else if (field == "pitch") {
+            result.pitch = value;
+        } else if (field == "turns") {
+            result.turns = value;
+        } else if (field == "section") {
+            result.section = value;
+        } else if (field == "size2") {
+            result.size2 = value;
+        } else if (field == "scale") {
+            result.scale = value;
+        } else if (field == "textU") {
+            result.textU = value;
+        } else if (field == "textV") {
+            result.textV = value;
         }
     }
     return result;
@@ -1908,8 +1986,8 @@ std::string Document::orderProblem(const std::vector<ObjectId>& order) const {
     }
     for (const Feature& feature : m_features) {
         const std::size_t place = at(feature.id);
-        if (usesSketch(feature)) {
-            const SketchItem* sketch = findSketch(feature.sketch);
+        for (const ObjectId id : sketchesOf(feature)) {
+            const SketchItem* sketch = findSketch(id);
             if (sketch != nullptr && at(sketch->id) > place) {
                 return feature.name + " is made from " + sketch->name +
                        ", so it cannot come before it.";
@@ -1995,6 +2073,10 @@ void Document::rebuild() {
     std::unordered_set<ObjectId> changed;
     const auto markChanged = [this, &changed](const Feature& feature) {
         changed.insert(feature.body);
+        // A combine or a stitch uses its tools up.
+        if (feature.kind == FeatureKind::Combine || feature.kind == FeatureKind::Stitch) {
+            changed.insert(feature.tools.begin(), feature.tools.end());
+        }
         for (const ObjectId piece : piecesOf(feature.id)) {
             changed.insert(piece);
         }
@@ -2002,6 +2084,15 @@ void Document::rebuild() {
     // What a feature leaves goes into its bodies. With fewer of them than solids, for now, it all
     // stays together: settlePieces() is about to make the rest.
     const auto leave = [this, &state](const Feature& feature, const Built& built) {
+        // What a combine uses up is gone from here on.
+        if ((feature.kind == FeatureKind::Combine && !feature.keepTools) ||
+            feature.kind == FeatureKind::Stitch) {
+            for (const ObjectId tool : feature.tools) {
+                if (tool != feature.body) {
+                    state[tool] = kernel::NamedShape{};
+                }
+            }
+        }
         const std::vector<ObjectId> pieces = piecesOf(feature.id);
         if (built.solids.size() < 2 || built.solids.size() > pieces.size() + 1) {
             state[feature.body] = built.result;
@@ -2194,9 +2285,17 @@ void Document::rebuild() {
         const bool stale =
             m_rebuildAll || !built.done || m_touched.contains(item) ||
             m_touched.contains(feature.body) ||
-            (feature.sketch.isValid() &&
-             (m_touched.contains(feature.sketch) || moved.contains(feature.sketch))) ||
+            [&] {
+                const std::vector<ObjectId> sketches = sketchesOf(feature);
+                return std::any_of(sketches.begin(), sketches.end(), [&](ObjectId id) {
+                    return m_touched.contains(id) || moved.contains(id);
+                });
+            }() ||
             changed.contains(feature.body) ||
+            std::any_of(feature.tools.begin(), feature.tools.end(),
+                        [&](ObjectId tool) {
+                            return changed.contains(tool) || m_touched.contains(tool);
+                        }) ||
             (feature.extentBody.isValid() &&
              (changed.contains(feature.extentBody) || m_touched.contains(feature.extentBody))) ||
             movedConstruction.contains(constructionIn(feature.reference)) ||

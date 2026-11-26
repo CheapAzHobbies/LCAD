@@ -9,6 +9,7 @@
 #include <QWidget>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 class QCheckBox;
@@ -17,6 +18,8 @@ class QDoubleSpinBox;
 class QFormLayout;
 class QLabel;
 class QListWidget;
+class QFontComboBox;
+class QLineEdit;
 class QPushButton;
 class QSpinBox;
 
@@ -50,6 +53,9 @@ public:
     /// Pull and revolve: the profiles, all of one sketch, each by the curves of its outline.
     void setProfiles(document::ObjectId sketch,
                      const std::vector<std::vector<sketch::EntityId>>& outlines);
+    /// Loft: the sections, in order, each a sketch and the curves of one outline of it.
+    void setSections(
+        const std::vector<std::pair<document::ObjectId, std::vector<sketch::EntityId>>>& sections);
     /// Fillet and chamfer: the edges, of one body, by name.
     void setEdges(document::ObjectId body, const std::vector<std::string>& edges);
     /// Shell: the faces to leave open, of one body, by name.
@@ -70,6 +76,9 @@ public:
     /// the direction, or the axis. `description` says what it is, for the list.
     void setPickedReference(document::ObjectId body, const std::string& name,
                             const QString& description);
+    /// Plane at an angle: a straight edge of a body, by name, picked to turn about.
+    void setPickedEdge(document::ObjectId body, const std::string& name,
+                       const QString& description);
 
     /// Whether what the feature needs has been picked.
     [[nodiscard]] bool hasInput() const;
@@ -108,9 +117,17 @@ private:
     void fillAxes();
     void fillSources();
     void fillReferences();
+    /// Plane: the axes it can turn about, or the planes it can be halfway to.
+    void fillPlaneSecond();
     /// Adds the construction planes or axes there are at this point in the timeline to a list.
     void addConstruction(QComboBox* box, document::FeatureKind kind) const;
     void fillSketches();
+    /// Sweep: the sketches its path can be, every one but the profile's.
+    void fillPaths();
+    /// Combine: the bodies that can be combined with the one chosen.
+    void fillTools();
+    /// Move Body and Coil: the axes to turn about or wind about.
+    void fillTurnAxes();
     /// Shows the boxes that go with the kind of hole.
     void showHoleFields();
     /// Reads the boxes into m_feature and shows or hides what depends on them.
@@ -150,6 +167,31 @@ private:
     std::string m_pickedName;
     QString m_pickedDescription;
     document::ObjectId m_pickedBody;
+    // Sweep and Pipe
+    QComboBox* m_path = nullptr;
+    // Combine, Move Body, Pipe, Coil, Thread
+    QListWidget* m_tools = nullptr;
+    QCheckBox* m_keepTools = nullptr;
+    QCheckBox* m_copy = nullptr;
+    /// Surface Pull: half each way.
+    QCheckBox* m_bothSides = nullptr;
+    // Text
+    QLineEdit* m_text = nullptr;
+    QFontComboBox* m_font = nullptr;
+    QComboBox* m_turnAxis = nullptr;
+    QDoubleSpinBox* m_moveX = nullptr;
+    QDoubleSpinBox* m_moveY = nullptr;
+    QDoubleSpinBox* m_moveZ = nullptr;
+    QDoubleSpinBox* m_wall = nullptr;
+    QDoubleSpinBox* m_pitch = nullptr;
+    QDoubleSpinBox* m_turns = nullptr;
+    QDoubleSpinBox* m_section = nullptr;
+    // Plane: how it is placed, and its second reference: the axis it turns about, or the plane
+    // it is halfway to. What was picked in the 3D view for that.
+    QComboBox* m_planeKind = nullptr;
+    QComboBox* m_planeSecond = nullptr;
+    std::string m_secondName;
+    QString m_secondDescription;
     // Hole
     QComboBox* m_sketch = nullptr;
     QComboBox* m_holeKind = nullptr;

@@ -450,7 +450,8 @@ void SketchInterfaceTest::sketchToolsAreCommandsWithShortcuts() {
         {"sketch.circle", SketchTool::Circle},       {"sketch.arc", SketchTool::Arc},
         {"sketch.point", SketchTool::Point},         {"sketch.polygon", SketchTool::Polygon},
         {"sketch.slot", SketchTool::Slot},           {"sketch.trim", SketchTool::Trim},
-        {"sketch.extend", SketchTool::Extend},       {"sketch.offset", SketchTool::Offset},
+        {"sketch.extend", SketchTool::Extend},       {"sketch.fillet", SketchTool::Fillet},
+        {"sketch.offset", SketchTool::Offset},
         {"sketch.dimension", SketchTool::Dimension}, {"sketch.select", SketchTool::Select},
     };
     for (const auto& [id, tool] : tools) {
@@ -1208,9 +1209,26 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     for (const char* tool :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.circle", "sketch.arc",
           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline",
-          "sketch.construction", "sketch.trim", "sketch.extend", "sketch.offset", "sketch.mirror",
-          "sketch.project", "sketch.dimension", "sketch.finish"}) {
+          "sketch.construction", "sketch.trim", "sketch.extend", "sketch.chamfer",
+          "sketch.offset", "sketch.mirror", "sketch.project", "sketch.dimension",
+          "sketch.finish"}) {
         QVERIFY2(shown.contains(QLatin1String(tool)), tool);
+    }
+    // Rectangles, circles, and arcs drawn other ways are in the list beside each.
+    const std::pair<const char*, QStringList> variants[] = {
+        {"rectangleButton", {QStringLiteral("sketch.centerRectangle")}},
+        {"circleButton", {QStringLiteral("sketch.circle3")}},
+        {"arcButton", {QStringLiteral("sketch.arc3"), QStringLiteral("sketch.tangentArc")}},
+        {"mirrorButton",
+         {QStringLiteral("sketch.circularPattern"), QStringLiteral("sketch.rectangularPattern")}},
+    };
+    for (const auto& [name, ids] : variants) {
+        auto* button = toolbar->findChild<QToolButton*>(QLatin1String(name));
+        QVERIFY2(button != nullptr && button->menu() != nullptr, name);
+        for (const QString& tool : ids) {
+            QVERIFY2(button->menu()->actions().contains(window.commands()->action(tool)),
+                     qPrintable(tool));
+        }
     }
     // The constraints have a button each where there is room, and otherwise one button that
     // opens the list of them. Either way all twelve are a click or two away.

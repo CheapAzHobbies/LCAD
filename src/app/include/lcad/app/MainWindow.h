@@ -30,6 +30,10 @@ class QTimer;
 class QToolBar;
 class QToolButton;
 
+class QFrame;
+
+class QDoubleSpinBox;
+
 namespace lcad::app {
 
 class BrowserPanel;
@@ -415,6 +419,10 @@ private:
     void closeMeasure();
     void takeMeasurePick();
     void showMeasurement();
+    /// Section view: shows or hides the bar that cuts the 3D view along a plane.
+    void setSectionShown(bool shown);
+    /// Cuts the view as the section bar says.
+    void applySection(bool recenter);
     /// The shape a selection entry stands for, or a null shape.
     [[nodiscard]] kernel::Shape shapeOf(const viewport::SelectedItem& item) const;
     void showTimelineMenu(document::ObjectId item, const QPoint& where);
@@ -518,11 +526,22 @@ private:
     /// The toolbar's buttons for New Component and Joint, which a narrow window puts away: the
     /// assembly list beside them has both.
     QList<QAction*> m_assemblyButtons;
+    /// Loft, Sweep, and the construction planes and axes: buttons of their own, and one that
+    /// lists them all for a narrow window.
+    QList<QAction*> m_shapeButtons;
+    QAction* m_shapesFolded = nullptr;
     QToolButton* m_finishButton = nullptr;
     QLabel* m_selectionLabel = nullptr;
     QLabel* m_commandLabel = nullptr;
     QComboBox* m_filterBox = nullptr;
     QToolButton* m_styleButton = nullptr;
+    // The section bar over the 3D view: the plane, how far along it, and which way it looks.
+    QFrame* m_sectionBar = nullptr;
+    QComboBox* m_sectionPlane = nullptr;
+    QDoubleSpinBox* m_sectionOffset = nullptr;
+    bool m_sectionFlipped = false;
+    /// The last command that started a tool or a feature, which Repeat starts again.
+    QString m_lastCommand;
     QToolButton* m_patternButton = nullptr;
 
     std::vector<std::unique_ptr<Session>> m_sessions;

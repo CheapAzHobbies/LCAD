@@ -2006,3 +2006,631 @@ TEST_CASE("Long work can be stopped, and what was there stays", "[document][feat
         CHECK_FALSE(lcad::kernel::stopRequested());
     }
 }
+
+TEST_CASE("A loft goes through outlines of sketches on planes of their own",
+          "[document][feature]") {
+    Document document;
+    // A 20 by 20 square on the XY plane, and a circle of radius 5 on a plane 30 above it.
+    const ObjectId base = document.addSketch("Base", lcad::kernel::planeXY());
+    lcad::sketch::Sketch square;
+    const lcad::sketch::RectangleParts r =
+        lcad::sketch::addRectangle(square, {-10.0, -10.0}, {10.0, 10.0});
+    const lcad::sketch::ConstraintId width = square.addConstraint(
+        ConstraintKind::Distance, square.find(r.bottom)->start, square.find(r.bottom)->end, 0, 20.0);
+    document.setSketchGeometry(base, square, "Draw");
+    const ObjectId top = document.addSketch(
+        "Top", lcad::kernel::makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch round;
+    const lcad::sketch::EntityId circle = round.addCircle({0.0, 0.0}, 5.0);
+    document.setSketchGeometry(top, round, "Draw");
+
+    Feature loft;
+    loft.kind = FeatureKind::Loft;
+    loft.sketch = base;
+    loft.regions = {document.findSketch(base)->geometry.regions().front().key};
+    loft.sections = {LoftSection{top, {circle}}};
+    const ObjectId made = document.addFeature(loft);
+    CHECK(document.featureError(made).empty());
+    CHECK(document.findFeature(made)->name == "Loft 1");
+    const ObjectId body = document.findFeature(made)->body;
+    const double volume = lcad::kernel::volume(document.findBody(body)->shape);
+    // Between the prism of the square and the cylinder of the circle.
+    CHECK(volume < 400.0 * 30.0);
+    CHECK(volume > pi * 25.0 * 30.0);
+
+    // It follows its sketches.
+    lcad::sketch::Sketch wider = document.findSketch(base)->geometry;
+    REQUIRE(lcad::sketch::tryDimensionValue(wider, width, 30.0).ok());
+    document.setSketchGeometry(base, wider, "Change Dimension");
+    CHECK(document.featureError(made).empty());
+    CHECK(lcad::kernel::volume(document.findBody(body)->shape) > volume);
+
+    // Saved and opened again, it is the same loft.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("loft.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    const Feature* reread = loaded.document->findFeature(made);
+    REQUIRE(reread != nullptr);
+    CHECK(reread->sections == document.findFeature(made)->sections);
+    CHECK(loaded.document->featureError(made).empty());
+
+    // Without its second section it says so.
+    Feature alone = *document.findFeature(made);
+    alone.sections.clear();
+    document.changeFeature(made, alone);
+    CHECK_THAT(document.featureError(made), ContainsSubstring("second outline"));
+}
+
+TEST_CASE("A sweep moves an outline along the curves of another sketch", "[document][feature]") {
+    Document document;
+    // A circle of radius 2 on the XZ plane, swept along a line of 40 along -Y from its center.
+    const ObjectId profile = document.addSketch("Profile", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch round;
+    round.addCircle({0.0, 0.0}, 2.0);
+    document.setSketchGeometry(profile, round, "Draw");
+    const ObjectId path = document.addSketch("Path", lcad::kernel::planeXY());
+    lcad::sketch::Sketch line;
+    line.addLine({0.0, 0.0}, {0.0, -40.0});
+    document.setSketchGeometry(path, line, "Draw");
+
+    Feature sweep;
+    sweep.kind = FeatureKind::Sweep;
+    sweep.sketch = profile;
+    sweep.pathSketch = path;
+    const ObjectId made = document.addFeature(sweep);
+    CHECK(document.featureError(made).empty());
+    CHECK(document.findFeature(made)->name == "Sweep 1");
+    const ObjectId body = document.findFeature(made)->body;
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel(pi * 4.0 * 40.0, 1e-6));
+
+    // The path's sketch changed, and the sweep follows.
+    lcad::sketch::Sketch longer;
+    longer.addLine({0.0, 0.0}, {0.0, -60.0});
+    document.setSketchGeometry(path, longer, "Draw");
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel(pi * 4.0 * 60.0, 1e-6));
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto file = directory.file("sweep.lcad");
+    saveDocument(document, file);
+    const LoadedDocument loaded = loadDocument(file);
+    CHECK(loaded.warnings.empty());
+    REQUIRE(loaded.document->findFeature(made) != nullptr);
+    CHECK(loaded.document->findFeature(made)->pathSketch == path);
+    CHECK(loaded.document->featureError(made).empty());
+
+    // A path that is not one chain is refused, with the reason.
+    lcad::sketch::Sketch broken;
+    broken.addLine({0.0, 0.0}, {0.0, -20.0});
+    broken.addLine({10.0, -30.0}, {10.0, -50.0});
+    document.setSketchGeometry(path, broken, "Draw");
+    CHECK_THAT(document.featureError(made), ContainsSubstring("one chain"));
+    // And a feature without a path sketch is refused outright.
+    Feature without = sweep;
+    without.pathSketch = ObjectId{9999};
+    CHECK_THROWS_AS(document.addFeature(without), std::invalid_argument);
+}
+
+TEST_CASE("Planes at an angle and midplanes", "[document][feature]") {
+    Document document;
+    // A plate 60 by 40 by 10 to put them on.
+    const ObjectId outline = document.addSketch("Outline", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {60.0, 40.0});
+    document.setSketchGeometry(outline, s, "Draw");
+    Feature pull;
+    pull.kind = FeatureKind::Pull;
+    pull.sketch = outline;
+    pull.distance = 10.0;
+    const ObjectId plate = document.addFeature(pull);
+    const ObjectId body = document.findFeature(plate)->body;
+    std::string top;
+    std::string bottom;
+    for (const std::string& name : document.findBody(body)->faceNames) {
+        if (name.find("/end/") != std::string::npos) {
+            top = name;
+        }
+        if (name.find("/start/") != std::string::npos) {
+            bottom = name;
+        }
+    }
+    REQUIRE(!top.empty());
+    REQUIRE(!bottom.empty());
+
+    // The XY plane turned 30 degrees about the X axis.
+    Feature tilted;
+    tilted.kind = FeatureKind::Plane;
+    tilted.planeKind = PlaneKind::AtAngle;
+    tilted.reference = "XY";
+    tilted.reference2 = "X";
+    tilted.angle = 30.0;
+    const ObjectId angled = document.addFeature(tilted);
+    CHECK(document.featureError(angled).empty());
+    auto state = document.planeState(angled);
+    REQUIRE(state.has_value());
+    CHECK_THAT(std::abs(state->plane.normal.z), WithinAbs(std::cos(pi / 6.0), 1e-9));
+    CHECK_THAT(std::abs(state->plane.normal.y), WithinAbs(std::sin(pi / 6.0), 1e-9));
+    CHECK_THAT(state->plane.normal.x, WithinAbs(0.0, 1e-9));
+    // It goes through the axis.
+    CHECK_THAT(state->plane.origin.y * state->plane.normal.y +
+                   state->plane.origin.z * state->plane.normal.z,
+               WithinAbs(0.0, 1e-9));
+    // 90 degrees about Z is not a turn at all for the XY plane: Z is square to it.
+    tilted = *document.findFeature(angled);
+    tilted.reference2 = "Z";
+    document.changeFeature(angled, tilted);
+    CHECK_THAT(document.featureError(angled), ContainsSubstring("square"));
+    document.undo();
+
+    // Halfway between the top and the bottom of the plate.
+    Feature middle;
+    middle.kind = FeatureKind::Plane;
+    middle.planeKind = PlaneKind::Midplane;
+    middle.body = body;
+    middle.reference = bottom;
+    middle.reference2 = top;
+    const ObjectId mid = document.addFeature(middle);
+    CHECK(document.featureError(mid).empty());
+    state = document.planeState(mid);
+    REQUIRE(state.has_value());
+    CHECK_THAT(std::abs(state->plane.normal.z), WithinAbs(1.0, 1e-9));
+    CHECK_THAT(state->plane.origin.z, WithinAbs(5.0, 1e-9));
+
+    // It follows the plate: twice as thick, and the midplane is at 10.
+    Feature thicker = *document.findFeature(plate);
+    thicker.distance = 20.0;
+    document.changeFeature(plate, thicker);
+    CHECK_THAT(document.planeState(mid)->plane.origin.z, WithinAbs(10.0, 1e-9));
+
+    // Between two planes that meet: XY and the angled one, halving the 30 degrees.
+    Feature halving;
+    halving.kind = FeatureKind::Plane;
+    halving.planeKind = PlaneKind::Midplane;
+    halving.reference = "XY";
+    halving.reference2 = "plane:" + std::to_string(angled.value);
+    const ObjectId half = document.addFeature(halving);
+    CHECK(document.featureError(half).empty());
+    CHECK_THAT(std::abs(document.planeState(half)->plane.normal.z),
+               WithinAbs(std::cos(pi / 12.0), 1e-9));
+    // The same plane twice is nothing to be halfway between.
+    halving.reference2 = "XY";
+    document.changeFeature(half, halving);
+    CHECK_THAT(document.featureError(half), ContainsSubstring("same plane"));
+    document.undo();
+    CHECK(document.featureError(half).empty());
+
+    // An offset from another construction plane.
+    Feature above;
+    above.kind = FeatureKind::Plane;
+    above.reference = "plane:" + std::to_string(mid.value);
+    above.distance = 7.0;
+    const ObjectId over = document.addFeature(above);
+    CHECK(document.featureError(over).empty());
+    // Along the midplane's normal, which is the bottom face's: downward.
+    const double expected = 10.0 + 7.0 * document.planeState(mid)->plane.normal.z;
+    CHECK_THAT(document.planeState(over)->plane.origin.z, WithinAbs(expected, 1e-9));
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("planes.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    for (const auto& warning : loaded.warnings) {
+        UNSCOPED_INFO(warning);
+    }
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(angled)->planeKind == PlaneKind::AtAngle);
+    CHECK(loaded.document->findFeature(mid)->reference2 == top);
+    CHECK_THAT(loaded.document->planeState(mid)->plane.origin.z, WithinAbs(10.0, 1e-9));
+    CHECK_THAT(loaded.document->planeState(over)->plane.origin.z, WithinAbs(expected, 1e-9));
+}
+
+TEST_CASE("Pull through all and draft and split body", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 60.0, 40.0);
+    Document& document = made.document;
+    const ObjectId plate = document.addFeature(pullOf(made.outline, 10.0));
+    const ObjectId body = document.findFeature(plate)->body;
+
+    // A circle on a plane 30 above, cut down through all of the plate.
+    const ObjectId above = document.addSketch(
+        "Above", lcad::kernel::makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch round;
+    round.addCircle({30.0, 20.0}, 5.0);
+    document.setSketchGeometry(above, round, "Circle");
+    Feature hole = pullOf(above, -1.0, Operation::Cut, body);
+    hole.throughAll = true;
+    const ObjectId through = document.addFeature(hole);
+    CHECK(document.featureError(through).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel(60.0 * 40.0 * 10.0 - pi * 25.0 * 10.0, 1e-6));
+    // Thicker plate, still through.
+    Feature thicker = *document.findFeature(plate);
+    thicker.distance = 20.0;
+    document.changeFeature(plate, thicker);
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape),
+               WithinRel((60.0 * 40.0 - pi * 25.0) * 20.0, 1e-6));
+    document.undo();
+    // Up, away from the plate, there is nothing to go through.
+    hole = *document.findFeature(through);
+    hole.distance = 1.0;
+    document.changeFeature(through, hole);
+    CHECK_THAT(document.featureError(through), ContainsSubstring("nothing that way"));
+    document.undo();
+
+    // Draft the four outer sides 3 degrees about the bottom: the plate narrows upward.
+    const double before = lcad::kernel::volume(document.findBody(body)->shape);
+    Feature draft;
+    draft.kind = FeatureKind::Draft;
+    draft.body = body;
+    draft.reference = "XY";
+    draft.angle = 3.0;
+    for (const std::string& name : document.findBody(body)->faceNames) {
+        if (name.rfind(std::to_string(plate.value) + "/side/", 0) == 0) {
+            draft.faces.push_back(name);
+        }
+    }
+    REQUIRE(draft.faces.size() == 4);
+    const ObjectId drafted = document.addFeature(draft);
+    CHECK(document.featureError(drafted).empty());
+    CHECK(document.findFeature(drafted)->name == "Draft 1");
+    const double after = lcad::kernel::volume(document.findBody(body)->shape);
+    CHECK(after < before);
+    CHECK(after > before * 0.9);
+
+    // Split along the YZ plane moved to x = 20: two bodies.
+    Feature cut;
+    cut.kind = FeatureKind::Plane;
+    cut.reference = "YZ";
+    cut.distance = 20.0;
+    const ObjectId plane = document.addFeature(cut);
+    Feature split;
+    split.kind = FeatureKind::SplitBody;
+    split.body = body;
+    split.reference = "plane:" + std::to_string(plane.value);
+    const ObjectId halves = document.addFeature(split);
+    CHECK(document.featureError(halves).empty());
+    std::size_t solids = 0;
+    double total = 0.0;
+    for (const Body& b : document.bodies()) {
+        if (!b.shape.isNull()) {
+            ++solids;
+            total += lcad::kernel::volume(b.shape);
+        }
+    }
+    CHECK(solids == 2);
+    CHECK_THAT(total, WithinRel(after, 1e-6));
+
+    // Saved and opened again.
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("split.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(through)->throughAll);
+    CHECK(loaded.document->findFeature(drafted)->faces == draft.faces);
+    CHECK(loaded.document->findFeature(halves)->reference == split.reference);
+    CHECK(loaded.document->featureError(halves).empty());
+}
+
+TEST_CASE("Combine and move bodies", "[document][feature]") {
+    Document document;
+    // Two plates, the second over half of the first.
+    const ObjectId a = document.addSketch("A", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {40.0, 20.0});
+    document.setSketchGeometry(a, s, "Draw");
+    const ObjectId b = document.addSketch("B", lcad::kernel::planeXY());
+    lcad::sketch::Sketch t;
+    lcad::sketch::addRectangle(t, {20.0, 0.0}, {60.0, 20.0});
+    document.setSketchGeometry(b, t, "Draw");
+    const ObjectId first = document.addFeature(pullOf(a, 10.0));
+    const ObjectId second = document.addFeature(pullOf(b, 10.0));
+    const ObjectId body = document.findFeature(first)->body;
+    const ObjectId other = document.findFeature(second)->body;
+    REQUIRE(body != other);
+
+    // The second cut out of the first, and used up.
+    Feature cut;
+    cut.kind = FeatureKind::Combine;
+    cut.body = body;
+    cut.tools = {other};
+    cut.operation = Operation::Cut;
+    const ObjectId combined = document.addFeature(cut);
+    CHECK(document.featureError(combined).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape), WithinRel(20.0 * 20.0 * 10.0, 1e-9));
+    CHECK(document.findBody(other)->shape.isNull());
+    // It follows the tool: a narrower second plate takes less.
+    lcad::sketch::Sketch narrower;
+    lcad::sketch::addRectangle(narrower, {30.0, 0.0}, {60.0, 20.0});
+    document.setSketchGeometry(b, narrower, "Draw");
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape), WithinRel(30.0 * 20.0 * 10.0, 1e-9));
+    document.undo();
+    // Kept, the tool stays a body.
+    cut = *document.findFeature(combined);
+    cut.keepTools = true;
+    cut.operation = Operation::Join;
+    document.changeFeature(combined, cut);
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape), WithinRel(60.0 * 20.0 * 10.0, 1e-9));
+    CHECK(!document.findBody(other)->shape.isNull());
+
+    // Moved 100 along X and turned a quarter about Z.
+    Feature move;
+    move.kind = FeatureKind::MoveBody;
+    move.body = other;
+    move.moveX = 100.0;
+    const ObjectId moved = document.addFeature(move);
+    CHECK(document.featureError(moved).empty());
+    auto box = lcad::kernel::boundingBox(document.findBody(other)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->min.x, WithinAbs(120.0, 1e-6));
+    // A copy of it, as a body of its own, 50 up.
+    Feature copy;
+    copy.kind = FeatureKind::MoveBody;
+    copy.copy = true;
+    copy.tools = {other};
+    copy.moveZ = 50.0;
+    const ObjectId copied = document.addFeature(copy);
+    CHECK(document.featureError(copied).empty());
+    const ObjectId copyBody = document.findFeature(copied)->body;
+    REQUIRE(copyBody != other);
+    box = lcad::kernel::boundingBox(document.findBody(copyBody)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(box->min.z, WithinAbs(50.0, 1e-6));
+    CHECK_THAT(box->min.x, WithinAbs(120.0, 1e-6));
+    // Turned a quarter about the Z axis: from x 120..160 to y 120..160.
+    move = *document.findFeature(moved);
+    move.reference = "Z";
+    move.angle = 90.0;
+    document.changeFeature(moved, move);
+    box = lcad::kernel::boundingBox(document.findBody(other)->shape);
+    CHECK_THAT(box->min.y, WithinAbs(120.0, 1e-6));
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("combine.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(combined)->tools == std::vector<ObjectId>{other});
+    CHECK(loaded.document->findFeature(copied)->copy);
+    CHECK_THAT(loaded.document->findFeature(moved)->angle, WithinAbs(90.0, 1e-12));
+}
+
+TEST_CASE("Pipes and coils and threads as features", "[document][feature]") {
+    Document document;
+    // A pipe along a line of 50 up from the origin.
+    const ObjectId path = document.addSketch("Path", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch line;
+    line.addLine({0.0, 0.0}, {0.0, 50.0});
+    document.setSketchGeometry(path, line, "Line");
+    Feature tube;
+    tube.kind = FeatureKind::Pipe;
+    tube.pathSketch = path;
+    tube.size = 10.0;
+    tube.wall = 1.0;
+    const ObjectId piped = document.addFeature(tube);
+    CHECK(document.featureError(piped).empty());
+    const ObjectId pipeBody = document.findFeature(piped)->body;
+    CHECK_THAT(lcad::kernel::volume(document.findBody(pipeBody)->shape),
+               WithinRel(pi * (25.0 - 16.0) * 50.0, 1e-6));
+
+    // A coil about the Z axis.
+    Feature spring;
+    spring.kind = FeatureKind::Coil;
+    spring.reference = "Z";
+    spring.size = 30.0;
+    spring.pitch = 4.0;
+    spring.turns = 3.0;
+    spring.section = 2.0;
+    const ObjectId coiled = document.addFeature(spring);
+    CHECK(document.featureError(coiled).empty());
+    // Too thick a wire for the pitch, said so.
+    spring = *document.findFeature(coiled);
+    spring.section = 5.0;
+    document.changeFeature(coiled, spring);
+    CHECK_THAT(document.featureError(coiled), ContainsSubstring("pitch"));
+    document.undo();
+
+    // A thread inside the pipe.
+    std::string inside;
+    for (const std::string& name : document.findBody(pipeBody)->faceNames) {
+        if (name.find("/side/inside") != std::string::npos) {
+            inside = name;
+        }
+    }
+    REQUIRE(!inside.empty());
+    const double before = lcad::kernel::volume(document.findBody(pipeBody)->shape);
+    Feature screw;
+    screw.kind = FeatureKind::Thread;
+    screw.body = pipeBody;
+    screw.faces = {inside};
+    screw.pitch = 1.0;
+    const ObjectId threaded = document.addFeature(screw);
+    CHECK(document.featureError(threaded).empty());
+    CHECK(lcad::kernel::volume(document.findBody(pipeBody)->shape) < before);
+
+    const lcad::test::TempDir directory;
+    const auto file = directory.file("pipe.lcad");
+    saveDocument(document, file);
+    const LoadedDocument loaded = loadDocument(file);
+    CHECK(loaded.warnings.empty());
+    CHECK_THAT(loaded.document->findFeature(piped)->wall, WithinAbs(1.0, 1e-12));
+    CHECK_THAT(loaded.document->findFeature(coiled)->turns, WithinAbs(3.0, 1e-12));
+    CHECK_THAT(loaded.document->findFeature(threaded)->pitch, WithinAbs(1.0, 1e-12));
+}
+
+TEST_CASE("A box made of surfaces and a thickened wall", "[document][feature]") {
+    Document document;
+    // A rectangle on the XY plane and the same on a plane 5 above.
+    const ObjectId base = document.addSketch("Base", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {20.0, 10.0});
+    document.setSketchGeometry(base, s, "Draw");
+    const ObjectId lid = document.addSketch(
+        "Lid", lcad::kernel::makePlane({0.0, 0.0, 5.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    document.setSketchGeometry(lid, s, "Draw");
+
+    Feature walls;
+    walls.kind = FeatureKind::SurfacePull;
+    walls.sketch = base;
+    walls.distance = 5.0;
+    const ObjectId pulled = document.addFeature(walls);
+    CHECK(document.featureError(pulled).empty());
+    const ObjectId sides = document.findFeature(pulled)->body;
+    CHECK(document.findFeature(pulled)->name == "Surface Pull 1");
+    CHECK_THAT(lcad::kernel::surfaceArea(document.findBody(sides)->shape),
+               WithinRel(2.0 * (20.0 + 10.0) * 5.0, 1e-9));
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sides)->shape), WithinAbs(0.0, 1e-9));
+
+    Feature bottom;
+    bottom.kind = FeatureKind::Patch;
+    bottom.sketch = base;
+    const ObjectId floor = document.findFeature(document.addFeature(bottom))->body;
+    Feature top = bottom;
+    top.sketch = lid;
+    const ObjectId cap = document.findFeature(document.addFeature(top))->body;
+
+    // Sewn: a solid box, and the patches used up.
+    Feature sew;
+    sew.kind = FeatureKind::Stitch;
+    sew.body = sides;
+    sew.tools = {floor, cap};
+    sew.size = 0.01;
+    const ObjectId sewn = document.addFeature(sew);
+    CHECK(document.featureError(sewn).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sides)->shape), WithinRel(1000.0, 1e-6));
+    CHECK(document.findBody(floor)->shape.isNull());
+    // It follows the sides: taller than the lid, they no longer close, and it is a surface.
+    walls = *document.findFeature(pulled);
+    walls.distance = 8.0;
+    document.changeFeature(pulled, walls);
+    CHECK(document.featureError(sewn).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sides)->shape), WithinAbs(0.0, 1e-6));
+    document.undo();
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sides)->shape), WithinRel(1000.0, 1e-6));
+
+    // An open wall thickened into a solid.
+    const ObjectId line = document.addSketch("Line", lcad::kernel::planeXY());
+    lcad::sketch::Sketch l;
+    l.addLine({0.0, 30.0}, {40.0, 30.0});
+    document.setSketchGeometry(line, l, "Draw");
+    Feature fence;
+    fence.kind = FeatureKind::SurfacePull;
+    fence.sketch = line;
+    fence.distance = 10.0;
+    const ObjectId sheet = document.findFeature(document.addFeature(fence))->body;
+    Feature thick;
+    thick.kind = FeatureKind::Thicken;
+    thick.body = sheet;
+    thick.size = 2.0;
+    const ObjectId thickened = document.addFeature(thick);
+    CHECK(document.featureError(thickened).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(sheet)->shape), WithinRel(800.0, 1e-6));
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("surfaces.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(sewn)->tools == sew.tools);
+    CHECK_THAT(lcad::kernel::volume(loaded.document->findBody(sides)->shape),
+               WithinRel(1000.0, 1e-6));
+}
+
+TEST_CASE("A body scaled about its middle", "[document][feature]") {
+    Bracket made;
+    drawOutline(made, 20.0, 10.0);
+    Document& document = made.document;
+    const ObjectId plate = document.addFeature(pullOf(made.outline, 10.0));
+    const ObjectId body = document.findFeature(plate)->body;
+    Feature grow;
+    grow.kind = FeatureKind::MoveBody;
+    grow.body = body;
+    grow.scale = 2.0;
+    const ObjectId grown = document.addFeature(grow);
+    CHECK(document.featureError(grown).empty());
+    CHECK_THAT(lcad::kernel::volume(document.findBody(body)->shape), WithinRel(8.0 * 2000.0, 1e-9));
+    // About its middle: it still is where it was.
+    const auto box = lcad::kernel::boundingBox(document.findBody(body)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT((box->min.x + box->max.x) / 2.0, WithinAbs(10.0, 1e-9));
+    CHECK_THAT(box->max.x - box->min.x, WithinAbs(40.0, 1e-9));
+    grow = *document.findFeature(grown);
+    grow.scale = 0.0;
+    document.changeFeature(grown, grow);
+    CHECK_THAT(document.featureError(grown), ContainsSubstring("scale"));
+    document.undo();
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("scale.lcad");
+    saveDocument(document, path);
+    CHECK_THAT(loadDocument(path).document->findFeature(grown)->scale, WithinAbs(2.0, 1e-12));
+}
+
+TEST_CASE("A surface offset from another", "[document][feature]") {
+    Document document;
+    const ObjectId base = document.addSketch("Base", lcad::kernel::planeXY());
+    lcad::sketch::Sketch s;
+    lcad::sketch::addRectangle(s, {0.0, 0.0}, {20.0, 10.0});
+    document.setSketchGeometry(base, s, "Draw");
+    Feature fill;
+    fill.kind = FeatureKind::Patch;
+    fill.sketch = base;
+    const ObjectId sheet = document.findFeature(document.addFeature(fill))->body;
+    Feature offset;
+    offset.kind = FeatureKind::OffsetSurface;
+    offset.tools = {sheet};
+    offset.size = 5.0;
+    const ObjectId made = document.addFeature(offset);
+    CHECK(document.featureError(made).empty());
+    const ObjectId copy = document.findFeature(made)->body;
+    REQUIRE(copy != sheet);
+    CHECK(!document.findBody(sheet)->shape.isNull());
+    CHECK_THAT(lcad::kernel::surfaceArea(document.findBody(copy)->shape), WithinRel(200.0, 1e-9));
+    const auto box = lcad::kernel::boundingBox(document.findBody(copy)->shape);
+    REQUIRE(box.has_value());
+    CHECK_THAT(std::abs(box->min.z), WithinAbs(5.0, 1e-6));
+    CHECK_THAT(box->max.z - box->min.z, WithinAbs(0.0, 1e-6));
+}
+
+TEST_CASE("Open curves turned into a surface", "[document][feature]") {
+    Document document;
+    // A line 10 out from the Z axis, 20 long, on the XZ plane.
+    const ObjectId profile = document.addSketch("Profile", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch s;
+    s.addLine({10.0, 0.0}, {10.0, 20.0});
+    const lcad::sketch::EntityId axis = s.addLine({0.0, -5.0}, {0.0, 25.0});
+    document.setSketchGeometry(profile, s, "Draw");
+    Feature turn;
+    turn.kind = FeatureKind::SurfaceRevolve;
+    turn.sketch = profile;
+    turn.axis = axis;
+    turn.angle = 360.0;
+    const ObjectId made = document.addFeature(turn);
+    CHECK(document.featureError(made).empty());
+    const ObjectId body = document.findFeature(made)->body;
+    // A cylinder's side, without the axis line turned into anything.
+    CHECK_THAT(lcad::kernel::surfaceArea(document.findBody(body)->shape),
+               WithinRel(2.0 * pi * 10.0 * 20.0, 1e-6));
+    // Half a turn, about the Z axis of the model instead.
+    turn = *document.findFeature(made);
+    turn.axis = 0;
+    turn.reference = "Z";
+    turn.angle = 180.0;
+    document.changeFeature(made, turn);
+    CHECK(document.featureError(made).empty());
+    // The line drawn on the axis turns into nothing, as it lies on it: half the cylinder.
+    CHECK_THAT(lcad::kernel::surfaceArea(document.findBody(body)->shape),
+               WithinRel(pi * 10.0 * 20.0, 1e-6));
+
+    const lcad::test::TempDir directory;
+    const auto path = directory.file("vase.lcad");
+    saveDocument(document, path);
+    const LoadedDocument loaded = loadDocument(path);
+    CHECK(loaded.warnings.empty());
+    CHECK(loaded.document->findFeature(made)->reference == "Z");
+}

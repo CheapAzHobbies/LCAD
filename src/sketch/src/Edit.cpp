@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -854,6 +856,12 @@ std::vector<ConstraintId> blockedBy(const Sketch& sketch, ConstraintKind kind, E
 
 Outcome tryDimensionValue(Sketch& sketch, ConstraintId dimension, double value) {
     Outcome outcome;
+    if (const Constraint* found = sketch.findConstraint(dimension);
+        found != nullptr && found->reference) {
+        outcome.refusal = Refusal::Reference;
+        outcome.result = sketch.state();
+        return outcome;
+    }
     const SolveResult before = sketch.state();
     outcome.result = before;
     Sketch work = sketch;
@@ -950,6 +958,222 @@ std::vector<EntityId> mirror(Sketch& sketch, const std::vector<EntityId>& entiti
         }
         work.setConstruction(copy, entity.construction);
         made.push_back(copy);
+    }
+    work.solve();
+    sketch = std::move(work);
+    return made;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Patterns
+
+namespace {
+
+// Adds a copy of entities, each point put where `place` says, with the constraints that are
+// among them only. Returns the copies, in the order of `entities`.
+std::vector<EntityId> copyPlaced(Sketch& work, const Sketch& sketch,
+                                 const std::vector<EntityId>& entities,
+                                 const std::function<Point2(Point2)>& place) {
+    std::map<EntityId, EntityId> copies;
+    std::vector<EntityId> made;
+    const auto map = [&copies](EntityId from, EntityId to) { copies[from] = to; };
+    for (const EntityId id : entities) {
+        const Entity* found = sketch.find(id);
+        if (found == nullptr || found->owner != 0 || id == sketch.origin()) {
+            throw std::invalid_argument("pattern: choose curves and free-standing points");
+        }
+        const Entity entity = *found;
+        const auto at = [&](EntityId point) { return place(sketch.position(point)); };
+        EntityId copy = 0;
+        switch (entity.kind) {
+        case EntityKind::Point:
+            copy = work.addPoint(place({entity.x, entity.y}));
+            break;
+        case EntityKind::Line:
+            copy = work.addLine(at(entity.start), at(entity.end));
+            map(entity.start, work.find(copy)->start);
+            map(entity.end, work.find(copy)->end);
+            break;
+        case EntityKind::Circle:
+            copy = work.addCircle(at(entity.center), entity.radius);
+            map(entity.center, work.find(copy)->center);
+            break;
+        case EntityKind::Arc:
+            copy = work.addArc(at(entity.center), at(entity.start), at(entity.end));
+            map(entity.center, work.find(copy)->center);
+            map(entity.start, work.find(copy)->start);
+            map(entity.end, work.find(copy)->end);
+            break;
+        case EntityKind::Ellipse:
+            copy = work.addEllipse(at(entity.center), at(entity.start), entity.radius);
+            map(entity.center, work.find(copy)->center);
+            map(entity.start, work.find(copy)->start);
+            break;
+        case EntityKind::Spline: {
+            std::vector<Point2> placed;
+            for (const EntityId point : entity.points) {
+                placed.push_back(at(point));
+            }
+            copy = work.addSpline(placed);
+            const std::vector<EntityId> copied = work.find(copy)->points;
+            for (std::size_t i = 0; i < copied.size(); ++i) {
+                map(entity.points[i], copied[i]);
+            }
+            break;
+        }
+        }
+        map(entity.id, copy);
+        work.setConstruction(copy, entity.construction);
+        made.push_back(copy);
+    }
+    // What holds the originals together holds each copy together. Not what holds them in
+    // place: a lock, or a constraint on something that was not copied.
+    for (const Constraint& c : sketch.constraints()) {
+        if (c.kind == ConstraintKind::Fix) {
+            continue;
+        }
+        const auto inside = [&copies](EntityId id) { return id == 0 || copies.contains(id); };
+        if (!inside(c.first) || !inside(c.second) || !inside(c.third)) {
+            continue;
+        }
+        const auto to = [&copies](EntityId id) { return id == 0 ? 0 : copies.at(id); };
+        const ConstraintId copied =
+            work.addConstraint(c.kind, to(c.first), to(c.second), to(c.third), c.value);
+        if (c.reference) {
+            work.setConstraintReference(copied, true);
+        }
+    }
+    return made;
+}
+
+} // namespace
+
+std::vector<EntityId> place(Sketch& sketch, const std::vector<EntityId>& entities,
+                            const Placing& placing, bool copy) {
+    if (entities.empty()) {
+        throw std::invalid_argument("place: there is nothing to move");
+    }
+    if (!std::isfinite(placing.scale) || placing.scale <= 1e-9 || !std::isfinite(placing.angle) ||
+        !std::isfinite(placing.move.x) || !std::isfinite(placing.move.y)) {
+        throw std::invalid_argument("place: it has to be turned, scaled, and moved by numbers");
+    }
+    const double c = std::cos(placing.angle);
+    const double s = std::sin(placing.angle);
+    const auto where = [&](Point2 p) {
+        const Point2 d{p.x - placing.center.x, p.y - placing.center.y};
+        return Point2{placing.center.x + placing.scale * (c * d.x - s * d.y) + placing.move.x,
+                      placing.center.y + placing.scale * (s * d.x + c * d.y) + placing.move.y};
+    };
+    if (copy) {
+        Sketch work = sketch;
+        std::vector<EntityId> made = copyPlaced(work, sketch, entities, where);
+        // A copy made larger keeps the shape, not the size its dimensions say.
+        if (std::abs(placing.scale - 1.0) > 1e-12) {
+            for (const Constraint& constraint : work.constraints()) {
+                const bool ours = std::find(made.begin(), made.end(), constraint.first) != made.end();
+                if (ours && (constraint.kind == ConstraintKind::Radius ||
+                             constraint.kind == ConstraintKind::Diameter)) {
+                    work.setConstraintValue(constraint.id, constraint.value * placing.scale);
+                }
+            }
+        }
+        if (work.solve().status == SolveStatus::Conflicting) {
+            throw std::invalid_argument("place: the copies do not fit their constraints");
+        }
+        sketch = std::move(work);
+        return made;
+    }
+    // Every point of what is moved, and every radius.
+    Parts parts(sketch);
+    for (const EntityId id : entities) {
+        const Entity* entity = sketch.find(id);
+        if (entity == nullptr || entity->owner != 0 || id == sketch.origin() || entity->fixed) {
+            throw std::invalid_argument("place: choose curves and free-standing points");
+        }
+        if (entity->kind == EntityKind::Point) {
+            parts.place(id, where({entity->x, entity->y}));
+            continue;
+        }
+        std::vector<EntityId> points = entity->points;
+        for (const EntityId point : {entity->start, entity->end, entity->center}) {
+            if (point != 0) {
+                points.push_back(point);
+            }
+        }
+        for (const EntityId point : points) {
+            parts.place(point, where(sketch.position(point)));
+        }
+        parts.at(id).radius = entity->radius * placing.scale;
+    }
+    Sketch work = parts.build();
+    const SolveResult result = work.solve();
+    // What held them stays: if they came back, or anything conflicts, it cannot go there.
+    bool went = result.status != SolveStatus::Conflicting;
+    for (const EntityId id : entities) {
+        const Entity* entity = sketch.find(id);
+        const EntityId probe = entity->kind == EntityKind::Point ? id
+                               : entity->start != 0         ? entity->start
+                                                            : entity->center;
+        const Point2 wanted = where(sketch.position(probe));
+        const Point2 got = work.position(probe);
+        went = went && std::hypot(wanted.x - got.x, wanted.y - got.y) < 1e-6;
+    }
+    if (!went) {
+        throw std::invalid_argument("place: the sketch's constraints do not let it go there");
+    }
+    sketch = std::move(work);
+    return entities;
+}
+
+std::vector<EntityId> patternCircular(Sketch& sketch, const std::vector<EntityId>& entities,
+                                      Point2 center, int count, double angle) {
+    if (count < 2 || count > 1000) {
+        throw std::invalid_argument("pattern: it needs from 2 to 1000 in all");
+    }
+    if (!std::isfinite(angle) || std::abs(angle) < 1e-9 || std::abs(angle) > 2.0 * pi + 1e-9) {
+        throw std::invalid_argument("pattern: the angle has to be more than 0 and at most a turn");
+    }
+    if (entities.empty()) {
+        throw std::invalid_argument("pattern: there is nothing to copy");
+    }
+    // A full turn spreads them evenly without the last landing on the first.
+    const bool whole = std::abs(std::abs(angle) - 2.0 * pi) < 1e-9;
+    const double step = angle / (whole ? count : count - 1);
+    Sketch work = sketch;
+    std::vector<EntityId> made;
+    for (int i = 1; i < count; ++i) {
+        const double a = step * i;
+        const double c = std::cos(a);
+        const double s = std::sin(a);
+        const auto turned = [&](Point2 p) {
+            const Point2 d{p.x - center.x, p.y - center.y};
+            return Point2{center.x + c * d.x - s * d.y, center.y + s * d.x + c * d.y};
+        };
+        const std::vector<EntityId> copies = copyPlaced(work, sketch, entities, turned);
+        made.insert(made.end(), copies.begin(), copies.end());
+    }
+    work.solve();
+    sketch = std::move(work);
+    return made;
+}
+
+std::vector<EntityId> patternRectangular(Sketch& sketch, const std::vector<EntityId>& entities,
+                                         Point2 step, int count) {
+    if (count < 2 || count > 1000) {
+        throw std::invalid_argument("pattern: it needs from 2 to 1000 in all");
+    }
+    if (!(std::hypot(step.x, step.y) > 1e-9)) {
+        throw std::invalid_argument("pattern: the copies need a distance between them");
+    }
+    if (entities.empty()) {
+        throw std::invalid_argument("pattern: there is nothing to copy");
+    }
+    Sketch work = sketch;
+    std::vector<EntityId> made;
+    for (int i = 1; i < count; ++i) {
+        const auto moved = [&](Point2 p) { return Point2{p.x + step.x * i, p.y + step.y * i}; };
+        const std::vector<EntityId> copies = copyPlaced(work, sketch, entities, moved);
+        made.insert(made.end(), copies.begin(), copies.end());
     }
     work.solve();
     sketch = std::move(work);
@@ -1370,6 +1594,296 @@ bool extend(Sketch& sketch, EntityId id, Point2 nearPoint) {
     work.solve();
     sketch = std::move(work);
     return true;
+}
+
+CenterRectangleParts addCenterRectangle(Sketch& sketch, Point2 center, Point2 corner) {
+    const Point2 opposite{2.0 * center.x - corner.x, 2.0 * center.y - corner.y};
+    Sketch work = sketch;
+    CenterRectangleParts made;
+    made.sides = addRectangle(work, opposite, corner);
+    const EntityId from = work.find(made.sides.bottom)->start;
+    const EntityId to = work.find(made.sides.top)->start;
+    made.diagonal = work.addLine(work.position(from), work.position(to));
+    work.setConstruction(made.diagonal, true);
+    work.addConstraint(ConstraintKind::Coincident, work.find(made.diagonal)->start, from);
+    work.addConstraint(ConstraintKind::Coincident, work.find(made.diagonal)->end, to);
+    made.center = work.addPoint(center);
+    work.addConstraint(ConstraintKind::Midpoint, made.center, made.diagonal);
+    work.solve();
+    sketch = std::move(work);
+    return made;
+}
+
+std::optional<std::pair<Point2, double>> circleThrough(Point2 a, Point2 b, Point2 c) {
+    const double d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+    const double scale = std::max({std::hypot(b.x - a.x, b.y - a.y),
+                                   std::hypot(c.x - a.x, c.y - a.y), 1e-12});
+    if (std::abs(d) < 1e-9 * scale * scale) {
+        return std::nullopt;
+    }
+    const double a2 = a.x * a.x + a.y * a.y;
+    const double b2 = b.x * b.x + b.y * b.y;
+    const double c2 = c.x * c.x + c.y * c.y;
+    const Point2 center{(a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
+                        (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d};
+    return std::pair<Point2, double>{center, std::hypot(a.x - center.x, a.y - center.y)};
+}
+
+EntityId addArcThrough(Sketch& sketch, Point2 start, Point2 through, Point2 end) {
+    const auto circle = circleThrough(start, through, end);
+    if (!circle.has_value()) {
+        throw std::invalid_argument("addArcThrough: the three points lie in a line");
+    }
+    // Counter-clockwise from start to end if the point between is on the left of the way from
+    // start to end, as seen going round that way.
+    const double side = (end.x - start.x) * (through.y - start.y) -
+                        (end.y - start.y) * (through.x - start.x);
+    return side < 0.0 ? sketch.addArc(circle->first, start, end)
+                       : sketch.addArc(circle->first, end, start);
+}
+
+EntityId addTangentArc(Sketch& sketch, EntityId from, Point2 end) {
+    // The end of a line or an arc there, and the way the curve goes on out of it.
+    EntityId curve = 0;
+    EntityId point = 0;
+    Point2 way;
+    for (const EntityId id : pointsTogether(sketch, from)) {
+        const Entity* owner = sketch.find(sketch.find(id)->owner);
+        if (owner == nullptr || (owner->kind != EntityKind::Line && owner->kind != EntityKind::Arc)) {
+            continue;
+        }
+        const Point2 p = sketch.position(id);
+        if (owner->kind == EntityKind::Line && (id == owner->start || id == owner->end)) {
+            const Point2 q = sketch.position(id == owner->start ? owner->end : owner->start);
+            way = {p.x - q.x, p.y - q.y};
+        } else if (owner->kind == EntityKind::Arc && (id == owner->start || id == owner->end)) {
+            const Point2 c = sketch.position(owner->center);
+            // Counter-clockwise at its end; the other way out of its start.
+            way = id == owner->end ? Point2{-(p.y - c.y), p.x - c.x}
+                                   : Point2{p.y - c.y, -(p.x - c.x)};
+        } else {
+            continue;
+        }
+        curve = owner->id;
+        point = id;
+        break;
+    }
+    if (curve == 0) {
+        throw std::invalid_argument("addTangentArc: it starts at the end of a line or an arc");
+    }
+    const double length = std::hypot(way.x, way.y);
+    const Point2 t{way.x / length, way.y / length};
+    const Point2 s = sketch.position(point);
+    const Point2 n{-t.y, t.x};
+    const Point2 d{end.x - s.x, end.y - s.y};
+    const double across = d.x * n.x + d.y * n.y;
+    const double reach = d.x * d.x + d.y * d.y;
+    if (std::abs(across) < 1e-9 * std::max(std::sqrt(reach), 1.0)) {
+        throw std::invalid_argument("addTangentArc: the end lies straight on, so there is no arc");
+    }
+    const double radius = reach / (2.0 * across);
+    const Point2 center{s.x + n.x * radius, s.y + n.y * radius};
+    Sketch work = sketch;
+    // Turning left goes counter-clockwise from the start; turning right, from the end.
+    const EntityId arc = radius > 0.0 ? work.addArc(center, s, end) : work.addArc(center, end, s);
+    const Entity made = *work.find(arc);
+    work.addConstraint(ConstraintKind::Coincident, radius > 0.0 ? made.start : made.end, point);
+    work.addConstraint(ConstraintKind::Tangent, curve, arc);
+    if (work.solve().status == SolveStatus::Conflicting) {
+        throw std::invalid_argument("addTangentArc: the rest of the sketch does not let it go on");
+    }
+    sketch = std::move(work);
+    return arc;
+}
+
+namespace {
+
+// An end of a line at a corner: the point, its line, the way along the line from the corner,
+// and the line's length.
+struct CornerEnd {
+    EntityId point = 0;
+    EntityId line = 0;
+    Point2 away;
+    double length = 0.0;
+};
+
+struct Corner {
+    std::array<CornerEnd, 2> ends;
+    Point2 at;
+    /// Half the angle between the lines.
+    double half = 0.0;
+};
+
+// The corner where two lines meet at `corner`, an end of either. `what` names the operation in
+// what is thrown.
+Corner cornerAt(const Sketch& sketch, EntityId corner, const std::string& what) {
+    std::vector<CornerEnd> ends;
+    for (const EntityId id : pointsTogether(sketch, corner)) {
+        const Entity* point = sketch.find(id);
+        const Entity* owner = sketch.find(point->owner);
+        // Construction geometry at the corner, such as a center rectangle's diagonal, stays
+        // with the point where the corner was.
+        if (owner == nullptr || owner->construction) {
+            continue;
+        }
+        if (owner->kind != EntityKind::Line || owner->fixed) {
+            throw std::invalid_argument(what + ": only a corner between two lines can be cut");
+        }
+        const EntityId other = owner->start == id ? owner->end : owner->start;
+        const Point2 from = sketch.position(id);
+        const Point2 to = sketch.position(other);
+        CornerEnd end;
+        end.point = id;
+        end.line = owner->id;
+        end.length = std::hypot(to.x - from.x, to.y - from.y);
+        end.away = {(to.x - from.x) / end.length, (to.y - from.y) / end.length};
+        ends.push_back(end);
+    }
+    if (ends.size() != 2 || ends[0].line == ends[1].line) {
+        throw std::invalid_argument(what + ": two lines have to meet at the corner");
+    }
+    Corner found;
+    found.ends = {ends[0], ends[1]};
+    found.at = sketch.position(ends[0].point);
+    const Point2 u1 = ends[0].away;
+    const Point2 u2 = ends[1].away;
+    const double cosine = std::clamp(u1.x * u2.x + u1.y * u2.y, -1.0, 1.0);
+    found.half = std::acos(cosine) / 2.0;
+    if (found.half < 1e-6 || found.half > pi / 2.0 - 1e-6) {
+        throw std::invalid_argument(what + ": the lines are in line, so there is no corner");
+    }
+    return found;
+}
+
+// Shortens both lines of a corner by `back` from it, and moves what was on the corner to a
+// construction point held on both lines where they would meet. The lines' ends are left apart,
+// for what joins them to be added.
+std::pair<Sketch, EntityId> cutBack(const Sketch& sketch, const Corner& corner, double back,
+                                    const std::string& what) {
+    for (const CornerEnd& end : corner.ends) {
+        if (back >= end.length - minimumLength) {
+            throw std::invalid_argument(what + ": it is too large for the lines");
+        }
+    }
+    Parts parts(sketch);
+    const EntityId sharp = parts.addPoint(corner.at, 0);
+    parts.at(sharp).construction = true;
+    std::vector<Constraint> kept;
+    const auto onCorner = [&](EntityId id) {
+        return id == corner.ends[0].point || id == corner.ends[1].point;
+    };
+    for (Constraint c : parts.constraints) {
+        const bool first = onCorner(c.first);
+        const bool second = onCorner(c.second);
+        const bool third = onCorner(c.third);
+        if (!first && !second && !third) {
+            kept.push_back(c);
+            continue;
+        }
+        // The two ends were one point; now what is added joins them.
+        if (c.kind == ConstraintKind::Coincident && first && second) {
+            continue;
+        }
+        c.first = first ? sharp : c.first;
+        c.second = second ? sharp : c.second;
+        c.third = third ? sharp : c.third;
+        // Added below in any case.
+        if (c.kind == ConstraintKind::PointOnLine && c.first == sharp &&
+            (c.second == corner.ends[0].line || c.second == corner.ends[1].line)) {
+            continue;
+        }
+        kept.push_back(c);
+    }
+    parts.constraints = std::move(kept);
+    for (const CornerEnd& end : corner.ends) {
+        parts.place(end.point, {corner.at.x + end.away.x * back, corner.at.y + end.away.y * back});
+    }
+    Sketch work = parts.build();
+    work.addConstraint(ConstraintKind::PointOnLine, sharp, corner.ends[0].line);
+    work.addConstraint(ConstraintKind::PointOnLine, sharp, corner.ends[1].line);
+    return {std::move(work), sharp};
+}
+
+} // namespace
+
+FilletParts fillet(Sketch& sketch, EntityId corner, double radius) {
+    if (!std::isfinite(radius) || radius <= 0.0) {
+        throw std::invalid_argument("fillet: the radius has to be more than 0");
+    }
+    const Corner found = cornerAt(sketch, corner, "fillet");
+    const Point2 at = found.at;
+    const Point2 u1 = found.ends[0].away;
+    const Point2 u2 = found.ends[1].away;
+    // Where the arc meets each line, how far from the corner, and its center on the bisector.
+    const double back = radius / std::tan(found.half);
+    auto [work, sharp] = cutBack(sketch, found, back, "fillet");
+    const Point2 t1{at.x + u1.x * back, at.y + u1.y * back};
+    const Point2 t2{at.x + u2.x * back, at.y + u2.y * back};
+    const double bisectorLength = std::hypot(u1.x + u2.x, u1.y + u2.y);
+    const Point2 bisector{(u1.x + u2.x) / bisectorLength, (u1.y + u2.y) / bisectorLength};
+    const double out = radius / std::sin(found.half);
+    const Point2 center{at.x + bisector.x * out, at.y + bisector.y * out};
+
+    // Counter-clockwise the short way round, from one line to the other.
+    const double turn =
+        (t1.x - center.x) * (t2.y - center.y) - (t1.y - center.y) * (t2.x - center.x);
+    const bool forward = turn > 0.0;
+    const CornerEnd& e1 = found.ends[0];
+    const CornerEnd& e2 = found.ends[1];
+    FilletParts made;
+    made.corner = sharp;
+    made.arc = work.addArc(center, forward ? t1 : t2, forward ? t2 : t1);
+    const Entity arc = *work.find(made.arc);
+    work.addConstraint(ConstraintKind::Coincident, arc.start, forward ? e1.point : e2.point);
+    work.addConstraint(ConstraintKind::Coincident, arc.end, forward ? e2.point : e1.point);
+    work.addConstraint(ConstraintKind::Tangent, e1.line, made.arc);
+    work.addConstraint(ConstraintKind::Tangent, e2.line, made.arc);
+    made.radius = work.addConstraint(ConstraintKind::Radius, made.arc, 0, 0, radius);
+    const SolveResult result = work.solve();
+    if (result.status == SolveStatus::Conflicting) {
+        throw std::invalid_argument("fillet: the rest of the sketch does not let the corner round");
+    }
+    sketch = std::move(work);
+    return made;
+}
+
+ChamferParts chamfer(Sketch& sketch, EntityId corner, double distance) {
+    if (!std::isfinite(distance) || distance <= 0.0) {
+        throw std::invalid_argument("chamfer: the distance has to be more than 0");
+    }
+    const Corner found = cornerAt(sketch, corner, "chamfer");
+    auto [work, sharp] = cutBack(sketch, found, distance, "chamfer");
+    const CornerEnd& e1 = found.ends[0];
+    const CornerEnd& e2 = found.ends[1];
+    const Point2 t1 = work.position(e1.point);
+    const Point2 t2 = work.position(e2.point);
+    ChamferParts made;
+    made.corner = sharp;
+    made.line = work.addLine(t1, t2);
+    const Entity bevel = *work.find(made.line);
+    work.addConstraint(ConstraintKind::Coincident, bevel.start, e1.point);
+    work.addConstraint(ConstraintKind::Coincident, bevel.end, e2.point);
+    // The same distance back along each line: construction lines from the corner, held equal,
+    // one of them dimensioned.
+    std::array<EntityId, 2> legs{};
+    for (std::size_t i = 0; i < 2; ++i) {
+        const CornerEnd& end = found.ends[i];
+        legs[i] = work.addLine(found.at, work.position(end.point));
+        work.setConstruction(legs[i], true);
+        const Entity leg = *work.find(legs[i]);
+        work.addConstraint(ConstraintKind::Coincident, leg.start, sharp);
+        work.addConstraint(ConstraintKind::Coincident, leg.end, end.point);
+    }
+    work.addConstraint(ConstraintKind::Equal, legs[0], legs[1]);
+    made.distance = work.addConstraint(ConstraintKind::Distance, work.find(legs[0])->start,
+                                       work.find(legs[0])->end, 0, distance);
+    const SolveResult result = work.solve();
+    if (result.status == SolveStatus::Conflicting) {
+        throw std::invalid_argument("chamfer: the rest of the sketch does not let the corner be "
+                                    "cut");
+    }
+    sketch = std::move(work);
+    return made;
 }
 
 } // namespace lcad::sketch

@@ -104,6 +104,14 @@ private slots:
     void aFailingFeatureSaysWhy();
     void edgesArePickedInTheViewForAFilletOrChamfer();
     void shellAndRevolveWork();
+    void loftAndSweepWork();
+    void planesAtAnAngleAndMidplanes();
+    void throughAllDraftAndSplit();
+    void combineMovePipeCoilAndThread();
+    void aSectionCutsTheView();
+    void surfacesArePulledPatchedStitchedAndThickened();
+    void theLastCommandCanBeRepeated();
+    void textIsWrittenRaisedAndEngraved();
     void featuresAreSavedAndOpenedAgain();
     void patternsAndMirrorsRepeatFeatures();
     void measureGivesDistancesAndAngles();
@@ -748,6 +756,524 @@ void ModelingInterfaceTest::shellAndRevolveWork() {
     QVERIFY(nearly(volumeOf(window, ring), pi * (400.0 - 100.0) * 20.0, 1e-5));
     QCOMPARE(window.document()->bodies().size(), std::size_t{2});
     Q_UNUSED(body);
+}
+
+void ModelingInterfaceTest::loftAndSweepWork() {
+    MainWindow window;
+    show(window);
+    // A 20 by 20 square on the XY plane, and a circle of radius 5 on a plane 30 above it.
+    const ObjectId base = window.document()->addSketch("Base", lcad::kernel::planeXY());
+    lcad::sketch::Sketch square = window.document()->findSketch(base)->geometry;
+    lcad::sketch::addRectangle(square, {-10.0, -10.0}, {10.0, 10.0});
+    window.document()->setSketchGeometry(base, square, "Rectangle");
+    const ObjectId top = window.document()->addSketch(
+        "Top", lcad::kernel::makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch round = window.document()->findSketch(top)->geometry;
+    round.addCircle({0.0, 0.0}, 5.0);
+    window.document()->setSketchGeometry(top, round, "Circle");
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    QVERIFY(action(window, "solid.loft") != nullptr);
+    QVERIFY(trigger(window, "solid.loft"));
+    FeaturePanel* loft = panel(window);
+    QVERIFY(loft != nullptr);
+    QCOMPARE(loft->kind(), lcad::document::FeatureKind::Loft);
+    QVERIFY(!okButton(loft)->isEnabled());
+    // The square, then the circle: the order they are clicked is the order of the loft.
+    const QPoint onSquare = at(window, 8.0, -8.0, 0.0);
+    const QPoint onCircle = at(window, 0.0, 0.0, 30.0);
+    QVERIFY(window.viewport()->profileAt(onSquare).has_value());
+    QCOMPARE(window.viewport()->profileAt(onSquare)->sketch, base);
+    QCOMPARE(window.viewport()->profileAt(onCircle)->sketch, top);
+    click(window, onSquare);
+    QCOMPARE(loft->feature().sketch, base);
+    QVERIFY(loft->feature().sections.empty());
+    QVERIFY(!okButton(loft)->isEnabled());
+    click(window, onCircle);
+    QCOMPARE(loft->feature().sections.size(), std::size_t{1});
+    QCOMPARE(loft->feature().sections.front().sketch, top);
+    QVERIFY(loft->findChild<QLabel*>(QStringLiteral("featureInput"))
+                ->text()
+                .contains(QStringLiteral("Base")));
+    QTRY_VERIFY(loft->errorText().isEmpty());
+    QVERIFY(okButton(loft)->isEnabled());
+    QTest::mouseClick(okButton(loft), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId lofted = window.document()->features().back().id;
+    QCOMPARE(window.document()->findFeature(lofted)->kind, lcad::document::FeatureKind::Loft);
+    const double volume = volumeOf(window, lofted);
+    QVERIFY(volume < 400.0 * 30.0);
+    QVERIFY(volume > pi * 25.0 * 30.0);
+    // Its sketches have done their work and are put away.
+    QVERIFY(!window.document()->findSketch(base)->visible);
+    QVERIFY(!window.document()->findSketch(top)->visible);
+
+    // Sweep: a circle on the XZ plane well away from the loft, along a line from its center.
+    const ObjectId profile = window.document()->addSketch("Profile", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch disc = window.document()->findSketch(profile)->geometry;
+    disc.addCircle({100.0, 10.0}, 2.0);
+    window.document()->setSketchGeometry(profile, disc, "Circle");
+    const ObjectId path = window.document()->addSketch(
+        "Path", lcad::kernel::makePlane({0.0, 0.0, 10.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch line = window.document()->findSketch(path)->geometry;
+    line.addLine({100.0, 0.0}, {100.0, -40.0});
+    window.document()->setSketchGeometry(path, line, "Line");
+    window.viewport()->fitAll();
+    render(window);
+    QVERIFY(trigger(window, "solid.sweep"));
+    FeaturePanel* sweep = panel(window);
+    QVERIFY(sweep != nullptr);
+    // The sketch without a closed outline is taken as the path.
+    auto* paths = sweep->findChild<QComboBox*>(QStringLiteral("path"));
+    QVERIFY(paths != nullptr);
+    QCOMPARE(sweep->feature().pathSketch, path);
+    const std::vector<lcad::viewport::Profile> pickable = window.viewport()->pickableProfiles();
+    const auto disk = std::find_if(pickable.begin(), pickable.end(),
+                                   [profile](const auto& p) { return p.sketch == profile; });
+    QVERIFY(disk != pickable.end());
+    window.viewport()->setPickedProfiles({*disk});
+    sweep->setProfiles(profile, {disk->outline});
+    QCOMPARE(sweep->feature().operation, Operation::NewBody);
+    QTRY_VERIFY2(sweep->errorText().isEmpty(), qPrintable(sweep->errorText()));
+    QTest::mouseClick(okButton(sweep), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId swept = window.document()->features().back().id;
+    QCOMPARE(window.document()->findFeature(swept)->kind, lcad::document::FeatureKind::Sweep);
+    QVERIFY(nearly(volumeOf(window, swept), pi * 4.0 * 40.0, 1e-5));
+    QCOMPARE(window.document()->bodies().size(), std::size_t{2});
+    window.viewport()->fitAll();
+    render(window);
+    lcad::test::keepFrame(window.grab().toImage(), "loft-and-sweep");
+}
+
+void ModelingInterfaceTest::planesAtAnAngleAndMidplanes() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    // Offset: an arrow in the 3D view, and what is typed beside it is the offset.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* offset = panel(window);
+    QVERIFY(offset != nullptr);
+    QTRY_VERIFY(window.viewport()->hasDistanceHandle());
+    render(window);
+    QLineEdit* field = window.viewport()->distanceField();
+    QVERIFY(field != nullptr);
+    field->setFocus();
+    field->selectAll();
+    QTest::keyClicks(field, QStringLiteral("15"));
+    QTest::keyClick(field, Qt::Key_Return);
+    QCOMPARE(offset->value(QStringLiteral("distance")), 15.0);
+    QTest::keyClick(offset, Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(!window.viewport()->hasDistanceHandle());
+
+    // At an angle: the XY plane turned 30 degrees about the X axis, chosen in the panel.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* angled = panel(window);
+    QVERIFY(angled != nullptr);
+    auto* second = angled->findChild<QComboBox*>(QStringLiteral("planeSecond"));
+    QVERIFY(second != nullptr);
+    QVERIFY(!second->isVisible());
+    angled->setChoice(QStringLiteral("planeKind"), 1);
+    QVERIFY(second->isVisible());
+    QCOMPARE(second->currentText(), QStringLiteral("X Axis"));
+    QVERIFY(!angled->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))->isVisible());
+    typeInto(angled, "angle", 30.0);
+    QCOMPARE(angled->feature().planeKind, lcad::document::PlaneKind::AtAngle);
+    QTRY_VERIFY2(angled->errorText().isEmpty(), qPrintable(angled->errorText()));
+    QTest::mouseClick(okButton(angled), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId tilted = window.document()->features().back().id;
+    const auto tilt = window.document()->planeState(tilted);
+    QVERIFY(tilt.has_value());
+    QVERIFY(nearly(std::abs(tilt->plane.normal.z), std::cos(pi / 6.0)));
+
+    // An edge clicked in the 3D view is the axis to turn about.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* byEdge = panel(window);
+    QVERIFY(byEdge != nullptr);
+    byEdge->setChoice(QStringLiteral("planeKind"), 1);
+    click(window, at(window, 30.0, 0.0, 8.0));
+    QVERIFY2(byEdge->feature().reference2.find('|') != std::string::npos,
+             byEdge->feature().reference2.c_str());
+    QCOMPARE(byEdge->feature().body, bodyOf(window, plate).id);
+    QTRY_VERIFY2(byEdge->errorText().isEmpty(), qPrintable(byEdge->errorText()));
+    QTest::keyClick(byEdge, Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+
+    // Midplane: the top of the plate clicked, and the XY plane, which its bottom lies in.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* middle = panel(window);
+    QVERIFY(middle != nullptr);
+    middle->setChoice(QStringLiteral("planeKind"), 2);
+    second = middle->findChild<QComboBox*>(QStringLiteral("planeSecond"));
+    QVERIFY(second->isVisible());
+    click(window, at(window, 30.0, 20.0, 8.0));
+    QVERIFY(middle->feature().reference.find("/end/") != std::string::npos);
+    QCOMPARE(middle->feature().body, bodyOf(window, plate).id);
+    middle->setChoice(QStringLiteral("planeSecond"), 0);
+    QCOMPARE(middle->feature().reference2, std::string("XY"));
+    QTRY_VERIFY2(middle->errorText().isEmpty(), qPrintable(middle->errorText()));
+    QTest::mouseClick(okButton(middle), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId mid = window.document()->features().back().id;
+    QVERIFY(nearly(window.document()->planeState(mid)->plane.origin.z, 4.0));
+
+    // Editing it shows what it is.
+    QVERIFY(window.editFeature(mid));
+    FeaturePanel* edited = panel(window);
+    QVERIFY(edited != nullptr);
+    QCOMPARE(edited->findChild<QComboBox*>(QStringLiteral("planeKind"))->currentIndex(), 2);
+    QCOMPARE(edited->feature().reference2, std::string("XY"));
+    QTest::keyClick(edited, Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+}
+
+void ModelingInterfaceTest::throughAllDraftAndSplit() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    // A circle on a plane above the plate, cut down through all of it.
+    const ObjectId above = window.document()->addSketch(
+        "Above", lcad::kernel::makePlane({0.0, 0.0, 30.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    lcad::sketch::Sketch round = window.document()->findSketch(above)->geometry;
+    round.addCircle({30.0, 20.0}, 5.0);
+    window.document()->setSketchGeometry(above, round, "Circle");
+    window.browser()->sketchItem(above)->setSelected(true);
+    QVERIFY(trigger(window, "solid.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    QCOMPARE(pull->feature().sketch, above);
+    pull->setChoice(QStringLiteral("extent"), 4);
+    QVERIFY(pull->feature().throughAll);
+    QVERIFY(!pull->findChild<QDoubleSpinBox*>(QStringLiteral("distance"))->isVisible());
+    QTest::mouseClick(pull->findChild<QPushButton*>(QStringLiteral("flip")), Qt::LeftButton);
+    pull->setChoice(QStringLiteral("operation"), 2);
+    QTRY_VERIFY2(pull->errorText().isEmpty(), qPrintable(pull->errorText()));
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(nearly(volumeOf(window, plate), (60.0 * 40.0 - pi * 25.0) * 8.0, 1e-5));
+
+    // Draft: the front face clicked, tilted about the XY plane.
+    QVERIFY(action(window, "solid.draft") != nullptr);
+    QVERIFY(trigger(window, "solid.draft"));
+    FeaturePanel* draft = panel(window);
+    QVERIFY(draft != nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Faces);
+    click(window, at(window, 30.0, 0.0, 4.0));
+    QCOMPARE(draft->feature().faces.size(), std::size_t{1});
+    QCOMPARE(draft->feature().body, body);
+    QCOMPARE(draft->feature().reference, std::string("XY"));
+    const double before = volumeOf(window, plate);
+    QTRY_VERIFY2(draft->errorText().isEmpty(), qPrintable(draft->errorText()));
+    QTest::mouseClick(okButton(draft), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QCOMPARE(window.document()->features().back().kind, lcad::document::FeatureKind::Draft);
+    QVERIFY(volumeOf(window, plate) != before);
+
+    // Split along the YZ plane: the body clicked, then two bodies.
+    QVERIFY(trigger(window, "solid.split"));
+    FeaturePanel* split = panel(window);
+    QVERIFY(split != nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Bodies);
+    split->setChoice(QStringLiteral("reference"), 2);
+    QCOMPARE(split->feature().reference, std::string("YZ"));
+    QCOMPARE(split->feature().body, body);
+    // The plate starts at x = 0, so the YZ plane only touches it: nothing to split.
+    QTRY_VERIFY(!split->errorText().isEmpty());
+    // A plane through its middle does.
+    QTest::keyClick(split, Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+    lcad::document::Feature middle;
+    middle.kind = lcad::document::FeatureKind::Plane;
+    middle.reference = "YZ";
+    middle.distance = 30.0;
+    const ObjectId cutPlane = window.document()->addFeature(middle);
+    QVERIFY(trigger(window, "solid.split"));
+    split = panel(window);
+    QVERIFY(split != nullptr);
+    auto* along = split->findChild<QComboBox*>(QStringLiteral("reference"));
+    const int index =
+        along->findData(QStringLiteral("plane:%1").arg(QString::number(cutPlane.value)));
+    QVERIFY(index >= 0);
+    split->setChoice(QStringLiteral("reference"), index);
+    QTRY_VERIFY2(split->errorText().isEmpty(), qPrintable(split->errorText()));
+    QTest::mouseClick(okButton(split), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    int solids = 0;
+    for (const lcad::document::Body& b : window.document()->bodies()) {
+        solids += b.shape.isNull() ? 0 : 1;
+    }
+    QCOMPARE(solids, 2);
+}
+
+void ModelingInterfaceTest::combineMovePipeCoilAndThread() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId body = bodyOf(window, plate).id;
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    // Pipe: a rod 10 across up a line from the middle of the plate, a body of its own.
+    const ObjectId path = window.document()->addSketch("Path", lcad::kernel::planeXZ());
+    lcad::sketch::Sketch line = window.document()->findSketch(path)->geometry;
+    line.addLine({30.0, 0.0}, {30.0, 30.0});
+    window.document()->setSketchGeometry(path, line, "Line");
+    QVERIFY(trigger(window, "solid.pipe"));
+    FeaturePanel* pipe = panel(window);
+    QVERIFY(pipe != nullptr);
+    QCOMPARE(pipe->feature().pathSketch, path);
+    QCOMPARE(pipe->feature().operation, Operation::NewBody);
+    typeInto(pipe, "wall", 0.0);
+    QTRY_VERIFY2(pipe->errorText().isEmpty(), qPrintable(pipe->errorText()));
+    QTest::mouseClick(okButton(pipe), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId rodFeature = window.document()->features().back().id;
+    const ObjectId rod = bodyOf(window, rodFeature).id;
+    QVERIFY(nearly(volumeOf(window, rodFeature), pi * 25.0 * 30.0, 1e-5));
+    QVERIFY(!window.document()->findSketch(path)->visible);
+
+    // Thread on the rod: its round face clicked.
+    window.viewport()->fitAll();
+    render(window);
+    QVERIFY(trigger(window, "solid.thread"));
+    FeaturePanel* thread = panel(window);
+    QVERIFY(thread != nullptr);
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Faces);
+    const auto box = lcad::kernel::boundingBox(window.document()->findBody(rod)->shape);
+    QVERIFY(box.has_value());
+    click(window, at(window, 30.0, -5.0, 20.0));
+    QCOMPARE(thread->feature().body, rod);
+    QCOMPARE(thread->feature().faces.size(), std::size_t{1});
+    QTRY_VERIFY2(thread->errorText().isEmpty(), qPrintable(thread->errorText()));
+    const double before = volumeOf(window, rodFeature);
+    QTest::mouseClick(okButton(thread), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(volumeOf(window, rodFeature) < before);
+
+    // Combine: the rod joined to the plate, by clicking it.
+    window.viewport()->clearSelection();
+    window.browser()->setSelection({body}, {});
+    QVERIFY(trigger(window, "solid.combine"));
+    FeaturePanel* combine = panel(window);
+    QVERIFY(combine != nullptr);
+    QCOMPARE(combine->feature().body, body);
+    QVERIFY(!okButton(combine)->isEnabled());
+    QCOMPARE(window.viewport()->selectionFilter(), lcad::viewport::SelectionFilter::Bodies);
+    combine->setBody(rod);
+    QCOMPARE(combine->feature().tools, std::vector<ObjectId>{rod});
+    QTRY_VERIFY2(combine->errorText().isEmpty(), qPrintable(combine->errorText()));
+    QTest::mouseClick(okButton(combine), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(window.document()->findBody(rod)->shape.isNull());
+
+    // Move/Copy: a copy of the plate 100 along X.
+    window.browser()->setSelection({body}, {});
+    QVERIFY(trigger(window, "solid.moveBody"));
+    FeaturePanel* move = panel(window);
+    QVERIFY(move != nullptr);
+    QCOMPARE(move->feature().body, body);
+    // The thread's long work showed a window of its own; the window takes typing again.
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    typeInto(move, "moveX", 100.0);
+    move->findChild<QCheckBox*>(QStringLiteral("copy"))->setChecked(true);
+    QCOMPARE(move->feature().moveX, 100.0);
+    QVERIFY(move->feature().copy);
+    QTRY_VERIFY2(move->errorText().isEmpty(), qPrintable(move->errorText()));
+    QTest::mouseClick(okButton(move), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId copied = window.document()->features().back().id;
+    const auto moved = lcad::kernel::boundingBox(bodyOf(window, copied).shape);
+    QVERIFY(moved.has_value());
+    QVERIFY(nearly(moved->min.x, 100.0));
+
+    // Coil about the Z axis.
+    QVERIFY(trigger(window, "solid.coil"));
+    FeaturePanel* coil = panel(window);
+    QVERIFY(coil != nullptr);
+    QCOMPARE(coil->feature().reference, std::string("Z"));
+    QTRY_VERIFY2(coil->errorText().isEmpty(), qPrintable(coil->errorText()));
+    QTest::mouseClick(okButton(coil), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QCOMPARE(window.document()->features().back().kind, lcad::document::FeatureKind::Coil);
+    QVERIFY(window.document()->featureError(window.document()->features().back().id).empty());
+}
+
+void ModelingInterfaceTest::aSectionCutsTheView() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+    QVERIFY(!window.viewport()->section().has_value());
+
+    // On: through the middle of the plate, along the XZ plane.
+    QVERIFY(trigger(window, "view.section"));
+    auto* bar = window.findChild<QFrame*>(QStringLiteral("sectionBar"));
+    QVERIFY(bar != nullptr && bar->isVisible());
+    auto section = window.viewport()->section();
+    QVERIFY(section.has_value());
+    QVERIFY(nearly(section->origin.y, 20.0));
+    QVERIFY(nearly(std::abs(section->normal.y), 1.0));
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-section");
+
+    // Moved, and turned the other way.
+    auto* offset = bar->findChild<QDoubleSpinBox*>(QStringLiteral("sectionOffset"));
+    offset->setValue(offset->value() - 5.0);
+    QVERIFY(nearly(std::abs(window.viewport()->section()->origin.y - 20.0), 5.0));
+    const double before = window.viewport()->section()->normal.y;
+    QTest::mouseClick(bar->findChild<QToolButton*>(QStringLiteral("sectionFlip")), Qt::LeftButton);
+    QVERIFY(nearly(window.viewport()->section()->normal.y, -before));
+
+    // Off: whole again.
+    QTest::mouseClick(bar->findChild<QToolButton*>(QStringLiteral("sectionClose")),
+                      Qt::LeftButton);
+    QVERIFY(!bar->isVisible());
+    QVERIFY(!window.viewport()->section().has_value());
+    QVERIFY(!action(window, "view.section")->isChecked());
+}
+
+void ModelingInterfaceTest::surfacesArePulledPatchedStitchedAndThickened() {
+    MainWindow window;
+    show(window);
+    const auto [outline, width] = drawPlate(window, 20.0, 10.0);
+    Q_UNUSED(width);
+    window.finishSketch();
+    window.viewport()->setStandardView(StandardView::Home);
+    window.viewport()->fitAll();
+    render(window);
+
+    // The four sides of the rectangle pulled up 5 as a surface.
+    window.browser()->setSelection({}, {outline});
+    QVERIFY(trigger(window, "surface.pull"));
+    FeaturePanel* pull = panel(window);
+    QVERIFY(pull != nullptr);
+    QCOMPARE(pull->feature().sketch, outline);
+    typeInto(pull, "distance", 5.0);
+    QTRY_VERIFY2(pull->errorText().isEmpty(), qPrintable(pull->errorText()));
+    QTest::mouseClick(okButton(pull), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId walls = bodyOf(window, window.document()->features().back().id).id;
+    QVERIFY(nearly(lcad::kernel::surfaceArea(window.document()->findBody(walls)->shape), 300.0));
+
+    // The bottom patched: the outline's area picked.
+    window.browser()->setSelection({}, {outline});
+    QVERIFY(trigger(window, "surface.patch"));
+    FeaturePanel* patch = panel(window);
+    QVERIFY(patch != nullptr);
+    QTRY_VERIFY(!patch->feature().regions.empty());
+    QTest::mouseClick(okButton(patch), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const ObjectId floor = bodyOf(window, window.document()->features().back().id).id;
+
+    // Sewn: still open at the top, so a surface.
+    window.browser()->setSelection({walls}, {});
+    QVERIFY(trigger(window, "surface.stitch"));
+    FeaturePanel* stitch = panel(window);
+    QVERIFY(stitch != nullptr);
+    QCOMPARE(stitch->feature().body, walls);
+    stitch->setBody(floor);
+    QCOMPARE(stitch->feature().tools, std::vector<ObjectId>{floor});
+    QTRY_VERIFY2(stitch->errorText().isEmpty(), qPrintable(stitch->errorText()));
+    QTest::mouseClick(okButton(stitch), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(window.document()->findBody(floor)->shape.isNull());
+
+    // Thickened 1: an open box with walls.
+    window.browser()->setSelection({walls}, {});
+    QVERIFY(trigger(window, "surface.thicken"));
+    FeaturePanel* thicken = panel(window);
+    QVERIFY(thicken != nullptr);
+    QCOMPARE(thicken->feature().body, walls);
+    typeInto(thicken, "size", 1.0);
+    QTRY_VERIFY2(thicken->errorText().isEmpty(), qPrintable(thicken->errorText()));
+    QTest::mouseClick(okButton(thicken), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const double volume = lcad::kernel::volume(window.document()->findBody(walls)->shape);
+    QVERIFY2(volume > 300.0 && volume < 600.0, qPrintable(QString::number(volume)));
+}
+
+void ModelingInterfaceTest::theLastCommandCanBeRepeated() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.commands()->refresh();
+    // The pull was the last.
+    QVERIFY(action(window, "edit.repeat")->text().contains(QStringLiteral("Pull")));
+    QVERIFY(trigger(window, "solid.fillet"));
+    QVERIFY(panel(window) != nullptr);
+    QTest::keyClick(panel(window), Qt::Key_Escape);
+    QTRY_VERIFY(panel(window) == nullptr);
+    window.commands()->refresh();
+    QVERIFY(action(window, "edit.repeat")->isEnabled());
+    QVERIFY(action(window, "edit.repeat")->text().contains(QStringLiteral("Fillet")));
+    QVERIFY(trigger(window, "edit.repeat"));
+    QVERIFY(panel(window) != nullptr);
+    QCOMPARE(panel(window)->kind(), lcad::document::FeatureKind::Fillet);
+}
+
+void ModelingInterfaceTest::textIsWrittenRaisedAndEngraved() {
+    MainWindow window;
+    show(window);
+    drawPlate(window, 60.0, 40.0);
+    const ObjectId plate = pullPlate(window);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const double whole = volumeOf(window, plate);
+
+    // Engraved into the top of the plate: a sketch there, Cut, half a millimeter in.
+    const ObjectId top = window.document()->addSketch(
+        "Top", lcad::kernel::makePlane({0.0, 0.0, 8.0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}));
+    window.browser()->setSelection({}, {top});
+    QVERIFY(trigger(window, "solid.text"));
+    FeaturePanel* text = panel(window);
+    QVERIFY(text != nullptr);
+    QCOMPARE(text->feature().sketch, top);
+    auto* words = text->findChild<QLineEdit*>(QStringLiteral("text"));
+    QVERIFY(words != nullptr);
+    words->selectAll();
+    QTest::keyClicks(words, QStringLiteral("LCAD 01"));
+    QCOMPARE(text->feature().text, std::string("LCAD 01"));
+    typeInto(text, "textU", 10.0);
+    typeInto(text, "textV", 10.0);
+    typeInto(text, "distance", -0.5);
+    text->setChoice(QStringLiteral("operation"), 2);
+    QCOMPARE(text->feature().operation, Operation::Cut);
+    QTRY_VERIFY2(text->errorText().isEmpty(), qPrintable(text->errorText()));
+    QTest::mouseClick(okButton(text), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    QVERIFY(volumeOf(window, plate) < whole);
+    QVERIFY(volumeOf(window, plate) > whole - 100.0);
+    QCOMPARE(window.document()->features().back().kind, lcad::document::FeatureKind::Text);
+    window.viewport()->setStandardView(StandardView::Top);
+    window.viewport()->fitAll();
+    render(window);
+    keepFrame(window.grab().toImage(), "modeling-text");
 }
 
 void ModelingInterfaceTest::featuresAreSavedAndOpenedAgain() {
@@ -1468,10 +1994,12 @@ void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
     QVERIFY2(around->errorText().isEmpty(), qPrintable(around->errorText()));
     QTest::mouseClick(okButton(around), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);
-    const auto box = lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
-    QVERIFY(box.has_value());
-    QVERIFY(nearly(box->max.x, 170.0, 1e-6));
-    QVERIFY(nearly(box->max.y, 150.0, 1e-6));
+    // Long work is done off the window's thread, so the copy may take a moment to arrive.
+    const auto boxOfRing = [&window, ringBody] {
+        return lcad::kernel::boundingBox(window.document()->findBody(ringBody)->shape);
+    };
+    QTRY_VERIFY(boxOfRing().has_value() && nearly(boxOfRing()->max.x, 170.0, 1e-6) &&
+                nearly(boxOfRing()->max.y, 150.0, 1e-6));
     render(window);
     keepFrame(window.grab().toImage(), "modeling-axes");
 

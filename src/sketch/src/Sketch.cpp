@@ -583,6 +583,32 @@ void Sketch::setConstraintMarker(ConstraintId id, int index, double shift, int s
                                 std::to_string(id));
 }
 
+void Sketch::setConstraintReference(ConstraintId id, bool reference) {
+    for (Constraint& constraint : m_constraints) {
+        if (constraint.id == id) {
+            if (reference && !isDimension(constraint.kind)) {
+                throw std::invalid_argument(
+                    "setConstraintReference: only a dimension can be a reference");
+            }
+            constraint.reference = reference;
+            return;
+        }
+    }
+    throw std::invalid_argument("setConstraintReference: there is no constraint " +
+                                std::to_string(id));
+}
+
+void Sketch::setConstraintLabel(ConstraintId id, std::optional<Point2> label) {
+    for (Constraint& constraint : m_constraints) {
+        if (constraint.id == id) {
+            constraint.label = label;
+            return;
+        }
+    }
+    throw std::invalid_argument("setConstraintLabel: there is no constraint " +
+                                std::to_string(id));
+}
+
 void Sketch::setConstraintValue(ConstraintId id, double value) {
     for (Constraint& constraint : m_constraints) {
         if (constraint.id != id) {

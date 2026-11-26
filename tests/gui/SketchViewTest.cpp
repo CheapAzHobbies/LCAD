@@ -104,14 +104,23 @@ private slots:
     void aLineIsDimensionedByClickingIt();
     void anImpossibleOrMeaninglessValueIsKeptForCorrection();
     void markersAndValuesCanBePickedAndDeleted();
+    void aDimensionsValueCanBeDraggedElsewhere();
 
     // Selecting and moving
     void clicksAndABoxSelect();
     void draggingMovesFreeGeometryAsOneUndoStep();
+    void aDraggedPointJoinsWhatItIsLetGoOn();
     void deleteAndConstructionActOnTheSelection();
 
     // Modifying
     void trimAndExtendActOnTheCurveClicked();
+    void aCornerIsRoundedAndItsRadiusTyped();
+    void moreWaysToDrawAndACornerCutStraight();
+    void patternsCopyWhatIsSelected();
+    void linesLineUpWithOtherLinesAndCrossings();
+    void clicksGoToRoundNumbersOnTheGrid();
+    void selectedGeometryIsMovedTurnedAndScaled();
+    void anOverConstrainingDimensionBecomesAReference();
     void offsetAndMirror();
     void projectBringsEdgesOfABodyIntoTheSketch();
     void aDimensionIsHorizontalOrVerticalByWhereItIsPut();
@@ -407,10 +416,13 @@ void SketchViewTest::whatStopsAConstraintFlashesRed() {
     QVERIFY(!editor()->addDimension());
     QCOMPARE(editor()->refusedBy(), std::vector<lcad::sketch::ConstraintId>{dimension});
 
-    // The opposite side has that length already, and the dimension is why.
+    // The opposite side has that length already, and the dimension is why: it flashes, and the
+    // new one goes in as a reference dimension.
     editor()->setSelection({sides[2].id});
-    QVERIFY(!editor()->addDimension());
+    QVERIFY(editor()->addDimension());
     QCOMPARE(editor()->refusedBy(), std::vector<lcad::sketch::ConstraintId>{dimension});
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Reference Dimension"));
+    m_document->undo();
 
     // Any kind of constraint: a level line made level again.
     editor()->setSelection({side});
@@ -443,15 +455,13 @@ void SketchViewTest::midpointGoesOnLines() {
         }
     }
 
-    // With the tool: a line clicked twice is the same thing.
+    // With the tool: one click on a line is the same thing.
     editor()->clearSelection();
     editor()->setConstraintTool(ConstraintKind::Midpoint);
     click(at(10.0, 0.0));
-    QCOMPARE(count(ConstraintKind::Midpoint), 1);
-    click(at(10.0, 0.0));
     QCOMPARE(count(ConstraintKind::Midpoint), 2);
 
-    // And a point that is there already goes to the middle of the line, clicked in either order.
+    // And a point that is there already goes to the middle of the line clicked after it.
     editor()->setTool(SketchTool::Line);
     click(at(0.0, 30.0));
     click(at(30.0, 30.0));
@@ -1706,6 +1716,59 @@ void SketchViewTest::draggingMovesFreeGeometryAsOneUndoStep() {
     QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Pin"));
 }
 
+void SketchViewTest::aDraggedPointJoinsWhatItIsLetGoOn() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    editor()->setTool(SketchTool::Line);
+    click(at(80.0, -20.0));
+    click(at(100.0, -10.0));
+    QTest::keyClick(m_viewport, Qt::Key_Escape);
+    render();
+    editor()->setTool(SketchTool::Select);
+    const Sketch drawn = sketch();
+    const std::vector<Entity> lines = curves(EntityKind::Line);
+    QCOMPARE(lines.size(), std::size_t{5});
+    const Entity loose = lines.back();
+    const auto joins = [this](ConstraintKind kind, EntityId a, EntityId b) {
+        const auto& all = sketch().constraints();
+        return std::any_of(all.begin(), all.end(), [&](const auto& c) {
+            return c.kind == kind &&
+                   ((c.first == a && c.second == b) || (c.first == b && c.second == a));
+        });
+    };
+
+    // A corner let go near the origin goes onto it and stays there, and the rectangle follows.
+    drag(at(10.0, 10.0), at(1.0, -1.0));
+    const Point2 joined = startOf(lines[0].id);
+    QVERIFY2(apart(joined, {0.0, 0.0}) < 1e-6,
+             qPrintable(QStringLiteral("%1 %2").arg(joined.x).arg(joined.y)));
+    QVERIFY(joins(ConstraintKind::Coincident, lines[0].start, sketch().origin()) ||
+            joins(ConstraintKind::Coincident, lines[3].end, sketch().origin()));
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Drag"));
+
+    // The end of a loose line, onto a corner of the rectangle.
+    drag(at(80.0, -20.0), at(59.0, 41.0));
+    QVERIFY(apart(startOf(loose.id), endOf(lines[1].id)) < 1e-6);
+    QVERIFY(joins(ConstraintKind::Coincident, loose.start, lines[1].end) ||
+            joins(ConstraintKind::Coincident, loose.start, lines[2].start));
+    // The corner it joined stays put when the line's other end is dragged.
+    const Point2 corner = endOf(lines[1].id);
+    drag(at(100.0, -10.0), at(110.0, 0.0));
+    QVERIFY(apart(startOf(loose.id), corner) < 1e-6);
+
+    // One undo takes back each drag with what it joined.
+    m_document->undo();
+    m_document->undo();
+    QVERIFY(apart(startOf(loose.id), {80.0, -20.0}) < 1e-6);
+    QVERIFY(!joins(ConstraintKind::Coincident, loose.start, lines[1].end) &&
+            !joins(ConstraintKind::Coincident, loose.start, lines[2].start));
+    m_document->undo();
+    QCOMPARE(sketch().constraints().size(), drawn.constraints().size());
+    QVERIFY(apart(startOf(lines[0].id), {10.0, 10.0}) < 1e-6);
+}
+
 void SketchViewTest::deleteAndConstructionActOnTheSelection() {
     openSketch();
     editor()->setTool(SketchTool::Rectangle);
@@ -1748,6 +1811,353 @@ void SketchViewTest::deleteAndConstructionActOnTheSelection() {
 
 // ---------------------------------------------------------------------------------------------
 // Modifying
+
+void SketchViewTest::aCornerIsRoundedAndItsRadiusTyped() {
+    openSketch();
+    editor()->setTool(SketchTool::Rectangle);
+    click(at(10.0, 10.0));
+    click(at(60.0, 40.0));
+    editor()->setTool(SketchTool::Fillet);
+    QVERIFY2(editor()->hint().contains(QStringLiteral("corner")), qPrintable(editor()->hint()));
+
+    // A click on a corner rounds it, and the radius is ready to be typed.
+    click(at(60.0, 40.0));
+    QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{1});
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Fillet"));
+    type(QStringLiteral("8"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    const Entity arc = curves(EntityKind::Arc).front();
+    QVERIFY2(qAbs(sketch().radiusOf(arc.id) - 8.0) < 1e-6,
+             qPrintable(QString::number(sketch().radiusOf(arc.id))));
+    // Tangent to both lines: its center is the radius in from each.
+    const std::vector<Entity> sides = curves(EntityKind::Line);
+    const Point2 center = sketch().position(arc.center);
+    QVERIFY(qAbs(startOf(sides[1].id).x - 8.0 - center.x) < 1e-6);
+    QVERIFY(qAbs(endOf(sides[2].id).y - 8.0 - center.y) < 1e-6);
+    // Still one outline, which a Pull can take.
+    QCOMPARE(sketch().profiles().size(), std::size_t{1});
+
+    // A click on the middle of a line rounds nothing, and says so.
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    click(at(35.0, 10.0));
+    QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{1});
+    QVERIFY(messages.count() >= 1);
+}
+
+void SketchViewTest::moreWaysToDrawAndACornerCutStraight() {
+    openSketch();
+    editor()->setInference(false);
+
+    // A rectangle by its center and a corner.
+    editor()->setTool(SketchTool::CenterRectangle);
+    QVERIFY(editor()->hint().contains(QStringLiteral("center")));
+    click(at(20.0, 20.0));
+    click(at(35.0, 30.0));
+    std::vector<Entity> lines;
+    for (const Entity& line : curves(EntityKind::Line)) {
+        if (!line.construction) {
+            lines.push_back(line);
+        }
+    }
+    QCOMPARE(lines.size(), std::size_t{4});
+    QVERIFY(apart(startOf(lines[0].id), {5.0, 10.0}) < 0.5);
+    QVERIFY(qAbs(apart(startOf(lines[0].id), endOf(lines[0].id)) - 30.0) < 0.5);
+
+    // A circle through three points: its center where they put it.
+    editor()->setTool(SketchTool::ThreePointCircle);
+    click(at(60.0, 0.0));
+    click(at(80.0, 0.0));
+    click(at(70.0, 10.0));
+    QCOMPARE(curves(EntityKind::Circle).size(), std::size_t{1});
+    const Entity round = curves(EntityKind::Circle).front();
+    QVERIFY(apart(sketch().position(round.center), {70.0, 0.0}) < 0.5);
+    QVERIFY(qAbs(sketch().radiusOf(round.id) - 10.0) < 0.5);
+
+    // An arc by its ends and a point it passes through, bulging down.
+    editor()->setTool(SketchTool::ThreePointArc);
+    click(at(-40.0, 0.0));
+    click(at(-20.0, 0.0));
+    click(at(-30.0, -10.0));
+    QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{1});
+    const Entity bow = curves(EntityKind::Arc).front();
+    QVERIFY(sketch().pointAt(bow.id, 0.5).y < -9.0);
+
+    // A tangent arc on from the end of a line.
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, -40.0));
+    click(at(20.0, -40.0));
+    editor()->cancel();
+    editor()->setInference(true);
+    editor()->setTool(SketchTool::TangentArc);
+    // Not from the middle of nowhere.
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    click(at(10.0, -60.0));
+    QVERIFY(messages.count() >= 1);
+    click(at(20.0, -40.0));
+    click(at(30.0, -30.0));
+    QCOMPARE(curves(EntityKind::Arc).size(), std::size_t{2});
+    const Entity bend = curves(EntityKind::Arc).back();
+    QVERIFY(qAbs(sketch().radiusOf(bend.id) - 10.0) < 0.5);
+    bool tangent = false;
+    for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+        tangent = tangent || (c.kind == ConstraintKind::Tangent &&
+                              (c.first == bend.id || c.second == bend.id));
+    }
+    QVERIFY(tangent);
+
+    // A corner of the rectangle cut straight across, and the distance typed.
+    editor()->setTool(SketchTool::Chamfer);
+    click(at(35.0, 30.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Chamfer"));
+    type(QStringLiteral("4"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QCOMPARE(sketch().profiles().size(), std::size_t{2});
+}
+
+void SketchViewTest::patternsCopyWhatIsSelected() {
+    openSketch();
+    editor()->setTool(SketchTool::Circle);
+    click(at(20.0, 0.0));
+    click(at(23.0, 0.0));
+    editor()->setTool(SketchTool::Select);
+    const Entity hole = curves(EntityKind::Circle).front();
+
+    // Not without something selected.
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    editor()->setTool(SketchTool::CircularPattern);
+    QCOMPARE(editor()->tool(), SketchTool::Select);
+    QVERIFY(messages.count() >= 1);
+
+    // Around the origin: the count is typed, the copies shown before Enter makes them.
+    editor()->setSelection({hole.id});
+    editor()->setTool(SketchTool::CircularPattern);
+    QCOMPARE(editor()->tool(), SketchTool::CircularPattern);
+    click(at(0.0, 0.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(editor()->valueField()->text(), QStringLiteral("6"));
+    editor()->valueField()->selectAll();
+    type(QStringLiteral("4"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QCOMPARE(curves(EntityKind::Circle).size(), std::size_t{4});
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Circular Pattern"));
+    bool atTop = false;
+    for (const Entity& c : curves(EntityKind::Circle)) {
+        atTop = atTop || apart(sketch().position(c.center), {0.0, 20.0}) < 0.5;
+    }
+    QVERIFY(atTop);
+    // The copies are selected, ready for the next.
+    QCOMPARE(editor()->selectedEntities().size(), std::size_t{3});
+    m_document->undo();
+    QCOMPARE(curves(EntityKind::Circle).size(), std::size_t{1});
+
+    // In a row: from one point to the next is the step.
+    editor()->setSelection({hole.id});
+    editor()->setTool(SketchTool::RectangularPattern);
+    click(at(20.0, 0.0));
+    click(at(20.0, 10.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QCOMPARE(curves(EntityKind::Circle).size(), std::size_t{3});
+    bool highest = false;
+    for (const Entity& c : curves(EntityKind::Circle)) {
+        highest = highest || apart(sketch().position(c.center), {20.0, 20.0}) < 0.5;
+    }
+    QVERIFY(highest);
+}
+
+void SketchViewTest::linesLineUpWithOtherLinesAndCrossings() {
+    openSketch();
+    const auto has = [this](ConstraintKind kind, EntityId a, EntityId b) {
+        for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+            if (c.kind == kind && ((c.first == a && c.second == b) ||
+                                   (c.first == b && c.second == a))) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto lastLine = [this] { return curves(EntityKind::Line).back(); };
+    // A slanting line to line up with.
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, 0.0));
+    click(at(40.0, 10.0));
+    editor()->cancel();
+    const Entity slant = lastLine();
+
+    // Nearly parallel to it: made parallel.
+    click(at(0.0, 30.0));
+    move(at(40.0, 40.6));
+    click(at(40.0, 40.6));
+    editor()->cancel();
+    const Entity along = lastLine();
+    QVERIFY(has(ConstraintKind::Parallel, along.id, slant.id));
+    const double dx = endOf(along.id).x - startOf(along.id).x;
+    const double dy = endOf(along.id).y - startOf(along.id).y;
+    QVERIFY(qAbs(dy / dx - 0.25) < 1e-6);
+
+    // Nearly square to it: made perpendicular.
+    click(at(60.0, 0.0));
+    click(at(50.6, 40.0));
+    editor()->cancel();
+    const Entity across = lastLine();
+    QVERIFY(has(ConstraintKind::Perpendicular, across.id, slant.id));
+
+    // On from the end of an arc, nearly the way it goes: tangent.
+    Sketch g = sketch();
+    const double r = 10.0;
+    const double eighth = std::atan(1.0);
+    const Point2 end{100.0 + r * std::cos(eighth), r * std::sin(eighth)};
+    const EntityId bend = g.addArc({100.0, 0.0}, {110.0, 0.0}, end);
+    m_document->setSketchGeometry(m_sketch, g, "Arc");
+    render();
+    click(at(end.x, end.y));
+    click(at(end.x - 14.0, end.y + 14.4));
+    editor()->cancel();
+    QVERIFY(has(ConstraintKind::Tangent, lastLine().id, bend));
+
+    // A point dropped where two lines cross is held on both.
+    click(at(0.0, -40.0));
+    click(at(40.0, -40.0));
+    editor()->cancel();
+    const Entity flat = lastLine();
+    click(at(20.0, -60.0));
+    click(at(20.0, -20.0));
+    editor()->cancel();
+    const Entity upright = lastLine();
+    editor()->setTool(SketchTool::Point);
+    click(at(20.4, -40.3));
+    std::vector<Entity> points;
+    for (const Entity& e : sketch().entities()) {
+        if (e.kind == EntityKind::Point && e.owner == 0 && e.id != sketch().origin()) {
+            points.push_back(e);
+        }
+    }
+    QCOMPARE(points.size(), std::size_t{1});
+    QVERIFY(apart(sketch().position(points[0].id), {20.0, -40.0}) < 1e-6);
+    QVERIFY(has(ConstraintKind::PointOnLine, points[0].id, flat.id));
+    QVERIFY(has(ConstraintKind::PointOnLine, points[0].id, upright.id));
+
+    // Near the top of a circle: exactly there, and held on the circle.
+    Sketch round = sketch();
+    const EntityId ring = round.addCircle({100.0, -60.0}, 10.0);
+    m_document->setSketchGeometry(m_sketch, round, "Circle");
+    render();
+    editor()->setTool(SketchTool::Point);
+    click(at(100.6, -50.4));
+    const Entity top = [this] {
+        Entity last;
+        for (const Entity& e : sketch().entities()) {
+            if (e.kind == EntityKind::Point && e.owner == 0 && e.id != sketch().origin()) {
+                last = e;
+            }
+        }
+        return last;
+    }();
+    QVERIFY(apart(sketch().position(top.id), {100.0, -50.0}) < 1e-6);
+    QVERIFY(has(ConstraintKind::PointOnCircle, top.id, ring));
+}
+
+void SketchViewTest::clicksGoToRoundNumbersOnTheGrid() {
+    openSketch();
+    QVERIFY(!editor()->hasGridSnap());
+    editor()->setGridSnap(true);
+    // At 3 pixels to the millimeter the steps are 5 mm: 1 mm would be closer than 8 pixels.
+    editor()->setTool(SketchTool::Line);
+    click(at(11.0, 4.0));
+    click(at(39.0, 21.0));
+    editor()->cancel();
+    const Entity line = curves(EntityKind::Line).front();
+    QVERIFY2(apart(startOf(line.id), {10.0, 5.0}) < 1e-9,
+             qPrintable(QStringLiteral("%1 %2").arg(startOf(line.id).x).arg(startOf(line.id).y)));
+    QVERIFY(apart(endOf(line.id), {40.0, 20.0}) < 1e-9);
+    // Points and curves still win over the grid.
+    click(at(40.6, 20.6));
+    click(at(61.0, 41.0));
+    editor()->cancel();
+    QVERIFY(apart(startOf(curves(EntityKind::Line).back().id), {40.0, 20.0}) < 1e-9);
+    editor()->setGridSnap(false);
+}
+
+void SketchViewTest::selectedGeometryIsMovedTurnedAndScaled() {
+    openSketch();
+    editor()->setInference(false);
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, 0.0));
+    click(at(20.0, 0.0));
+    editor()->cancel();
+    const Entity line = curves(EntityKind::Line).front();
+
+    // Moved 10 up.
+    editor()->setSelection({line.id});
+    editor()->setTool(SketchTool::MoveSketch);
+    QCOMPARE(editor()->tool(), SketchTool::MoveSketch);
+    click(at(0.0, 0.0));
+    click(at(0.0, 10.0));
+    QVERIFY(apart(startOf(line.id), {0.0, 10.0}) < 1e-6);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Move"));
+    QCOMPARE(editor()->tool(), SketchTool::Select);
+
+    // Copied with Ctrl: two lines.
+    editor()->setSelection({line.id});
+    editor()->setTool(SketchTool::MoveSketch);
+    click(at(0.0, 10.0));
+    click(at(0.0, 30.0), Qt::ControlModifier);
+    QCOMPARE(curves(EntityKind::Line).size(), std::size_t{2});
+    QVERIFY(apart(startOf(line.id), {0.0, 10.0}) < 1e-6);
+
+    // Turned a quarter about its start, typed.
+    editor()->setSelection({line.id});
+    editor()->setTool(SketchTool::RotateSketch);
+    click(at(0.0, 10.0));
+    QVERIFY(editor()->valueField() != nullptr);
+    QCOMPARE(editor()->valueField()->text(), QStringLiteral("90"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QVERIFY(apart(endOf(line.id), {0.0, 30.0}) < 1e-6);
+
+    // Scaled to half about its start.
+    editor()->setSelection({line.id});
+    editor()->setTool(SketchTool::ScaleSketch);
+    click(at(0.0, 10.0));
+    editor()->valueField()->selectAll();
+    type(QStringLiteral("0.5"));
+    QTest::keyClick(editor()->valueField(), Qt::Key_Return);
+    render();
+    QVERIFY(apart(endOf(line.id), {0.0, 20.0}) < 1e-6);
+}
+
+void SketchViewTest::anOverConstrainingDimensionBecomesAReference() {
+    openSketch();
+    Sketch g = sketch();
+    const lcad::sketch::RectangleParts r = lcad::sketch::addRectangle(g, {0.0, 0.0}, {30.0, 20.0});
+    g.addConstraint(ConstraintKind::Distance, g.find(r.bottom)->start, g.find(r.bottom)->end, 0,
+                    30.0);
+    g.solve();
+    m_document->setSketchGeometry(m_sketch, g, "Draw");
+    render();
+    // The top is as long as the bottom already: its length goes in as a reference.
+    editor()->setSelection({r.top});
+    QSignalSpy messages(editor(), &SketchEditor::message);
+    QVERIFY(editor()->addDimension());
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Reference Dimension"));
+    QVERIFY(messages.count() >= 1);
+    lcad::sketch::ConstraintId reference = 0;
+    for (const lcad::sketch::Constraint& c : sketch().constraints()) {
+        if (c.reference) {
+            reference = c.id;
+        }
+    }
+    QVERIFY(reference != 0);
+    QVERIFY(editor()->dimensionText(reference).startsWith(QStringLiteral("(")));
+    // It cannot be set.
+    QVERIFY(!editor()->setDimensionValue(reference, 50.0));
+}
 
 void SketchViewTest::trimAndExtendActOnTheCurveClicked() {
     openSketch();
@@ -1926,6 +2336,70 @@ void SketchViewTest::projectBringsEdgesOfABodyIntoTheSketch() {
 
 // With the Dimension tool, a line takes one click: its dimension then follows the pointer, and
 // typing a number places it there with that value. Enter places it as it measures.
+void SketchViewTest::aDimensionsValueCanBeDraggedElsewhere() {
+    openSketch();
+    editor()->setInference(false);
+    Sketch g = sketch();
+    const EntityId line = g.addLine({10.0, 0.0}, {70.0, 0.0});
+    const Entity* entity = g.find(line);
+    const lcad::sketch::ConstraintId length =
+        g.addConstraint(ConstraintKind::Distance, entity->start, entity->end, 0, 60.0);
+    const EntityId circle = g.addCircle({40.0, 50.0}, 10.0);
+    const lcad::sketch::ConstraintId radius =
+        g.addConstraint(ConstraintKind::Radius, circle, 0, 0, 10.0);
+    g.solve();
+    m_document->setSketchGeometry(m_sketch, g, "Draw");
+    editor()->setTool(SketchTool::Select);
+    render();
+
+    // The length's value, from below the line to above it and off to the side.
+    const QPoint from = editor()->dimensionRect(length).center().toPoint();
+    drag(from, at(85.0, 20.0));
+    const auto* moved = sketch().findConstraint(length);
+    QVERIFY(moved->label.has_value());
+    const QPointF now = editor()->dimensionRect(length).center();
+    QVERIFY2(QLineF(now, QPointF(at(85.0, 20.0))).length() < 3.0,
+             qPrintable(QStringLiteral("%1 %2").arg(now.x()).arg(now.y())));
+    // It is still the same dimension, of the same value.
+    QCOMPARE(moved->value, 60.0);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Move Dimension"));
+    QVERIFY(editor()->valueField() == nullptr);
+
+    // It moves with what it measures.
+    Sketch shifted = sketch();
+    shifted.dragBy(line, 0.0, -10.0);
+    m_document->setSketchGeometry(m_sketch, shifted, "Shift");
+    render();
+    const QPointF after = editor()->dimensionRect(length).center();
+    QVERIFY(qAbs((after.y() - now.y()) - (at(0.0, -10.0).y() - at(0.0, 0.0).y())) < 1.5);
+    m_document->undo();
+
+    // A radius's value goes around the circle, wherever it is put.
+    const QPoint rim = editor()->dimensionRect(radius).center().toPoint();
+    drag(rim, at(15.0, 50.0));
+    QVERIFY(sketch().findConstraint(radius)->label.has_value());
+    QVERIFY(sketch().findConstraint(radius)->label->x < 0.0);
+
+    // One undo puts each back.
+    m_document->undo();
+    m_document->undo();
+    QVERIFY(!sketch().findConstraint(length)->label.has_value());
+    QVERIFY(!sketch().findConstraint(radius)->label.has_value());
+
+    // Esc puts a value being dragged back where it was.
+    move(from);
+    QTest::mousePress(m_viewport, Qt::LeftButton, Qt::NoModifier, from);
+    for (const QPoint& point : {from + QPoint(10, 10), from + QPoint(30, 30)}) {
+        QMouseEvent event(QEvent::MouseMove, point, m_viewport->mapToGlobal(point), Qt::NoButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(m_viewport, &event);
+    }
+    editor()->cancel();
+    QTest::mouseRelease(m_viewport, Qt::LeftButton, Qt::NoModifier, from + QPoint(30, 30));
+    render();
+    QVERIFY(!sketch().findConstraint(length)->label.has_value());
+}
+
 void SketchViewTest::aLineIsDimensionedByClickingIt() {
     openSketch();
     m_viewport->setFocus();

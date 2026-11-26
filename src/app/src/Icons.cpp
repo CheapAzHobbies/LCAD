@@ -206,6 +206,161 @@ const QHash<QString, Drawing>& drawings() {
              i.arc(6, 17.5, 13, 3, 200, 290);
              i.poly({{16.5, 14}, {19.2, 16.3}, {16, 18}}, false);
          }},
+        {QStringLiteral("surface-pull"),
+         [](const Ink& i) {
+             // A curved sheet standing up from a curve, open at its ends.
+             QPainterPath sheet(QPointF(3, 19));
+             sheet.cubicTo(QPointF(8, 14), QPointF(14, 22), QPointF(21, 16));
+             sheet.lineTo(21, 7);
+             sheet.cubicTo(QPointF(14, 13), QPointF(8, 5), QPointF(3, 10));
+             sheet.closeSubpath();
+             i.p.fillPath(sheet, i.accent);
+             i.p.drawPath(sheet);
+         }},
+        {QStringLiteral("patch"),
+         [](const Ink& i) {
+             // An outline, and the flat face filling it.
+             i.fill({{4, 8}, {14, 4}, {20, 10}, {16, 20}, {6, 18}});
+             i.poly({{4, 8}, {14, 4}, {20, 10}, {16, 20}, {6, 18}});
+         }},
+        {QStringLiteral("stitch"),
+         [](const Ink& i) {
+             // Two sheets meeting at a seam, stitched across it.
+             i.fill({{3, 6}, {11, 6}, {11, 18}, {3, 18}});
+             i.poly({{3, 6}, {11, 6}, {11, 18}, {3, 18}});
+             i.fill({{13, 6}, {21, 6}, {21, 18}, {13, 18}});
+             i.poly({{13, 6}, {21, 6}, {21, 18}, {13, 18}});
+             for (int k = 0; k < 3; ++k) {
+                 i.line(9, 8 + 4 * k, 15, 10 + 4 * k);
+             }
+         }},
+        {QStringLiteral("thicken"),
+         [](const Ink& i) {
+             // A thin sheet, and the slab it becomes.
+             i.line(3, 6, 21, 6);
+             i.fill({{3, 11}, {21, 11}, {21, 18}, {3, 18}});
+             i.poly({{3, 11}, {21, 11}, {21, 18}, {3, 18}});
+             i.line(12, 7, 12, 10);
+         }},
+        {QStringLiteral("text"),
+         [](const Ink& i) {
+             // A capital A raised from a slab.
+             i.fill({{3, 18}, {21, 18}, {21, 21}, {3, 21}});
+             i.poly({{3, 18}, {21, 18}, {21, 21}, {3, 21}});
+             i.poly({{6, 16}, {12, 3}, {18, 16}}, false);
+             i.line(8.5, 11, 15.5, 11);
+         }},
+        {QStringLiteral("combine"),
+         [](const Ink& i) {
+             // Two blocks overlapping, made one.
+             i.fill({{3, 9}, {14, 9}, {14, 4}, {21, 4}, {21, 15}, {10, 15}, {10, 20}, {3, 20}});
+             i.poly({{3, 9}, {14, 9}, {14, 4}, {21, 4}, {21, 15}, {10, 15}, {10, 20}, {3, 20}});
+         }},
+        {QStringLiteral("move-body"),
+         [](const Ink& i) {
+             // A block, and arrows out of it four ways.
+             i.fill({{9, 9}, {15, 9}, {15, 15}, {9, 15}});
+             i.poly({{9, 9}, {15, 9}, {15, 15}, {9, 15}});
+             i.line(12, 2, 12, 7);
+             i.line(12, 17, 12, 22);
+             i.line(2, 12, 7, 12);
+             i.line(17, 12, 22, 12);
+             i.poly({{10, 4}, {12, 2}, {14, 4}}, false);
+             i.poly({{20, 10}, {22, 12}, {20, 14}}, false);
+         }},
+        {QStringLiteral("pipe"),
+         [](const Ink& i) {
+             // A tube bending round a corner, and its round end.
+             QPainterPath tube(QPointF(4, 21));
+             tube.lineTo(4, 12);
+             tube.arcTo(QRectF(4, 4, 16, 16), 180, -90);
+             tube.lineTo(21, 4);
+             tube.lineTo(21, 10);
+             tube.lineTo(12, 10);
+             tube.arcTo(QRectF(10, 10, 4, 4), 90, 90);
+             tube.lineTo(10, 21);
+             tube.closeSubpath();
+             i.p.fillPath(tube, i.accent);
+             i.p.drawPath(tube);
+             i.ellipse(7, 21, 3, 1.2);
+         }},
+        {QStringLiteral("coil"),
+         [](const Ink& i) {
+             // Turns of a spring, seen from the side.
+             for (int k = 0; k < 4; ++k) {
+                 i.ellipse(12, 5 + 4.5 * k, 7, 2);
+             }
+             i.line(5, 5, 5, 18.5);
+             i.line(19, 5, 19, 18.5);
+         }},
+        {QStringLiteral("thread"),
+         [](const Ink& i) {
+             // A rod with the slanting crests of a thread.
+             i.fill({{8, 3}, {16, 3}, {16, 21}, {8, 21}});
+             i.poly({{8, 3}, {16, 3}, {16, 21}, {8, 21}});
+             for (int k = 0; k < 5; ++k) {
+                 const qreal y = 5 + 3.5 * k;
+                 i.line(8, y + 1.5, 16, y);
+             }
+         }},
+        {QStringLiteral("draft"),
+         [](const Ink& i) {
+             // A block whose sides lean in, and the plane they lean from.
+             i.fill({{5, 19}, {19, 19}, {16, 6}, {8, 6}});
+             i.poly({{5, 19}, {19, 19}, {16, 6}, {8, 6}});
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(5, 19, 5, 6);
+             i.line(19, 19, 19, 6);
+             i.p.restore();
+             i.line(2, 21, 22, 21);
+         }},
+        {QStringLiteral("split"),
+         [](const Ink& i) {
+             // A block cut in two, the halves apart, and the plane between them.
+             i.fill({{3, 6}, {10, 6}, {10, 18}, {3, 18}});
+             i.poly({{3, 6}, {10, 6}, {10, 18}, {3, 18}});
+             i.fill({{14, 6}, {21, 6}, {21, 18}, {14, 18}});
+             i.poly({{14, 6}, {21, 6}, {21, 18}, {14, 18}});
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(12, 2, 12, 22);
+             i.p.restore();
+         }},
+        {QStringLiteral("loft"),
+         [](const Ink& i) {
+             // A wide outline below, a narrow one above, and the solid between them.
+             i.fill({{3, 19}, {21, 19}, {16, 6}, {8, 6}});
+             i.poly({{3, 19}, {21, 19}, {16, 6}, {8, 6}});
+             i.p.save();
+             QPen dashed = i.p.pen();
+             dashed.setStyle(Qt::DashLine);
+             i.p.setPen(dashed);
+             i.line(3, 19, 8, 6);
+             i.line(21, 19, 16, 6);
+             i.p.restore();
+             i.line(6, 3, 18, 3);
+             i.line(1, 22, 23, 22);
+         }},
+        {QStringLiteral("sweep"),
+         [](const Ink& i) {
+             // A section, and the bent path it is moved along.
+             QPainterPath bent(QPointF(5, 20));
+             bent.lineTo(5, 12);
+             bent.arcTo(QRectF(5, 4, 16, 16), 180, -90);
+             bent.lineTo(20, 4);
+             bent.lineTo(20, 10);
+             bent.lineTo(13, 10);
+             bent.arcTo(QRectF(11, 10, 4, 4), 90, 90);
+             bent.lineTo(11, 20);
+             bent.closeSubpath();
+             i.p.fillPath(bent, i.accent);
+             i.p.drawPath(bent);
+         }},
         {QStringLiteral("fillet"),
          [](const Ink& i) {
              QPainterPath body(QPointF(4, 20));
@@ -528,6 +683,39 @@ const QHash<QString, Drawing>& drawings() {
              node(i, 18.5, 18.5);
              node(i, 6, 6);
              node(i, 6, 18.5);
+         }},
+        {QStringLiteral("rectangle-center"),
+         [](const Ink& i) {
+             i.poly({{4.5, 7}, {19.5, 7}, {19.5, 17}, {4.5, 17}});
+             node(i, 12, 12);
+             node(i, 19.5, 7);
+         }},
+        {QStringLiteral("circle-3point"),
+         [](const Ink& i) {
+             i.ellipse(12, 12, 7.5, 7.5);
+             node(i, 4.5, 12);
+             node(i, 17.3, 6.7);
+             node(i, 17.3, 17.3);
+         }},
+        {QStringLiteral("arc-3point"),
+         [](const Ink& i) {
+             i.arc(12, 17, 8, 8, 0, 180);
+             node(i, 4, 17);
+             node(i, 20, 17);
+             node(i, 12, 9);
+         }},
+        {QStringLiteral("arc-tangent"),
+         [](const Ink& i) {
+             i.line(3, 18, 11, 18);
+             i.arc(11, 10, 8, 8, 270, 90);
+             node(i, 11, 18);
+             node(i, 19, 10);
+         }},
+        {QStringLiteral("chamfer-sketch"),
+         [](const Ink& i) {
+             i.poly({{5, 19}, {5, 5}, {12, 5}, {19, 12}, {19, 19}}, false);
+             node(i, 12, 5);
+             node(i, 19, 12);
          }},
         {QStringLiteral("point"),
          [](const Ink& i) {

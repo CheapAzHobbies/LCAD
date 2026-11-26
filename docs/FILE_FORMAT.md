@@ -104,7 +104,7 @@ has no such field, and a file written before sketches existed opens as it always
 | `entities` | The geometry. Every position is a `point`; a `line` names its `start` and `end`, a `circle` its `center` and has a `radius`, an `arc` names its `center`, `start`, and `end` (it runs counter-clockwise from start to end), an `ellipse` names its `center` and `major` (the end of its major axis) and has a `minorRadius`, and a `spline` lists its `controlPoints` (a clamped B-spline of degree 3, or less with fewer points, with its knots spread evenly). `owner` is the curve a point belongs to, or 0. The first entity is the sketch's origin: a fixed point at (0, 0) that belongs to nothing. |
 | `construction` | Geometry that guides the sketch and is left out of its outlines. |
 | `fixed` | Reference geometry, which the solver leaves where it is. |
-| `constraints` | `kind` is one of `Coincident`, `PointOnLine`, `PointOnCircle`, `Horizontal`, `Vertical`, `Parallel`, `Perpendicular`, `Tangent`, `Equal`, `Concentric`, `Midpoint`, `Symmetric`, `Collinear`, `Fix`, `Distance`, `DistanceX`, `DistanceY`, `PointLineDistance`, `Radius`, `Diameter`, `Angle`. `entities` are the up to three entities it is about, 0 for none. `value` is a dimension's value in millimeters or radians. `markers`, only where a symbol was moved, is `[shift, side, shift, side]` for the first and second curve the symbol hangs on: how far from the curve's middle as a share of the curve, and on which side. |
+| `constraints` | `kind` is one of `Coincident`, `PointOnLine`, `PointOnCircle`, `Horizontal`, `Vertical`, `Parallel`, `Perpendicular`, `Tangent`, `Equal`, `Concentric`, `Midpoint`, `Symmetric`, `Collinear`, `Fix`, `Distance`, `DistanceX`, `DistanceY`, `PointLineDistance`, `Radius`, `Diameter`, `Angle`. `entities` are the up to three entities it is about, 0 for none. `value` is a dimension's value in millimeters or radians. `markers`, only where a symbol was moved, is `[shift, side, shift, side]` for the first and second curve the symbol hangs on: how far from the curve's middle as a share of the curve, and on which side. `label`, only on a dimension whose value was moved, is `[x, y]`: where the value is, in millimeters, from the middle of what a distance measures, the center of a circle or an arc, or the corner of an angle. `reference`, only on a reference dimension, is `true`: it shows what the geometry measures and does not set it; its `value` is what it measured when the file was saved. |
 | `nextEntityId`, `nextConstraintId` | The ids the next entity and constraint get, as `nextId` is for objects. |
 
 Numbers are written with every digit, so a sketch comes back exactly as it was saved and is as
@@ -126,10 +126,12 @@ optional, and a file without them opens as it always did.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, or `Repair`. |
+| `kind` | `Pull`, `Revolve`, `Fillet`, `Chamfer`, `Shell`, `Mirror`, `Rectangular Pattern`, `Circular Pattern`, `Plane` (a construction plane), `Hole`, `Axis` (a construction axis), `Offset Face`, `Move Face`, `Delete Face`, `Repair`, `Loft`, `Sweep`, `Draft`, `Split Body`, `Combine`, `Move Body`, `Pipe`, `Coil`, `Thread`, `Surface Pull`, `Patch`, `Stitch`, `Thicken`, `Offset Surface`, `Surface Revolve`, or `Text`. |
 | `suppressed` | Left out of the model, and kept. |
 | `body` | The body it changes, or for a pull or revolve with `operation` `NewBody`, the body it makes. |
 | `sketch`, `regions` | A pull's or revolve's sketch, and its closed areas, each by the ids of the curves around it, sorted. An empty list means every area of the sketch. |
+| `sections` | A loft only: its sections after the first, in order, each `{"sketch", "region"}`: a sketch and one closed area of it, by the ids of the curves around it, sorted. The first section is the loft's `sketch` and the one area in its `regions`. |
+| `pathSketch` | A sweep only: the sketch whose curves, joined end to end, its `regions` are moved along. |
 | `operation` | `NewBody`, `Join`, `Cut`, or `Intersect`. |
 | `distance`, `distanceBack`, `symmetric` | How far a pull goes along the sketch's normal, how far the other way (0 for one side), and whether `distance` is split evenly to both sides. |
 | `axis`, `angle` | The sketch line a revolve turns about, and how far, in degrees. A circular pattern's `angle` too. |
@@ -138,10 +140,27 @@ optional, and a file without them opens as it always did.
 | `reference` (move face) | Move Face only: the direction, as for a pattern (`X`, `Y`, `Z`, the name of an edge or face, or `axis:` and an id); its `distance` is how far. An Offset Face's `distance` is how far along the faces' normals. |
 | `size` | A fillet's radius, a chamfer's distance, a shell's wall thickness, a hole's diameter. |
 | `taper` | A pull only, and only when not zero: how far its sides lean in, in degrees. |
+| `throughAll` (pull) | A pull only, written only when true: it goes through every body, the way `distance` points, or both ways if `symmetric`; `distance` gives only the way. |
+| `faces`, `reference`, `angle` (draft) | A draft only: the faces it tilts, the plane they are tilted about (`XY`, `XZ`, `YZ`, `plane:` and an id, or a flat face of `body`), and by how many degrees. |
+| `tools`, `keepTools` (combine) | A combine only: the bodies joined to, cut out of, or intersected with `body`, as `operation` says, and whether they stay bodies of their own. |
+| `move`, `copy`, `reference`, `angle`, `tools`, `scale` (move body) | A move only: how many times as large about its middle (written only when not 1), then how far along X, Y, and Z; the axis it is turned about (empty for none) and by how many degrees; and whether it makes a moved copy of the body in `tools` as `body` rather than moving `body`. |
+| `pathSketch`, `size`, `wall` (pipe) | A pipe only: the sketch whose curves it runs along, its outside diameter, and its wall thickness (0 for a solid rod). |
+| `reference`, `size`, `pitch`, `turns`, `section` (coil) | A coil only: the axis it winds about, its diameter, the rise of a turn, how many turns, and the diameter of its wire. |
+| `sketch`, `distance`, `symmetric` (surface pull) | A surface pull only: every curve of the sketch, pulled `distance` along its normal, or half each way. |
+| `sketch`, `axis`, `reference`, `angle` (surface revolve) | A surface revolve only: every curve of the sketch but its axis, turned about the sketch line `axis`, or the model axis `reference` as for a revolve, by `angle` degrees. |
+| `sketch`, `regions` (patch) | A patch only: the closed areas filled with flat faces. |
+| `tools`, `size` (stitch) | A stitch only: the bodies sewn to `body`, and the widest gap it closes. |
+| `tools`, `size` (offset surface) | An offset surface only: the surface it is offset from, and how far; `body` is the new surface. |
+| `text`, `font`, `at`, `size`, `distance` (text) | Text only: the words, in UTF-8; the font's family; where on its `sketch`'s plane it starts, `[u, v]`, the left of its baseline; how tall its letters are; and how far it is pulled. `operation` and `body` as for a pull. |
+| `size` (thicken) | A thicken only: how thick the solid made of the surface `body` is; negative is the other way. |
+| `size2` (chamfer) | A chamfer of two distances only: the distance on the other face at each edge, `size` being on the first. |
+| `faces`, `pitch` (thread) | A thread only: the cylindrical face of `body` it is cut into, and its pitch. |
+| `reference` (split body) | A split only: the plane `body` is cut in two along, as for a draft. |
 | `extentBody`, `extentFace` | A pull up to a face only: the body, and the name of its flat face, that the pull ends in. |
 | `sources`, `reference`, `reference2`, `count`, `count2`, `spacing`, `spacing2` | Mirror and patterns only: the features copied (empty: the whole body), the plane, direction, or axis (`XY`, `XZ`, `YZ`, `X`, `Y`, `Z`, a face or edge name, `plane:` and the id of a construction plane, or `axis:` and the id of a construction axis), how many, and how far apart. |
 | `holeKind`, `throughAll`, `tipAngle`, `headDiameter`, `headDepth`, `countersinkAngle`, `flipped` | A hole only: `Simple`, `Counterbore`, or `Countersink`; right through or to `distance` with a point of `tipAngle` degrees; the width and depth of a counterbore or the angle of a countersink; and whether it is drilled toward the side the sketch is seen from. Its `size` is the diameter. The holes go at `points`, entities of its `sketch`; left out, at the sketch's free-standing points, or with none of those, at the centers of its circles. |
-| `reference`, `visible` | A construction plane only: what it is placed against (`XY`, `XZ`, `YZ`, or the name of a flat face of `body`), and whether it is shown. Its `distance` is how far it is from that, along its normal. It makes no body; `body` is 0 for one placed against an origin plane. |
+| `reference`, `visible` | A construction plane only: what it is placed against (`XY`, `XZ`, `YZ`, `plane:` and the id of another construction plane, or the name of a flat face of `body`), and whether it is shown. Its `distance` is how far it is from that, along its normal. It makes no body; `body` is 0 for one placed against an origin plane. |
+| `planeKind`, `reference2` | A construction plane that is not an offset plane only. `At Angle`: it goes through the axis `reference2` (`X`, `Y`, `Z`, `axis:` and an id, or the name of a straight edge of `body`), turned `angle` degrees about it from `reference`. `Midplane`: it lies halfway between `reference` and the plane or flat face `reference2`, or halves the angle between them if they are not parallel. |
 | `reference`, `visible` (axis) | A construction axis only: what it runs along (`X`, `Y`, `Z`, or the name of an edge or a face of `body`: a straight edge, or a round edge or face, whose axis it is), and whether it is shown. It makes no body; `body` is 0 for an origin axis. |
 
 `document.json` may also hold `parameters`, a list of `{"id", "name", "expression", "comment"}`.

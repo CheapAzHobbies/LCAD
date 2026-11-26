@@ -301,6 +301,38 @@ QString TimelineStrip::iconName(document::ObjectId item) const {
             return QStringLiteral("delete-face");
         case FeatureKind::Repair:
             return QStringLiteral("repair");
+        case FeatureKind::Loft:
+            return QStringLiteral("loft");
+        case FeatureKind::Sweep:
+            return QStringLiteral("sweep");
+        case FeatureKind::Draft:
+            return QStringLiteral("draft");
+        case FeatureKind::SplitBody:
+            return QStringLiteral("split");
+        case FeatureKind::Combine:
+            return QStringLiteral("combine");
+        case FeatureKind::MoveBody:
+            return QStringLiteral("move-body");
+        case FeatureKind::Pipe:
+            return QStringLiteral("pipe");
+        case FeatureKind::Coil:
+            return QStringLiteral("coil");
+        case FeatureKind::Thread:
+            return QStringLiteral("thread");
+        case FeatureKind::SurfacePull:
+            return QStringLiteral("surface-pull");
+        case FeatureKind::Patch:
+            return QStringLiteral("patch");
+        case FeatureKind::Stitch:
+            return QStringLiteral("stitch");
+        case FeatureKind::Thicken:
+            return QStringLiteral("thicken");
+        case FeatureKind::OffsetSurface:
+            return QStringLiteral("offset-face");
+        case FeatureKind::SurfaceRevolve:
+            return QStringLiteral("revolve");
+        case FeatureKind::Text:
+            return QStringLiteral("text");
         }
     }
     return QStringLiteral("box");
@@ -323,12 +355,19 @@ QString TimelineStrip::describe(document::ObjectId item) const {
         QStringList users;
         for (const document::Feature& feature : m_document->features()) {
             const bool makes =
-                feature.operation == document::Operation::NewBody &&
-                (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve);
+                (feature.operation == document::Operation::NewBody &&
+                 (feature.kind == FeatureKind::Pull || feature.kind == FeatureKind::Revolve ||
+                  feature.kind == FeatureKind::Loft || feature.kind == FeatureKind::Sweep ||
+                  feature.kind == FeatureKind::Pipe || feature.kind == FeatureKind::Coil ||
+                  feature.kind == FeatureKind::Text)) ||
+                feature.kind == FeatureKind::SurfacePull || feature.kind == FeatureKind::Patch ||
+                feature.kind == FeatureKind::OffsetSurface ||
+                feature.kind == FeatureKind::SurfaceRevolve;
             const bool copiesIt = std::find(feature.sources.begin(), feature.sources.end(), id) !=
                                   feature.sources.end();
-            if (feature.id != id &&
-                (feature.sketch == id || (feature.body == id && !makes) || copiesIt)) {
+            const std::vector<document::ObjectId> sketches = document::sketchesOf(feature);
+            const bool fromIt = std::find(sketches.begin(), sketches.end(), id) != sketches.end();
+            if (feature.id != id && (fromIt || (feature.body == id && !makes) || copiesIt)) {
                 users.append(name(feature.name));
             }
         }
@@ -363,8 +402,14 @@ QString TimelineStrip::describe(document::ObjectId item) const {
     case ItemKind::Feature: {
         const document::Feature* feature = m_document->findFeature(item);
         lines.append(tr("%1 · %2").arg(name(feature->name), featureKindName(feature->kind)));
-        if (const document::SketchItem* sketch = m_document->findSketch(feature->sketch)) {
-            lines.append(tr("Made from %1").arg(name(sketch->name)));
+        QStringList from;
+        for (const document::ObjectId id : document::sketchesOf(*feature)) {
+            if (const document::SketchItem* sketch = m_document->findSketch(id)) {
+                from.append(name(sketch->name));
+            }
+        }
+        if (!from.isEmpty()) {
+            lines.append(tr("Made from %1").arg(from.join(QStringLiteral(", "))));
         }
         QStringList copied;
         for (const document::ObjectId source : feature->sources) {
@@ -378,7 +423,14 @@ QString TimelineStrip::describe(document::ObjectId item) const {
         if (const document::Body* body = m_document->findBody(feature->body)) {
             const bool makes =
                 feature->operation == document::Operation::NewBody &&
-                (feature->kind == FeatureKind::Pull || feature->kind == FeatureKind::Revolve);
+                ((feature->kind == FeatureKind::Pull || feature->kind == FeatureKind::Revolve ||
+                  feature->kind == FeatureKind::Loft || feature->kind == FeatureKind::Sweep ||
+                  feature->kind == FeatureKind::Pipe || feature->kind == FeatureKind::Coil ||
+                  feature->kind == FeatureKind::Text) ||
+                 (feature->kind == FeatureKind::MoveBody && feature->copy) ||
+                 feature->kind == FeatureKind::SurfacePull || feature->kind == FeatureKind::Patch ||
+                 feature->kind == FeatureKind::OffsetSurface ||
+                 feature->kind == FeatureKind::SurfaceRevolve);
             lines.append(makes ? tr("Makes %1").arg(name(body->name))
                                : tr("Works on %1").arg(name(body->name)));
             if (makes) {

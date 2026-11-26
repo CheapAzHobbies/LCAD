@@ -56,9 +56,10 @@ programs call extrude).
    pointer; a second click lets one go).
 3. Type the distance on the right, or drag the arrow in the 3D view up or down, or type the
    distance into the box beside the arrow and press Enter. A negative distance, or **Flip
-   Direction**, pulls the other way. **Direction** pulls to one side, by the same amount to both sides (**Symmetric**), by
-   different amounts (**Two Sides**), or up to a flat face you click in the 3D view (**To
-   Face**), which it then follows. **Taper** leans the sides in as the pull goes out (negative
+   Direction**, pulls the other way. **Direction** pulls to one side, by the same amount to
+   both sides (**Symmetric**), by different amounts (**Two Sides**), up to a flat face you
+   click in the 3D view (**To Face**), which it then follows, or through every body that way
+   (**Through All**: **Flip Direction** chooses the way). **Taper** leans the sides in as the pull goes out (negative
    leans them out); it works on a pull to one side.
 4. **Operation**: a **New Body**, **Join** it to a body, **Cut** it out of one, or keep only
    what it shares with one (**Intersect**). Until you choose, LCAD guesses: a pull that lies
@@ -98,6 +99,28 @@ a whole body: select the feature in the timeline first, or check it in the panel
 direction, or axis is one through the origin, a construction plane or axis, or an edge or face
 you click in the 3D view.
 
+## Surfaces
+
+A surface is a body of faces that need not enclose anything: a sheet. Surfaces are made under
+**Create > Surface**, and end up as solids:
+
+- **Surface Pull** pulls every curve of a sketch, open or closed, into a surface: choose the
+  sketch, type the distance, and check **Half each way** for both sides of the sketch.
+- **Surface Revolve** turns every curve of a sketch, open or closed, about an axis into a
+  surface: choose the sketch, the axis (a line of the sketch, which is left out, or an origin
+  or construction axis), and the angle. A vase from its side profile, for instance.
+- **Patch** fills closed areas of a sketch, clicked in the 3D view, with flat faces.
+- **Stitch** sews surfaces to a surface where their edges meet, closing gaps up to the size
+  typed. Where they close all round, the result is a solid; otherwise it stays a surface. The
+  surfaces sewn on are used up.
+- **Thicken** makes a surface into a solid of the thickness typed, out along its faces'
+  normals, or the other way for a negative thickness; the corners are joined.
+- **Offset Surface** makes a new surface at the distance typed from the one you click, leaving
+  that one as it is.
+
+A surface has an area but no volume. Like other bodies, surfaces follow the sketches they are
+made from.
+
 ## Holes
 
 Draw where the holes go in a sketch on the face to drill into: points, or circles. Then press **H**,
@@ -113,6 +136,28 @@ sketch that is not on the face itself.
 Under **Modify**: **Fillet** (F) rounds edges, **Chamfer** bevels them, **Shell** hollows a body
 out, open at the faces you click. Click the edges or faces in the 3D view, before or after
 starting the command; Shift-click picks more.
+
+**Draft** tilts the faces you click by an angle, about a plane chosen in the panel (an origin
+plane or a construction plane): the body keeps its size where the faces cross the plane, and
+narrows along the plane's normal, as a part that comes out of a mold must. A negative angle
+tilts them the other way.
+
+**Split Body** cuts the body you click in two along an origin plane or a construction plane.
+Each piece becomes a body of its own, and the features after it work on them as on any body.
+
+**Combine** joins other bodies to a body, cuts them out of it, or keeps only what they share:
+choose the body in the panel and click the others in the 3D view. They are used up, unless you
+check **Keep the bodies used**.
+
+**Move/Copy Body** scales the body you click about its middle, moves it along X, Y, and Z, and
+then turns it about an axis, or with **Make a moved copy** leaves it where it is and makes a
+moved copy as a body of its own.
+
+**Chamfer** takes a second distance, **Other side**, for a bevel that is not even: the first
+distance is along one face at each edge and the second along the other. 0 makes both the same.
+
+**Edit > Repeat**, also at the top of the menu a right-click opens in the 3D view, starts the
+last tool or feature again.
 
 ## Changing faces directly
 
@@ -163,6 +208,8 @@ OBJ file's numbers are taken as millimeters.
 
 - **STEP**: the exact solids, each a part with its name, for other CAD programs. Not the timeline:
   they get the shapes, not how they were made.
+- **IGES**: the exact solids and surfaces, in millimeters, for older CAD and CAM programs that do
+  not read STEP.
 - **STL**, **3MF**, or **OBJ**: triangles, for 3D printing and other tools. Choose how closely the
   triangles follow curved surfaces (Coarse, Medium, Fine, or your own deviation and angle). STL
   can be written as text; 3MF keeps each body's name and the unit. A mesh is an approximation of
@@ -267,19 +314,61 @@ one was. Expressions take units (mm, cm, m, in, ft for lengths; deg, rad for ang
 and ^, parentheses, and sqrt, abs, sin, cos, tan, asin, acos, atan, min, max, round, floor, ceil,
 and pi.
 
+**Loft** makes a solid through closed areas of two or more sketches, usually each on an offset
+plane of its own: click an area of the first sketch in the 3D view, then one of the next, and so
+on. The loft goes through them in the order they are clicked; click a picked one again to let
+it go, or another area of the same sketch to take its place. A square to a circle, or a large
+outline to a small one, both work. Each area has to be an outline without holes in it.
+
+**Sweep** moves closed areas of a sketch along a path: the curves of another sketch, which have
+to join end to end, open or closed. Click the areas in the 3D view and choose the path's sketch
+under **Path** (a sketch with no closed outline is offered first). The areas stay where they
+are, so draw the path starting on them, for instance on a plane through the profile's center.
+
+Like a pull, a loft or a sweep makes a body of its own or joins, cuts, or intersects one, follows
+its sketches when they change, and puts them away when it is made.
+
+**Pipe** makes a round tube along the curves of a sketch chosen under **Path**: type its outside
+**Diameter** and its **Wall**, or 0 for a solid rod. It starts where the path starts, square to
+it.
+
+**Coil** winds a round wire about an axis (an origin axis or a construction axis), from where the
+axis starts: its **Diameter**, the **Pitch** it rises each turn, how many **Turns**, and the
+**Wire** thickness, less than the pitch.
+
+**Text** writes letters on the plane of a sketch, from the fonts installed on the computer:
+type the text, choose the sketch it goes on, the font, the **Height** of the letters, the
+**Depth**, and where it starts (**Across** and **Up**, in the sketch, at the left of the line the
+letters stand on). As a new body, joined to a body to raise it, or with **Cut** and a negative
+depth to engrave it into a face.
+
+**Thread** cuts a 60° screw thread all along the round face you click: the outside of a rod, or
+the inside of a hole. Type its **Pitch**: 1.5 for M10, 1.25 for M8, 1 for M6, 0.8 for M5. The
+hole or rod should already be the size the thread is for.
+
 ## Construction planes
 
-**Offset Plane** (under **Create**) adds a plane to sketch on: pick an origin plane in the panel,
-or click a flat face in the 3D view, and type how far from it. Planes are listed under
-**Construction** in the browser (uncheck to hide, double-click to move), and drawn in amber.
-To sketch on one, select it in the browser and click **New Sketch**, or click **New Sketch** and
-then the plane in the 3D view.
+**Construction Plane** (under **Create**, and the plane button in the toolbar) adds a plane to
+sketch on. Choose its **Type** in the panel:
+
+- **Offset:** pick an origin plane or another construction plane in the panel, or click a flat
+  face in the 3D view, and type how far from it, or drag the arrow in the 3D view, or type into
+  the box beside it.
+- **At Angle:** a plane through an axis, turned from a plane by the angle typed. Pick the axis
+  in the panel (an origin axis or a construction axis) or click a straight edge in the 3D view.
+- **Midplane:** halfway between two planes: click two flat faces, or pick planes in the panel.
+  If the two are not parallel, it halves the angle between them, through the line where they
+  meet.
+
+Planes are listed under **Construction** in the browser (uncheck to hide, double-click to
+change), and drawn in amber. To sketch on one, select it in the browser and click **New
+Sketch**, or click **New Sketch** and then the plane in the 3D view.
 
 A sketch drawn on a construction plane, or started on a flat face of a body, follows it: move
 the plane or change the body, and the sketch and what was made from it move too.
 
-**Axis** (under **Create**) adds a construction axis: pick an origin axis in the panel, or click
-a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
+**Axis** (under **Create**, and the plane button in the toolbar) adds a construction axis: pick
+an origin axis in the panel, or click a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
 listed under **Construction** too and drawn as dashed amber lines. A revolve can turn about one,
 and a pattern go along or around one; when the edge or face it runs along moves, the axis and
 what uses it follow.
@@ -310,6 +399,14 @@ its length, area, radius, or position; click a second to see the distance betwee
 along X, Y, and Z) and, for flat faces and straight edges, the angle between them. A third click
 starts again. Esc closes it.
 
+
+### Section view
+
+**View > Section View** cuts the 3D view along a plane, to see inside the model; the faces it
+cuts through are filled in color. A bar at the top left of the view chooses the plane (an origin
+plane or a construction plane) and how far along its normal the cut is; it starts through the
+middle of the model. **Flip** shows the other side, and **×** shows the model whole again. It
+only changes what is shown: the model is not cut, and you can go on working while it is on.
 ## Sketching
 
 A sketch is flat geometry on a plane: lines, circles, and arcs, held in shape by constraints
@@ -337,6 +434,10 @@ in the 3D view.
 | Rectangle | R | Click one corner, then the opposite one. |
 | Circle | C | Click the center, then a point on the circle. |
 | Arc | A | Click the center, then where it starts, then move round the center and click where it ends. |
+| Center Rectangle | | Click the center, then a corner. A construction diagonal holds it centered on the point. In the list beside Rectangle. |
+| 3-Point Circle | | Click three points on the circle. In the list beside Circle. |
+| 3-Point Arc | | Click where it starts, where it ends, then a point it passes through. In the list beside Arc. |
+| Tangent Arc | | Click the end of a line or an arc, then where the arc ends. It goes on from the curve, joined and tangent to it. In the list beside Arc. |
 | Point | | Click where it goes. |
 | Polygon | | Click the center, then a corner. The number of sides is set in the panel on the right. |
 | Slot | | Click the two centers, then move away from the line between them and click to set the width. |
@@ -356,6 +457,20 @@ of the rectangle (`40 25`), or the diameter of the circle. The size becomes a di
 dashed. Press X with curves selected to turn them into construction geometry or back. With
 nothing selected, X switches what the drawing tools make.
 
+
+While drawing, LCAD lines things up and holds them so, with a mark by the pointer to say how:
+
+- A click on a point, the origin among them, joins it there (a square mark); on the middle of a
+  line or an arc, holds it there (a triangle); on a curve, holds it on the curve (a cross), and
+  at the right, top, left, or bottom of a circle or an arc, exactly there; where two curves
+  cross, holds it on both (a circled cross).
+- A line drawn nearly level or upright is made horizontal or vertical. One drawn nearly parallel
+  or square to another line is made parallel (∥) or perpendicular (⊥) to it, and that line is
+  lit; one that goes on from the end of an arc nearly the way it goes is made tangent (◠).
+- Hold Shift to draw at any angle, or turn all of this off with **Sketch > Pick Up Constraints
+  While Drawing**.
+- **Sketch > Snap to Grid** puts clicks that land on nothing on round numbers: steps of 0.1,
+  0.5, 1, 5, 10 mm and so on, whichever is the smallest that suits the zoom.
 ### Selecting and moving
 
 Press Esc until no tool is active. Then:
@@ -364,6 +479,11 @@ Press Esc until no tool is active. Then:
   across empty space to select what lies wholly inside the rectangle.
 - Drag a point or a curve to move it, as far as its constraints allow. Drag a circle by its rim
   to change its size.
+- Let a dragged point go on another point, the origin among them, and it joins it with
+  Coincident. On the middle of a line or an arc it goes there with Midpoint, and on a curve it
+  stays on it. A mark under the pointer says which, and one undo takes back both.
+- Drag a dimension's value to put it elsewhere: a length's line follows it to either side, and a
+  radius points to it. It stays there as the sketch changes, and is saved with it.
 - Delete removes what is selected.
 
 ### Constraints
@@ -380,7 +500,7 @@ constraint first and then what it is about.
 | Tangent | A line and a circle or arc; or two circles or arcs |
 | Equal | Two lines (same length); or two circles or arcs (same radius) |
 | Concentric | Two circles or arcs |
-| Midpoint | A point and a line or an arc. A line or an arc alone, or clicked twice, gets a new point at its middle |
+| Midpoint | A line or an arc, clicked or selected, gets a new point at its middle. A point and then a line or an arc puts the point there |
 | Symmetric | Two points and the line between them |
 | Lock | Points, or curves, which stay where they are |
 
@@ -413,6 +533,11 @@ click; two points or lines need a click on each.
 
 Or select first, then press D: a line gets its length, a circle its diameter, and the value
 opens for typing. With a line selected, the panel says "Press D to give it a length".
+
+A size the other dimensions and constraints already fix, such as the length of the second side
+of a rectangle, goes in as a **reference dimension**, in brackets: it shows the size and follows
+the sketch, and does not set it. What fixes it flashes red. Its value cannot be typed over;
+delete it if it is not wanted.
 
 | Click | Gives |
 |---|---|
@@ -447,6 +572,13 @@ coincident with it), then add dimensions until nothing is blue.
 |---|---|---|
 | Cut | T | Click the part of a curve to remove. It goes up to where other curves cross it. |
 | Extend | | Click a line or an arc near an end. It grows to the next curve it meets. |
+| Circular Pattern | | Select curves first. Click the point to copy them around; type how many there are to be in all, and press Enter. The copies show before they are made. In the list beside Mirror. |
+| Rectangular Pattern | | Select curves first. Click a point, then where that point goes in the next copy; type how many in all, and press Enter. In the list beside Mirror. |
+| Move/Copy | | Select curves first. Click a point, then where that point goes; hold Ctrl on the second click to make a copy instead. In the list beside Mirror. |
+| Rotate | | Select curves first. Click the point to turn about, type the angle, and press Enter. |
+| Scale | | Select curves first. Click the point to scale about, type how many times as large, and press Enter. A dimension that holds the size stops it; a copy is not held. |
+| Chamfer | | Click a corner where two lines meet. A line cuts it, the same distance back on each line, and that distance opens to be typed. |
+| Fillet | | Click a corner where two lines meet. An arc rounds it, tangent to both lines, and its radius opens to be typed. Its center shows like any arc's, and its radius is a dimension: double-click it to change it. A construction point stays where the corner was, so dimensions to the corner still hold. |
 | Offset | O | Click a curve, which takes the whole outline it belongs to. Then click where the copy should go. |
 | Mirror | | Select what to mirror, choose Mirror, and click the line to mirror in. |
 | Project | P | Click an edge or a corner of a body. It comes into the sketch as reference geometry, in its own color, and does not move. |

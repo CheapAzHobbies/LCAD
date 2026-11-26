@@ -18,12 +18,13 @@ add_library(lcad_kernel STATIC
     src/Shape.cpp
     src/Stop.cpp
     src/SubShapes.cpp
+    src/Text.cpp
     src/Transform.cpp
     src/Version.cpp)
 add_library(lcad::kernel ALIAS lcad_kernel)
 target_include_directories(lcad_kernel PUBLIC include)
 # 3MF files are zip archives. Eigen does the fitting of surfaces to meshes.
-target_link_libraries(lcad_kernel PRIVATE lcad::core lcad_occt_exchange lcad_libzip lcad_eigen)
+target_link_libraries(lcad_kernel PRIVATE lcad::core lcad_occt_exchange lcad_occt_text lcad_libzip lcad_eigen)
 lcad_target_defaults(lcad_kernel)
 
 # For the few modules that have to hand shapes to OCCT themselves (the viewport, kernel tests).
