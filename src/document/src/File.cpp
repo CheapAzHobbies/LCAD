@@ -1458,6 +1458,33 @@ Tool readTool(const json& entry, const std::filesystem::path& path) {
     return tool;
 }
 
+nlohmann::ordered_json writeView(const SavedView& view) {
+    return nlohmann::ordered_json{{"id", view.id.value},
+                                  {"name", view.name},
+                                  {"eye", view.eye},
+                                  {"center", view.center},
+                                  {"up", view.up},
+                                  {"scale", view.scale},
+                                  {"perspective", view.perspective}};
+}
+
+SavedView readView(const json& entry, const std::filesystem::path& path) {
+    SavedView view;
+    view.id = ObjectId{idMember(entry, "id", "a saved view", path)};
+    view.name = stringMember(entry, "name", "a saved view", path);
+    const std::string where = "the saved view " + view.name;
+    const auto three = [&](const char* key) {
+        const std::vector<double> numbers = numbersMember(entry, key, 3, where, path);
+        return std::array<double, 3>{numbers[0], numbers[1], numbers[2]};
+    };
+    view.eye = three("eye");
+    view.center = three("center");
+    view.up = three("up");
+    view.scale = numberMember(entry, "scale", where, path);
+    view.perspective = boolMember(entry, "perspective", where, path);
+    return view;
+}
+
 nlohmann::ordered_json writeOperation(const MachiningOperation& operation) {
     using nlohmann::ordered_json;
     ordered_json out;
@@ -1607,6 +1634,11 @@ void readOutputs(const json& document, const std::filesystem::path& path, Docume
             state.setups.push_back(readSetup(entry, path));
         }
     }
+    if (const json* views = optionalList(document, "savedViews", path)) {
+        for (const json& entry : *views) {
+            state.views.push_back(readView(entry, path));
+        }
+    }
 }
 
 void writeOutputs(const Document& document, nlohmann::ordered_json& model) {
@@ -1627,6 +1659,13 @@ void writeOutputs(const Document& document, nlohmann::ordered_json& model) {
         model["setups"] = ordered_json::array();
         for (const Setup& setup : document.setups()) {
             model["setups"].push_back(writeSetup(setup));
+        }
+    }
+    // Written only when there are some, so that a file without them reads as it did.
+    if (!document.views().empty()) {
+        model["savedViews"] = ordered_json::array();
+        for (const SavedView& view : document.views()) {
+            model["savedViews"].push_back(writeView(view));
         }
     }
 }

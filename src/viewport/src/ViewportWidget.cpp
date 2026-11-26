@@ -2116,6 +2116,7 @@ public:
         case Kind::HistoryChanged:
         case Kind::DrawingsChanged:
         case Kind::MachiningChanged:
+        case Kind::ViewsChanged:
         case Kind::MaterialsChanged:
             return;
         }

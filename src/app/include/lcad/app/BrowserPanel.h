@@ -51,6 +51,8 @@ public:
     /// The occurrences selected, each by its path from the root.
     [[nodiscard]] std::vector<std::vector<document::ObjectId>> selectedOccurrences() const;
     [[nodiscard]] std::vector<document::ObjectId> selectedJoints() const;
+    /// The saved views selected in the tree.
+    [[nodiscard]] std::vector<document::ObjectId> selectedViews() const;
     /// Selects these bodies' entries, and no others, without emitting bodySelectionChanged().
     void setSelectedBodies(const std::vector<document::ObjectId>& bodies);
     /// Selects exactly these bodies and sketches, without emitting bodySelectionChanged().
@@ -103,7 +105,7 @@ public:
     void setOriginVisibility(const std::array<bool, 6>& visible);
 
     /// What an entry stands for.
-    enum class EntryKind { Other, Body, Sketch, Plane, Occurrence, Joint };
+    enum class EntryKind { Other, Body, Sketch, Plane, Occurrence, Joint, View };
     [[nodiscard]] static EntryKind kindOf(const QTreeWidgetItem* item);
     /// The path of an occurrence's entry, or of the occurrence an entry is listed under.
     [[nodiscard]] static std::vector<document::ObjectId> pathOf(const QTreeWidgetItem* item);
@@ -124,6 +126,8 @@ signals:
     void occurrenceActivated(const std::vector<lcad::document::ObjectId>& path);
     /// The user double-clicked a joint.
     void jointActivated(lcad::document::ObjectId joint);
+    /// The user double-clicked a saved view: look at the model that way.
+    void viewActivated(lcad::document::ObjectId view);
     /// The user dropped an occurrence onto another, or onto the document's entry (an invalid
     /// id): move it into that component.
     void occurrenceDropped(lcad::document::ObjectId occurrence, lcad::document::ObjectId component);
@@ -166,6 +170,8 @@ private:
     QTreeWidgetItem* m_sketches = nullptr;
     QTreeWidgetItem* m_planes = nullptr;
     QTreeWidgetItem* m_joints = nullptr;
+    QTreeWidgetItem* m_views = nullptr;
+    void fillViews();
     document::ObjectId m_editedSketch;
     std::vector<document::ObjectId> m_activePath;
     std::array<bool, 6> m_originVisible{};
