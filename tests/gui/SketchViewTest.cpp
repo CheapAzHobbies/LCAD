@@ -2048,6 +2048,18 @@ void SketchViewTest::clicksGoToRoundNumbersOnTheGrid() {
     click(at(61.0, 41.0));
     editor()->cancel();
     QVERIFY(apart(startOf(curves(EntityKind::Line).back().id), {40.0, 20.0}) < 1e-9);
+
+    // A grid of 25 mm: of its steps, 0.25, 1.25, 2.5, 12.5 mm..., the first at least 8 pixels
+    // is 12.5 mm.
+    editor()->setGridSpacing(25.0);
+    click(at(61.0, 4.0));
+    click(at(86.0, 39.0));
+    editor()->cancel();
+    const Entity coarse = curves(EntityKind::Line).back();
+    QVERIFY2(apart(startOf(coarse.id), {62.5, 0.0}) < 1e-9,
+             qPrintable(QStringLiteral("%1 %2").arg(startOf(coarse.id).x).arg(startOf(coarse.id).y)));
+    QVERIFY(apart(endOf(coarse.id), {87.5, 37.5}) < 1e-9);
+    editor()->setGridSpacing(10.0);
     editor()->setGridSnap(false);
 }
 

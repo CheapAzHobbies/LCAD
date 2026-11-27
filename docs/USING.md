@@ -706,7 +706,9 @@ beside it show how the axes lie.
 **View > Display Style**, or the last button of the toolbar, offers shaded with edges (the
 default), shaded, wireframe, hidden line, and transparent. **View > Grid** shows a reference
 grid on the XY plane with lines 10 mm apart, and **View > Axis Marker** the X, Y, Z marker in
-the corner.
+the corner. **View > Grid Spacing** sets how far apart the grid's lines are. Snap to Grid in a
+sketch then takes its steps from that spacing: tenths, halves, ones, fives, and tens of it, as
+suits the zoom.
 
 ## Selecting
 

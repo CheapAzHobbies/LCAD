@@ -98,6 +98,7 @@ const char* const geometryKey = "window/geometry";
 const char* const layoutKey = "window/layout";
 const char* const reverseZoomKey = "view/reverseZoom";
 const char* const gridKey = "view/grid";
+const char* const gridSpacingKey = "view/gridSpacing";
 const char* const axesKey = "view/axes";
 const char* const animateKey = "view/animate";
 const char* const navigationKey = "view/navigation";
@@ -1449,6 +1450,20 @@ void MainWindow::defineCommands() {
         c.isChecked = [this] { return m_viewport->isGridVisible(); };
         m_commands->add(std::move(c));
 
+        c = make("view.gridSpacing", tr("Grid &Spacing..."), view,
+                 tr("Set how far apart the grid's lines are; the sketch's grid snap follows"));
+        c.aliases = {tr("grid size"), tr("snap increment"), tr("grid settings")};
+        c.run = [this](bool) {
+            bool ok = false;
+            const double spacing = QInputDialog::getDouble(
+                this, tr("Grid Spacing"), tr("Lines apart (mm):"), m_viewport->gridSpacing(),
+                0.01, 10000.0, 2, &ok);
+            if (ok) {
+                setGridSpacing(spacing);
+            }
+        };
+        m_commands->add(std::move(c));
+
         c = make("view.section", tr("&Section View"), view,
                  tr("Cut the 3D view along a plane to see inside the model"));
         c.iconName = QStringLiteral("split");
@@ -2130,7 +2145,7 @@ void MainWindow::createTopBar() {
                            "view.style.hiddenLine", "view.style.transparent"}) {
         style->addAction(action(id));
     }
-    view->addActions({action("view.grid"), action("view.axes")});
+    view->addActions({action("view.grid"), action("view.gridSpacing"), action("view.axes")});
     view->addSeparator();
     QMenu* mouse = view->addMenu(tr("&Mouse"));
     mouse->addActions(
@@ -2655,10 +2670,16 @@ void MainWindow::createDocks() {
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
 }
 
+void MainWindow::setGridSpacing(double millimeters) {
+    m_viewport->setGridSpacing(millimeters);
+    QSettings().setValue(QLatin1String(gridSpacingKey), m_viewport->gridSpacing());
+}
+
 void MainWindow::restoreSettings() {
     const QSettings settings;
     m_viewport->setZoomReversed(settings.value(QLatin1String(reverseZoomKey), false).toBool());
     m_viewport->setGridVisible(settings.value(QLatin1String(gridKey), true).toBool());
+    m_viewport->setGridSpacing(settings.value(QLatin1String(gridSpacingKey), 10.0).toDouble());
     m_viewport->setAxesVisible(settings.value(QLatin1String(axesKey), true).toBool());
     m_viewport->setAnimated(settings.value(QLatin1String(animateKey), true).toBool());
     m_viewport->setNavigationPreset(settings.value(QLatin1String(navigationKey)).toInt() ==

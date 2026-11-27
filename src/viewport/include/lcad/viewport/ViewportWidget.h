@@ -313,9 +313,14 @@ public:
     [[nodiscard]] ViewportColors colors() const;
     void setDisplayStyle(DisplayStyle style);
     [[nodiscard]] DisplayStyle displayStyle() const;
-    /// A reference grid on the XY plane, with lines 10 mm apart. Off until switched on.
+    /// A reference grid on the XY plane, or the plane of the sketch being edited. Off until
+    /// switched on.
     void setGridVisible(bool visible);
     [[nodiscard]] bool isGridVisible() const;
+    /// How far apart the grid's lines are, in millimeters; 10 at first. The sketch's grid snap
+    /// takes its steps from it too. Values that are not positive are ignored.
+    void setGridSpacing(double millimeters);
+    [[nodiscard]] double gridSpacing() const;
     /// Cuts the view along a plane: what lies on the side its normal points to is left out, and
     /// the cut faces of solids are filled in. Nothing shows everything whole again.
     void setSection(const std::optional<kernel::Plane>& plane);

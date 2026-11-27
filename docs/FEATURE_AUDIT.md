@@ -177,7 +177,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Display styles, grid | Have | |
 | Repeat last command | Have | Edit menu, and first in the 3D view's right-click menu. |
 | Saved camera views | No | |
-| Grid spacing setting | No | |
+| Grid spacing setting | Have | Since 2026-11-27: View > Grid Spacing; the sketch's grid snap follows it. |
 
 ## Order of work
 

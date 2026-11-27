@@ -307,6 +307,7 @@ public:
     ConstraintKind constraintKind = ConstraintKind::Coincident;
     bool inference = true;
     bool gridSnap = false;
+    double gridSpacing = 10.0;
     bool constructionMode = false;
     int polygonSides = 6;
 
@@ -1216,8 +1217,9 @@ public:
     // 0.1, 0.5, 1, 5, 10 mm and so on that is at least 8 pixels at this zoom.
     void snapToGrid(Snap& snap, const QPointF& position) const {
         const double mm = millimetersPerPixel(position);
-        double step = 0.1;
-        for (int i = 0; step / mm < 8.0 && i < 20; ++i) {
+        // A hundredth of the grid's spacing, then five and two times that in turn.
+        double step = gridSpacing / 100.0;
+        for (int i = 0; step / mm < 8.0 && i < 30; ++i) {
             step *= i % 2 == 0 ? 5.0 : 2.0;
         }
         snap.position = {std::round(snap.position.x / step) * step,
@@ -3773,6 +3775,12 @@ void SketchEditor::cancel() {
     }
     m_impl->update();
     emit changed();
+}
+
+void SketchEditor::setGridSpacing(double millimeters) {
+    if (std::isfinite(millimeters) && millimeters > 0.0) {
+        m_impl->gridSpacing = millimeters;
+    }
 }
 
 void SketchEditor::setGridSnap(bool on) {

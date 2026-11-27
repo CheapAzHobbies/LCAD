@@ -126,7 +126,10 @@ public:
     void setInference(bool on);
     /// Clicks that land on nothing else go to round numbers in the sketch: steps of 0.1, 0.5,
     /// 1, 5, 10 mm and so on, the smallest at least 8 pixels apart at the zoom. Off at first.
+    /// With another grid spacing the steps are that many tenths, halves, ones, fives, and tens
+    /// of it instead.
     void setGridSnap(bool on);
+    void setGridSpacing(double millimeters);
     [[nodiscard]] bool hasGridSnap() const;
     [[nodiscard]] bool hasInference() const;
     /// Whether the drawing tools make construction geometry.

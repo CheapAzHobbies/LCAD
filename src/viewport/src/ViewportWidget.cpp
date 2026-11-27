@@ -861,6 +861,7 @@ public:
     // The modifier that, with the middle button, orbits in the current preset.
     Aspect_VKeyFlags orbitModifiers = Aspect_VKeyFlags_SHIFT;
     bool gridVisible = false;
+    double gridSpacing = 10.0;
     bool axesVisible = true;
     bool animated = true;
     std::array<Handle(AIS_Shape), 6> originObjects;
@@ -1254,9 +1255,11 @@ public:
             viewer->DeactivateGrid();
             return;
         }
-        // Lines 10 mm apart, covering a square meter around the origin.
-        viewer->SetRectangularGridValues(0.0, 0.0, 10.0, 10.0, 0.0);
-        viewer->SetRectangularGridGraphicValues(500.0, 500.0, 0.0);
+        // Lines `gridSpacing` apart, covering a square meter around the origin, or a hundred
+        // lines each way if that is more.
+        const double reach = std::max(500.0, 50.0 * gridSpacing);
+        viewer->SetRectangularGridValues(0.0, 0.0, gridSpacing, gridSpacing, 0.0);
+        viewer->SetRectangularGridGraphicValues(reach, reach, 0.0);
         viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
         viewer->Grid()->SetColors(toOcct(colors.grid), toOcct(colors.gridMajor));
         // OCCT would otherwise leave a star on the grid point nearest a click in empty space.
@@ -2987,6 +2990,22 @@ void ViewportWidget::setGridVisible(bool visible) {
 
 bool ViewportWidget::isGridVisible() const {
     return m_impl->gridVisible;
+}
+
+void ViewportWidget::setGridSpacing(double millimeters) {
+    if (!std::isfinite(millimeters) || millimeters <= 0.0) {
+        return;
+    }
+    m_impl->gridSpacing = millimeters;
+    sketchEditor()->setGridSpacing(millimeters);
+    if (m_impl->canRender()) {
+        m_impl->applyGrid();
+        m_impl->redraw();
+    }
+}
+
+double ViewportWidget::gridSpacing() const {
+    return m_impl->gridSpacing;
 }
 
 void ViewportWidget::setAxesVisible(bool visible) {
