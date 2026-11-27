@@ -591,8 +591,10 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_planeKind->addItem(tr("Offset"), static_cast<int>(document::PlaneKind::Offset));
         m_planeKind->addItem(tr("At Angle"), static_cast<int>(document::PlaneKind::AtAngle));
         m_planeKind->addItem(tr("Midplane"), static_cast<int>(document::PlaneKind::Midplane));
+        m_planeKind->addItem(tr("Tangent"), static_cast<int>(document::PlaneKind::Tangent));
         m_planeKind->setToolTip(tr("Parallel to a plane at a distance; through an axis at an "
-                                   "angle to a plane; or halfway between two planes."));
+                                   "angle to a plane; halfway between two planes; or touching "
+                                   "a round face."));
         connect(m_planeKind, &QComboBox::activated, this, [this] { readFields(); });
         m_form->addRow(tr("Type"), m_planeKind);
         m_reference->setToolTip(tr("What the plane is placed against. Click a flat face in the "
@@ -1545,6 +1547,7 @@ bool FeaturePanel::hasInput() const {
     case FeatureKind::Plane:
         return !m_feature.reference.empty() &&
                (m_feature.planeKind == document::PlaneKind::Offset ||
+                m_feature.planeKind == document::PlaneKind::Tangent ||
                 !m_feature.reference2.empty());
     case FeatureKind::Axis:
         return !m_feature.reference.empty() &&
@@ -1707,11 +1710,17 @@ void FeaturePanel::readFields() {
         const auto kind = static_cast<document::PlaneKind>(m_planeKind->currentData().toInt());
         if (kind != m_feature.planeKind) {
             // Its second reference is of another kind now: axes, or planes.
+            if (kind == document::PlaneKind::Tangent) {
+                // At the middle of the face to begin with.
+                m_angle->setValue(0.0);
+            }
             m_feature.planeKind = kind;
             fillPlaneSecond();
         }
         m_feature.reference = m_reference->currentData().toString().toStdString();
-        m_feature.reference2 = kind == document::PlaneKind::Offset || m_planeSecond->count() == 0
+        m_feature.reference2 = kind == document::PlaneKind::Offset ||
+                                       kind == document::PlaneKind::Tangent ||
+                                       m_planeSecond->count() == 0
                                    ? std::string()
                                    : m_planeSecond->currentData().toString().toStdString();
         // Origin planes, construction planes and axes need no body; a face or an edge, the body
@@ -1729,9 +1738,14 @@ void FeaturePanel::readFields() {
                 label->setVisible(shown);
             }
         };
+        const bool tangent = kind == document::PlaneKind::Tangent;
         show(m_distance, kind == document::PlaneKind::Offset);
-        show(m_planeSecond, kind != document::PlaneKind::Offset);
-        show(m_angle, kind == document::PlaneKind::AtAngle);
+        show(m_planeSecond, kind == document::PlaneKind::AtAngle ||
+                                kind == document::PlaneKind::Midplane);
+        show(m_angle, kind == document::PlaneKind::AtAngle || tangent);
+        if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(m_reference))) {
+            label->setText(tangent ? tr("Touching") : tr("From"));
+        }
         if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(m_planeSecond))) {
             label->setText(kind == document::PlaneKind::AtAngle ? tr("Axis") : tr("And"));
         }
@@ -1991,6 +2005,11 @@ void FeaturePanel::updatePicked() {
         case document::PlaneKind::Midplane:
             text = tr("Choose two planes, or click two flat faces in the 3D view. The plane goes "
                       "halfway between them.");
+            break;
+        case document::PlaneKind::Tangent:
+            text = tr("Click the side of a cylinder, or a sphere, in the 3D view. The plane "
+                      "touches it at the middle of the face, turned by the angle about its "
+                      "axis.");
             break;
         }
         break;

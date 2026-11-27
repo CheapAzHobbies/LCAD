@@ -122,7 +122,7 @@ private slots:
     void partsThatDoNotTouchAreBodiesOfTheirOwn();
     void parametersDriveTheModel();
     void constructionAxesGuideRevolvesAndPatterns();
-    void anAxisGoesWhereTwoPlanesMeet();
+    void axesWhereTwoPlanesMeetAndTangentPlanes();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -1900,7 +1900,7 @@ void ModelingInterfaceTest::parametersDriveTheModel() {
 QTEST_MAIN(ModelingInterfaceTest)
 #include "ModelingInterfaceTest.moc"
 
-void ModelingInterfaceTest::anAxisGoesWhereTwoPlanesMeet() {
+void ModelingInterfaceTest::axesWhereTwoPlanesMeetAndTangentPlanes() {
     MainWindow window;
     show(window);
     QVERIFY(trigger(window, "construct.axis"));
@@ -1931,6 +1931,22 @@ void ModelingInterfaceTest::anAxisGoesWhereTwoPlanesMeet() {
     const auto state = window.document()->axisState(made.id);
     QVERIFY(state.has_value());
     QVERIFY(nearly(std::abs(state->axis.direction.y), 1.0));
+
+    // A tangent plane asks for a round face and an angle, and no second reference.
+    QVERIFY(trigger(window, "construct.offsetPlane"));
+    FeaturePanel* planePanel = panel(window);
+    QVERIFY(planePanel != nullptr);
+    auto* kind = planePanel->findChild<QComboBox*>(QStringLiteral("planeKind"));
+    const int tangent = kind->findText(QStringLiteral("Tangent"));
+    QVERIFY(tangent >= 0);
+    kind->setCurrentIndex(tangent);
+    emit kind->activated(tangent);
+    QCOMPARE(planePanel->feature().planeKind, lcad::document::PlaneKind::Tangent);
+    QVERIFY(!planePanel->findChild<QComboBox*>(QStringLiteral("planeSecond"))
+                 ->isVisibleTo(planePanel));
+    QVERIFY(planePanel->findChild<QDoubleSpinBox*>(QStringLiteral("angle"))
+                ->isVisibleTo(planePanel));
+    QVERIFY(planePanel->errorText().contains(QStringLiteral("round face")));
 }
 
 void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {

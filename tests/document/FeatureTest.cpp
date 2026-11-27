@@ -1455,6 +1455,52 @@ TEST_CASE("Ellipses and splines are pulled into solids, and saved", "[document][
     CHECK_THAT(volumes(*loaded.document)[1], WithinRel(pi * 30.0 * 12.0 * 5.0, 1e-9));
 }
 
+TEST_CASE("A tangent plane touches a round face, turned about its axis", "[document][feature]") {
+    Document document;
+    // A rod of radius 5 standing at (50, 0).
+    const ObjectId rodSketch = document.addSketch("Rod", lcad::kernel::planeXY());
+    lcad::sketch::Sketch rod;
+    rod.addCircle({50.0, 0.0}, 5.0);
+    document.setSketchGeometry(rodSketch, rod, "Circle");
+    const ObjectId rodPull = document.addFeature(pullOf(rodSketch, 20.0));
+    const ObjectId rodBody = document.findFeature(rodPull)->body;
+    std::string side;
+    for (const std::string& face : document.namedBody(rodBody).faceNames) {
+        if (face.find("/side/") != std::string::npos) {
+            side = face;
+        }
+    }
+    REQUIRE_FALSE(side.empty());
+    Feature touching;
+    touching.kind = FeatureKind::Plane;
+    touching.planeKind = PlaneKind::Tangent;
+    touching.body = rodBody;
+    touching.reference = side;
+    touching.angle = 0.0;
+    const ObjectId plane = document.addFeature(touching);
+    REQUIRE(document.featureError(plane).empty());
+    const auto touchesAt = [&](double angle) {
+        Feature turned = *document.findFeature(plane);
+        turned.angle = angle;
+        document.changeFeature(plane, turned);
+        REQUIRE(document.featureError(plane).empty());
+        const lcad::kernel::Plane at = document.planeState(plane)->plane;
+        // Its normal points out from the axis, and it is 5 from the axis that way.
+        const double out = (at.origin.x - 50.0) * at.normal.x + at.origin.y * at.normal.y;
+        CHECK_THAT(out, WithinAbs(5.0, 1e-9));
+        CHECK_THAT(at.normal.z, WithinAbs(0.0, 1e-12));
+        return at.normal;
+    };
+    const auto first = touchesAt(0.0);
+    const auto quarter = touchesAt(90.0);
+    CHECK_THAT(first.x * quarter.x + first.y * quarter.y, WithinAbs(0.0, 1e-9));
+    // Not on a flat plane.
+    Feature flat = *document.findFeature(plane);
+    flat.reference = "XY";
+    document.changeFeature(plane, flat);
+    CHECK_THAT(document.featureError(plane), ContainsSubstring("round face"));
+}
+
 TEST_CASE("A construction axis where two planes meet", "[document][feature]") {
     const lcad::test::TempDir folder;
     Document document;

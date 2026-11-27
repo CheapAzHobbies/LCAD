@@ -794,8 +794,8 @@ private:
     std::vector<Material> m_materials;
     std::vector<Drawing> m_drawings;
     std::vector<Tool> m_tools;
-    std::vector<SavedView> m_views;
     std::vector<Setup> m_setups;
+    std::vector<SavedView> m_views;
     /// Where each occurrence is in its parent, as the joints last placed it, and why a joint
     /// does not hold.
     std::unordered_map<ObjectId, kernel::Placement> m_solved;

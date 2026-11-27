@@ -118,6 +118,9 @@ enum class PlaneKind {
     /// Halfway between `reference` and `reference2`: between them if they are parallel, and
     /// otherwise halving the angle between them, through the line where they meet.
     Midplane,
+    /// Touching the round face `reference` (a cylinder or a sphere) along a line: at the middle
+    /// of the face, turned `angle` degrees about its axis from there.
+    Tangent,
 };
 
 [[nodiscard]] const char* toString(PlaneKind kind);

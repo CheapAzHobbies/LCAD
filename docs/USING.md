@@ -339,6 +339,8 @@ sketch on. Choose its **Type** in the panel:
 - **Midplane:** halfway between two planes: click two flat faces, or pick planes in the panel.
   If the two are not parallel, it halves the angle between them, through the line where they
   meet.
+- **Tangent:** touching a round face along a line: click the side of a cylinder, or a sphere.
+  It touches at the middle of the face, and the angle turns it about the face's axis from there.
 
 Planes are listed under **Construction** in the browser (uncheck to hide, double-click to
 change), and drawn in amber. To sketch on one, select it in the browser and click **New

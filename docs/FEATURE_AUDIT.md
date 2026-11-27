@@ -66,7 +66,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Plane at angle, about an axis or an edge | Have | Since 2026-11-12. |
 | Midplane, between parallel planes or halving an angle | Have | Since 2026-11-12. |
 | Offset from another construction plane | Have | Since 2026-11-12. |
-| Tangent plane, plane through three points, plane along a path | No | |
+| Tangent plane | Have | Since 2026-11-27, to a cylinder or a sphere. |
+| Plane through three points, plane along a path | No | |
 | Axis: origin, along an edge, through a cylinder, cone, or torus | Have | |
 | Axis through two planes, perpendicular to a face | Have | Since 2026-11-27. |
 | Axis through two points | No | Corners of a body are not named yet. |

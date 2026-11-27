@@ -847,7 +847,77 @@ kernel::Vector inPlane(const kernel::Vector& normal, const kernel::Vector& towar
 
 } // namespace
 
+// A plane touching a round face: at the face's middle, turned `angle` degrees about its axis.
+PlaneState tangentPlane(const Feature& feature, const Document& document,
+                        const BodyStates& bodies) {
+    const std::string& name = feature.reference;
+    if (name == "XY" || name == "XZ" || name == "YZ" || name.rfind("plane:", 0) == 0) {
+        throw FeatureFailure("A tangent plane touches a round face: click the side of a "
+                             "cylinder, or a sphere.");
+    }
+    const auto found = bodies.find(feature.body);
+    const Body* body = document.findBody(feature.body);
+    if (found == bodies.end() || found->second.shape.isNull()) {
+        throw FeatureFailure(body != nullptr
+                                 ? "The body it is placed on, " + body->name +
+                                       ", does not exist at this point in the timeline."
+                                 : std::string("The body it touches is gone."));
+    }
+    const int index = kernel::findFace(found->second, feature.reference);
+    if (index < 0) {
+        throw FeatureFailure("The face it touches no longer exists: " +
+                             describeName(document, feature.reference) + ".");
+    }
+    const kernel::Shape face =
+        kernel::subShape(found->second.shape, kernel::SubShapeKind::Face, index);
+    const auto axis = kernel::axisOf(face);
+    const auto radius = kernel::radiusOf(face);
+    if (!axis.has_value() || !radius.has_value()) {
+        throw FeatureFailure(describeName(document, feature.reference) +
+                             " is not round: choose the side of a cylinder, or a sphere.");
+    }
+    if (!std::isfinite(feature.angle)) {
+        throw FeatureFailure("Its angle is not a number.");
+    }
+    const kernel::Vector along = unitOf(axis->direction);
+    // Out from the axis toward the middle of the face; for a whole cylinder, whose middle is
+    // on the axis, square to the axis and to Z (or X).
+    kernel::Point middle = axis->origin;
+    double size = 20.0;
+    if (const auto box = kernel::boundingBox(face)) {
+        middle = {(box->min.x + box->max.x) / 2.0, (box->min.y + box->max.y) / 2.0,
+                  (box->min.z + box->max.z) / 2.0};
+        const double dx = box->max.x - box->min.x;
+        const double dy = box->max.y - box->min.y;
+        const double dz = box->max.z - box->min.z;
+        size = std::max(20.0, 1.2 * std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    const kernel::Vector offAxis = between(axis->origin, middle);
+    const kernel::Point foot = moved(axis->origin, scaled(along, dot(offAxis, along)));
+    kernel::Vector out = between(foot, middle);
+    if (dot(out, out) < 1e-12) {
+        out = cross(along, {0.0, 0.0, 1.0});
+        if (dot(out, out) < 1e-12) {
+            out = cross(along, {1.0, 0.0, 0.0});
+        }
+    }
+    out = unitOf(out);
+    const kernel::Vector side = cross(along, out);
+    const double turn = feature.angle * 3.14159265358979323846 / 180.0;
+    const kernel::Vector normal =
+        unitOf(plus(scaled(out, std::cos(turn)), scaled(side, std::sin(turn))));
+    const kernel::Point touch = moved(foot, scaled(normal, *radius));
+    PlaneState state;
+    state.plane = kernel::makePlane(touch, normal, along);
+    state.center = touch;
+    state.size = size;
+    return state;
+}
+
 PlaneState placePlane(const Feature& feature, const Document& document, const BodyStates& bodies) {
+    if (feature.planeKind == PlaneKind::Tangent) {
+        return tangentPlane(feature, document, bodies);
+    }
     PlaneState state = referencePlane(feature.reference, feature, document, bodies);
     kernel::Plane base = state.plane;
     const auto dropCenter = [&state](const kernel::Plane& onto) {
@@ -925,6 +995,8 @@ PlaneState placePlane(const Feature& feature, const Document& document, const Bo
         state.size = std::max(state.size, other.size);
         break;
     }
+    case PlaneKind::Tangent:
+        break;
     }
     dropCenter(base);
     state.plane = base;
