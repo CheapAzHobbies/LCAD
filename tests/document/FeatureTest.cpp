@@ -1455,6 +1455,45 @@ TEST_CASE("Ellipses and splines are pulled into solids, and saved", "[document][
     CHECK_THAT(volumes(*loaded.document)[1], WithinRel(pi * 30.0 * 12.0 * 5.0, 1e-9));
 }
 
+TEST_CASE("A construction axis where two planes meet", "[document][feature]") {
+    const lcad::test::TempDir folder;
+    Document document;
+    // A plane 10 above XY, and the axis where it meets XZ: along X, at Z = 10.
+    Feature raised;
+    raised.kind = FeatureKind::Plane;
+    raised.reference = "XY";
+    raised.distance = 10.0;
+    const ObjectId plane = document.addFeature(raised);
+    Feature meet;
+    meet.kind = FeatureKind::Axis;
+    meet.axisKind = AxisKind::TwoPlanes;
+    meet.reference = "plane:" + std::to_string(plane.value);
+    meet.reference2 = "XZ";
+    const ObjectId axis = document.addFeature(meet);
+    REQUIRE(document.featureError(axis).empty());
+    const auto state = document.axisState(axis);
+    REQUIRE(state.has_value());
+    CHECK_THAT(std::abs(state->axis.direction.x), WithinAbs(1.0, 1e-12));
+    CHECK_THAT(state->axis.origin.z, WithinAbs(10.0, 1e-9));
+    CHECK_THAT(state->axis.origin.y, WithinAbs(0.0, 1e-9));
+    // The plane moves: the axis goes with it.
+    raised.id = plane;
+    raised.name = document.findFeature(plane)->name;
+    raised.distance = 25.0;
+    document.changeFeature(plane, raised);
+    CHECK_THAT(document.axisState(axis)->axis.origin.z, WithinAbs(25.0, 1e-9));
+    // It comes back from a file as it was.
+    const auto file = folder.file("axis.lcad");
+    saveDocument(document, file);
+    const LoadedDocument loaded = loadDocument(file);
+    CHECK(*loaded.document->findFeature(axis) == *document.findFeature(axis));
+    // Parallel planes do not meet.
+    meet = *document.findFeature(axis);
+    meet.reference2 = "XY";
+    document.changeFeature(axis, meet);
+    CHECK_THAT(document.featureError(axis), ContainsSubstring("parallel"));
+}
+
 TEST_CASE("Construction axes: revolves turn about them, patterns go around them",
           "[document][feature]") {
     Document document;

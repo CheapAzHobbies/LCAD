@@ -601,6 +601,10 @@ nlohmann::ordered_json writeFeature(const Feature& feature) {
         out["planeKind"] = toString(feature.planeKind);
         out["reference2"] = feature.reference2;
     }
+    if (feature.kind == FeatureKind::Axis && feature.axisKind != AxisKind::Along) {
+        out["axisKind"] = toString(feature.axisKind);
+        out["reference2"] = feature.reference2;
+    }
     // A revolve about an origin axis or a construction axis; the direction of a face moved;
     // the plane of a draft or a split.
     if (((feature.kind == FeatureKind::Revolve || feature.kind == FeatureKind::SurfaceRevolve) &&
@@ -768,6 +772,15 @@ Feature readFeature(const json& entry, const std::filesystem::path& path) {
             damaged(path, where + " is a plane of the unknown kind \"" + planeKind + "\"");
         }
         feature.planeKind = *known;
+        feature.reference2 = stringMember(entry, "reference2", where, path);
+    }
+    if (feature.kind == FeatureKind::Axis && entry.contains("axisKind")) {
+        const std::string axisKind = stringMember(entry, "axisKind", where, path);
+        const auto known = axisKindFromString(axisKind);
+        if (!known.has_value()) {
+            damaged(path, where + " is an axis of the unknown kind \"" + axisKind + "\"");
+        }
+        feature.axisKind = *known;
         feature.reference2 = stringMember(entry, "reference2", where, path);
     }
     if (((feature.kind == FeatureKind::Revolve || feature.kind == FeatureKind::SurfaceRevolve) &&

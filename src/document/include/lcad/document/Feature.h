@@ -123,6 +123,18 @@ enum class PlaneKind {
 [[nodiscard]] const char* toString(PlaneKind kind);
 [[nodiscard]] std::optional<PlaneKind> planeKindFromString(const std::string& name);
 
+/// How a construction axis is placed.
+enum class AxisKind {
+    /// Along `reference`: an origin axis, a straight edge, the axis of a round edge or face, or
+    /// square to a flat face through its middle.
+    Along,
+    /// Where the planes `reference` and `reference2` meet.
+    TwoPlanes,
+};
+
+[[nodiscard]] const char* toString(AxisKind kind);
+[[nodiscard]] std::optional<AxisKind> axisKindFromString(const std::string& name);
+
 /// What a hole looks like at the top.
 enum class HoleKind {
     Simple,
@@ -237,6 +249,8 @@ struct Feature {
     bool visible = true;
     /// Plane: how it is placed.
     PlaneKind planeKind = PlaneKind::Offset;
+    /// Axis: how it is placed.
+    AxisKind axisKind = AxisKind::Along;
     // Loft
     /// The sections after the first, in the order the loft goes through them.
     std::vector<LoftSection> sections;

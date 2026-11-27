@@ -122,6 +122,7 @@ private slots:
     void partsThatDoNotTouchAreBodiesOfTheirOwn();
     void parametersDriveTheModel();
     void constructionAxesGuideRevolvesAndPatterns();
+    void anAxisGoesWhereTwoPlanesMeet();
 
 private:
     static QAction* action(const MainWindow& window, const char* id) {
@@ -1898,6 +1899,39 @@ void ModelingInterfaceTest::parametersDriveTheModel() {
 
 QTEST_MAIN(ModelingInterfaceTest)
 #include "ModelingInterfaceTest.moc"
+
+void ModelingInterfaceTest::anAxisGoesWhereTwoPlanesMeet() {
+    MainWindow window;
+    show(window);
+    QVERIFY(trigger(window, "construct.axis"));
+    FeaturePanel* axisPanel = panel(window);
+    QVERIFY(axisPanel != nullptr);
+    const auto choose = [axisPanel](const char* name, const QString& text) {
+        auto* box = axisPanel->findChild<QComboBox*>(QLatin1String(name));
+        QVERIFY2(box != nullptr, name);
+        const int index = box->findText(text);
+        QVERIFY2(index >= 0, qPrintable(text));
+        box->setCurrentIndex(index);
+        emit box->activated(index);
+    };
+    auto* second = axisPanel->findChild<QComboBox*>(QStringLiteral("planeSecond"));
+    QVERIFY(second != nullptr);
+    QVERIFY(!second->isVisibleTo(axisPanel));
+    choose("axisKind", QStringLiteral("Where Two Planes Meet"));
+    QVERIFY(second->isVisibleTo(axisPanel));
+    choose("reference", QStringLiteral("XY Plane"));
+    choose("planeSecond", QStringLiteral("XY Plane"));
+    QVERIFY(axisPanel->errorText().contains(QStringLiteral("parallel")));
+    choose("planeSecond", QStringLiteral("YZ Plane"));
+    QVERIFY2(axisPanel->errorText().isEmpty(), qPrintable(axisPanel->errorText()));
+    QTest::mouseClick(okButton(axisPanel), Qt::LeftButton);
+    QTRY_VERIFY(panel(window) == nullptr);
+    const Feature& made = window.document()->features().back();
+    QCOMPARE(made.axisKind, lcad::document::AxisKind::TwoPlanes);
+    const auto state = window.document()->axisState(made.id);
+    QVERIFY(state.has_value());
+    QVERIFY(nearly(std::abs(state->axis.direction.y), 1.0));
+}
 
 void ModelingInterfaceTest::constructionAxesGuideRevolvesAndPatterns() {
     MainWindow window;

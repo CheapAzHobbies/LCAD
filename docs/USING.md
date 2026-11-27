@@ -348,7 +348,10 @@ A sketch drawn on a construction plane, or started on a flat face of a body, fol
 the plane or change the body, and the sketch and what was made from it move too.
 
 **Axis** (under **Create**, and the plane button in the toolbar) adds a construction axis: pick
-an origin axis in the panel, or click a straight edge, or a round edge or face (the axis of a hole or a rod), in the 3D view. Axes are
+an origin axis in the panel, or click a straight edge, a round edge or face (the axis of a hole
+or a rod), or a flat face (square to it, through its middle), in the 3D view. With **Type**
+set to **Where Two Planes Meet**, choose two planes, or click two flat faces, and the axis lies
+along the line where they meet. Axes are
 listed under **Construction** too and drawn as dashed amber lines. A revolve can turn about one,
 and a pattern go along or around one; when the edge or face it runs along moves, the axis and
 what uses it follow.

@@ -614,9 +614,26 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         fillPlaneSecond();
         break;
     case FeatureKind::Axis:
-        m_reference->setToolTip(tr("What the axis runs along. Click a straight edge, or a round "
-                                   "edge or face, in the 3D view to run it along that."));
+        m_axisKind = new QComboBox(this);
+        m_axisKind->setObjectName(QStringLiteral("axisKind"));
+        m_axisKind->addItem(tr("Along"), static_cast<int>(document::AxisKind::Along));
+        m_axisKind->addItem(tr("Where Two Planes Meet"),
+                            static_cast<int>(document::AxisKind::TwoPlanes));
+        m_axisKind->setToolTip(tr("Along an axis, an edge, or a face; or the line where two "
+                                  "planes meet."));
+        connect(m_axisKind, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("Type"), m_axisKind);
+        m_reference->setToolTip(tr("What the axis runs along. Click a straight edge, a round "
+                                   "edge or face, or a flat face to stand square to, in the 3D "
+                                   "view."));
         m_form->addRow(tr("Along"), m_reference);
+        m_planeSecond = new QComboBox(this);
+        m_planeSecond->setObjectName(QStringLiteral("planeSecond"));
+        m_planeSecond->setToolTip(tr("The second plane. Click a second flat face in the 3D view "
+                                     "to take that."));
+        connect(m_planeSecond, &QComboBox::activated, this, [this] { readFields(); });
+        m_form->addRow(tr("And"), m_planeSecond);
+        fillPlaneSecond();
         break;
     case FeatureKind::OffsetFace:
         m_distance = addField(QStringLiteral("distance"), tr("Distance"), -largestInput,
@@ -752,10 +769,12 @@ void FeaturePanel::fillReferences() {
     const QString was = m_reference->currentData().toString();
     const QSignalBlocker blocker(m_reference);
     m_reference->clear();
+    const bool twoPlanes = m_feature.kind == FeatureKind::Axis &&
+                           m_feature.axisKind == document::AxisKind::TwoPlanes;
     const bool mirror = m_feature.kind == FeatureKind::Mirror ||
                         m_feature.kind == FeatureKind::Plane ||
                         m_feature.kind == FeatureKind::Draft ||
-                        m_feature.kind == FeatureKind::SplitBody;
+                        m_feature.kind == FeatureKind::SplitBody || twoPlanes;
     if (mirror) {
         m_reference->addItem(tr("XY Plane"), QStringLiteral("XY"));
         m_reference->addItem(tr("XZ Plane"), QStringLiteral("XZ"));
@@ -763,7 +782,7 @@ void FeaturePanel::fillReferences() {
         // A plane can be placed against another construction plane too, and a body drafted
         // about one or split along one.
         if (m_feature.kind == FeatureKind::Plane || m_feature.kind == FeatureKind::Draft ||
-            m_feature.kind == FeatureKind::SplitBody) {
+            m_feature.kind == FeatureKind::SplitBody || twoPlanes) {
             addConstruction(m_reference, FeatureKind::Plane);
         }
     } else {
@@ -867,10 +886,14 @@ void FeaturePanel::setPickedReference(document::ObjectId body, const std::string
         }
     }
     // A midplane's second face: the first is already picked.
-    if (m_planeKind != nullptr &&
-        static_cast<document::PlaneKind>(m_planeKind->currentData().toInt()) ==
-            document::PlaneKind::Midplane &&
-        !m_pickedName.empty()) {
+    const bool secondPlane =
+        (m_planeKind != nullptr &&
+         static_cast<document::PlaneKind>(m_planeKind->currentData().toInt()) ==
+             document::PlaneKind::Midplane) ||
+        (m_axisKind != nullptr &&
+         static_cast<document::AxisKind>(m_axisKind->currentData().toInt()) ==
+             document::AxisKind::TwoPlanes);
+    if (secondPlane && !m_pickedName.empty()) {
         m_pickedBody = body;
         m_secondName = name;
         m_secondDescription = description;
@@ -901,18 +924,28 @@ void FeaturePanel::fillPlaneSecond() {
     if (m_planeSecond == nullptr) {
         return;
     }
-    const auto kind = static_cast<document::PlaneKind>(m_planeKind->currentData().toInt());
+    // What the second reference is: an axis to turn about, a second plane, or nothing.
+    bool axes = false;
+    bool planes = false;
+    if (m_planeKind != nullptr) {
+        const auto kind = static_cast<document::PlaneKind>(m_planeKind->currentData().toInt());
+        axes = kind == document::PlaneKind::AtAngle;
+        planes = kind == document::PlaneKind::Midplane;
+    } else if (m_axisKind != nullptr) {
+        planes = static_cast<document::AxisKind>(m_axisKind->currentData().toInt()) ==
+                 document::AxisKind::TwoPlanes;
+    }
     const QString was = m_planeSecond->count() > 0 && !m_filling
                             ? m_planeSecond->currentData().toString()
                             : QString::fromStdString(m_feature.reference2);
     const QSignalBlocker blocker(m_planeSecond);
     m_planeSecond->clear();
-    if (kind == document::PlaneKind::AtAngle) {
+    if (axes) {
         m_planeSecond->addItem(tr("X Axis"), QStringLiteral("X"));
         m_planeSecond->addItem(tr("Y Axis"), QStringLiteral("Y"));
         m_planeSecond->addItem(tr("Z Axis"), QStringLiteral("Z"));
         addConstruction(m_planeSecond, FeatureKind::Axis);
-    } else if (kind == document::PlaneKind::Midplane) {
+    } else if (planes) {
         m_planeSecond->addItem(tr("XY Plane"), QStringLiteral("XY"));
         m_planeSecond->addItem(tr("XZ Plane"), QStringLiteral("XZ"));
         m_planeSecond->addItem(tr("YZ Plane"), QStringLiteral("YZ"));
@@ -923,11 +956,11 @@ void FeaturePanel::fillPlaneSecond() {
     QString description = m_secondDescription;
     if (picked.empty() && !m_feature.reference2.empty() &&
         m_planeSecond->findData(QString::fromStdString(m_feature.reference2)) < 0 &&
-        kind != document::PlaneKind::Offset) {
+        (axes || planes)) {
         picked = m_feature.reference2;
-        description = kind == document::PlaneKind::AtAngle ? tr("Picked edge") : tr("Picked face");
+        description = axes ? tr("Picked edge") : tr("Picked face");
     }
-    if (!picked.empty() && kind != document::PlaneKind::Offset) {
+    if (!picked.empty() && (axes || planes)) {
         m_planeSecond->addItem(description, QString::fromStdString(picked));
     }
     int index = m_planeSecond->findData(was);
@@ -1309,6 +1342,11 @@ void FeaturePanel::setFeature(const document::Feature& feature) {
         m_secondName.clear();
         fillPlaneSecond();
     }
+    if (m_axisKind != nullptr) {
+        m_axisKind->setCurrentIndex(m_axisKind->findData(static_cast<int>(feature.axisKind)));
+        m_secondName.clear();
+        fillPlaneSecond();
+    }
     if (feature.kind == FeatureKind::Hole) {
         fillSketches();
         fillBodies();
@@ -1509,7 +1547,8 @@ bool FeaturePanel::hasInput() const {
                (m_feature.planeKind == document::PlaneKind::Offset ||
                 !m_feature.reference2.empty());
     case FeatureKind::Axis:
-        return !m_feature.reference.empty();
+        return !m_feature.reference.empty() &&
+               (m_feature.axisKind == document::AxisKind::Along || !m_feature.reference2.empty());
     case FeatureKind::Hole:
         return m_feature.sketch.isValid() && m_feature.body.isValid();
     case FeatureKind::Loft:
@@ -1759,9 +1798,35 @@ void FeaturePanel::readFields() {
         m_feature.reference = m_reference->currentData().toString().toStdString();
     }
     if (m_feature.kind == FeatureKind::Axis) {
+        const auto kind = static_cast<document::AxisKind>(m_axisKind->currentData().toInt());
+        if (kind != m_feature.axisKind) {
+            // Its references are of another kind now: planes, or axes, edges, and faces.
+            m_feature.axisKind = kind;
+            m_pickedName.clear();
+            m_secondName.clear();
+            fillReferences();
+            fillPlaneSecond();
+        }
         m_feature.reference = m_reference->currentData().toString().toStdString();
-        // An origin axis needs no body; an edge or a face, the body it is part of.
-        m_feature.body = m_feature.reference.size() > 1 ? m_pickedBody : document::ObjectId{};
+        const bool twoPlanes = kind == document::AxisKind::TwoPlanes;
+        m_feature.reference2 = twoPlanes && m_planeSecond->count() > 0
+                                   ? m_planeSecond->currentData().toString().toStdString()
+                                   : std::string();
+        // Origin axes and planes, and construction ones, need no body; an edge or a face, the
+        // body it is part of.
+        const auto ofBody = [](const std::string& name) {
+            return name.size() > 2 && name.rfind("plane:", 0) != 0 && name.rfind("axis:", 0) != 0;
+        };
+        m_feature.body = ofBody(m_feature.reference) || ofBody(m_feature.reference2)
+                             ? m_pickedBody
+                             : document::ObjectId{};
+        m_planeSecond->setVisible(twoPlanes);
+        if (QWidget* label = m_form->labelForField(m_planeSecond)) {
+            label->setVisible(twoPlanes);
+        }
+        if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(m_reference))) {
+            label->setText(twoPlanes ? tr("Plane") : tr("Along"));
+        }
     }
     if (m_axis != nullptr) {
         // A line of the sketch, by its number; or an axis of the model, by name.
@@ -1930,8 +1995,11 @@ void FeaturePanel::updatePicked() {
         }
         break;
     case FeatureKind::Axis:
-        text = tr("Choose an origin axis below, or click a straight edge, or a round edge or "
-                  "face, in the 3D view.");
+        text = m_feature.axisKind == document::AxisKind::TwoPlanes
+                   ? tr("Choose two planes, or click two flat faces in the 3D view. The axis "
+                        "goes where they meet.")
+                   : tr("Choose an origin axis below, or click a straight edge, a round edge "
+                        "or face, or a flat face to stand square to, in the 3D view.");
         break;
     case FeatureKind::OffsetFace:
     case FeatureKind::MoveFace:

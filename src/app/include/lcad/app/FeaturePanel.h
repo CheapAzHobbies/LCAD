@@ -189,6 +189,7 @@ private:
     // Plane: how it is placed, and its second reference: the axis it turns about, or the plane
     // it is halfway to. What was picked in the 3D view for that.
     QComboBox* m_planeKind = nullptr;
+    QComboBox* m_axisKind = nullptr;
     QComboBox* m_planeSecond = nullptr;
     std::string m_secondName;
     QString m_secondDescription;

@@ -619,6 +619,32 @@ std::vector<kernel::NamedShape> solidsOf(const kernel::NamedShape& result, const
     return solids;
 }
 
+PlaneState referencePlane(const std::string& name, const Feature& feature,
+                          const Document& document, const BodyStates& bodies);
+
+// The line where two planes meet. Throws if they are parallel.
+kernel::Axis meetingOf(const kernel::Plane& a, const kernel::Plane& b) {
+    const kernel::Vector& n1 = a.normal;
+    const kernel::Vector& n2 = b.normal;
+    const kernel::Vector d{n1.y * n2.z - n1.z * n2.y, n1.z * n2.x - n1.x * n2.z,
+                           n1.x * n2.y - n1.y * n2.x};
+    const double length2 = d.x * d.x + d.y * d.y + d.z * d.z;
+    if (length2 < 1e-12) {
+        throw FeatureFailure("The two planes are parallel, so they do not meet.");
+    }
+    const double h1 = n1.x * a.origin.x + n1.y * a.origin.y + n1.z * a.origin.z;
+    const double h2 = n2.x * b.origin.x + n2.y * b.origin.y + n2.z * b.origin.z;
+    // (h1 (n2 x d) + h2 (d x n1)) / |d|^2 is on both.
+    const kernel::Vector u{n2.y * d.z - n2.z * d.y, n2.z * d.x - n2.x * d.z,
+                           n2.x * d.y - n2.y * d.x};
+    const kernel::Vector v{d.y * n1.z - d.z * n1.y, d.z * n1.x - d.x * n1.z,
+                           d.x * n1.y - d.y * n1.x};
+    const double length = std::sqrt(length2);
+    return {{(h1 * u.x + h2 * v.x) / length2, (h1 * u.y + h2 * v.y) / length2,
+             (h1 * u.z + h2 * v.z) / length2},
+            {d.x / length, d.y / length, d.z / length}};
+}
+
 AxisState placeAxis(const Feature& feature, const Document& document, const BodyStates& bodies) {
     AxisState state;
     std::optional<kernel::BoundingBox> extent;
@@ -635,7 +661,18 @@ AxisState placeAxis(const Feature& feature, const Document& document, const Body
         extent->max = {std::max(extent->max.x, box->max.x), std::max(extent->max.y, box->max.y),
                        std::max(extent->max.z, box->max.z)};
     };
-    if (feature.reference == "X" || feature.reference == "Y" || feature.reference == "Z") {
+    if (feature.axisKind == AxisKind::TwoPlanes) {
+        const PlaneState first = referencePlane(feature.reference, feature, document, bodies);
+        const PlaneState second = referencePlane(feature.reference2, feature, document, bodies);
+        state.axis = meetingOf(first.plane, second.plane);
+        // Drawn across both.
+        for (const PlaneState* each : {&first, &second}) {
+            const double half = each->size / 2.0;
+            widen(kernel::BoundingBox{
+                {each->center.x - half, each->center.y - half, each->center.z - half},
+                {each->center.x + half, each->center.y + half, each->center.z + half}});
+        }
+    } else if (feature.reference == "X" || feature.reference == "Y" || feature.reference == "Z") {
         state.axis = axisNamed(feature.reference, kernel::NamedShape{}, document);
         // Drawn across the model.
         for (const auto& entry : bodies) {

@@ -144,6 +144,19 @@ std::optional<PlaneKind> planeKindFromString(const std::string& name) {
     return std::nullopt;
 }
 
+const char* toString(AxisKind kind) {
+    return kind == AxisKind::TwoPlanes ? "Two Planes" : "Along";
+}
+
+std::optional<AxisKind> axisKindFromString(const std::string& name) {
+    for (const AxisKind kind : {AxisKind::Along, AxisKind::TwoPlanes}) {
+        if (name == toString(kind)) {
+            return kind;
+        }
+    }
+    return std::nullopt;
+}
+
 std::vector<ObjectId> sketchesOf(const Feature& feature) {
     std::vector<ObjectId> sketches;
     const auto add = [&sketches](ObjectId id) {

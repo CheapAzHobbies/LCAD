@@ -4203,10 +4203,14 @@ void MainWindow::takeFeaturePicks() {
         // A plane at an angle turns about an edge clicked.
         const bool turns = kind == document::FeatureKind::Plane &&
                            m_featurePanel->feature().planeKind == document::PlaneKind::AtAngle;
+        // Faces only: a plane placed against one, or an axis where two meet.
+        const bool facesOnly =
+            (kind == document::FeatureKind::Plane && !turns) ||
+            (kind == document::FeatureKind::Axis &&
+             m_featurePanel->feature().axisKind == document::AxisKind::TwoPlanes);
         for (const SelectedItem& item : m_viewport->selection()) {
             if (item.kind != SelectedItem::Kind::Face &&
-                (item.kind != SelectedItem::Kind::Edge ||
-                 (kind == document::FeatureKind::Plane && !turns))) {
+                (item.kind != SelectedItem::Kind::Edge || facesOnly)) {
                 continue;
             }
             if (const std::string name = nameOf(item); !name.empty()) {

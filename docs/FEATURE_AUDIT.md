@@ -68,7 +68,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Offset from another construction plane | Have | Since 2026-11-12. |
 | Tangent plane, plane through three points, plane along a path | No | |
 | Axis: origin, along an edge, through a cylinder, cone, or torus | Have | |
-| Axis through two points, two planes, perpendicular to a face | No | |
+| Axis through two planes, perpendicular to a face | Have | Since 2026-11-27. |
+| Axis through two points | No | Corners of a body are not named yet. |
 | Construction points | No | |
 | Rename, hide, edit planes and axes | Have | |
 | Drag a plane's offset in the 3D view | Have | Since 2026-11-13, with the pull's arrow. |
