@@ -1658,6 +1658,43 @@ CenterRectangleParts addCenterRectangle(Sketch& sketch, Point2 center, Point2 co
     return made;
 }
 
+RectangleParts addRectangleThrough(Sketch& sketch, Point2 first, Point2 second, Point2 third) {
+    requireUsable(first, "addRectangleThrough");
+    requireUsable(second, "addRectangleThrough");
+    requireUsable(third, "addRectangleThrough");
+    const Point2 along = second - first;
+    const double length = norm(along);
+    if (length <= minimumLength) {
+        throw std::invalid_argument("addRectangleThrough: the first side has no length");
+    }
+    // The way across, and how far: to the line through `third` parallel to the first side.
+    const Point2 across{-along.y / length, along.x / length};
+    const double width = (third.x - first.x) * across.x + (third.y - first.y) * across.y;
+    if (std::abs(width) <= minimumLength) {
+        throw std::invalid_argument("addRectangleThrough: the rectangle has no width");
+    }
+    const Point2 shift = across * width;
+    Sketch work = sketch;
+    RectangleParts parts;
+    // Named as if the first side were the bottom.
+    parts.bottom = work.addLine(first, second);
+    parts.right = work.addLine(second, second + shift);
+    parts.top = work.addLine(second + shift, first + shift);
+    parts.left = work.addLine(first + shift, first);
+    const auto join = [&work](EntityId a, EntityId b) {
+        work.addConstraint(ConstraintKind::Coincident, work.find(a)->end, work.find(b)->start);
+    };
+    join(parts.bottom, parts.right);
+    join(parts.right, parts.top);
+    join(parts.top, parts.left);
+    join(parts.left, parts.bottom);
+    work.addConstraint(ConstraintKind::Perpendicular, parts.bottom, parts.right);
+    work.addConstraint(ConstraintKind::Parallel, parts.bottom, parts.top);
+    work.addConstraint(ConstraintKind::Parallel, parts.right, parts.left);
+    sketch = std::move(work);
+    return parts;
+}
+
 std::optional<std::pair<Point2, double>> circleThrough(Point2 a, Point2 b, Point2 c) {
     const double d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
     const double scale = std::max({std::hypot(b.x - a.x, b.y - a.y),

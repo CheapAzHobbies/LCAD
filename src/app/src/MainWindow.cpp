@@ -1707,6 +1707,13 @@ void MainWindow::defineSketchCommands() {
          "rectangle-center",
          {},
          {tr("rectangle from center"), tr("centered rectangle")}},
+        {SketchTool::ThreePointRectangle,
+         "sketch.rectangle3",
+         tr("&3-Point Rectangle"),
+         tr("Draw a rectangle at any angle: two corners along one side, then how wide"),
+         "rectangle-3point",
+         {},
+         {tr("rotated rectangle"), tr("angled rectangle"), tr("three point rectangle")}},
         {SketchTool::Circle,
          "sketch.circle",
          tr("&Circle"),
@@ -2102,6 +2109,7 @@ void MainWindow::createTopBar() {
     sketchMenu->addSeparator();
     for (const char* id :
          {"sketch.select", "sketch.line", "sketch.rectangle", "sketch.centerRectangle",
+          "sketch.rectangle3",
           "sketch.circle", "sketch.circle3", "sketch.arc", "sketch.arc3", "sketch.tangentArc",
           "sketch.point", "sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline"}) {
         sketchMenu->addAction(action(id));
@@ -2432,7 +2440,8 @@ void MainWindow::createSketchToolbar() {
     };
     toolbar->addAction(action("sketch.select"));
     toolbar->addAction(action("sketch.line"));
-    variants("rectangleButton", {"sketch.rectangle", "sketch.centerRectangle"});
+    variants("rectangleButton",
+             {"sketch.rectangle", "sketch.centerRectangle", "sketch.rectangle3"});
     variants("circleButton", {"sketch.circle", "sketch.circle3"});
     variants("arcButton", {"sketch.arc", "sketch.arc3", "sketch.tangentArc"});
     for (const char* id :

@@ -18,7 +18,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Item | State | Note |
 |---|---|---|
 | Line, chains of lines | Have | |
-| Rectangle | Part | Two corners, or center and corner. No three-point rectangle. |
+| Rectangle | Have | Two corners, center and corner, or three points at any angle. |
 | Circle | Have | Center and radius, or three points. |
 | Arc | Have | Center, start, and end; three points; tangent on from a curve. |
 | Ellipse, polygon, slot, spline, point | Have | Polygon is inscribed only; spline is fit-point only. |

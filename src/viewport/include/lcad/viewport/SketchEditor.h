@@ -57,6 +57,8 @@ enum class SketchTool {
     Chamfer,
     /// By its center and a corner.
     CenterRectangle,
+    /// At any angle: two corners give one side, and a third click how wide it is.
+    ThreePointRectangle,
     /// Through three points.
     ThreePointCircle,
     /// By its start, its end, and a point it passes through.

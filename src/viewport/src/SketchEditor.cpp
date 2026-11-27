@@ -1750,6 +1750,24 @@ public:
         clicks.clear();
     }
 
+    void addRectangleThrough(const Snap& a, const Snap& b, const Snap& c) {
+        sketch::Sketch g = geometry();
+        sketch::RectangleParts parts;
+        try {
+            parts = sketch::addRectangleThrough(g, a.position, b.position, c.position);
+        } catch (const std::invalid_argument&) {
+            emit q->message(tr("A rectangle needs a width and a length."));
+            return;
+        }
+        for (const EntityId side : {parts.bottom, parts.right, parts.top, parts.left}) {
+            finishCurve(g, side);
+        }
+        attach(g, g.find(parts.bottom)->start, a);
+        attach(g, g.find(parts.bottom)->end, b);
+        commit(std::move(g), tr("Rectangle"));
+        clicks.clear();
+    }
+
     void addCircleThrough(const Snap& a, const Snap& b, const Snap& c) {
         const auto round = sketch::circleThrough(a.position, b.position, c.position);
         if (!round.has_value()) {
@@ -1954,6 +1972,22 @@ public:
             strokes.push_back(segment({o.x, at.y}, o));
             break;
         }
+        case SketchTool::ThreePointRectangle:
+            if (clicks.size() == 1) {
+                strokes.push_back(segment(first, at));
+            } else {
+                sketch::Sketch scratch;
+                try {
+                    const sketch::RectangleParts parts =
+                        sketch::addRectangleThrough(scratch, first, clicks[1].position, at);
+                    for (const EntityId side : {parts.bottom, parts.right, parts.top, parts.left}) {
+                        strokes.push_back(strokeOf(scratch, *scratch.find(side)));
+                    }
+                } catch (const std::invalid_argument&) {
+                    strokes.push_back(segment(first, clicks[1].position));
+                }
+            }
+            break;
         case SketchTool::ThreePointCircle:
             if (clicks.size() == 1) {
                 strokes.push_back(segment(first, at));
@@ -2083,6 +2117,19 @@ public:
             return tr("%1 × %2 mm")
                 .arg(formatValue(2.0 * std::abs(at.x - first.x)),
                      formatValue(2.0 * std::abs(at.y - first.y)));
+        case SketchTool::ThreePointRectangle: {
+            if (clicks.size() == 1) {
+                return tr("%1 mm").arg(formatValue(apart(first, at)));
+            }
+            const Point2 side = clicks[1].position - first;
+            const double length = norm(side);
+            if (length < 1e-12) {
+                return {};
+            }
+            const double width =
+                std::abs(side.x * (at.y - first.y) - side.y * (at.x - first.x)) / length;
+            return tr("%1 × %2 mm").arg(formatValue(length), formatValue(width));
+        }
         case SketchTool::ThreePointCircle: {
             if (clicks.size() == 1) {
                 return tr("%1 mm").arg(formatValue(apart(first, at)));
@@ -2144,6 +2191,7 @@ public:
         const bool draws = tool == SketchTool::Line || tool == SketchTool::Rectangle ||
                            tool == SketchTool::Circle || tool == SketchTool::Arc ||
                            tool == SketchTool::CenterRectangle ||
+                           tool == SketchTool::ThreePointRectangle ||
                            tool == SketchTool::ThreePointCircle ||
                            tool == SketchTool::ThreePointArc || tool == SketchTool::TangentArc ||
                            tool == SketchTool::CircularPattern ||
@@ -2258,6 +2306,13 @@ public:
                 clicks.push_back(cursor);
             } else {
                 addCenterRectangle(clicks.front(), cursor);
+            }
+            break;
+        case SketchTool::ThreePointRectangle:
+            if (clicks.size() < 2) {
+                clicks.push_back(cursor);
+            } else {
+                addRectangleThrough(clicks[0], clicks[1], cursor);
             }
             break;
         case SketchTool::ThreePointCircle:
@@ -4240,6 +4295,10 @@ QString SketchEditor::hint() const {
     case SketchTool::CenterRectangle:
         return placed == 0 ? tr("Center Rectangle: click the center")
                            : tr("Center Rectangle: click a corner");
+    case SketchTool::ThreePointRectangle:
+        return placed == 0   ? tr("3-Point Rectangle: click a corner")
+               : placed == 1 ? tr("3-Point Rectangle: click the next corner along one side")
+                             : tr("3-Point Rectangle: click how far across it goes");
     case SketchTool::ThreePointCircle:
         return placed == 0   ? tr("3-Point Circle: click a point on the circle")
                : placed == 1 ? tr("3-Point Circle: click a second point on it")

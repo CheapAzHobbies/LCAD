@@ -1216,7 +1216,8 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
     }
     // Rectangles, circles, and arcs drawn other ways are in the list beside each.
     const std::pair<const char*, QStringList> variants[] = {
-        {"rectangleButton", {QStringLiteral("sketch.centerRectangle")}},
+        {"rectangleButton",
+         {QStringLiteral("sketch.centerRectangle"), QStringLiteral("sketch.rectangle3")}},
         {"circleButton", {QStringLiteral("sketch.circle3")}},
         {"arcButton", {QStringLiteral("sketch.arc3"), QStringLiteral("sketch.tangentArc")}},
         {"mirrorButton",

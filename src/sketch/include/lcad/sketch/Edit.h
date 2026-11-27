@@ -64,6 +64,12 @@ struct CenterRectangleParts {
 /// A rectangle around `center` with one corner at `corner`, held centered on the point.
 CenterRectangleParts addCenterRectangle(Sketch& sketch, Point2 center, Point2 corner);
 
+/// A rectangle at any angle: one side from `first` to `second`, and the opposite side as far
+/// to one side of it as `third` is. Each side is held square to the next. The lines run from
+/// `first` to `second` and on round. Throws std::invalid_argument if it would have no width or
+/// no length.
+RectangleParts addRectangleThrough(Sketch& sketch, Point2 first, Point2 second, Point2 third);
+
 /// The circle through three points: its center and radius. Nothing if they lie in a line.
 [[nodiscard]] std::optional<std::pair<Point2, double>> circleThrough(Point2 a, Point2 b,
                                                                      Point2 c);

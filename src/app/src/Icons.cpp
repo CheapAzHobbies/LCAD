@@ -690,6 +690,14 @@ const QHash<QString, Drawing>& drawings() {
              node(i, 12, 12);
              node(i, 19.5, 7);
          }},
+        {QStringLiteral("rectangle-3point"),
+         [](const Ink& i) {
+             // A tilted rectangle by two corners and a point across.
+             i.poly({{4, 14}, {14, 4}, {20, 10}, {10, 20}});
+             node(i, 4, 14);
+             node(i, 14, 4);
+             node(i, 20, 10);
+         }},
         {QStringLiteral("circle-3point"),
          [](const Ink& i) {
              i.ellipse(12, 12, 7.5, 7.5);

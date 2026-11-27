@@ -1832,6 +1832,25 @@ void SketchViewTest::moreWaysToDrawAndACornerCutStraight() {
     QVERIFY(apart(startOf(lines[0].id), {5.0, 10.0}) < 0.5);
     QVERIFY(qAbs(apart(startOf(lines[0].id), endOf(lines[0].id)) - 30.0) < 0.5);
 
+    // A rectangle at an angle: two corners, then how far across.
+    editor()->setTool(SketchTool::ThreePointRectangle);
+    click(at(100.0, 0.0));
+    click(at(130.0, 30.0));
+    click(at(110.0, 50.0));
+    std::vector<Entity> tilted;
+    for (const Entity& line : curves(EntityKind::Line)) {
+        if (!line.construction && line.id > lines.back().id) {
+            tilted.push_back(line);
+        }
+    }
+    QCOMPARE(tilted.size(), std::size_t{4});
+    QVERIFY(apart(startOf(tilted[0].id), {100.0, 0.0}) < 0.5);
+    QVERIFY(apart(endOf(tilted[0].id), {130.0, 30.0}) < 0.5);
+    // Across: (110, 50) is 20 sqrt(2) from the first side.
+    QVERIFY(qAbs(apart(startOf(tilted[1].id), endOf(tilted[1].id)) - 20.0 * std::sqrt(2.0)) <
+            0.5);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Rectangle"));
+
     // A circle through three points: its center where they put it.
     editor()->setTool(SketchTool::ThreePointCircle);
     click(at(60.0, 0.0));
@@ -1882,7 +1901,8 @@ void SketchViewTest::moreWaysToDrawAndACornerCutStraight() {
     type(QStringLiteral("4"));
     QTest::keyClick(editor()->valueField(), Qt::Key_Return);
     render();
-    QCOMPARE(sketch().profiles().size(), std::size_t{2});
+    // The rectangles, the tilted one too, and the circle.
+    QCOMPARE(sketch().profiles().size(), std::size_t{3});
 }
 
 void SketchViewTest::patternsCopyWhatIsSelected() {

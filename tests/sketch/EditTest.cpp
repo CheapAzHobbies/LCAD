@@ -688,6 +688,25 @@ TEST_CASE("A point can be held at the middle of an arc", "[sketch][edit]") {
                     .has_value());
 }
 
+TEST_CASE("A three-point rectangle stays square when it is dragged", "[sketch][edit]") {
+    Sketch sketch;
+    const RectangleParts parts = addRectangleThrough(sketch, {0.0, 0.0}, {30.0, 40.0}, {-8.0, 6.0});
+    CHECK_THAT(endOf(sketch, parts.right).x, WithinAbs(30.0 - 8.0, lengthTolerance));
+    CHECK_THAT(endOf(sketch, parts.right).y, WithinAbs(40.0 + 6.0, lengthTolerance));
+    CHECK(sketch.solve().status == SolveStatus::Solved);
+    sketch.dragBy(sketch.find(parts.bottom)->end, 5.0, -5.0);
+    const auto direction = [&sketch](EntityId line) {
+        const auto a = startOf(sketch, line);
+        const auto b = endOf(sketch, line);
+        return std::pair<double, double>{b.x - a.x, b.y - a.y};
+    };
+    const auto [ax, ay] = direction(parts.bottom);
+    const auto [bx, by] = direction(parts.right);
+    CHECK_THAT(ax * bx + ay * by, WithinAbs(0.0, 1e-6));
+    CHECK_THROWS_AS(addRectangleThrough(sketch, {0.0, 0.0}, {10.0, 0.0}, {20.0, 0.0}),
+                    std::invalid_argument);
+}
+
 TEST_CASE("Break splits a line or an arc in two where it is clicked", "[sketch][edit]") {
     Sketch sketch;
     SECTION("a line: the pieces stay joined and in line") {

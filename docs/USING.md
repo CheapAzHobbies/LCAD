@@ -418,6 +418,7 @@ in the 3D view.
 | Circle | C | Click the center, then a point on the circle. |
 | Arc | A | Click the center, then where it starts, then move round the center and click where it ends. |
 | Center Rectangle | | Click the center, then a corner. A construction diagonal holds it centered on the point. In the list beside Rectangle. |
+| 3-Point Rectangle | | Click two corners along one side, at any angle, then how far across. The sides are held square to each other. In the list beside Rectangle. |
 | 3-Point Circle | | Click three points on the circle. In the list beside Circle. |
 | 3-Point Arc | | Click where it starts, where it ends, then a point it passes through. In the list beside Arc. |
 | Tangent Arc | | Click the end of a line or an arc, then where the arc ends. It goes on from the curve, joined and tangent to it. In the list beside Arc. |
