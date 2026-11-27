@@ -1776,6 +1776,13 @@ void MainWindow::defineSketchCommands() {
          "extend",
          {},
          {tr("lengthen")}},
+        {SketchTool::Break,
+         "sketch.break",
+         tr("&Break"),
+         tr("Break a line or an arc in two at the point clicked"),
+         "break",
+         {},
+         {tr("split curve"), tr("divide")}},
         {SketchTool::Fillet,
          "sketch.fillet",
          tr("&Fillet"),
@@ -2086,8 +2093,8 @@ void MainWindow::createTopBar() {
     }
     sketchMenu->addSeparator();
     for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset",
-          "sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern", "sketch.move",
+         {"sketch.trim", "sketch.extend", "sketch.break", "sketch.fillet", "sketch.chamfer",
+          "sketch.offset", "sketch.mirror", "sketch.circularPattern", "sketch.rectangularPattern", "sketch.move",
           "sketch.rotate", "sketch.scale", "sketch.project"}) {
         sketchMenu->addAction(action(id));
     }
@@ -2418,8 +2425,10 @@ void MainWindow::createSketchToolbar() {
     }
     toolbar->addAction(action("sketch.construction"));
     toolbar->addSeparator();
-    for (const char* id :
-         {"sketch.trim", "sketch.extend", "sketch.fillet", "sketch.chamfer", "sketch.offset"}) {
+    toolbar->addAction(action("sketch.trim"));
+    // Extend, and Break in the list beside it.
+    variants("extendButton", {"sketch.extend", "sketch.break"});
+    for (const char* id : {"sketch.fillet", "sketch.chamfer", "sketch.offset"}) {
         toolbar->addAction(action(id));
     }
     // Mirror, and the patterns in the list beside it.

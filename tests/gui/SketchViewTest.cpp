@@ -113,6 +113,7 @@ private slots:
 
     // Modifying
     void trimAndExtendActOnTheCurveClicked();
+    void circlesAndLinesMatchSizesNearlyTheSame();
     void aCornerIsRoundedAndItsRadiusTyped();
     void moreWaysToDrawAndACornerCutStraight();
     void patternsCopyWhatIsSelected();
@@ -2171,6 +2172,43 @@ void SketchViewTest::trimAndExtendActOnTheCurveClicked() {
              qPrintable(QString::number(endOf(lines[3].id).x)));
     QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Extend"));
     QCOMPARE(count(ConstraintKind::PointOnLine), 1);
+
+    // Break the short line where it is clicked: two pieces, joined and in line.
+    editor()->setTool(SketchTool::Break);
+    const std::size_t before = curves(EntityKind::Line).size();
+    click(at(20.0, 60.0));
+    QCOMPARE(curves(EntityKind::Line).size(), before + 1);
+    QVERIFY(apart(endOf(lines[3].id), {20.0, 60.0}) < 0.4);
+    QCOMPARE(QString::fromStdString(m_document->undoLabel()), QStringLiteral("Break"));
+    QCOMPARE(count(ConstraintKind::Collinear), 1);
+}
+
+void SketchViewTest::circlesAndLinesMatchSizesNearlyTheSame() {
+    openSketch();
+    editor()->setTool(SketchTool::Circle);
+    click(at(0.0, 0.0));
+    click(at(10.0, 0.0));
+    // Nearly as big as the first: made the same, and held so.
+    click(at(40.0, 0.0));
+    move(at(50.2, 0.0));
+    click(at(50.2, 0.0));
+    const std::vector<Entity> circles = curves(EntityKind::Circle);
+    QCOMPARE(circles.size(), std::size_t{2});
+    QVERIFY(qAbs(sketch().radiusOf(circles[1].id) - 10.0) < 1e-6);
+    QCOMPARE(count(ConstraintKind::Equal), 1);
+
+    // A line nearly as long as another, drawn at a slant so it lines up with nothing else.
+    editor()->setTool(SketchTool::Line);
+    click(at(0.0, 30.0));
+    click(at(30.0, 30.0));
+    editor()->cancel();
+    click(at(0.0, 60.0));
+    move(at(18.0, 84.2));
+    click(at(18.0, 84.2));
+    editor()->cancel();
+    const Entity slant = curves(EntityKind::Line).back();
+    QVERIFY(qAbs(apart(startOf(slant.id), endOf(slant.id)) - 30.0) < 1e-6);
+    QCOMPARE(count(ConstraintKind::Equal), 2);
 }
 
 void SketchViewTest::offsetAndMirror() {

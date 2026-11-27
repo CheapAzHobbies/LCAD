@@ -1296,6 +1296,10 @@ nlohmann::ordered_json writeDrawing(const Drawing& drawing) {
         {"date", title.date},         {"material", title.material},
         {"company", title.company},
     };
+    // Only where there is one, so that other files read as they did.
+    if (drawing.partsList) {
+        out["partsList"] = true;
+    }
     out["views"] = ordered_json::array();
     for (const DrawingView& view : drawing.views) {
         ordered_json entry;
@@ -1370,6 +1374,9 @@ Drawing readDrawing(const json& entry, const std::filesystem::path& path) {
     drawing.titleBlock.date = stringMember(title, "date", titleWhere, path);
     drawing.titleBlock.material = stringMember(title, "material", titleWhere, path);
     drawing.titleBlock.company = stringMember(title, "company", titleWhere, path);
+    if (entry.contains("partsList")) {
+        drawing.partsList = boolMember(entry, "partsList", where, path);
+    }
     if (const json* views = optionalList(entry, "views", path)) {
         for (const json& item : *views) {
             DrawingView view;

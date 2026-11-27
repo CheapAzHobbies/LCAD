@@ -1134,6 +1134,13 @@ public:
             } else {
                 alignLine(snap, *anchor, at);
             }
+            if (snap.alignedTo == 0) {
+                matchSize(snap, *anchor, position, false);
+            }
+        }
+        if (anchor.has_value() && tool == SketchTool::Circle && clicks.size() == 1 &&
+            !freeAngle) {
+            matchSize(snap, *anchor, position, true);
         }
         if (gridSnap && !snap.horizontal && !snap.vertical && !snap.locked &&
             snap.alignedTo == 0) {
@@ -1274,6 +1281,38 @@ public:
         }
         const double along = way.x * d.x + way.y * d.y;
         snap.position = anchor + way * along;
+    }
+
+    // Holds the end of a line as long as another line, or the rim of a circle at the radius of
+    // another circle or arc, when it is nearly that: within a few pixels.
+    void matchSize(Snap& snap, Point2 anchor, const QPointF& position, bool radius) const {
+        const Point2 d = snap.position - anchor;
+        const double size = norm(d);
+        if (size < 1e-9) {
+            return;
+        }
+        const sketch::Sketch& g = geometry();
+        double best = 0.5 * pointReach * millimetersPerPixel(position);
+        double matched = 0.0;
+        for (const Entity& entity : g.entities()) {
+            double other = 0.0;
+            if (radius && (entity.kind == EntityKind::Circle || entity.kind == EntityKind::Arc)) {
+                other = g.radiusOf(entity.id);
+            } else if (!radius && entity.kind == EntityKind::Line) {
+                other = apart(g.position(entity.start), g.position(entity.end));
+            } else {
+                continue;
+            }
+            if (std::abs(other - size) < best) {
+                best = std::abs(other - size);
+                matched = other;
+                snap.alignedTo = entity.id;
+                snap.alignKind = ConstraintKind::Equal;
+            }
+        }
+        if (snap.alignedTo != 0) {
+            snap.position = anchor + d * (matched / size);
+        }
     }
 
     // Keeps a new point where the click that made it landed.
@@ -1431,6 +1470,10 @@ public:
         attach(g, g.find(made)->center, center);
         if (rim != nullptr && inference && rim->kind == Snap::Kind::Point) {
             sketch::tryConstraint(g, ConstraintKind::PointOnCircle, rim->entity, made);
+        }
+        if (rim != nullptr && inference && rim->alignKind == ConstraintKind::Equal &&
+            rim->alignedTo != 0 && g.find(rim->alignedTo) != nullptr) {
+            sketch::tryConstraint(g, ConstraintKind::Equal, made, rim->alignedTo);
         }
         if (dimensioned) {
             sketch::tryConstraint(g, ConstraintKind::Diameter, made, 0, 0, 2.0 * radius);
@@ -2383,6 +2426,22 @@ public:
                 emit q->message(tool == SketchTool::Trim
                                     ? tr("Nothing crosses that curve, so there is nothing to cut.")
                                     : tr("That end meets no other curve if it is lengthened."));
+            }
+            break;
+        }
+        case SketchTool::Break: {
+            const Entity* picked = hover != 0 ? g.find(hover) : nullptr;
+            if (picked == nullptr ||
+                (picked->kind != EntityKind::Line && picked->kind != EntityKind::Arc)) {
+                emit q->message(tr("Click a line or an arc where to break it."));
+                break;
+            }
+            sketch::Sketch next = g;
+            if (sketch::breakAt(next, hover, cursor.position) != 0) {
+                hover = 0;
+                commit(std::move(next), tr("Break"));
+            } else {
+                emit q->message(tr("Click between the ends of the curve, not at one."));
             }
             break;
         }
@@ -3527,7 +3586,8 @@ public:
         }
         const bool draws = tool != SketchTool::Select && tool != SketchTool::Dimension &&
                            tool != SketchTool::Constraint && tool != SketchTool::Trim &&
-                           tool != SketchTool::Extend && tool != SketchTool::Fillet &&
+                           tool != SketchTool::Extend && tool != SketchTool::Break &&
+                           tool != SketchTool::Fillet &&
                            tool != SketchTool::Chamfer &&
                            tool != SketchTool::Offset &&
                            tool != SketchTool::Mirror && tool != SketchTool::Project;
@@ -3568,6 +3628,8 @@ public:
                 const QString symbol = cursor.alignKind == ConstraintKind::Parallel ? QStringLiteral("∥")
                                        : cursor.alignKind == ConstraintKind::Perpendicular
                                            ? QStringLiteral("⊥")
+                                       : cursor.alignKind == ConstraintKind::Equal
+                                           ? QStringLiteral("=")
                                            : QStringLiteral("◠");
                 painter.setPen(colors.preview);
                 painter.drawText(at + QPointF(10.0, -10.0), symbol);
@@ -4161,6 +4223,8 @@ QString SketchEditor::hint() const {
         return tr("Cut: click the part of a curve to remove");
     case SketchTool::Extend:
         return tr("Extend: click a line or an arc near the end to lengthen");
+    case SketchTool::Break:
+        return tr("Break: click a line or an arc where to break it in two");
     case SketchTool::Fillet:
         return tr("Fillet: click a corner where two lines meet, then type the radius");
     case SketchTool::Chamfer:

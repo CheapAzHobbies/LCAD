@@ -153,6 +153,9 @@ struct Drawing {
     SheetSize size = SheetSize::A3;
     DrawingStandard standard = DrawingStandard::Iso;
     TitleBlock titleBlock;
+    /// A parts list above the title block: each body, how many of it the assembly has, and
+    /// what it is made of.
+    bool partsList = false;
     std::vector<DrawingView> views;
     std::vector<DrawingDimension> dimensions;
     std::vector<DrawingNote> notes;

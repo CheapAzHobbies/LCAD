@@ -206,6 +206,12 @@ std::vector<EntityId> offset(Sketch& sketch, const std::vector<EntityId>& curves
 /// Returns false, changing nothing, if there is nothing to trim.
 bool trim(Sketch& sketch, EntityId curve, Point2 nearPoint);
 
+/// Breaks a line or an arc in two at the point on it nearest to `at`. The two pieces are joined
+/// there and held in line (lines) or on the same circle (arcs); what was attached to the old end
+/// moves to the second piece. A length dimension of the whole is taken away. Returns the second
+/// piece, or 0, changing nothing, for anything else or a point at or beyond an end.
+EntityId breakAt(Sketch& sketch, EntityId curve, Point2 at);
+
 /// Lengthens a line or an arc at the end nearer to `nearPoint` until it meets another curve, and
 /// holds that end on the curve. Returns false, changing nothing, if it meets none.
 bool extend(Sketch& sketch, EntityId curve, Point2 nearPoint);

@@ -447,6 +447,8 @@ While drawing, LCAD lines things up and holds them so, with a mark by the pointe
 - A line drawn nearly level or upright is made horizontal or vertical. One drawn nearly parallel
   or square to another line is made parallel (∥) or perpendicular (⊥) to it, and that line is
   lit; one that goes on from the end of an arc nearly the way it goes is made tangent (◠).
+- A line drawn nearly as long as another, or a circle nearly the size of another circle or arc,
+  is made the same and held equal (=) to it.
 - Hold Shift to draw at any angle, or turn all of this off with **Sketch > Pick Up Constraints
   While Drawing**.
 - **Sketch > Snap to Grid** puts clicks that land on nothing on round numbers: steps of 0.1,
@@ -552,6 +554,7 @@ coincident with it), then add dimensions until nothing is blue.
 |---|---|---|
 | Cut | T | Click the part of a curve to remove. It goes up to where other curves cross it. |
 | Extend | | Click a line or an arc near an end. It grows to the next curve it meets. |
+| Break | | Click a line or an arc where to break it. The two pieces stay joined and in line, or on one circle. In the list beside Extend. |
 | Circular Pattern | | Select curves first. Click the point to copy them around; type how many there are to be in all, and press Enter. The copies show before they are made. In the list beside Mirror. |
 | Rectangular Pattern | | Select curves first. Click a point, then where that point goes in the next copy; type how many in all, and press Enter. In the list beside Mirror. |
 | Move/Copy | | Select curves first. Click a point, then where that point goes; hold Ctrl on the second click to make a copy instead. In the list beside Mirror. |
@@ -581,6 +584,8 @@ the right has the sheet's size, the standard, and the title block. ISO puts the 
 front view (first-angle), and ANSI above it (third-angle). The views show everything that is shown
 in the model.
 
+- **A parts list:** check Parts list under the title block. A table above it lists each body, how
+  many of it the assembly has, and its material.
 - **Move a view** by dragging it. Select it to change its scale, or to leave out hidden lines or
   center marks.
 - **Add a view** from the View button.

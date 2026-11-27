@@ -451,7 +451,7 @@ void SketchInterfaceTest::sketchToolsAreCommandsWithShortcuts() {
         {"sketch.point", SketchTool::Point},         {"sketch.polygon", SketchTool::Polygon},
         {"sketch.slot", SketchTool::Slot},           {"sketch.trim", SketchTool::Trim},
         {"sketch.extend", SketchTool::Extend},       {"sketch.fillet", SketchTool::Fillet},
-        {"sketch.offset", SketchTool::Offset},
+        {"sketch.offset", SketchTool::Offset},       {"sketch.break", SketchTool::Break},
         {"sketch.dimension", SketchTool::Dimension}, {"sketch.select", SketchTool::Select},
     };
     for (const auto& [id, tool] : tools) {
@@ -1221,6 +1221,7 @@ void SketchInterfaceTest::theSketchToolbarFitsAndDrawsInBothThemes() {
         {"arcButton", {QStringLiteral("sketch.arc3"), QStringLiteral("sketch.tangentArc")}},
         {"mirrorButton",
          {QStringLiteral("sketch.circularPattern"), QStringLiteral("sketch.rectangularPattern")}},
+        {"extendButton", {QStringLiteral("sketch.break")}},
     };
     for (const auto& [name, ids] : variants) {
         auto* button = toolbar->findChild<QToolButton*>(QLatin1String(name));

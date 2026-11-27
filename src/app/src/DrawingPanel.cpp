@@ -67,7 +67,7 @@ DrawingPanel::DrawingPanel(QWidget* parent)
       m_standardBox(new QComboBox(this)), m_title(new QLineEdit(this)),
       m_partNumber(new QLineEdit(this)), m_revision(new QLineEdit(this)),
       m_drawnBy(new QLineEdit(this)), m_date(new QLineEdit(this)), m_material(new QLineEdit(this)),
-      m_company(new QLineEdit(this)), m_viewBox(new QGroupBox(tr("View"), this)),
+      m_company(new QLineEdit(this)), m_partsList(new QCheckBox(this)), m_viewBox(new QGroupBox(tr("View"), this)),
       m_viewKind(new QLabel(this)), m_scale(new QComboBox(this)), m_hidden(new QCheckBox(this)),
       m_centerMarks(new QCheckBox(this)), m_flipped(new QCheckBox(this)),
       m_dimensionBox(new QGroupBox(tr("Dimension"), this)), m_suffix(new QLineEdit(this)),
@@ -113,6 +113,11 @@ DrawingPanel::DrawingPanel(QWidget* parent)
     titleForm->addRow(tr("Date"), m_date);
     titleForm->addRow(tr("Material"), m_material);
     titleForm->addRow(tr("Company"), m_company);
+    m_partsList->setText(tr("Parts list"));
+    m_partsList->setObjectName(QStringLiteral("partsList"));
+    m_partsList->setToolTip(tr("A table above the title block: each body, how many, and its "
+                               "material"));
+    titleForm->addRow(m_partsList);
     layout->addWidget(titleBox);
 
     auto* viewForm = new QFormLayout(m_viewBox);
@@ -168,6 +173,13 @@ DrawingPanel::DrawingPanel(QWidget* parent)
     text(m_date, &document::TitleBlock::date, tr("Change Date"));
     text(m_material, &document::TitleBlock::material, tr("Change Material"));
     text(m_company, &document::TitleBlock::company, tr("Change Company"));
+
+    connect(m_partsList, &QCheckBox::toggled, this, [this](bool on) {
+        if (!m_filling && m_hasDrawing) {
+            m_drawing.partsList = on;
+            edit(tr("Show Parts List"));
+        }
+    });
 
     connect(m_name, &QLineEdit::editingFinished, this, [this] {
         const std::string name = m_name->text().trimmed().toStdString();
@@ -308,9 +320,11 @@ void DrawingPanel::fill() {
     const QSignalBlocker a(m_hidden);
     const QSignalBlocker b(m_centerMarks);
     const QSignalBlocker c(m_flipped);
+    const QSignalBlocker d(m_partsList);
     for (QWidget* field :
          std::initializer_list<QWidget*>{m_name, m_sizeBox, m_standardBox, m_title, m_partNumber,
-                                         m_revision, m_drawnBy, m_date, m_material, m_company}) {
+                                         m_revision, m_drawnBy, m_date, m_material, m_company,
+                                         m_partsList}) {
         field->setEnabled(m_hasDrawing);
     }
     if (m_hasDrawing) {
@@ -326,6 +340,7 @@ void DrawingPanel::fill() {
         m_date->setText(QString::fromStdString(title.date));
         m_material->setText(QString::fromStdString(title.material));
         m_company->setText(QString::fromStdString(title.company));
+        m_partsList->setChecked(m_drawing.partsList);
     }
 
     const DrawingView* view = nullptr;

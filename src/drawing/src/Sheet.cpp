@@ -406,6 +406,59 @@ void addFrameAndTitle(Sheet& sheet, const Drawing& drawing) {
     addProjectionSymbol(sheet, {x + 165.0, y - row * 2.5 - 1.2}, drawing.standard);
 }
 
+// A table above the title block: each body that has a shape, how many there are of it in the
+// assembly, and what it is made of, numbered from the bottom up.
+void addPartsList(Sheet& sheet, const document::Document& document) {
+    struct Row {
+        std::string name;
+        int count = 1;
+        std::string material;
+    };
+    std::vector<Row> rows;
+    for (const document::Body& body : document.bodies()) {
+        if (body.shape.isNull() || body.discarded) {
+            continue;
+        }
+        int count = 1;
+        if (body.component.isValid()) {
+            count = static_cast<int>(std::count_if(
+                document.instances().begin(), document.instances().end(),
+                [&body](const document::Instance& i) { return i.component == body.component; }));
+            count = std::max(count, 1);
+        }
+        rows.push_back({body.name, count, body.material});
+    }
+    if (rows.empty()) {
+        return;
+    }
+    const double right = sheet.width - margin;
+    const double left = right - titleWidth;
+    const double rowHeight = 6.0;
+    const double columns[] = {left, left + 12.0, left + 112.0, left + 128.0, right};
+    double y = margin + titleHeight;
+    const auto row = [&](const std::string& item, const std::string& name,
+                         const std::string& count, const std::string& material, bool bold) {
+        const double top = y + rowHeight;
+        sheet.strokes.push_back(lineOf(Pen::Frame, {left, top}, {right, top}));
+        for (const double x : columns) {
+            sheet.strokes.push_back(lineOf(Pen::Frame, {x, y}, {x, top}));
+        }
+        const double base = y + 1.8;
+        addLabel(sheet, item, {columns[0] + 6.0, base}, 2.5, Label::Align::Center, bold);
+        addLabel(sheet, name, {columns[1] + 1.5, base}, 2.5, Label::Align::Left, bold);
+        addLabel(sheet, count, {columns[2] + 8.0, base}, 2.5, Label::Align::Center, bold);
+        addLabel(sheet, material, {columns[3] + 1.5, base}, 2.5, Label::Align::Left, bold);
+        y = top;
+    };
+    // The header at the bottom, against the title block, and the parts above it, the first
+    // nearest: as drawings usually have it.
+    row("Item", "Name", "Qty", "Material", true);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        row(std::to_string(i + 1), rows[i].name, std::to_string(rows[i].count), rows[i].material,
+            false);
+    }
+}
+
 // A number with the decimals it needs.
 std::string compactNumber(double value, int decimals) {
     // Not printf, whose point is a comma on a German system.
@@ -809,6 +862,9 @@ struct SheetBuilder::Impl {
         sheet.width = size.width;
         sheet.height = size.height;
         addFrameAndTitle(sheet, drawing);
+        if (drawing.partsList) {
+            addPartsList(sheet, document);
+        }
         modelParts();
 
         std::map<ObjectId, Placed> placedViews;

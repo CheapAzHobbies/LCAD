@@ -27,7 +27,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Fillet | Have | Between two lines. |
 | Chamfer | Have | Equal distance, between two lines. |
 | Trim, extend, offset, mirror | Have | |
-| Break, split | No | |
+| Break, split | Have | Since 2026-11-27: Break, of a line or an arc at a point. |
 | Sketch patterns (rectangular, circular) | Have | Each copy keeps the constraints among the originals; the copies are not tied to each other. |
 | Move, copy, rotate, scale | Have | Since 2026-11-12, of what is selected. |
 | Project edges of a body | Have | |
@@ -50,7 +50,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Horizontal and vertical while drawing a line | Have | |
 | Snap to circle centers | Have | Centers are points, so they snap as points. |
 | Parallel, perpendicular, tangent detected while drawing | Have | Lines, since 2026-11-12: parallel or square to any line, tangent on from an arc. |
-| Equal lengths and radii detected | No | |
+| Equal lengths and radii detected | Have | Since 2026-11-27: lines and circles as they are drawn. |
 | Snap to intersections | Have | Since 2026-11-12. |
 | Snap to quadrants | Have | Since 2026-11-12. |
 | Grid snapping | Have | Steps that follow the zoom. |
@@ -153,7 +153,8 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | PDF and DXF | Have | |
 | Auxiliary and broken views | No | |
 | GD&T, surface finish, weld symbols | No | |
-| Balloons, parts lists | No | |
+| Parts list | Have | Since 2026-11-27, above the title block. |
+| Balloons | No | |
 | DWG | No | |
 
 ## 9. Files

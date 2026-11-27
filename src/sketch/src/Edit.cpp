@@ -1545,6 +1545,50 @@ bool trim(Sketch& sketch, EntityId id, Point2 nearPoint) {
     return true;
 }
 
+EntityId breakAt(Sketch& sketch, EntityId id, Point2 at) {
+    const Entity* found = sketch.find(id);
+    if (found == nullptr || found->fixed ||
+        (found->kind != EntityKind::Line && found->kind != EntityKind::Arc) ||
+        !std::isfinite(at.x) || !std::isfinite(at.y)) {
+        return 0;
+    }
+    const Entity entity = *found;
+    const Curve curve = describe(sketch, entity);
+    const double speed = std::max(curve.speed(), minimumLength);
+    const double margin = 10.0 * joinTolerance / speed;
+    const double span = curve.span();
+    const double where = curve.parameterOf(at);
+    if (!(where > margin && where < span - margin)) {
+        return 0;
+    }
+    const Point2 split = curve.at(where);
+    Parts parts(sketch);
+    const EntityId rest = curve.isLine()
+                              ? parts.addLine(split, curve.b, entity.construction)
+                              : parts.addArc(curve.center, split, curve.b, entity.construction);
+    const EntityId restStart = parts.at(rest).start;
+    const EntityId restEnd = parts.at(rest).end;
+    // A dimension of the whole length no longer measures anything there is.
+    std::erase_if(parts.constraints, [&entity](const Constraint& c) {
+        const bool ends = (c.first == entity.start && c.second == entity.end) ||
+                          (c.first == entity.end && c.second == entity.start);
+        return ends && (c.kind == ConstraintKind::Distance ||
+                        c.kind == ConstraintKind::DistanceX ||
+                        c.kind == ConstraintKind::DistanceY);
+    });
+    parts.releaseLength(id);
+    parts.hand(entity.end, restEnd);
+    parts.place(entity.end, split);
+    parts.constrain(ConstraintKind::Coincident, entity.end, restStart);
+    // Joined, the pieces of an arc on the same center are on the same circle.
+    parts.constrain(curve.isLine() ? ConstraintKind::Collinear : ConstraintKind::Concentric, id,
+                    rest);
+    Sketch work = parts.build();
+    work.solve();
+    sketch = std::move(work);
+    return rest;
+}
+
 bool extend(Sketch& sketch, EntityId id, Point2 nearPoint) {
     const Entity* found = sketch.find(id);
     if (found == nullptr || found->fixed ||

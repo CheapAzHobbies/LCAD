@@ -777,6 +777,13 @@ const QHash<QString, Drawing>& drawings() {
              i.line(12, 12, 17.5, 12);
              i.poly({{14.8, 9.3}, {17.5, 12}, {14.8, 14.7}}, false);
          }},
+        {QStringLiteral("break"),
+         [](const Ink& i) {
+             i.line(3.5, 15, 10, 12);
+             i.line(14, 10, 20.5, 7);
+             i.p.setPen(QPen(i.accent, 1.6, Qt::SolidLine, Qt::RoundCap));
+             i.line(10, 7, 14, 15);
+         }},
         {QStringLiteral("offset"),
          [](const Ink& i) {
              i.poly({{4.5, 19.5}, {4.5, 5}, {19.5, 5}}, false);

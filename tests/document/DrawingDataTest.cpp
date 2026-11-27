@@ -21,6 +21,7 @@ Drawing someDrawing(Document& document) {
     drawing.titleBlock.partNumber = "LC-001";
     drawing.titleBlock.revision = "B";
     drawing.titleBlock.material = "6061 aluminum";
+    drawing.partsList = true;
 
     DrawingView front;
     front.id = document.newId();

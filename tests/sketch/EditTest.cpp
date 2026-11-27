@@ -688,6 +688,46 @@ TEST_CASE("A point can be held at the middle of an arc", "[sketch][edit]") {
                     .has_value());
 }
 
+TEST_CASE("Break splits a line or an arc in two where it is clicked", "[sketch][edit]") {
+    Sketch sketch;
+    SECTION("a line: the pieces stay joined and in line") {
+        const EntityId flat = sketch.addLine({0.0, 0.0}, {40.0, 0.0});
+        const EntityId beyond = sketch.addLine({40.0, 0.0}, {50.0, 10.0});
+        sketch.addConstraint(ConstraintKind::Coincident, sketch.find(flat)->end,
+                             sketch.find(beyond)->start);
+        sketch.addConstraint(ConstraintKind::Distance, sketch.find(flat)->start,
+                             sketch.find(flat)->end, 0, 40.0);
+        CHECK(breakAt(sketch, flat, {0.0, 0.0}) == 0);
+        const EntityId rest = breakAt(sketch, flat, {15.0, 1.0});
+        REQUIRE(rest != 0);
+        CHECK(curveCount(sketch) == 3);
+        CHECK_THAT(endOf(sketch, flat).x, WithinAbs(15.0, lengthTolerance));
+        CHECK_THAT(startOf(sketch, rest).x, WithinAbs(15.0, lengthTolerance));
+        CHECK_THAT(endOf(sketch, rest).x, WithinAbs(40.0, lengthTolerance));
+        CHECK(hasConstraint(sketch, ConstraintKind::Coincident, sketch.find(rest)->end,
+                            sketch.find(beyond)->start));
+        CHECK(hasConstraint(sketch, ConstraintKind::Collinear, flat, rest));
+        CHECK_FALSE(std::any_of(sketch.constraints().begin(), sketch.constraints().end(),
+                                [](const Constraint& c) {
+                                    return c.kind == ConstraintKind::Distance;
+                                }));
+        CHECK(sketch.solve().status == SolveStatus::Solved);
+    }
+    SECTION("an arc: the pieces share the center") {
+        const EntityId arc = sketch.addArc({0.0, 0.0}, {10.0, 0.0}, {0.0, 10.0});
+        const EntityId rest = breakAt(sketch, arc, {7.0, 7.0});
+        REQUIRE(rest != 0);
+        CHECK(hasConstraint(sketch, ConstraintKind::Concentric, arc, rest));
+        CHECK_THAT(endOf(sketch, arc).x, WithinAbs(10.0 / std::sqrt(2.0), lengthTolerance));
+        CHECK_THAT(endOf(sketch, rest).y, WithinAbs(10.0, lengthTolerance));
+        CHECK(sketch.solve().status == SolveStatus::Solved);
+    }
+    SECTION("a circle is not broken") {
+        const EntityId circle = sketch.addCircle({0.0, 0.0}, 5.0);
+        CHECK(breakAt(sketch, circle, {5.0, 0.0}) == 0);
+    }
+}
+
 TEST_CASE("Trim removes the part of a curve between its crossings", "[sketch][edit]") {
     Sketch sketch;
     // A long horizontal line crossed by two upright ones at x = 10 and x = 30.

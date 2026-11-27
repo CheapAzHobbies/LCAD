@@ -353,6 +353,16 @@ void DrawingInterfaceTest::theTitleBlockAndTheSheetAreChangedInThePanel() {
     }));
     QVERIFY(action(window, "edit.undo")->text().contains(QStringLiteral("Part Number")));
 
+    // A parts list above the title block.
+    panel->partsListBox()->setChecked(true);
+    QVERIFY(window.drawings()->drawing()->partsList);
+    {
+        const auto& listed = window.drawings()->view()->sheet().labels;
+        QVERIFY(std::any_of(listed.begin(), listed.end(), [](const lcad::drawing::Label& label) {
+            return label.text == "Qty";
+        }));
+    }
+
     // Another sheet size.
     panel->sizeBox()->setCurrentIndex(panel->sizeBox()->findText(QStringLiteral("A2")));
     emit panel->sizeBox()->activated(panel->sizeBox()->currentIndex());

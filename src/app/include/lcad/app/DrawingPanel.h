@@ -46,6 +46,7 @@ public:
     [[nodiscard]] QComboBox* standardBox() const { return m_standardBox; }
     [[nodiscard]] QLineEdit* titleField() const { return m_title; }
     [[nodiscard]] QLineEdit* partNumberField() const { return m_partNumber; }
+    [[nodiscard]] QCheckBox* partsListBox() const { return m_partsList; }
     [[nodiscard]] QComboBox* scaleBox() const { return m_scale; }
     [[nodiscard]] QCheckBox* hiddenBox() const { return m_hidden; }
     [[nodiscard]] QLineEdit* suffixField() const { return m_suffix; }
@@ -80,6 +81,7 @@ private:
     QLineEdit* m_date;
     QLineEdit* m_material;
     QLineEdit* m_company;
+    QCheckBox* m_partsList;
     QGroupBox* m_viewBox;
     QLabel* m_viewKind;
     QComboBox* m_scale;

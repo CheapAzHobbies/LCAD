@@ -457,6 +457,22 @@ TEST_CASE("The title block says what the drawing is", "[drawing]") {
     }
 }
 
+TEST_CASE("A parts list names each body and how many there are", "[drawing]") {
+    Document document;
+    addPlate(document);
+    Drawing drawing = frontView(document);
+    SheetBuilder builder(document);
+    CHECK_FALSE(hasLabel(builder.build(drawing), "Qty"));
+    drawing.partsList = true;
+    const Sheet sheet = builder.build(drawing);
+    for (const char* text : {"Item", "Name", "Qty", "Material", "Plate", "1"}) {
+        CHECK(hasLabel(sheet, text));
+    }
+    for (const Label& label : sheet.labels) {
+        CHECK(label.at.y < sheet.height - 10.0);
+    }
+}
+
 TEST_CASE("Standard views fit the sheet, and go where the standard puts them", "[drawing]") {
     for (const DrawingStandard standard : {DrawingStandard::Iso, DrawingStandard::Ansi}) {
         Document document;

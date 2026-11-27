@@ -173,6 +173,8 @@ A sketch that follows something has `attachedTo`, the id of a construction plane
 and `attachedFace`, the name of the body's face (empty for a plane). Its `plane` is then where it
 was when the file was saved, and it is placed again from what it follows on opening.
 
+A drawing has `partsList`, `true`, only where it shows a parts list above its title block.
+
 A body that a feature makes is written as `{"id", "name", "visible", "madeBy"}`, without
 geometry: it is built again from its feature on opening.
 

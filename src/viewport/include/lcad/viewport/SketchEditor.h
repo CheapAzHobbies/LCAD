@@ -49,6 +49,8 @@ enum class SketchTool {
     Constraint,
     Trim,
     Extend,
+    /// Click a line or an arc where to break it in two.
+    Break,
     /// Click a corner where two lines meet to round it, then type the radius.
     Fillet,
     /// Click a corner where two lines meet to cut it straight across, then type how far back.
