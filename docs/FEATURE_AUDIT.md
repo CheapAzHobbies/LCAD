@@ -83,7 +83,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Pull through all | Have | Since 2026-11-12. |
 | Revolve, loft, sweep | Have | Loft and sweep since 2026-11-12. |
 | Hole: simple, counterbore, countersink | Have | |
-| Thread | Have | Modeled 60° thread, outside or inside, by pitch. No thread tables yet. |
+| Thread | Have | Modeled 60° thread, outside or inside; metric sizes M2 to M30 give the pitch. |
 | Coil, pipe | Have | Since 2026-11-12. |
 | Emboss and engrave text | Have | Create > Text. |
 | Rib, web, emboss of a sketch onto a curved face | No | |

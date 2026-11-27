@@ -477,12 +477,39 @@ FeaturePanel::FeaturePanel(FeatureKind kind, const document::Document* document,
         m_section->setToolTip(tr("How thick the wire is. Less than the pitch, so the turns do "
                                  "not touch."));
         break;
-    case FeatureKind::Thread:
+    case FeatureKind::Thread: {
+        // ISO metric sizes, coarse pitch first, then the usual fine ones.
+        m_threadSize = new QComboBox(this);
+        m_threadSize->setObjectName(QStringLiteral("threadSize"));
+        m_threadSize->addItem(tr("Custom"), 0.0);
+        const std::pair<const char*, double> sizes[] = {
+            {"M2", 0.4},     {"M2.5", 0.45}, {"M3", 0.5},   {"M4", 0.7},    {"M5", 0.8},
+            {"M6", 1.0},     {"M8", 1.25},   {"M10", 1.5},  {"M12", 1.75},  {"M14", 2.0},
+            {"M16", 2.0},    {"M20", 2.5},   {"M24", 3.0},  {"M30", 3.5},   {"M8", 1.0},
+            {"M10", 1.25},   {"M12", 1.25},  {"M12", 1.5},  {"M16", 1.5},   {"M20", 1.5},
+        };
+        for (const auto& [name, pitch] : sizes) {
+            m_threadSize->addItem(
+                QStringLiteral("%1 × %2").arg(QLatin1String(name), QLocale().toString(pitch)),
+                pitch);
+        }
+        m_threadSize->setToolTip(tr("A standard metric size gives its pitch. The diameter is "
+                                    "the face's own: draw the rod or the hole to the size."));
+        connect(m_threadSize, &QComboBox::activated, this, [this](int index) {
+            const double pitch = m_threadSize->itemData(index).toDouble();
+            if (pitch > 0.0) {
+                const QSignalBlocker blocker(m_pitch);
+                m_pitch->setValue(pitch);
+            }
+            readFields();
+        });
+        m_form->addRow(tr("Size"), m_threadSize);
         m_pitch = addField(QStringLiteral("pitch"), tr("Pitch"), 0.0, largestInput, tr(" mm"));
         m_pitch->setValue(1.5);
         m_pitch->setToolTip(tr("How far the thread rises each turn: 1.5 for an M10 screw, 1.25 "
                                "for M8, 1 for M6, 0.8 for M5."));
         break;
+    }
     case FeatureKind::Sweep:
         m_path = new QComboBox(this);
         m_path->setObjectName(QStringLiteral("path"));
@@ -1800,6 +1827,12 @@ void FeaturePanel::readFields() {
     }
     if (m_wall != nullptr) {
         m_feature.wall = m_wall->value();
+    }
+    if (m_threadSize != nullptr &&
+        std::abs(m_threadSize->currentData().toDouble() - m_pitch->value()) > 1e-9) {
+        // A pitch typed that is not the size's: a size of its own.
+        const QSignalBlocker blocker(m_threadSize);
+        m_threadSize->setCurrentIndex(0);
     }
     if (m_pitch != nullptr) {
         m_feature.pitch = m_pitch->value();

@@ -817,6 +817,36 @@ TEST_CASE("Pipes, coils, and threads", "[kernel][modeling]") {
     CHECK_THROWS_AS(thread(bolt, side == 0 ? 1 : 0, 1.5, "10"), Error);
 }
 
+TEST_CASE("Threads of any pitch cut, whole turns or not", "[kernel][modeling][thread]") {
+    const NamedShape bolt = nameFaces(makeCylinder(5.0, 20.0), "9");
+    int side = -1;
+    for (int i = 0; i < subShapeCount(bolt.shape, SubShapeKind::Face); ++i) {
+        if (!planeOfFace(subShape(bolt.shape, SubShapeKind::Face, i)).has_value()) {
+            side = i;
+        }
+    }
+    REQUIRE(side >= 0);
+    for (const double pitch : {0.8, 1.0, 1.25, 1.4, 1.75, 3.0}) {
+        INFO("pitch " << pitch);
+        NamedShape threaded;
+        CHECK_NOTHROW(threaded = thread(bolt, side, pitch, "10"));
+        if (!threaded.shape.isNull()) {
+            CHECK(countTopology(threaded.shape).solids == 1);
+            CHECK(volume(threaded.shape) < volume(bolt.shape));
+        }
+    }
+    // 21.4 turns' worth on a longer rod.
+    const NamedShape longer = nameFaces(makeCylinder(5.0, 30.0), "11");
+    int round = -1;
+    for (int i = 0; i < subShapeCount(longer.shape, SubShapeKind::Face); ++i) {
+        if (!planeOfFace(subShape(longer.shape, SubShapeKind::Face, i)).has_value()) {
+            round = i;
+        }
+    }
+    REQUIRE(round >= 0);
+    CHECK_NOTHROW(thread(longer, round, 1.4, "12"));
+}
+
 TEST_CASE("Surfaces are pulled, patched, stitched, and thickened", "[kernel][modeling]") {
     // An L of two lines pulled 10 up: two faces sewn at the corner, not a solid.
     const auto at = [](double x, double y) { return toWorld(planeXY(), x, y); };

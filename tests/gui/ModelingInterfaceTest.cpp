@@ -1066,6 +1066,18 @@ void ModelingInterfaceTest::combineMovePipeCoilAndThread() {
     QCOMPARE(thread->feature().body, rod);
     QCOMPARE(thread->feature().faces.size(), std::size_t{1});
     QTRY_VERIFY2(thread->errorText().isEmpty(), qPrintable(thread->errorText()));
+    // A standard size gives its pitch; a pitch typed makes it a size of its own.
+    auto* size = thread->findChild<QComboBox*>(QStringLiteral("threadSize"));
+    QVERIFY(size != nullptr);
+    const int m8 = size->findText(QStringLiteral("M8 × 1.25"));
+    QVERIFY(m8 > 0);
+    size->setCurrentIndex(m8);
+    emit size->activated(m8);
+    QCOMPARE(thread->feature().pitch, 1.25);
+    thread->findChild<QDoubleSpinBox*>(QStringLiteral("pitch"))->setValue(1.4);
+    QCOMPARE(size->currentIndex(), 0);
+    QCOMPARE(thread->feature().pitch, 1.4);
+    QTRY_VERIFY2(thread->errorText().isEmpty(), qPrintable(thread->errorText()));
     const double before = volumeOf(window, rodFeature);
     QTest::mouseClick(okButton(thread), Qt::LeftButton);
     QTRY_VERIFY(panel(window) == nullptr);

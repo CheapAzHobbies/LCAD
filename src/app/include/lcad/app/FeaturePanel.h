@@ -190,6 +190,7 @@ private:
     // it is halfway to. What was picked in the 3D view for that.
     QComboBox* m_planeKind = nullptr;
     QComboBox* m_axisKind = nullptr;
+    QComboBox* m_threadSize = nullptr;
     QComboBox* m_planeSecond = nullptr;
     std::string m_secondName;
     QString m_secondDescription;

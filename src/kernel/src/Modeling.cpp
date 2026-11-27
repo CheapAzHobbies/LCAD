@@ -1124,7 +1124,10 @@ NamedShape thread(const NamedShape& body, int face, double pitch, const std::str
         // The thread starts where the face does along the axis.
         const gp_Ax3 frame(line.Location().Translated(gp_Vec(line.Direction()) * vMin),
                            line.Direction(), cylinder.Position().XDirection());
-        const TopoDS_Wire spine = helixOf(frame, radius, pitch, length / pitch);
+        // Whole turns, ending within a turn of the face's far end: a helix that stops partway
+        // round can leave the cut unable to close.
+        const TopoDS_Wire spine =
+            helixOf(frame, radius, pitch, std::floor(length / pitch + 1e-9));
         // A 60-degree groove, 0.6134 of the pitch deep (the external depth of ISO metric
         // threads), reaching a little past the surface so that it cuts cleanly.
         const double depth = 0.6134 * pitch;
