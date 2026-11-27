@@ -154,7 +154,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Auxiliary and broken views | No | |
 | GD&T, surface finish, weld symbols | No | |
 | Parts list | Have | Since 2026-11-27, above the title block. |
-| Balloons | No | |
+| Balloons | Have | Since 2026-11-27. Numbered by hand, from the next free number. |
 | DWG | No | |
 
 ## 9. Files

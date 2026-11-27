@@ -299,6 +299,27 @@ void DrawingInterfaceTest::sectionsDetailsAndNotesAreAddedAndMoved() {
     QVERIFY(std::any_of(
         view->sheet().labels.begin(), view->sheet().labels.end(),
         [](const lcad::drawing::Label& label) { return label.text == "Break all edges"; }));
+
+    // A balloon: click the part, then where it goes; it offers the next item number.
+    QVERIFY(trigger(window, "drawing.balloon"));
+    click(window, {(top.left + top.right) / 2.0, (top.bottom + top.top) / 2.0});
+    QVERIFY(view->textField() == nullptr);
+    click(window, {top.right + 25.0, top.top + 15.0});
+    QVERIFY(view->textField() != nullptr);
+    QCOMPARE(view->textField()->text(), QStringLiteral("1"));
+    QTest::keyClick(view->textField(), Qt::Key_Return);
+    QTRY_VERIFY(view->textField() == nullptr);
+    QCOMPARE(window.drawings()->drawing()->notes.size(), std::size_t{2});
+    QVERIFY(window.drawings()->drawing()->notes.back().balloon);
+    QVERIFY(action(window, "edit.undo")->text().contains(QStringLiteral("Balloon")));
+    // The tool stays on for the next one, which is numbered on.
+    QCOMPARE(window.drawings()->tool(), lcad::app::DrawingWorkspace::Tool::Balloon);
+    click(window, {(top.left + top.right) / 2.0, top.top - 1.0});
+    click(window, {top.right + 25.0, top.top + 30.0});
+    QVERIFY(view->textField() != nullptr);
+    QCOMPARE(view->textField()->text(), QStringLiteral("2"));
+    QTest::keyClick(view->textField(), Qt::Key_Escape);
+    window.drawings()->setTool(lcad::app::DrawingWorkspace::Tool::Select);
     keepFrame(window.grab().toImage(), "drawing-section-detail");
 
     // A view is dragged to another place, one undo step, with what it shows.

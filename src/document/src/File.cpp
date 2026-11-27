@@ -1342,11 +1342,18 @@ nlohmann::ordered_json writeDrawing(const Drawing& drawing) {
     }
     out["notes"] = ordered_json::array();
     for (const DrawingNote& note : drawing.notes) {
-        out["notes"].push_back(ordered_json{{"id", note.id.value},
-                                            {"text", note.text},
-                                            {"x", note.x},
-                                            {"y", note.y},
-                                            {"height", note.height}});
+        ordered_json item{{"id", note.id.value},
+                          {"text", note.text},
+                          {"x", note.x},
+                          {"y", note.y},
+                          {"height", note.height}};
+        if (note.balloon) {
+            item["balloon"] = true;
+            item["view"] = note.view.value;
+            item["leaderX"] = note.leaderX;
+            item["leaderY"] = note.leaderY;
+        }
+        out["notes"].push_back(std::move(item));
     }
     return out;
 }
@@ -1432,6 +1439,14 @@ Drawing readDrawing(const json& entry, const std::filesystem::path& path) {
             note.x = numberMember(item, "x", at, path);
             note.y = numberMember(item, "y", at, path);
             note.height = numberMember(item, "height", at, path);
+            if (item.contains("balloon")) {
+                note.balloon = boolMember(item, "balloon", at, path);
+            }
+            if (note.balloon) {
+                note.view = ObjectId{idMember(item, "view", at, path)};
+                note.leaderX = numberMember(item, "leaderX", at, path);
+                note.leaderY = numberMember(item, "leaderY", at, path);
+            }
             drawing.notes.push_back(std::move(note));
         }
     }

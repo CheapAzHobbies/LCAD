@@ -1049,6 +1049,17 @@ const QHash<QString, Drawing>& drawings() {
              i.line(4, 12, 20, 12);
              i.line(4, 17.5, 14, 17.5);
          }},
+        {QStringLiteral("balloon"),
+         [](const Ink& i) {
+             // A numbered circle with a leader down to a dot.
+             i.p.drawEllipse(QPointF(14.5, 9), 5.5, 5.5);
+             i.line(13, 7, 14.5, 6);
+             i.line(14.5, 6, 14.5, 12);
+             i.p.setPen(QPen(i.accent, 1.6, Qt::SolidLine, Qt::RoundCap));
+             i.line(10.5, 13, 5.5, 18.5);
+             i.p.setBrush(i.accent);
+             i.p.drawEllipse(QPointF(5, 19), 1.3, 1.3);
+         }},
         {QStringLiteral("setup"),
          [](const Ink& i) {
              // A block on a table, with zero marked on it.

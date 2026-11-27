@@ -2169,7 +2169,8 @@ void MainWindow::createTopBar() {
     sheet->addActions(
         {action("drawing.sectionUp"), action("drawing.sectionAcross"), action("drawing.detail")});
     sheet->addSeparator();
-    sheet->addActions({action("sketch.dimension"), action("drawing.note")});
+    sheet->addActions(
+        {action("sketch.dimension"), action("drawing.note"), action("drawing.balloon")});
     sheet->addSeparator();
     sheet->addActions({action("drawing.exportPdf"), action("drawing.exportDxf")});
     m_menuBar->insertMenu(window->menuAction(), sheet);

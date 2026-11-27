@@ -511,6 +511,11 @@ double fittingScale(double modelWidth, double modelHeight, double roomWidth, dou
     return 0.001;
 }
 
+double balloonRadius(const document::DrawingNote& note) {
+    const double letters = static_cast<double>(std::max<std::size_t>(note.text.size(), 1));
+    return note.height * (0.95 + 0.3 * letters);
+}
+
 std::string scaleText(double scale) {
     if (scale >= 1.0) {
         return compactNumber(scale, 2) + ":1";
@@ -1007,7 +1012,30 @@ struct SheetBuilder::Impl {
                                 " dimensions have lost what they measure, and are not shown.");
         }
         for (const document::DrawingNote& note : drawing.notes) {
-            addLabel(sheet, note.text, {note.x, note.y}, note.height);
+            if (!note.balloon) {
+                addLabel(sheet, note.text, {note.x, note.y}, note.height);
+                continue;
+            }
+            const Point2D center{note.x, note.y};
+            const double radius = balloonRadius(note);
+            sheet.strokes.push_back(circleOf(Pen::Dimension, center, radius));
+            addLabel(sheet, note.text, {note.x, note.y - note.height / 2.0}, note.height,
+                     Label::Align::Center);
+            // The leader, from the edge of the circle to a dot on the part.
+            const auto placedView = placedViews.find(note.view);
+            if (placedView == placedViews.end()) {
+                continue;
+            }
+            const Point2D tip = placedView->second.mapping({note.leaderX, note.leaderY});
+            const double dx = tip.x - center.x;
+            const double dy = tip.y - center.y;
+            const double length = std::hypot(dx, dy);
+            if (length > radius) {
+                const Point2D edge{center.x + dx / length * radius,
+                                   center.y + dy / length * radius};
+                sheet.strokes.push_back(lineOf(Pen::Dimension, edge, tip));
+            }
+            sheet.strokes.push_back(circleOf(Pen::Dimension, tip, 0.5));
         }
         return sheet;
     }

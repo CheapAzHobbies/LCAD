@@ -303,6 +303,12 @@ void MainWindow::defineDrawingCommands() {
         c.aliases = {tr("text"), tr("label")};
         m_commands->add(std::move(c));
 
+        c = toolCommand("drawing.balloon", tr("&Balloon"),
+                        tr("Number a part to match the parts list, with a leader to it"),
+                        "balloon", DrawingWorkspace::Tool::Balloon);
+        c.aliases = {tr("item number"), tr("callout"), tr("bubble")};
+        m_commands->add(std::move(c));
+
         const auto exportTo = [this](const QString& filter, const QString& suffix) {
             const QString base =
                 QString::fromStdString(m_drawings->drawing()->name) + QLatin1Char('.') + suffix;
@@ -363,7 +369,7 @@ void MainWindow::createDrawingToolbar() {
     toolbar->addWidget(views);
     toolbar->addSeparator();
     for (const char* id : {"drawing.sectionUp", "drawing.sectionAcross", "drawing.detail",
-                           "sketch.dimension", "drawing.note"}) {
+                           "sketch.dimension", "drawing.note", "drawing.balloon"}) {
         toolbar->addAction(action(id));
     }
     toolbar->addSeparator();

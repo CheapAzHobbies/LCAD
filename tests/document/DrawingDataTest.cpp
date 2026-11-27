@@ -82,6 +82,17 @@ Drawing someDrawing(Document& document) {
     note.y = 30.0;
     note.height = 5.0;
     drawing.notes.push_back(note);
+
+    DrawingNote balloon;
+    balloon.id = document.newId();
+    balloon.text = "1";
+    balloon.x = 200.0;
+    balloon.y = 150.0;
+    balloon.balloon = true;
+    balloon.view = front.id;
+    balloon.leaderX = 4.5;
+    balloon.leaderY = -2.0;
+    drawing.notes.push_back(balloon);
     return drawing;
 }
 

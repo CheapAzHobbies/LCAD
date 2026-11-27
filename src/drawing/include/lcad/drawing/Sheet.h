@@ -173,6 +173,9 @@ private:
 /// A scale as it is written: "1:2", "5:1".
 [[nodiscard]] std::string scaleText(double scale);
 
+/// The radius of a balloon's circle, in millimeters: room for its text.
+[[nodiscard]] double balloonRadius(const document::DrawingNote& note);
+
 /// A number of millimeters as a dimension says it: no more decimals than it needs, at most two.
 [[nodiscard]] std::string lengthText(double millimeters);
 

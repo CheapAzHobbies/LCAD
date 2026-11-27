@@ -263,7 +263,7 @@ toolpaths of a setup are worked out from the model when they are wanted, and are
 | `titleBlock` | `title`, `partNumber`, `revision`, `drawnBy`, `date`, `material`, `company` |
 | `views` | Each with `id`, `kind` (`front`, `back`, `top`, `bottom`, `left`, `right`, `isometric`, `section`, `detail`), `label`, `scale` (sheet millimeters per model millimeter), `x` and `y` (its middle on the sheet), `showHidden`, `centerMarks`. A section or a detail has `parent`. A section has `sectionVertical`, `sectionPosition`, `sectionFlipped`. A detail has `detailX`, `detailY`, `detailRadius` |
 | `dimensions` | Each with `id`, `view`, `kind` (`aligned`, `horizontal`, `vertical`, `radius`, `diameter`), `first`, and but for a radius or a diameter `second`, then `offset` and `suffix`. A point is `body`, `path`, `edge` (the edge's name), and `where` (`start`, `end`, `middle`, `center`) |
-| `notes` | Each with `id`, `text`, `x`, `y`, `height` |
+| `notes` | Each with `id`, `text`, `x`, `y`, `height`; a balloon also has `balloon`, `true`, the `view` its leader points into, and `leaderX`, `leaderY`, where in that view, in millimeters of the model |
 
 `tools` is a list with `id`, `name`, `kind` (`flat`, `ball`, `drill`), `diameter`, `fluteLength`,
 `stickout`, `flutes`, `tipAngle`, and `number`.

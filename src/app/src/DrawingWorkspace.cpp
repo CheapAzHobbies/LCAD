@@ -85,12 +85,20 @@ DrawingWorkspace::DrawingWorkspace(QWidget* parent)
         Drawing changed = *drawing();
         DrawingNote note;
         note.id = m_document->newId();
-        note.text = text.toStdString();
+        note.text = text.trimmed().toStdString();
         note.x = at.x;
         note.y = at.y;
+        const bool balloon = m_tool == Tool::Balloon && m_balloonTip.has_value();
+        if (balloon) {
+            note.balloon = true;
+            note.view = m_balloonTip->view;
+            note.leaderX = m_balloonTip->at.x;
+            note.leaderY = m_balloonTip->at.y;
+        }
         changed.notes.push_back(std::move(note));
-        change(changed, tr("Add Note"));
-        setTool(Tool::Select);
+        change(changed, balloon ? tr("Add Balloon") : tr("Add Note"));
+        // Balloons come several at a time; a note is one.
+        setTool(balloon ? Tool::Balloon : Tool::Select);
     });
     connect(m_panel, &DrawingPanel::changed, this,
             [this](const Drawing& changed, const QString& label) { change(changed, label); });
@@ -249,6 +257,7 @@ void DrawingWorkspace::addView(ViewKind kind) {
 void DrawingWorkspace::setTool(Tool tool) {
     m_tool = tool;
     m_pending.reset();
+    m_balloonTip.reset();
     m_view->setMark(std::nullopt);
     m_view->setMode(tool == Tool::Select ? SheetView::Mode::Select : SheetView::Mode::Pick);
     m_panel->setPrompt(prompt());
@@ -270,6 +279,9 @@ QString DrawingWorkspace::prompt() const {
         return tr("Click the middle of what to show larger");
     case Tool::Note:
         return tr("Click where the note goes");
+    case Tool::Balloon:
+        return m_balloonTip.has_value() ? tr("Click where the balloon goes")
+                                        : tr("Click the part the balloon points to");
     }
     return {};
 }
@@ -296,7 +308,32 @@ void DrawingWorkspace::onClicked(const Point2D& at, Qt::KeyboardModifiers modifi
     case Tool::Note:
         m_view->askForText(at);
         break;
+    case Tool::Balloon:
+        clickBalloon(at);
+        break;
     }
+}
+
+void DrawingWorkspace::clickBalloon(const Point2D& at) {
+    if (!m_balloonTip.has_value()) {
+        const drawing::ViewBox* box = viewAt(at);
+        if (box == nullptr) {
+            emit message(tr("Click a part in a view."));
+            return;
+        }
+        m_balloonTip = BalloonTip{box->view, box->toView(at)};
+        m_view->setMark(at);
+        m_panel->setPrompt(prompt());
+        return;
+    }
+    // The next item number, which can be typed over.
+    int next = 1;
+    for (const DrawingNote& note : drawing()->notes) {
+        if (note.balloon) {
+            next = std::max(next, std::atoi(note.text.c_str()) + 1);
+        }
+    }
+    m_view->askForText(at, QString::number(next));
 }
 
 const drawing::ViewBox* DrawingWorkspace::viewAt(const Point2D& at) const {

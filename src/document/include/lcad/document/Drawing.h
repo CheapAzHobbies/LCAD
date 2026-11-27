@@ -120,7 +120,7 @@ struct DrawingDimension {
     friend bool operator==(const DrawingDimension&, const DrawingDimension&) = default;
 };
 
-/// Text anywhere on a sheet.
+/// Text anywhere on a sheet, or a balloon.
 struct DrawingNote {
     ObjectId id;
     std::string text;
@@ -129,6 +129,13 @@ struct DrawingNote {
     double y = 0.0;
     /// The height of its letters, in millimeters.
     double height = 3.5;
+    /// A balloon: the text, an item number of the parts list, in a circle around (x, y), with a
+    /// leader to a point of a view. The point is in millimeters of the model, as the view shows
+    /// it, so the leader follows the view when it moves.
+    bool balloon = false;
+    ObjectId view;
+    double leaderX = 0.0;
+    double leaderY = 0.0;
 
     friend bool operator==(const DrawingNote&, const DrawingNote&) = default;
 };

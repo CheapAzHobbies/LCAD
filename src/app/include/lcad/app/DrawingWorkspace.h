@@ -34,6 +34,8 @@ public:
         Detail,
         /// Click where a note goes.
         Note,
+        /// Click a part in a view, then where the balloon goes, and type its item number.
+        Balloon,
     };
 
     explicit DrawingWorkspace(QWidget* parent);
@@ -82,6 +84,7 @@ private:
                    const drawing::Point2D& to);
     [[nodiscard]] QString nextLabel() const;
     [[nodiscard]] QString prompt() const;
+    void clickBalloon(const drawing::Point2D& at);
     [[nodiscard]] const drawing::ViewBox* viewAt(const drawing::Point2D& at) const;
 
     document::Document* m_document = nullptr;
@@ -94,6 +97,12 @@ private:
     Tool m_tool = Tool::Select;
     /// The Dimension tool's first point, until it has its second.
     std::optional<drawing::SnapPoint> m_pending;
+    /// The Balloon tool's first click: the view, and the point in it the leader goes to.
+    struct BalloonTip {
+        document::ObjectId view;
+        drawing::Point2D at;
+    };
+    std::optional<BalloonTip> m_balloonTip;
 };
 
 } // namespace lcad::app

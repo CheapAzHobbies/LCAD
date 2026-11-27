@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <set>
 #include <sstream>
 
@@ -471,6 +472,44 @@ TEST_CASE("A parts list names each body and how many there are", "[drawing]") {
     for (const Label& label : sheet.labels) {
         CHECK(label.at.y < sheet.height - 10.0);
     }
+}
+
+TEST_CASE("A balloon is a numbered circle with a leader that follows its view", "[drawing]") {
+    Document document;
+    addPlate(document);
+    Drawing drawing = frontView(document);
+    DrawingNote balloon;
+    balloon.id = document.newId();
+    balloon.text = "1";
+    balloon.x = 250.0;
+    balloon.y = 220.0;
+    balloon.balloon = true;
+    balloon.view = drawing.views[0].id;
+    drawing.notes.push_back(balloon);
+    SheetBuilder builder(document);
+    const auto leaderEnd = [&](const Sheet& sheet) {
+        // The leader's tip: the end of a dimension line that is not on the balloon's circle.
+        std::optional<Point2D> tip;
+        for (const Stroke& stroke : sheet.strokes) {
+            if (stroke.pen == Pen::Dimension && !stroke.isArc && stroke.points.size() == 2) {
+                tip = stroke.points.back();
+            }
+        }
+        return tip;
+    };
+    const Sheet first = builder.build(drawing);
+    CHECK(hasLabel(first, "1"));
+    const auto tip = leaderEnd(first);
+    REQUIRE(tip.has_value());
+    // The leader ends at the model's origin, as the view shows it.
+    const ViewBox& box = first.views[0];
+    CHECK_THAT(tip->x, WithinAbs(box.x - box.origin.x * box.scale, 1e-6));
+    CHECK_THAT(tip->y, WithinAbs(box.y - box.origin.y * box.scale, 1e-6));
+    drawing.views[0].x += 20.0;
+    const auto moved = leaderEnd(builder.build(drawing));
+    REQUIRE(moved.has_value());
+    CHECK_THAT(moved->x - tip->x, WithinAbs(20.0, 1e-6));
+    CHECK_THAT(moved->y - tip->y, WithinAbs(0.0, 1e-6));
 }
 
 TEST_CASE("Standard views fit the sheet, and go where the standard puts them", "[drawing]") {

@@ -242,6 +242,11 @@ void SheetView::paintEvent(QPaintEvent*) {
                 painter.setPen(QPen(accent, 1.5, Qt::DashLine));
                 painter.setBrush(Qt::NoBrush);
                 const QPointF at = toWidget({note.x, note.y});
+                if (note.balloon) {
+                    const double r = drawing::balloonRadius(note) * m_zoom + 3.0;
+                    painter.drawEllipse(at, r, r);
+                    continue;
+                }
                 painter.drawRect(QRectF(at.x() - 3.0, at.y() - note.height * m_zoom - 3.0,
                                         note.height * m_zoom * 12.0, note.height * m_zoom + 6.0));
             }
@@ -263,6 +268,12 @@ void SheetView::resizeEvent(QResizeEvent* event) {
 
 const document::DrawingNote* SheetView::noteAt(const Point2D& at) const {
     for (const document::DrawingNote& note : m_notes) {
+        if (note.balloon) {
+            if (std::hypot(at.x - note.x, at.y - note.y) <= drawing::balloonRadius(note) + reach()) {
+                return &note;
+            }
+            continue;
+        }
         const double wide = static_cast<double>(note.text.size()) * note.height * 0.7;
         if (at.x >= note.x - reach() && at.x <= note.x + wide + reach() &&
             at.y >= note.y - reach() && at.y <= note.y + note.height + reach()) {

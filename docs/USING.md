@@ -586,6 +586,8 @@ in the model.
 
 - **A parts list:** check Parts list under the title block. A table above it lists each body, how
   many of it the assembly has, and its material.
+- **A balloon:** choose Balloon, click the part, then where the balloon goes. It offers the next
+  item number; type another and press Enter. The leader stays on the part when the view moves.
 - **Move a view** by dragging it. Select it to change its scale, or to leave out hidden lines or
   center marks.
 - **Add a view** from the View button.
