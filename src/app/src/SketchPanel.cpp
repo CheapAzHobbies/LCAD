@@ -7,6 +7,7 @@
 #include <lcad/sketch/Edit.h>
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QEnterEvent>
 #include <QFormLayout>
 #include <QFrame>
@@ -273,6 +274,16 @@ SketchPanel::SketchPanel(viewport::SketchEditor* editor, QWidget* parent)
     auto* sidesLabel = new QLabel(tr("Polygon sides"), this);
     sidesLabel->setObjectName(QStringLiteral("secondary"));
     m_sidesForm->addRow(sidesLabel, m_sides);
+    m_polygonFit = new QComboBox(this);
+    m_polygonFit->setObjectName(QStringLiteral("polygonFit"));
+    m_polygonFit->addItem(tr("Inside a circle"));
+    m_polygonFit->addItem(tr("Around a circle"));
+    m_polygonFit->setToolTip(tr("Inside a circle: the second click is a corner. Around a "
+                                "circle: it is the middle of a side, for a size across the "
+                                "flats."));
+    auto* fitLabel = new QLabel(tr("Polygon fits"), this);
+    fitLabel->setObjectName(QStringLiteral("secondary"));
+    m_sidesForm->addRow(fitLabel, m_polygonFit);
     layout->addLayout(m_sidesForm);
     layout->addSpacing(8);
 
@@ -293,6 +304,8 @@ SketchPanel::SketchPanel(viewport::SketchEditor* editor, QWidget* parent)
             [this](bool on) { m_editor->setConstructionMode(on); });
     connect(m_sides, &QSpinBox::valueChanged, this,
             [this](int sides) { m_editor->setPolygonSides(sides); });
+    connect(m_polygonFit, &QComboBox::activated, this,
+            [this](int index) { m_editor->setPolygonCircumscribed(index == 1); });
     connect(m_finish, &QPushButton::clicked, this, &SketchPanel::finishRequested);
     connect(m_editor, &viewport::SketchEditor::hoverChanged, this, [this] {
         if (m_editor->isActive()) {
@@ -342,8 +355,12 @@ void SketchPanel::refresh(const QString& name) {
         m_inference->setChecked(m_editor->hasInference());
         m_construction->setChecked(m_editor->constructionMode());
         m_sides->setValue(m_editor->polygonSides());
+        const QSignalBlocker d(m_polygonFit);
+        m_polygonFit->setCurrentIndex(m_editor->polygonCircumscribed() ? 1 : 0);
     }
-    m_sidesForm->setRowVisible(m_sides, m_editor->tool() == viewport::SketchTool::Polygon);
+    const bool polygon = m_editor->tool() == viewport::SketchTool::Polygon;
+    m_sidesForm->setRowVisible(m_sides, polygon);
+    m_sidesForm->setRowVisible(m_polygonFit, polygon);
 
     const std::vector<sketch::EntityId> entities = m_editor->selectedEntities();
     const std::vector<sketch::ConstraintId> constraints = m_editor->selectedConstraints();

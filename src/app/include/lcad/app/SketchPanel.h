@@ -14,6 +14,7 @@ class QFormLayout;
 class QLabel;
 class QPushButton;
 class QSpinBox;
+class QComboBox;
 class QVBoxLayout;
 
 namespace lcad::app {
@@ -68,6 +69,7 @@ public:
     void removeConstraint(int row);
 
     [[nodiscard]] QSpinBox* sidesField() const { return m_sides; }
+    [[nodiscard]] QComboBox* polygonFitField() const { return m_polygonFit; }
     [[nodiscard]] QCheckBox* inferenceBox() const { return m_inference; }
     [[nodiscard]] QCheckBox* constructionBox() const { return m_construction; }
     [[nodiscard]] QPushButton* finishButton() const { return m_finish; }
@@ -90,6 +92,7 @@ private:
     QCheckBox* m_inference;
     QCheckBox* m_construction;
     QSpinBox* m_sides;
+    QComboBox* m_polygonFit = nullptr;
     QFormLayout* m_sidesForm = nullptr;
     QVBoxLayout* m_constraintList;
     QPushButton* m_finish;

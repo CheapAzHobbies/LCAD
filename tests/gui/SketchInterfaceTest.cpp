@@ -19,6 +19,7 @@
 #include <GuiHelpers.h>
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDockWidget>
 #include <QLabel>
 #include <QLineEdit>
@@ -796,8 +797,14 @@ void SketchInterfaceTest::polygonSidesAreForThePolygonTool() {
     QVERIFY(!panel->sidesField()->isVisible());
     QVERIFY(trigger(window, "sketch.polygon"));
     QVERIFY(panel->sidesField()->isVisible());
+    QVERIFY(panel->polygonFitField()->isVisible());
+    // Around a circle: the second click is the middle of a side.
+    panel->polygonFitField()->setCurrentIndex(1);
+    emit panel->polygonFitField()->activated(1);
+    QVERIFY(window.viewport()->sketchEditor()->polygonCircumscribed());
     QVERIFY(trigger(window, "sketch.circle"));
     QVERIFY(!panel->sidesField()->isVisible());
+    QVERIFY(!panel->polygonFitField()->isVisible());
 }
 
 void SketchInterfaceTest::buttonsSayTheirNames() {

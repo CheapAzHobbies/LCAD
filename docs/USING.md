@@ -423,7 +423,7 @@ in the 3D view.
 | 3-Point Arc | | Click where it starts, where it ends, then a point it passes through. In the list beside Arc. |
 | Tangent Arc | | Click the end of a line or an arc, then where the arc ends. It goes on from the curve, joined and tangent to it. In the list beside Arc. |
 | Point | | Click where it goes. |
-| Polygon | | Click the center, then a corner. The number of sides is set in the panel on the right. |
+| Polygon | | Click the center, then a corner. The number of sides is set in the panel on the right. With **Polygon fits** set to **Around a circle**, the second click is the middle of a side instead, and a construction circle inside it gives the size across the flats, to dimension a nut, say. |
 | Slot | | Click the two centers, then move away from the line between them and click to set the width. |
 | Ellipse | | Click the center, then the end of the major axis, then how far out it reaches across (its minor radius). The dimension tool gives it its minor radius; its major radius is the distance from the center to the end of the major axis. |
 | Spline | | Click the points it goes through first and last, and the ones it is drawn toward in between. Enter, a double-click, or Esc ends it. Drag its points to reshape it. |

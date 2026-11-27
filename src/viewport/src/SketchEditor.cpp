@@ -310,6 +310,7 @@ public:
     double gridSpacing = 10.0;
     bool constructionMode = false;
     int polygonSides = 6;
+    bool polygonCircumscribed = false;
 
     std::vector<EntityId> selected;
     std::vector<ConstraintId> selectedConstraints;
@@ -1836,7 +1837,8 @@ public:
         sketch::Sketch g = geometry();
         sketch::PolygonParts parts;
         try {
-            parts = sketch::addPolygon(g, center.position, corner.position, polygonSides);
+            parts = sketch::addPolygon(g, center.position, corner.position, polygonSides,
+                                       polygonCircumscribed);
         } catch (const std::invalid_argument&) {
             emit q->message(tr("A polygon needs a size."));
             return;
@@ -1845,7 +1847,9 @@ public:
             finishCurve(g, side);
         }
         attach(g, g.find(parts.circle)->center, center);
-        attach(g, g.find(parts.sides.front())->start, corner);
+        if (!polygonCircumscribed) {
+            attach(g, g.find(parts.sides.front())->start, corner);
+        }
         commit(std::move(g), tr("Polygon"));
         clicks.clear();
     }
@@ -2029,8 +2033,11 @@ public:
             }
             break;
         case SketchTool::Polygon: {
-            const double radius = apart(first, at);
-            const double start = std::atan2(at.y - first.y, at.x - first.x);
+            const double halfTurn = pi / polygonSides;
+            const double radius =
+                apart(first, at) / (polygonCircumscribed ? std::cos(halfTurn) : 1.0);
+            const double start = std::atan2(at.y - first.y, at.x - first.x) -
+                                 (polygonCircumscribed ? halfTurn : 0.0);
             for (int i = 0; radius > 1e-9 && i < polygonSides; ++i) {
                 strokes.push_back(
                     segment(first + direction(start + 2.0 * pi * i / polygonSides) * radius,
@@ -3872,6 +3879,16 @@ void SketchEditor::setPolygonSides(int sides) {
 
 int SketchEditor::polygonSides() const {
     return m_impl->polygonSides;
+}
+
+void SketchEditor::setPolygonCircumscribed(bool on) {
+    m_impl->polygonCircumscribed = on;
+    m_impl->update();
+    emit changed();
+}
+
+bool SketchEditor::polygonCircumscribed() const {
+    return m_impl->polygonCircumscribed;
 }
 
 std::vector<sketch::EntityId> SketchEditor::selectedEntities() const {

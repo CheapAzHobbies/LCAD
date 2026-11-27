@@ -53,6 +53,8 @@ struct PolygonParts {
     std::vector<EntityId> sides;
     /// The construction circle through the corners.
     EntityId circle = 0;
+    /// Circumscribed: the construction circle the sides touch. 0 otherwise.
+    EntityId inner = 0;
 };
 /// A center rectangle: also a construction diagonal, and a point at its middle, which is where
 /// the rectangle is centered.
@@ -84,8 +86,11 @@ EntityId addArcThrough(Sketch& sketch, Point2 start, Point2 through, Point2 end)
 EntityId addTangentArc(Sketch& sketch, EntityId from, Point2 end);
 
 /// A regular polygon with `sides` sides (3 to 64) around `center`, with one corner at `corner`:
-/// lines of equal length whose ends are held on a construction circle.
-PolygonParts addPolygon(Sketch& sketch, Point2 center, Point2 corner, int sides);
+/// lines of equal length whose ends are held on a construction circle. Circumscribed, `corner`
+/// is the middle of a side instead, and a second construction circle inside touches the sides:
+/// its size is the size across the flats.
+PolygonParts addPolygon(Sketch& sketch, Point2 center, Point2 corner, int sides,
+                        bool circumscribed = false);
 
 struct SlotParts {
     EntityId firstArc = 0;

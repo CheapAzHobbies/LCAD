@@ -140,6 +140,10 @@ public:
     /// How many sides the polygon tool gives a polygon: 3 to 64.
     void setPolygonSides(int sides);
     [[nodiscard]] int polygonSides() const;
+    /// Whether the polygon tool's second click is the middle of a side, the polygon drawn
+    /// around a circle, rather than a corner. Off at first.
+    void setPolygonCircumscribed(bool on);
+    [[nodiscard]] bool polygonCircumscribed() const;
 
     // The selection
 

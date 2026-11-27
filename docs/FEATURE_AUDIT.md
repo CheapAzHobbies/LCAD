@@ -21,7 +21,7 @@ large project of its own. Both come after the gaps in mechanical modeling below.
 | Rectangle | Have | Two corners, center and corner, or three points at any angle. |
 | Circle | Have | Center and radius, or three points. |
 | Arc | Have | Center, start, and end; three points; tangent on from a curve. |
-| Ellipse, polygon, slot, spline, point | Have | Polygon is inscribed only; spline is fit-point only. |
+| Ellipse, polygon, slot, spline, point | Have | Polygon inside or around a circle; spline is fit-point only. |
 | Construction geometry | Have | Any curve can be made construction. |
 | Sketch text | Part | Text is a feature (Create > Text), raised, engraved, or a body; not text in a sketch. |
 | Fillet | Have | Between two lines. |

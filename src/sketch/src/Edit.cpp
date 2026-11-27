@@ -496,21 +496,26 @@ RectangleParts addRectangle(Sketch& sketch, Point2 corner, Point2 opposite) {
     return parts;
 }
 
-PolygonParts addPolygon(Sketch& sketch, Point2 center, Point2 corner, int sides) {
+PolygonParts addPolygon(Sketch& sketch, Point2 center, Point2 corner, int sides,
+                        bool circumscribed) {
     requireUsable(center, "addPolygon");
     requireUsable(corner, "addPolygon");
     if (sides < 3 || sides > 64) {
         throw std::invalid_argument("addPolygon: a polygon has 3 to 64 sides");
     }
-    const double radius = apart(center, corner);
-    if (radius <= minimumLength) {
+    const double reach = apart(center, corner);
+    if (reach <= minimumLength) {
         throw std::invalid_argument("addPolygon: the polygon has no size");
     }
+    // Circumscribed, the corners are half a side's turn either side of `corner`, and further out.
+    const double halfTurn = pi / sides;
+    const double radius = circumscribed ? reach / std::cos(halfTurn) : reach;
     Sketch work = sketch;
     PolygonParts parts;
     parts.circle = work.addCircle(center, radius);
     work.setConstruction(parts.circle, true);
-    const double first = std::atan2(corner.y - center.y, corner.x - center.x);
+    const double first = std::atan2(corner.y - center.y, corner.x - center.x) -
+                         (circumscribed ? halfTurn : 0.0);
     const auto cornerAt = [&](int index) {
         const double angle = first + 2.0 * pi * index / sides;
         return Point2{center.x + radius * std::cos(angle), center.y + radius * std::sin(angle)};
@@ -527,6 +532,12 @@ PolygonParts addPolygon(Sketch& sketch, Point2 center, Point2 corner, int sides)
         if (i > 0) {
             work.addConstraint(ConstraintKind::Equal, parts.sides.front(), side);
         }
+    }
+    if (circumscribed) {
+        parts.inner = work.addCircle(center, reach);
+        work.setConstruction(parts.inner, true);
+        work.addConstraint(ConstraintKind::Concentric, parts.circle, parts.inner);
+        work.addConstraint(ConstraintKind::Tangent, parts.sides.front(), parts.inner);
     }
     sketch = std::move(work);
     return parts;

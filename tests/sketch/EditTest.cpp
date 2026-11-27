@@ -197,6 +197,27 @@ TEST_CASE("The polygon tool makes a regular polygon that stays regular", "[sketc
     CHECK(same(sketch, before));
 }
 
+TEST_CASE("A polygon around a circle is sized across its flats", "[sketch][edit]") {
+    Sketch sketch;
+    // A hexagon 20 across the flats, a flat's middle straight to the right of the center.
+    const PolygonParts nut = addPolygon(sketch, {0.0, 0.0}, {10.0, 0.0}, 6, true);
+    REQUIRE(nut.inner != 0);
+    CHECK(sketch.find(nut.inner)->construction);
+    CHECK_THAT(sketch.radiusOf(nut.inner), WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT(sketch.radiusOf(nut.circle), WithinAbs(20.0 / std::sqrt(3.0), lengthTolerance));
+    const Point2 a = startOf(sketch, nut.sides[0]);
+    const Point2 b = endOf(sketch, nut.sides[0]);
+    CHECK_THAT((a.x + b.x) / 2.0, WithinAbs(10.0, lengthTolerance));
+    CHECK_THAT((a.y + b.y) / 2.0, WithinAbs(0.0, lengthTolerance));
+    const SolveResult state = sketch.solve();
+    CHECK(state.status == SolveStatus::Solved);
+    CHECK(state.degreesOfFreedom == 4);
+    // Across the flats as a dimension: the size follows.
+    sketch.addConstraint(ConstraintKind::Diameter, nut.inner, 0, 0, 13.0);
+    CHECK(sketch.solve().status == SolveStatus::Solved);
+    CHECK_THAT(sketch.radiusOf(nut.circle), WithinAbs(13.0 / std::sqrt(3.0), 1e-6));
+}
+
 TEST_CASE("The slot tool makes a closed slot with five freedoms", "[sketch][edit]") {
     Sketch sketch;
     // Along a slanted axis, so that nothing lines up with X or Y by luck.
