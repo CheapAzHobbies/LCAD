@@ -1450,6 +1450,43 @@ void MainWindow::defineCommands() {
         c.isChecked = [this] { return m_viewport->isGridVisible(); };
         m_commands->add(std::move(c));
 
+        c = make("view.saveView", tr("Save &View..."), view,
+                 tr("Keep where the camera is under a name, to go back to it"));
+        c.aliases = {tr("named view"), tr("save camera"), tr("bookmark view")};
+        c.run = [this](bool) {
+            bool ok = false;
+            const QString name = QInputDialog::getText(
+                this, tr("Save View"), tr("Name:"), QLineEdit::Normal,
+                QString::fromStdString(document()->uniqueViewName("View")), &ok);
+            if (ok && !name.trimmed().isEmpty()) {
+                saveView(name.trimmed());
+            }
+        };
+        m_commands->add(std::move(c));
+
+        c = make("view.deleteView", tr("&Delete Saved View..."), view,
+                 tr("Forget a view kept with Save View"));
+        c.run = [this](bool) {
+            QStringList names;
+            for (const document::SavedView& saved : document()->views()) {
+                names << QString::fromStdString(saved.name);
+            }
+            bool ok = false;
+            const QString name = QInputDialog::getItem(this, tr("Delete Saved View"),
+                                                       tr("View:"), names, 0, false, &ok);
+            if (!ok) {
+                return;
+            }
+            for (const document::SavedView& saved : document()->views()) {
+                if (QString::fromStdString(saved.name) == name) {
+                    document()->removeView(saved.id);
+                    break;
+                }
+            }
+        };
+        c.isEnabled = [this] { return !document()->views().empty(); };
+        m_commands->add(std::move(c));
+
         c = make("view.gridSpacing", tr("Grid &Spacing..."), view,
                  tr("Set how far apart the grid's lines are; the sketch's grid snap follows"));
         c.aliases = {tr("grid size"), tr("snap increment"), tr("grid settings")};
@@ -2145,6 +2182,19 @@ void MainWindow::createTopBar() {
                            "view.top", "view.bottom"}) {
         view->addAction(action(id));
     }
+    QMenu* saved = view->addMenu(tr("Saved &Views"));
+    saved->setObjectName(QStringLiteral("menu.savedViews"));
+    connect(saved, &QMenu::aboutToShow, this, [this, saved] {
+        saved->clear();
+        for (const document::SavedView& each : document()->views()) {
+            QAction* go = saved->addAction(QString::fromStdString(each.name));
+            connect(go, &QAction::triggered, this, [this, id = each.id] { showSavedView(id); });
+        }
+        if (document()->views().empty()) {
+            saved->addAction(tr("None yet"))->setEnabled(false);
+        }
+    });
+    view->addActions({action("view.saveView"), action("view.deleteView")});
     view->addSeparator();
     view->addAction(action("view.perspective"));
     QMenu* style = view->addMenu(tr("&Display Style"));
@@ -2677,6 +2727,34 @@ void MainWindow::createDocks() {
     // under the viewport.
     setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+}
+
+document::ObjectId MainWindow::saveView(const QString& name) {
+    const viewport::CameraState camera = m_viewport->cameraState();
+    document::SavedView kept;
+    kept.name = name.toStdString();
+    kept.eye = camera.eye;
+    kept.center = camera.center;
+    kept.up = camera.up;
+    kept.scale = camera.scale;
+    kept.perspective = camera.projection == viewport::Projection::Perspective;
+    return document()->addView(kept);
+}
+
+bool MainWindow::showSavedView(document::ObjectId id) {
+    const document::SavedView* kept = document()->findView(id);
+    if (kept == nullptr) {
+        return false;
+    }
+    viewport::CameraState camera;
+    camera.eye = kept->eye;
+    camera.center = kept->center;
+    camera.up = kept->up;
+    camera.scale = kept->scale;
+    camera.projection =
+        kept->perspective ? viewport::Projection::Perspective : viewport::Projection::Orthographic;
+    m_viewport->setCameraState(camera);
+    return true;
 }
 
 void MainWindow::setGridSpacing(double millimeters) {

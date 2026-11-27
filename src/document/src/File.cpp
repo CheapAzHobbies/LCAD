@@ -1642,6 +1642,29 @@ void readOutputs(const json& document, const std::filesystem::path& path, Docume
             state.setups.push_back(readSetup(entry, path));
         }
     }
+    if (const json* views = optionalList(document, "views", path)) {
+        for (const json& entry : *views) {
+            SavedView view;
+            const std::string where = "a saved view";
+            view.id = ObjectId{idMember(entry, "id", where, path)};
+            view.name = stringMember(entry, "name", where, path);
+            const auto triple = [&](const char* key) {
+                const json& list = member(entry, key, where, path);
+                if (!list.is_array() || list.size() != 3 || !list[0].is_number() ||
+                    !list[1].is_number() || !list[2].is_number()) {
+                    damaged(path, where + " has a " + key + " that is not three numbers");
+                }
+                return std::array<double, 3>{list[0].get<double>(), list[1].get<double>(),
+                                             list[2].get<double>()};
+            };
+            view.eye = triple("eye");
+            view.center = triple("center");
+            view.up = triple("up");
+            view.scale = numberMember(entry, "scale", where, path);
+            view.perspective = boolMember(entry, "perspective", where, path);
+            state.views.push_back(std::move(view));
+        }
+    }
 }
 
 void writeOutputs(const Document& document, nlohmann::ordered_json& model) {
@@ -1662,6 +1685,21 @@ void writeOutputs(const Document& document, nlohmann::ordered_json& model) {
         model["setups"] = ordered_json::array();
         for (const Setup& setup : document.setups()) {
             model["setups"].push_back(writeSetup(setup));
+        }
+    }
+    if (!document.views().empty()) {
+        model["views"] = ordered_json::array();
+        for (const SavedView& view : document.views()) {
+            const auto triple = [](const std::array<double, 3>& p) {
+                return ordered_json::array({p[0], p[1], p[2]});
+            };
+            model["views"].push_back(ordered_json{{"id", view.id.value},
+                                                  {"name", view.name},
+                                                  {"eye", triple(view.eye)},
+                                                  {"center", triple(view.center)},
+                                                  {"up", triple(view.up)},
+                                                  {"scale", view.scale},
+                                                  {"perspective", view.perspective}});
         }
     }
 }

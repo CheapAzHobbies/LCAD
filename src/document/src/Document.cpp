@@ -144,7 +144,8 @@ Document::Document(DocumentState state)
       m_components(std::move(state.components)), m_occurrences(std::move(state.occurrences)),
       m_joints(std::move(state.joints)), m_materials(std::move(state.materials)),
       m_drawings(std::move(state.drawings)), m_tools(std::move(state.tools)),
-      m_setups(std::move(state.setups)), m_timeline(std::move(state.timeline)),
+      m_setups(std::move(state.setups)), m_views(std::move(state.views)),
+      m_timeline(std::move(state.timeline)),
       m_marker(state.marker), m_nextId(state.nextId) {
     std::unordered_set<ObjectId> seen;
     const auto claim = [this, &seen](ObjectId id, const char* what) {
@@ -239,6 +240,10 @@ Document::Document(DocumentState state)
     for (const Drawing& drawing : m_drawings) {
         claim(drawing.id, "drawing");
         requireName(drawing.name, "Document");
+    }
+    for (const SavedView& view : m_views) {
+        claim(view.id, "saved view");
+        requireName(view.name, "Document");
     }
     for (const Tool& tool : m_tools) {
         claim(tool.id, "tool");
@@ -1679,6 +1684,9 @@ void Document::apply(const Edit& edit) {
     case Edit::Kind::AddSetup:
     case Edit::Kind::RemoveSetup:
     case Edit::Kind::ChangeSetup:
+    case Edit::Kind::AddView:
+    case Edit::Kind::RemoveView:
+    case Edit::Kind::ChangeView:
         applyOutput(edit, true);
         break;
     }
@@ -1883,6 +1891,9 @@ void Document::revert(const Edit& edit) {
     case Edit::Kind::AddSetup:
     case Edit::Kind::RemoveSetup:
     case Edit::Kind::ChangeSetup:
+    case Edit::Kind::AddView:
+    case Edit::Kind::RemoveView:
+    case Edit::Kind::ChangeView:
         applyOutput(edit, false);
         break;
     }

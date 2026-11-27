@@ -266,6 +266,10 @@ toolpaths of a setup are worked out from the model when they are wanted, and are
 | `dimensions` | Each with `id`, `view`, `kind` (`aligned`, `horizontal`, `vertical`, `radius`, `diameter`), `first`, and but for a radius or a diameter `second`, then `offset` and `suffix`. A point is `body`, `path`, `edge` (the edge's name), and `where` (`start`, `end`, `middle`, `center`) |
 | `notes` | Each with `id`, `text`, `x`, `y`, `height`; a balloon also has `balloon`, `true`, the `view` its leader points into, and `leaderX`, `leaderY`, where in that view, in millimeters of the model |
 
+`views` is a list of saved camera positions, each with `id`, `name`, `eye`, `center`, and `up`
+(each three numbers: where the camera is, the point it looks at, and which way is up), `scale`,
+and `perspective`. Written only when there are some.
+
 `tools` is a list with `id`, `name`, `kind` (`flat`, `ball`, `drill`), `diameter`, `fluteLength`,
 `stickout`, `flutes`, `tipAngle`, and `number`.
 

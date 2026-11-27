@@ -217,3 +217,44 @@ TEST_CASE("Drawings, tools, and setups come back from a file as they were",
     Document& reopened = *loaded.document;
     CHECK(reopened.newId().value > setup.value);
 }
+
+TEST_CASE("Saved views are kept, renamed, and forgotten, and come back from a file",
+          "[document][view][file]") {
+    const lcad::test::TempDir folder;
+    Document document;
+    SavedView view;
+    view.name = document.uniqueViewName("View");
+    CHECK(view.name == "View 1");
+    view.eye = {100.0, -200.0, 150.0};
+    view.center = {0.0, 0.0, 10.0};
+    view.up = {0.0, 0.0, 1.0};
+    view.scale = 2.5;
+    view.perspective = true;
+    const ObjectId id = document.addView(view);
+    REQUIRE(document.findView(id) != nullptr);
+    CHECK(document.uniqueViewName("View") == "View 2");
+    CHECK(document.undoLabel() == "Save View");
+
+    SavedView renamed = *document.findView(id);
+    renamed.name = "Underside";
+    document.changeView(renamed);
+    CHECK(document.findView(id)->name == "Underside");
+    CHECK(document.undoLabel() == "Rename View");
+    document.undo();
+    CHECK(document.findView(id)->name == "View 1");
+    document.redo();
+
+    const auto file = folder.file("views.lcad");
+    saveDocument(document, file);
+    const LoadedDocument loaded = loadDocument(file);
+    REQUIRE(loaded.document->views().size() == 1);
+    CHECK(loaded.document->views().front() == *document.findView(id));
+
+    document.removeView(id);
+    CHECK(document.views().empty());
+    document.undo();
+    CHECK(document.findView(id) != nullptr);
+    CHECK_THROWS_AS(document.removeView(ObjectId{9999}), std::invalid_argument);
+    view.name.clear();
+    CHECK_THROWS_AS(document.addView(view), std::invalid_argument);
+}

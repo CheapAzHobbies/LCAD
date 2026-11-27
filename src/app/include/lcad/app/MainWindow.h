@@ -121,6 +121,10 @@ public:
     /// How far apart the grid's lines are, and the steps of the sketch's grid snap; kept for
     /// the next start.
     void setGridSpacing(double millimeters);
+    /// Keeps where the camera is in the document under `name`. Returns the saved view's id.
+    document::ObjectId saveView(const QString& name);
+    /// Puts the camera where a saved view has it. False if there is no such view.
+    bool showSavedView(document::ObjectId id);
     /// The Drawing workspace: its sheet, its panel, and its tools.
     [[nodiscard]] DrawingWorkspace* drawings() const { return m_drawings; }
     /// The Manufacture workspace: its panel, its toolpaths, and its simulation.

@@ -457,6 +457,10 @@ While drawing, LCAD lines things up and holds them so, with a mark by the pointe
   While Drawing**.
 - **Sketch > Snap to Grid** puts clicks that land on nothing on round numbers: steps of 0.1,
   0.5, 1, 5, 10 mm and so on, whichever is the smallest that suits the zoom.
+
+**View > Save View** keeps where the camera is under a name, with the document; choose the name
+in **View > Saved Views** to go back to it. **View > Delete Saved View** forgets one.
+Saving and deleting can be undone.
 ### Selecting and moving
 
 Press Esc until no tool is active. Then:

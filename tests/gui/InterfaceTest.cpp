@@ -149,6 +149,7 @@ private slots:
 
     // The 3D view, driven from the window
     void gridAndDisplayStyleAreCommandsAndRemembered();
+    void savedViewsPutTheCameraBack();
 
 private:
     static void create(MainWindow& window, PrimitiveKind kind,
@@ -1299,6 +1300,41 @@ void InterfaceTest::viewportMenuReachesWhatLiesBehind() {
     QVERIFY(qAbs(face->max.z) < 1e-6);
 }
 
+void InterfaceTest::savedViewsPutTheCameraBack() {
+    MainWindow window;
+    show(window);
+    create(window, PrimitiveKind::Box);
+    auto* viewport = window.viewport();
+    viewport->setAnimated(false);
+    QVERIFY(!action(window, "view.deleteView")->isEnabled());
+    viewport->setStandardView(lcad::viewport::StandardView::Top);
+    const lcad::viewport::CameraState top = viewport->cameraState();
+    const ObjectId id = window.saveView(QStringLiteral("From above"));
+    QCOMPARE(window.document()->views().size(), std::size_t{1});
+    QCOMPARE(window.document()->findView(id)->name, std::string("From above"));
+    window.commands()->refresh();
+    QVERIFY(action(window, "view.deleteView")->isEnabled());
+
+    viewport->setStandardView(lcad::viewport::StandardView::Front);
+    QVERIFY(viewport->cameraState().eye != top.eye);
+    QVERIFY(window.showSavedView(id));
+    const lcad::viewport::CameraState back = viewport->cameraState();
+    for (int i = 0; i < 3; ++i) {
+        QVERIFY(qAbs(back.eye[i] - top.eye[i]) < 1e-6);
+        QVERIFY(qAbs(back.up[i] - top.up[i]) < 1e-6);
+    }
+    QVERIFY(qAbs(back.scale - top.scale) < 1e-6);
+    // Listed in View > Saved Views.
+    auto* menu = window.findChild<QMenu*>(QStringLiteral("menu.savedViews"));
+    QVERIFY(menu != nullptr);
+    emit menu->aboutToShow();
+    const QList<QAction*> listed = menu->actions();
+    QVERIFY(std::any_of(listed.begin(), listed.end(), [](const QAction* a) {
+        return a->text() == QStringLiteral("From above");
+    }));
+    QVERIFY(!window.showSavedView(ObjectId{424242}));
+}
+
 void InterfaceTest::gridAndDisplayStyleAreCommandsAndRemembered() {
     {
         MainWindow window;
@@ -1332,9 +1368,12 @@ void InterfaceTest::gridAndDisplayStyleAreCommandsAndRemembered() {
         window.commands()->trigger(QStringLiteral("view.navigation.middleOrbits"));
         QVERIFY(!viewport->areAxesVisible());
         QVERIFY(!viewport->isAnimated());
+        window.setGridSpacing(25.0);
+        QCOMPARE(viewport->gridSpacing(), 25.0);
     }
     // As after a restart.
     const MainWindow window;
+    QCOMPARE(window.viewport()->gridSpacing(), 25.0);
     QVERIFY(!window.viewport()->isGridVisible());
     QVERIFY(!window.viewport()->areAxesVisible());
     QVERIFY(!window.viewport()->isAnimated());

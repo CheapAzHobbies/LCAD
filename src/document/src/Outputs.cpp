@@ -368,8 +368,67 @@ void Document::removeSetup(ObjectId id) {
     record(std::move(edit), "Delete Setup");
 }
 
+const SavedView* Document::findView(ObjectId id) const {
+    return findIn(m_views, id);
+}
+
+std::string Document::uniqueViewName(std::string_view base) const {
+    return uniqueName(m_views, base);
+}
+
+ObjectId Document::addView(SavedView view) {
+    requireName(view.name, "addView");
+    view.id = newId();
+    Edit edit{};
+    edit.kind = Edit::Kind::AddView;
+    edit.id = view.id;
+    edit.index = m_views.size();
+    edit.view = std::move(view);
+    record(std::move(edit), "Save View");
+    return m_views.back().id;
+}
+
+void Document::changeView(const SavedView& view) {
+    const std::size_t index = indexIn(m_views, view.id);
+    if (index == notFound) {
+        throw std::invalid_argument("changeView: the document has no such view");
+    }
+    requireName(view.name, "changeView");
+    if (m_views[index] == view) {
+        return;
+    }
+    Edit edit{};
+    edit.kind = Edit::Kind::ChangeView;
+    edit.id = view.id;
+    edit.view = m_views[index];
+    edit.newView = view;
+    record(std::move(edit), m_views[index].name != view.name ? "Rename View" : "Update View");
+}
+
+void Document::removeView(ObjectId id) {
+    const std::size_t index = indexIn(m_views, id);
+    if (index == notFound) {
+        throw std::invalid_argument("removeView: the document has no such view");
+    }
+    Edit edit{};
+    edit.kind = Edit::Kind::RemoveView;
+    edit.id = id;
+    edit.index = index;
+    edit.view = m_views[index];
+    record(std::move(edit), "Delete View");
+}
+
 void Document::applyOutput(const Edit& edit, bool forward) {
     switch (edit.kind) {
+    case Edit::Kind::AddView:
+    case Edit::Kind::RemoveView:
+        addOrRemove(m_views, edit.index, edit.view, (edit.kind == Edit::Kind::AddView) == forward);
+        notify(Change::Kind::ViewsChanged, edit.id);
+        break;
+    case Edit::Kind::ChangeView:
+        change(m_views, forward ? edit.newView : edit.view);
+        notify(Change::Kind::ViewsChanged, edit.id);
+        break;
     case Edit::Kind::AddDrawing:
     case Edit::Kind::RemoveDrawing:
         addOrRemove(m_drawings, edit.index, edit.drawing,

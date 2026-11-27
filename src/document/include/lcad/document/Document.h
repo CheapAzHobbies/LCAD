@@ -4,6 +4,7 @@
 
 #include <lcad/document/Assembly.h>
 #include <lcad/document/Drawing.h>
+#include <lcad/document/SavedView.h>
 #include <lcad/document/Feature.h>
 #include <lcad/document/Machining.h>
 #include <lcad/document/ObjectId.h>
@@ -151,6 +152,8 @@ struct Change {
         DrawingsChanged,
         /// A setup or a tool (`body` is its id) was added, removed, or changed.
         MachiningChanged,
+        /// A saved view (`body` is its id) was added, removed, or renamed.
+        ViewsChanged,
     };
     Kind kind = Kind::HistoryChanged;
     /// The body or sketch concerned. Not valid for HistoryChanged, TimelineChanged, and the
@@ -182,6 +185,7 @@ struct DocumentState {
     std::vector<Drawing> drawings;
     std::vector<Tool> tools;
     std::vector<Setup> setups;
+    std::vector<SavedView> views;
 };
 
 /// What a feature would give if it were applied now. See Document::tryFeature().
@@ -522,6 +526,18 @@ public:
     void changeDrawing(const Drawing& drawing, const std::string& label = "Change Drawing");
     void removeDrawing(ObjectId id);
 
+    // Saved views
+
+    [[nodiscard]] const std::vector<SavedView>& views() const { return m_views; }
+    [[nodiscard]] const SavedView* findView(ObjectId id) const;
+    /// `base` followed by the lowest number no saved view has yet: "View 1".
+    [[nodiscard]] std::string uniqueViewName(std::string_view base) const;
+    /// Keeps a camera position under its name, which must not be empty. Returns its new id.
+    ObjectId addView(SavedView view);
+    /// Changes a saved view: its name, or where it looks from.
+    void changeView(const SavedView& view);
+    void removeView(ObjectId id);
+
     [[nodiscard]] const std::vector<Tool>& tools() const { return m_tools; }
     /// The tool with this id, or nullptr. The pointer is valid until the next edit.
     [[nodiscard]] const Tool* findTool(ObjectId id) const;
@@ -623,6 +639,9 @@ private:
             AddSetup,
             RemoveSetup,
             ChangeSetup,
+            AddView,
+            RemoveView,
+            ChangeView,
         };
         Kind kind;
         ObjectId id;
@@ -688,6 +707,8 @@ private:
         Tool newTool;
         Setup setup;
         Setup newSetup;
+        SavedView view;
+        SavedView newView;
     };
 
     struct Step {
@@ -773,6 +794,7 @@ private:
     std::vector<Material> m_materials;
     std::vector<Drawing> m_drawings;
     std::vector<Tool> m_tools;
+    std::vector<SavedView> m_views;
     std::vector<Setup> m_setups;
     /// Where each occurrence is in its parent, as the joints last placed it, and why a joint
     /// does not hold.

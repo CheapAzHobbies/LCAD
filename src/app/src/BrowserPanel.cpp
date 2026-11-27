@@ -1025,6 +1025,7 @@ void BrowserPanel::onDocumentChanged(const document::Change& change) {
     case Kind::PlacementsChanged:
     case Kind::DrawingsChanged:
     case Kind::MachiningChanged:
+    case Kind::ViewsChanged:
     case Kind::MaterialsChanged:
     case Kind::ParametersChanged:
     case Kind::HistoryChanged:
